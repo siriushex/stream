@@ -5494,7 +5494,21 @@ function updateAdapterBusyWarningFromFields() {
 
 function getAdapterStatusEntry(adapterId) {
   if (!adapterId || !state.adapterStatus) return null;
-  return state.adapterStatus[adapterId] || null;
+  const direct = state.adapterStatus[adapterId];
+  if (direct) return direct;
+  const adapter = state.adapterEditing && state.adapterEditing.adapter;
+  const cfg = adapter && adapter.config ? adapter.config : null;
+  const adapterNum = cfg && cfg.adapter !== undefined ? String(cfg.adapter) : null;
+  const deviceNum = cfg && cfg.device !== undefined ? String(cfg.device) : null;
+  if (!adapterNum) return null;
+  const list = Object.values(state.adapterStatus);
+  for (const entry of list) {
+    if (!entry || entry.adapter === undefined) continue;
+    if (String(entry.adapter) === adapterNum && String(entry.device || 0) === String(deviceNum || 0)) {
+      return entry;
+    }
+  }
+  return null;
 }
 
 function isAdapterLocked(adapterId) {
