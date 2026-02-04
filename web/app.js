@@ -2211,6 +2211,165 @@ function formatInputSummary(inputs, activeIndex) {
   return `Inputs: ${summary.okCount} OK • ${summary.downCount} DOWN • ${summary.unkCount} UNK`;
 }
 
+function isStreamVisible(stream) {
+  const term = searchTerm.toLowerCase();
+  if (!term) return true;
+  const name = (stream.config && stream.config.name) || '';
+  return (stream.id + ' ' + name).toLowerCase().includes(term);
+}
+
+function rebuildStreamIndex(list) {
+  state.streamIndex = {};
+  list.forEach((stream) => {
+    state.streamIndex[stream.id] = stream;
+  });
+}
+
+function findTileById(id) {
+  return $$('.tile').find((tile) => tile.dataset.id === id) || null;
+}
+
+function ensureDashboardEmptyState() {
+  if (!elements.dashboardStreams) return;
+  const hasTile = Boolean(elements.dashboardStreams.querySelector('.tile'));
+  const empty = elements.dashboardStreams.querySelector('[data-role="streams-empty"]');
+  if (hasTile) {
+    if (empty) empty.remove();
+    return;
+  }
+  if (!empty) {
+    const panel = createEl('div', 'panel', 'No streams yet. Create the first one.');
+    panel.dataset.role = 'streams-empty';
+    elements.dashboardStreams.appendChild(panel);
+  }
+}
+
+function buildStreamTile(stream) {
+  const tile = document.createElement('div');
+  const stats = state.stats[stream.id] || {};
+  const enabled = stream.enabled !== false;
+  const onAir = enabled && stats.on_air === true;
+  const tileState = enabled ? (onAir ? 'ok' : 'warn') : 'disabled';
+  const rateState = enabled ? (onAir ? '' : 'warn') : 'disabled';
+  const metaText = enabled ? (onAir ? 'Active' : 'Inactive') : 'Disabled';
+  const statusInfo = getStreamStatusInfo(stream, stats);
+  const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+  const activeIndex = getActiveInputIndex(stats);
+  const activeLabel = getActiveInputLabel(inputs, activeIndex);
+  const compactInputText = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
+  const inputSummaryText = formatInputSummary(inputs, activeIndex);
+  tile.className = `tile ${tileState}`;
+  tile.dataset.id = stream.id;
+  tile.dataset.enabled = enabled ? '1' : '0';
+
+  const displayName = (stream.config && stream.config.name) || stream.id;
+  const detailsId = `tile-details-${stream.id}`;
+
+  tile.innerHTML = `
+    <div class="tile-header">
+      <div class="tile-head">
+        <div class="tile-title" data-autofit="true" data-autofit-min="12" data-autofit-max="14">${displayName}</div>
+        <div class="tile-actions">
+          <button class="tile-toggle" data-action="tile-toggle" aria-expanded="false" aria-controls="${detailsId}">⯈</button>
+          <button class="kebab" data-action="menu" aria-label="Menu"><span></span></button>
+        </div>
+      </div>
+      <div class="tile-summary">
+        <div class="tile-rate ${rateState}" data-autofit="true" data-autofit-min="11" data-autofit-max="14">${formatBitrate(stats.bitrate || 0)}</div>
+        <div class="tile-meta" data-autofit="true" data-autofit-min="11" data-autofit-max="12">${metaText}</div>
+        <div class="tile-compact-status stream-status-badge ${statusInfo.className}" data-role="tile-compact-status">
+          <span class="stream-status-dot"></span>
+          <span data-role="tile-compact-status-label">${statusInfo.label}</span>
+        </div>
+        <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
+        <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
+      </div>
+    </div>
+    <div class="tile-details" id="${detailsId}">
+      <div class="tile-inputs" data-role="tile-inputs"></div>
+    </div>
+    <div class="tile-menu">
+      <button class="menu-item" data-action="edit">Edit</button>
+      ${getPlaylistUrl(stream) ? '<button class="menu-item" data-action="preview">Preview</button>' : ''}
+      <button class="menu-item" data-action="analyze">Analyze</button>
+      <button class="menu-item" data-action="toggle">${enabled ? 'Disable' : 'Enable'}</button>
+      <button class="menu-item" data-action="delete">Delete</button>
+    </div>
+  `;
+
+  tile.querySelectorAll(AUTO_FIT_SELECTOR).forEach(registerAutoFit);
+  scheduleAutoFit(tile);
+  applyTileUiState(tile);
+  return tile;
+}
+
+function updateStreamTile(stream) {
+  if (!elements.dashboardStreams) return;
+  const visible = isStreamVisible(stream);
+  const existing = findTileById(stream.id);
+  if (!visible) {
+    if (existing) existing.remove();
+    delete state.streamIndex[stream.id];
+    ensureDashboardEmptyState();
+    return;
+  }
+  const tile = buildStreamTile(stream);
+  if (existing) {
+    existing.replaceWith(tile);
+  } else {
+    elements.dashboardStreams.appendChild(tile);
+  }
+  state.streamIndex[stream.id] = stream;
+  ensureDashboardEmptyState();
+  scheduleAutoFit(elements.dashboardStreams);
+}
+
+function removeStreamFromState(streamId) {
+  const id = String(streamId);
+  state.streams = state.streams.filter((stream) => stream && stream.id !== id);
+  delete state.streamIndex[id];
+  if (state.stats) {
+    delete state.stats[id];
+  }
+}
+
+function upsertStreamInState(stream) {
+  if (!stream) return;
+  const id = String(stream.id);
+  const index = state.streams.findIndex((item) => item && item.id === id);
+  if (index === -1) {
+    state.streams.push(stream);
+  } else {
+    state.streams[index] = stream;
+  }
+  if (isStreamVisible(stream)) {
+    state.streamIndex[id] = stream;
+  } else {
+    delete state.streamIndex[id];
+  }
+}
+
+function applyStreamUpdate(stream) {
+  if (state.viewMode === 'cards') {
+    updateStreamTile(stream);
+    updateTiles();
+    return;
+  }
+  renderStreams();
+}
+
+function applyStreamRemoval(streamId) {
+  if (state.viewMode === 'cards') {
+    const tile = findTileById(streamId);
+    if (tile) tile.remove();
+    delete state.streamIndex[streamId];
+    ensureDashboardEmptyState();
+    scheduleAutoFit(elements.dashboardStreams);
+    return;
+  }
+  renderStreams();
+}
+
 function isTranscodeStream(stream) {
   const typeValue = String(stream && stream.config && stream.config.type || '').toLowerCase();
   return typeValue === 'transcode' || typeValue === 'ffmpeg';
@@ -8246,10 +8405,7 @@ function renderStreams() {
     return (stream.id + ' ' + name).toLowerCase().includes(term);
   });
 
-  state.streamIndex = {};
-  filtered.forEach((stream) => {
-    state.streamIndex[stream.id] = stream;
-  });
+  rebuildStreamIndex(filtered);
 
   if (state.viewMode === 'table') {
     renderStreamTable(filtered);
@@ -8262,69 +8418,15 @@ function renderStreams() {
 
   elements.dashboardStreams.innerHTML = '';
   if (filtered.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'panel';
-    empty.textContent = 'No streams yet. Create the first one.';
+    const empty = createEl('div', 'panel', 'No streams yet. Create the first one.');
+    empty.dataset.role = 'streams-empty';
     elements.dashboardStreams.appendChild(empty);
     return;
   }
 
   filtered.forEach((stream) => {
-    const tile = document.createElement('div');
-    const stats = state.stats[stream.id] || {};
-    const enabled = stream.enabled !== false;
-    const onAir = enabled && stats.on_air === true;
-    const tileState = enabled ? (onAir ? 'ok' : 'warn') : 'disabled';
-    const rateState = enabled ? (onAir ? '' : 'warn') : 'disabled';
-    const metaText = enabled ? (onAir ? 'Active' : 'Inactive') : 'Disabled';
-    const statusInfo = getStreamStatusInfo(stream, stats);
-    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-    const activeIndex = getActiveInputIndex(stats);
-    const activeLabel = getActiveInputLabel(inputs, activeIndex);
-    const compactInputText = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
-    const inputSummaryText = formatInputSummary(inputs, activeIndex);
-    tile.className = `tile ${tileState}`;
-    tile.dataset.id = stream.id;
-    tile.dataset.enabled = enabled ? '1' : '0';
-
-    const displayName = (stream.config && stream.config.name) || stream.id;
-    const detailsId = `tile-details-${stream.id}`;
-
-    tile.innerHTML = `
-      <div class="tile-header">
-        <div class="tile-head">
-          <div class="tile-title" data-autofit="true" data-autofit-min="12" data-autofit-max="14">${displayName}</div>
-          <div class="tile-actions">
-            <button class="tile-toggle" data-action="tile-toggle" aria-expanded="false" aria-controls="${detailsId}">⯈</button>
-            <button class="kebab" data-action="menu" aria-label="Menu"><span></span></button>
-          </div>
-        </div>
-        <div class="tile-summary">
-          <div class="tile-rate ${rateState}" data-autofit="true" data-autofit-min="11" data-autofit-max="14">${formatBitrate(stats.bitrate || 0)}</div>
-          <div class="tile-meta" data-autofit="true" data-autofit-min="11" data-autofit-max="12">${metaText}</div>
-          <div class="tile-compact-status stream-status-badge ${statusInfo.className}" data-role="tile-compact-status">
-            <span class="stream-status-dot"></span>
-            <span data-role="tile-compact-status-label">${statusInfo.label}</span>
-          </div>
-          <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
-          <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
-        </div>
-      </div>
-      <div class="tile-details" id="${detailsId}">
-        <div class="tile-inputs" data-role="tile-inputs"></div>
-      </div>
-      <div class="tile-menu">
-        <button class="menu-item" data-action="edit">Edit</button>
-        ${getPlaylistUrl(stream) ? '<button class="menu-item" data-action="preview">Preview</button>' : ''}
-        <button class="menu-item" data-action="analyze">Analyze</button>
-        <button class="menu-item" data-action="toggle">${enabled ? 'Disable' : 'Enable'}</button>
-        <button class="menu-item" data-action="delete">Delete</button>
-      </div>
-    `;
-
+    const tile = buildStreamTile(stream);
     elements.dashboardStreams.appendChild(tile);
-    tile.querySelectorAll(AUTO_FIT_SELECTOR).forEach(registerAutoFit);
-    scheduleAutoFit(tile);
   });
 
   updateTiles();
@@ -9841,14 +9943,24 @@ async function saveStream(event) {
 
     setStatus('Stream saved');
     closeEditor();
-    try {
-      await loadStreams();
-    } catch (err) {
-      const message = err && err.network
-        ? 'Stream saved, but the server is unreachable. Refresh later.'
-        : (err && err.message ? err.message : 'Stream saved, but refresh failed');
-      setStatus(message);
+    if (isNew) {
+      try {
+        await loadStreams();
+      } catch (err) {
+        const message = err && err.network
+          ? 'Stream saved, but the server is unreachable. Refresh later.'
+          : (err && err.message ? err.message : 'Stream saved, but refresh failed');
+        setStatus(message);
+      }
+      return;
     }
+    const updated = {
+      id: payload.id,
+      enabled: payload.enabled,
+      config: payload.config || {},
+    };
+    upsertStreamInState(updated);
+    applyStreamUpdate(updated);
   } catch (err) {
     let message = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
     const networkMessage = formatNetworkError(err);
@@ -9869,7 +9981,13 @@ async function toggleStream(stream) {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
-  await loadStreams();
+  const updated = {
+    id: payload.id,
+    enabled: payload.enabled,
+    config: payload.config,
+  };
+  upsertStreamInState(updated);
+  applyStreamUpdate(updated);
 }
 
 async function deleteStream(stream) {
@@ -9877,7 +9995,8 @@ async function deleteStream(stream) {
   if (!confirmed) return;
   await apiJson(`/api/v1/streams/${stream.id}`, { method: 'DELETE' });
   setStatus('Stream deleted');
-  await loadStreams();
+  removeStreamFromState(stream.id);
+  applyStreamRemoval(stream.id);
 }
 
 function startPreview(stream) {
