@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added CODEOWNERS ownership map and CI guard for required ownership entries.
+  - Added strict team workflow documentation and PR template.
+- Tests:
+  - Not run (docs/CI only).
+### 2026-02-04
+- Changes:
   - Made General settings more compact with show/hide toggles for optional sections.
 - Tests:
   - Not run (UI change).
