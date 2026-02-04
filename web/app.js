@@ -9890,6 +9890,11 @@ function stopAccessLogPolling() {
 }
 
 function syncPollingForView() {
+  if (state.currentView === 'dashboard') {
+    startStatusPolling();
+  } else {
+    stopStatusPolling();
+  }
   if (state.currentView === 'sessions') {
     startSessionPolling();
   } else {
@@ -9936,7 +9941,6 @@ function pauseAllPolling() {
 
 function resumeAllPolling() {
   if (document.hidden) return;
-  startStatusPolling();
   syncPollingForView();
   if (state.currentView === 'adapters') {
     startDvbPolling();
