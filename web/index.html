@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260205e</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260205f</div>
       </div>
     </header>
 
@@ -1779,8 +1779,8 @@
             <h4>HTTP Authentication</h4>
             <ul>
               <li><strong>Allow Basic auth (users table)</strong> — enable HTTP Basic auth for UI/API and play links.</li>
-              <li><strong>Allowed IPs</strong> — if set, only listed IPs can access HTTP streams.</li>
-              <li><strong>Denied IPs</strong> — always blocked (takes priority over allow list).</li>
+              <li><strong>Allowed IPs</strong> — if set, only listed IPs can access HTTP streams (supports CIDR).</li>
+              <li><strong>Denied IPs</strong> — always blocked (takes priority over allow list, supports CIDR).</li>
               <li>Play links honor allow/deny filters: <code>/play/*</code>, <code>/stream/*</code>, playlists.</li>
             </ul>
 

@@ -411,6 +411,40 @@ local function http_auth_list(value)
     return out
 end
 
+local function ip_to_u32(ip)
+    if not ip or ip == "" then
+        return nil
+    end
+    local a, b, c, d = ip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+    a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+    if not a or not b or not c or not d then
+        return nil
+    end
+    if a > 255 or b > 255 or c > 255 or d > 255 then
+        return nil
+    end
+    return a * 16777216 + b * 65536 + c * 256 + d
+end
+
+local function cidr_match(ip, cidr)
+    local base, mask = cidr:match("^(.-)/(%d+)$")
+    if not base or not mask then
+        return false
+    end
+    local ip_num = ip_to_u32(ip)
+    local base_num = ip_to_u32(base)
+    local bits = tonumber(mask)
+    if not ip_num or not base_num or not bits or bits < 0 or bits > 32 then
+        return false
+    end
+    if bits == 0 then
+        return true
+    end
+    local shift = 32 - bits
+    local factor = 2 ^ shift
+    return math.floor(ip_num / factor) == math.floor(base_num / factor)
+end
+
 local function http_auth_has(list, value)
     if not value or value == "" then
         return false
@@ -418,6 +452,11 @@ local function http_auth_has(list, value)
     for _, item in ipairs(list) do
         if item == value then
             return true
+        end
+        if item:find("/", 1, true) then
+            if cidr_match(value, item) then
+                return true
+            end
         end
     end
     return false
