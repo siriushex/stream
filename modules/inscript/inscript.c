@@ -203,6 +203,7 @@ static int fn_inscript_callback(lua_State *L)
         lua_pop(lua, 1); // argv
         argc = new_idx - 1;
         script = server_script;
+        argv_idx = 2;
     }
     else
     {

@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Fixed embedded launcher to treat JSON configs as server configs and skip the script arg in option parsing.
+  - Bumped UI build stamp to 20260204l.
+- Tests:
+  - Not run (deploy-only).
+### 2026-02-04
+- Changes:
   - Refreshed `SKILL.md` and `AGENT.md` to reflect current UX updates, single-owner governance, and CI guardrails.
 - Tests:
   - Not run (docs only).
