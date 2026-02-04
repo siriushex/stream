@@ -2483,6 +2483,43 @@ local function restore_config_revision(server, client, request, rev_id)
     })
 end
 
+local function delete_config_revision(server, client, request, rev_id)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not config or not config.delete_revision then
+        return error_response(server, client, 501, "config revisions are unavailable")
+    end
+    local row = config.delete_revision(rev_id)
+    if not row then
+        return error_response(server, client, 404, "revision not found")
+    end
+    local active_id = config.get_setting("config_active_revision_id")
+    local lkg_id = config.get_setting("config_lkg_revision_id")
+    if active_id and tonumber(active_id) == tonumber(rev_id) then
+        config.set_setting("config_active_revision_id", 0)
+    end
+    if lkg_id and tonumber(lkg_id) == tonumber(rev_id) then
+        config.set_setting("config_lkg_revision_id", 0)
+    end
+    json_response(server, client, 200, { status = "ok", deleted = tonumber(rev_id) })
+end
+
+local function delete_all_config_revisions(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not config or not config.delete_all_revisions then
+        return error_response(server, client, 501, "config revisions are unavailable")
+    end
+    local count = config.delete_all_revisions()
+    config.set_setting("config_active_revision_id", 0)
+    config.set_setting("config_lkg_revision_id", 0)
+    json_response(server, client, 200, { status = "ok", deleted = tonumber(count) or 0 })
+end
+
 function api.handle_request(server, client, request)
     if not request then
         return nil
@@ -2855,9 +2892,16 @@ function api.handle_request(server, client, request)
     if path == "/api/v1/config/revisions" and method == "GET" then
         return list_config_revisions(server, client, request)
     end
+    if path == "/api/v1/config/revisions" and method == "DELETE" then
+        return delete_all_config_revisions(server, client, request)
+    end
     local config_rev_id = path:match("^/api/v1/config/revisions/(%d+)/restore$")
     if config_rev_id and method == "POST" then
         return restore_config_revision(server, client, request, config_rev_id)
+    end
+    local config_rev_delete = path:match("^/api/v1/config/revisions/(%d+)$")
+    if config_rev_delete and method == "DELETE" then
+        return delete_config_revision(server, client, request, config_rev_delete)
     end
 
     if path == "/api/v1/settings" and method == "GET" then

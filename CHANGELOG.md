@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added config history deletion controls (per revision + delete all).
+- Tests:
+  - Not run (UI + API change).
+### 2026-02-04
+- Changes:
   - Added LNB sanitization for adapters to prevent startup aborts on invalid format.
   - DVB adapter UI now refreshes on view with busy badge + refresh button.
 - Tests:

@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260204b" />
+  <link rel="stylesheet" href="/styles.css?v=20260204c" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script defer src="/app.js?v=20260204b"></script>
+  <script defer src="/app.js?v=20260204c"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260204b</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260204c</div>
       </div>
     </header>
 
@@ -135,7 +135,7 @@
                   <div class="adapter-detected-row">
                     <select id="adapter-detected"></select>
                     <span class="adapter-detected-badge" id="adapter-detected-badge"></span>
-                    <button class="btn ghost" type="button" id="adapter-detected-refresh">Refresh</button>
+                    <button class="btn ghost" type="button" id="adapter-detected-refresh">Refresh DVB list</button>
                   </div>
                   <div class="form-hint" id="adapter-detected-hint">
                     Select a detected adapter to fill Adapter/Device/Type fields.
@@ -154,11 +154,11 @@
                   </label>
                   <label class="field">
                     <span>Adapter</span>
-                    <input type="number" id="adapter-index" placeholder="0" />
+                    <select id="adapter-index"></select>
                   </label>
                   <label class="field">
                     <span>Device (fe)</span>
-                    <input type="number" id="adapter-device" placeholder="0" />
+                    <select id="adapter-device"></select>
                   </label>
                   <label class="field">
                     <span>Type</span>
@@ -1421,6 +1421,7 @@
                 <div class="panel-title">Config History</div>
                 <div class="panel-actions">
                   <button class="btn ghost" type="button" id="btn-config-refresh">Refresh</button>
+                  <button class="btn ghost" type="button" id="btn-config-delete-all">Delete All</button>
                 </div>
               </div>
               <div class="muted config-history-meta">
