@@ -85,6 +85,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   - Includes `lua_mem_kb` and `perf` timings (`refresh_ms`, `status_ms`,
     `status_one_ms`, `adapter_refresh_ms`) for basic profiling.
   - Prometheus adds `astra_lua_mem_kb` and `astra_perf_*_ms` gauges.
+- Tools: `GET /api/v1/tools` (resolved ffmpeg/ffprobe paths and versions).
 - Audit log: `GET /api/v1/audit?since=&limit=&action=&actor=&target=&ip=&ok=` (admin-only).
 - Users: `GET /api/v1/users`, `POST /api/v1/users`, `PUT /api/v1/users/<username>`,
   `POST /api/v1/users/<username>/reset` (admin-only).
@@ -144,6 +145,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
     `access_log_max_entries`, `access_log_retention_sec`.
   - InfluxDB export: `influx_enabled`, `influx_url`, `influx_org`, `influx_bucket`,
     `influx_token`, `influx_interval_sec`, `influx_instance`, `influx_measurement`.
+  - Transcode tools: `ffmpeg_path`, `ffprobe_path` (optional overrides).
   - Stream defaults: `no_data_timeout_sec`, `probe_interval_sec`, `stable_ok_sec`,
     `backup_initial_delay_sec`, `backup_start_delay_sec`, `backup_return_delay_sec`,
     `backup_stop_if_all_inactive_sec`, `backup_active_warm_max`, `http_keep_active`.

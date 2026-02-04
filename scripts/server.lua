@@ -596,6 +596,24 @@ function main()
         end
     end
 
+    local edition = os.getenv("ASTRA_EDITION") or os.getenv("ASTRAL_EDITION")
+    local tool_info = nil
+    if transcode and transcode.get_tool_info then
+        tool_info = transcode.get_tool_info(false)
+    end
+    if edition and edition ~= "" then
+        local bundled = tool_info and (tool_info.ffmpeg_bundled or tool_info.ffprobe_bundled) or false
+        log.info(string.format("[edition] %s (bundled tools: %s)", tostring(edition), bundled and "yes" or "no"))
+    end
+    if tool_info then
+        log.info(string.format("[tools] ffmpeg=%s (%s)",
+            tostring(tool_info.ffmpeg_path_resolved or "ffmpeg"),
+            tostring(tool_info.ffmpeg_source or "path")))
+        log.info(string.format("[tools] ffprobe=%s (%s)",
+            tostring(tool_info.ffprobe_path_resolved or "ffprobe"),
+            tostring(tool_info.ffprobe_source or "path")))
+    end
+
     apply_log_settings()
     if runtime and runtime.configure_influx then
         runtime.configure_influx()

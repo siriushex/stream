@@ -1534,8 +1534,13 @@ init_output_module.srt = function(channel_data, output_id)
         udp_url = udp_url .. "?pkt_size=" .. tostring(pkt_size)
     end
 
+    local bin = resolve_tool_path("ffmpeg", {
+        setting_key = "ffmpeg_path",
+        env_key = "ASTRA_FFMPEG_PATH",
+        prefer = conf.bridge_bin,
+    })
     local args = {
-        conf.bridge_bin or "ffmpeg",
+        bin,
         "-hide_banner",
         "-nostdin",
         "-loglevel",
@@ -2379,8 +2384,12 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     stop_audio_fix_process(channel_data, output_id, output_data, false)
     set_udp_output_passthrough(channel_data, output_id, false)
 
+    local bin = resolve_tool_path("ffmpeg", {
+        setting_key = "ffmpeg_path",
+        env_key = "ASTRA_FFMPEG_PATH",
+    })
     local args = {
-        "ffmpeg",
+        bin,
         "-hide_banner",
         "-nostats",
         "-nostdin",

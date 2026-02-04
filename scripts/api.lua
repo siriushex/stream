@@ -1368,6 +1368,13 @@ local function list_alerts(server, client, request)
     json_response(server, client, 200, rows)
 end
 
+local function list_tools(server, client)
+    if transcode and transcode.get_tool_info then
+        return json_response(server, client, 200, transcode.get_tool_info(true))
+    end
+    return json_response(server, client, 200, {})
+end
+
 local function list_metrics(server, client, request)
     local now = os.time()
     local started_at = (runtime and runtime.started_at) or now
@@ -2738,6 +2745,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/audit" and method == "GET" then
         return list_audit_events(server, client, request)
+    end
+    if path == "/api/v1/tools" and method == "GET" then
+        return list_tools(server, client)
     end
     if path == "/api/v1/alerts" and method == "GET" then
         return list_alerts(server, client, request)
