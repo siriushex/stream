@@ -1871,6 +1871,153 @@ local function telegram_test(server, client)
     json_response(server, client, 200, { status = "queued" })
 end
 
+local function resolve_server_entry(body)
+    if type(body) ~= "table" then
+        return nil, "invalid json"
+    end
+    if body.id and config and config.get_setting then
+        local list = config.get_setting("servers")
+        if type(list) == "table" then
+            for _, item in ipairs(list) do
+                if type(item) == "table" and tostring(item.id or "") == tostring(body.id or "") then
+                    return item
+                end
+            end
+        end
+        return nil, "server not found"
+    end
+    return body
+end
+
+local function normalize_server_host(entry)
+    if type(entry) ~= "table" then
+        return nil, "invalid server"
+    end
+    local host = entry.host or entry.address or ""
+    if host == "" then
+        return nil, "server host required"
+    end
+    local parsed = nil
+    if host:find("://", 1, true) then
+        parsed = parse_url(host)
+        if not parsed then
+            return nil, "invalid server url"
+        end
+    end
+    local host_only = host
+    local port_hint = nil
+    if not parsed then
+        local maybe_host, maybe_port = host:match("^(.-):(%d+)$")
+        if maybe_host and maybe_port then
+            host_only = maybe_host
+            port_hint = tonumber(maybe_port)
+        end
+    end
+    local scheme = parsed and parsed.format or "http"
+    if scheme ~= "http" then
+        return nil, "https not supported"
+    end
+    local port = tonumber(entry.port) or port_hint or (parsed and parsed.port) or 8000
+    local hostname = parsed and parsed.host or host_only
+    return {
+        host = hostname,
+        port = port,
+        login = entry.login or "",
+        password = entry.password or "",
+    }
+end
+
+local function server_test(server, client, request)
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local cfg, cfg_err = normalize_server_host(entry)
+    if not cfg then
+        return error_response(server, client, 400, cfg_err or "invalid server")
+    end
+
+    local responded = false
+    local function respond_ok(message)
+        if responded then return end
+        responded = true
+        json_response(server, client, 200, { status = "ok", message = message or "ok" })
+    end
+    local function respond_err(code, message)
+        if responded then return end
+        responded = true
+        error_response(server, client, code or 400, message or "failed")
+    end
+
+    local function do_health(cookie)
+        local headers = {
+            "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
+            "Connection: close",
+        }
+        if cookie and cookie ~= "" then
+            table.insert(headers, "Cookie: " .. cookie)
+        end
+        http_request({
+            host = cfg.host,
+            port = cfg.port,
+            path = "/api/v1/health/process",
+            method = "GET",
+            headers = headers,
+            callback = function(self, response)
+                if not response then
+                    return respond_err(502, "no response from server")
+                end
+                if response.code and response.code >= 200 and response.code < 300 then
+                    return respond_ok("health ok")
+                end
+                return respond_err(400, "health check failed (" .. tostring(response.code or "unknown") .. ")")
+            end,
+        })
+    end
+
+    if cfg.login ~= "" and cfg.password ~= "" then
+        local payload = json.encode({ username = cfg.login, password = cfg.password })
+        local headers = {
+            "Content-Type: application/json",
+            "Content-Length: " .. tostring(#payload),
+            "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
+            "Connection: close",
+        }
+        http_request({
+            host = cfg.host,
+            port = cfg.port,
+            path = "/api/v1/auth/login",
+            method = "POST",
+            headers = headers,
+            content = payload,
+            callback = function(self, response)
+                if not response then
+                    return respond_err(502, "login failed (no response)")
+                end
+                if not response.code or response.code >= 400 then
+                    return respond_err(400, "login failed (" .. tostring(response.code or "unknown") .. ")")
+                end
+                local cookie = nil
+                if response.headers and response.headers["set-cookie"] then
+                    cookie = tostring(response.headers["set-cookie"])
+                end
+                local token = cookie and cookie:match("astra_session=([^;]+)") or ""
+                if token == "" then
+                    return respond_err(400, "login failed (no session cookie)")
+                end
+                do_health("astra_session=" .. token)
+            end,
+        })
+        return
+    end
+
+    do_health(nil)
+end
+
 local function login(server, client, request)
     local body = parse_json_body(request)
     if not body or not body.username or not body.password then
@@ -2638,6 +2785,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/test" and method == "POST" then
         return telegram_test(server, client)
+    end
+    if path == "/api/v1/servers/test" and method == "POST" then
+        return server_test(server, client, request)
     end
     if path == "/api/v1/import" and method == "POST" then
         return import_config(server, client, request)

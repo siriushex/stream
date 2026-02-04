@@ -99,6 +99,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   `GET /api/v1/buffer-status`, `GET /api/v1/buffer-status/<id>`.
 - Token auth: `GET /api/v1/sessions?type=auth`, `GET /api/v1/auth-debug/session` (admin),
   `GET /api/v1/alerts?type=auth`.
+- Servers: `POST /api/v1/servers/test` (test remote server health/login).
 - NOTE: all endpoints except login/logout require a valid session; unauthorized
   returns 401.
 - NOTE: if `http_csrf_enabled` is on, state-changing requests that rely on the
@@ -140,6 +141,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
     `backup_initial_delay_sec`, `backup_start_delay_sec`, `backup_return_delay_sec`,
     `backup_stop_if_all_inactive_sec`, `backup_active_warm_max`, `http_keep_active`.
   - Groups: `groups` (array of `{id,name}` used for playlist group-title).
+  - Servers: `servers` (array of `{id,name,host,port,login,password,enabled}`).
   - Telegram alerts: `telegram_enabled`, `telegram_level`, `telegram_bot_token`, `telegram_chat_id`.
 - NOTE: policy is enforced on user create/reset; defaults require min length 8,
   at least one letter + number, and no spaces. Default admin remains `admin`

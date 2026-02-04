@@ -63,6 +63,9 @@ const state = {
   groups: [],
   groupEditing: null,
   groupIdAuto: false,
+  servers: [],
+  serverEditing: null,
+  serverIdAuto: false,
   userEditing: null,
   userMode: 'edit',
   activeAnalyzeId: null,
@@ -239,6 +242,25 @@ const elements = {
   groupCancel: $('#group-cancel'),
   groupClose: $('#group-close'),
   groupError: $('#group-error'),
+  serverNew: $('#server-new'),
+  serverTable: $('#server-table'),
+  serverEmpty: $('#server-empty'),
+  serverOverlay: $('#server-overlay'),
+  serverTitle: $('#server-title'),
+  serverForm: $('#server-form'),
+  serverEnabled: $('#server-enabled'),
+  serverId: $('#server-id'),
+  serverName: $('#server-name'),
+  serverHost: $('#server-host'),
+  serverPort: $('#server-port'),
+  serverLogin: $('#server-login'),
+  serverPassword: $('#server-password'),
+  serverPasswordHint: $('#server-password-hint'),
+  serverSave: $('#server-save'),
+  serverCancel: $('#server-cancel'),
+  serverClose: $('#server-close'),
+  serverTest: $('#server-test'),
+  serverError: $('#server-error'),
   settingsEpgInterval: $('#settings-epg-interval'),
   settingsEventRequest: $('#settings-event-request'),
   settingsMonitorAnalyzeMax: $('#settings-monitor-analyze-max'),
@@ -837,6 +859,49 @@ function normalizeGroups(value) {
   return out;
 }
 
+function slugifyServerId(name) {
+  const source = String(name || '').toLowerCase();
+  let slug = source.replace(/[^a-z0-9_-]+/g, '_');
+  slug = slug.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  if (!slug) {
+    slug = `server_${Date.now()}`;
+  }
+  return slug;
+}
+
+function normalizeServers(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  value.forEach((entry) => {
+    if (!entry) return;
+    if (typeof entry === 'string') {
+      const host = entry.trim();
+      if (!host) return;
+      const id = slugifyServerId(host);
+      out.push({ id, name: host, host, enabled: true });
+      return;
+    }
+    const idRaw = String(entry.id || '').trim();
+    const nameRaw = String(entry.name || '').trim();
+    const hostRaw = String(entry.host || entry.address || '').trim();
+    if (!idRaw && !nameRaw && !hostRaw) return;
+    const id = idRaw || slugifyServerId(nameRaw || hostRaw);
+    const name = nameRaw || id;
+    const port = entry.port !== undefined ? Number(entry.port) : undefined;
+    const enabled = entry.enabled !== false;
+    out.push({
+      id,
+      name,
+      host: hostRaw,
+      port: Number.isFinite(port) ? port : undefined,
+      login: entry.login || '',
+      password: entry.password || '',
+      enabled,
+    });
+  });
+  return out;
+}
+
 function getSettingNumber(key, fallback) {
   const value = Number(state.settings[key]);
   return Number.isFinite(value) ? value : fallback;
@@ -944,6 +1009,223 @@ function closeGroupModal() {
   state.groupEditing = null;
   state.groupIdAuto = false;
   setOverlay(elements.groupOverlay, false);
+}
+
+function renderServers() {
+  if (!elements.serverTable || !elements.serverEmpty) return;
+  const header = `
+    <div class="table-row header">
+      <div>ID</div>
+      <div>Name</div>
+      <div>Address</div>
+      <div>Login</div>
+      <div>Status</div>
+      <div></div>
+    </div>
+  `;
+  elements.serverTable.innerHTML = header;
+
+  const servers = (Array.isArray(state.servers) ? state.servers : [])
+    .slice()
+    .sort((a, b) => {
+      const al = (a.name || a.id || '').toLowerCase();
+      const bl = (b.name || b.id || '').toLowerCase();
+      return al.localeCompare(bl);
+    });
+
+  if (!servers.length) {
+    elements.serverEmpty.hidden = false;
+    return;
+  }
+  elements.serverEmpty.hidden = true;
+
+  servers.forEach((server) => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    const idCell = createEl('div', '', server.id || '');
+    const nameCell = createEl('div', '', server.name || '');
+    const address = server.host ? `${server.host}${server.port ? `:${server.port}` : ''}` : '';
+    const hostCell = createEl('div', '', address || '-');
+    const loginCell = createEl('div', '', server.login || '-');
+    const statusCell = createEl('div', '', server.enabled ? 'Enabled' : 'Disabled');
+    const actionCell = document.createElement('div');
+
+    const editBtn = createEl('button', 'btn ghost', 'Edit');
+    editBtn.type = 'button';
+    editBtn.dataset.action = 'server-edit';
+    editBtn.dataset.id = server.id || '';
+
+    const openBtn = createEl('button', 'btn ghost', 'Open');
+    openBtn.type = 'button';
+    openBtn.dataset.action = 'server-open';
+    openBtn.dataset.id = server.id || '';
+
+    const testBtn = createEl('button', 'btn ghost', 'Test');
+    testBtn.type = 'button';
+    testBtn.dataset.action = 'server-test';
+    testBtn.dataset.id = server.id || '';
+
+    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.dataset.action = 'server-delete';
+    deleteBtn.dataset.id = server.id || '';
+
+    actionCell.appendChild(editBtn);
+    actionCell.appendChild(openBtn);
+    actionCell.appendChild(testBtn);
+    actionCell.appendChild(deleteBtn);
+
+    row.appendChild(idCell);
+    row.appendChild(nameCell);
+    row.appendChild(hostCell);
+    row.appendChild(loginCell);
+    row.appendChild(statusCell);
+    row.appendChild(actionCell);
+    elements.serverTable.appendChild(row);
+  });
+}
+
+function openServerModal(server) {
+  state.serverEditing = server ? { ...server } : null;
+  state.serverIdAuto = !server;
+  if (elements.serverTitle) {
+    elements.serverTitle.textContent = server ? 'Edit server' : 'New server';
+  }
+  if (elements.serverEnabled) elements.serverEnabled.checked = server ? server.enabled !== false : true;
+  if (elements.serverId) elements.serverId.value = server ? server.id || '' : '';
+  if (elements.serverName) elements.serverName.value = server ? server.name || '' : '';
+  if (elements.serverHost) elements.serverHost.value = server ? server.host || '' : '';
+  if (elements.serverPort) elements.serverPort.value = server && server.port ? String(server.port) : '';
+  if (elements.serverLogin) elements.serverLogin.value = server ? server.login || '' : '';
+  if (elements.serverPassword) elements.serverPassword.value = '';
+  if (elements.serverPasswordHint) {
+    elements.serverPasswordHint.textContent = server && server.password ? 'Password set (stored)' : 'Password not set';
+  }
+  if (elements.serverError) elements.serverError.textContent = '';
+  setOverlay(elements.serverOverlay, true);
+}
+
+function closeServerModal() {
+  state.serverEditing = null;
+  state.serverIdAuto = false;
+  setOverlay(elements.serverOverlay, false);
+}
+
+function syncServerIdFromName() {
+  if (!state.serverIdAuto) return;
+  if (!elements.serverName || !elements.serverId) return;
+  const name = elements.serverName.value.trim();
+  const nextId = name ? slugifyServerId(name) : '';
+  if (elements.serverId.value !== nextId) {
+    elements.serverId.value = nextId;
+  }
+}
+
+function handleServerIdInput() {
+  if (!elements.serverId) return;
+  const current = elements.serverId.value.trim();
+  if (!current) {
+    state.serverIdAuto = true;
+    syncServerIdFromName();
+    return;
+  }
+  state.serverIdAuto = false;
+}
+
+function handleServerNameInput() {
+  syncServerIdFromName();
+}
+
+async function saveServer() {
+  const id = elements.serverId ? elements.serverId.value.trim() : '';
+  const name = elements.serverName ? elements.serverName.value.trim() : '';
+  const host = elements.serverHost ? elements.serverHost.value.trim() : '';
+  const port = toNumber(elements.serverPort && elements.serverPort.value);
+  const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
+  const password = elements.serverPassword ? elements.serverPassword.value : '';
+  const enabled = elements.serverEnabled ? elements.serverEnabled.checked : true;
+  if (!id) throw new Error('Server id is required');
+  if (!name) throw new Error('Server name is required');
+  if (!host) throw new Error('Server address is required');
+
+  const servers = Array.isArray(state.servers) ? state.servers.slice() : [];
+  const existingIdx = servers.findIndex((s) => s && s.id === id);
+  if (state.serverEditing && state.serverEditing.id && state.serverEditing.id !== id) {
+    if (existingIdx !== -1) {
+      throw new Error(`Server id "${id}" already exists`);
+    }
+    const currentIdx = servers.findIndex((s) => s && s.id === state.serverEditing.id);
+    if (currentIdx !== -1) {
+      const existing = servers[currentIdx];
+      servers[currentIdx] = {
+        id,
+        name,
+        host,
+        port,
+        login,
+        password: password || existing.password || '',
+        enabled,
+      };
+    } else {
+      servers.push({ id, name, host, port, login, password, enabled });
+    }
+  } else if (!state.serverEditing) {
+    if (existingIdx !== -1) {
+      throw new Error(`Server id "${id}" already exists`);
+    }
+    servers.push({ id, name, host, port, login, password, enabled });
+  } else {
+    const existing = servers[existingIdx];
+    servers[existingIdx] = {
+      id,
+      name,
+      host,
+      port,
+      login,
+      password: password || (existing && existing.password) || '',
+      enabled,
+    };
+  }
+
+  await saveSettings({ servers });
+  state.servers = normalizeServers(state.settings.servers);
+  renderServers();
+  closeServerModal();
+}
+
+async function deleteServer(id) {
+  const servers = Array.isArray(state.servers) ? state.servers.slice() : [];
+  const next = servers.filter((s) => s && s.id !== id);
+  await saveSettings({ servers: next });
+  state.servers = normalizeServers(state.settings.servers);
+  renderServers();
+}
+
+async function testServer(id, payload) {
+  const body = id ? { id } : payload;
+  await apiJson('/api/v1/servers/test', {
+    method: 'POST',
+    body: JSON.stringify(body || {}),
+  });
+  setStatus('Server test: OK');
+}
+
+function openServerUrl(id) {
+  const server = (state.servers || []).find((s) => s && s.id === id);
+  if (!server) return;
+  let url = server.host || '';
+  if (!/^https?:\/\//i.test(url)) {
+    url = `http://${url}`;
+  }
+  if (server.port) {
+    const hostPart = url.replace(/^https?:\/\//i, '').split('/')[0];
+    const hasPort = /:\d+$/.test(hostPart);
+    if (!hasPort) {
+      const base = url.replace(/\/$/, '');
+      url = `${base}:${server.port}`;
+    }
+  }
+  window.open(url, '_blank');
 }
 
 function syncGroupIdFromName() {
@@ -8408,6 +8690,7 @@ function applySettingsToUI() {
   }
 
   renderGroups();
+  renderServers();
   updateStreamGroupOptions();
   applyFeatureVisibility();
 }
@@ -8666,6 +8949,7 @@ async function loadSettings() {
     state.settings = {};
   }
   state.groups = normalizeGroups(state.settings.groups);
+  state.servers = normalizeServers(state.settings.servers);
 
   applySettingsToUI();
   if (elements.configPreview) {
@@ -9514,6 +9798,76 @@ function bindEvents() {
         const confirmed = window.confirm(`Delete group ${id}? Streams using it will keep the old value.`);
         if (!confirmed) return;
         deleteGroup(id).catch((err) => setStatus(err.message || 'Delete failed'));
+      }
+    });
+  }
+
+  if (elements.serverNew) {
+    elements.serverNew.addEventListener('click', () => openServerModal(null));
+  }
+  if (elements.serverClose) {
+    elements.serverClose.addEventListener('click', closeServerModal);
+  }
+  if (elements.serverCancel) {
+    elements.serverCancel.addEventListener('click', closeServerModal);
+  }
+  if (elements.serverId) {
+    elements.serverId.addEventListener('input', handleServerIdInput);
+  }
+  if (elements.serverName) {
+    elements.serverName.addEventListener('input', handleServerNameInput);
+  }
+  if (elements.serverForm) {
+    elements.serverForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await saveServer();
+      } catch (err) {
+        if (elements.serverError) {
+          elements.serverError.textContent = err.message || 'Failed to save server';
+        }
+      }
+    });
+  }
+  if (elements.serverTest) {
+    elements.serverTest.addEventListener('click', async () => {
+      try {
+        if (state.serverEditing && state.serverEditing.id) {
+          await testServer(state.serverEditing.id);
+          return;
+        }
+        const payload = {
+          host: elements.serverHost ? elements.serverHost.value.trim() : '',
+          port: toNumber(elements.serverPort && elements.serverPort.value),
+          login: elements.serverLogin ? elements.serverLogin.value.trim() : '',
+          password: elements.serverPassword ? elements.serverPassword.value : '',
+        };
+        await testServer(null, payload);
+      } catch (err) {
+        setStatus(err.message || 'Server test failed');
+      }
+    });
+  }
+  if (elements.serverTable) {
+    elements.serverTable.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const id = target.dataset.id;
+      if (action === 'server-edit') {
+        const server = (state.servers || []).find((s) => s && s.id === id);
+        if (server) openServerModal(server);
+      }
+      if (action === 'server-open') {
+        openServerUrl(id);
+      }
+      if (action === 'server-test') {
+        testServer(id).catch((err) => setStatus(err.message || 'Server test failed'));
+      }
+      if (action === 'server-delete') {
+        const confirmed = window.confirm(`Delete server ${id}?`);
+        if (!confirmed) return;
+        deleteServer(id).catch((err) => setStatus(err.message || 'Delete failed'));
       }
     });
   }
