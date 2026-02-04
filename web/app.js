@@ -208,6 +208,13 @@ const elements = {
   settingsItems: $$('#settings-menu .settings-item'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
+  settingsShowEpg: $('#settings-show-epg'),
+  settingsShowWebhook: $('#settings-show-webhook'),
+  settingsShowLogLimits: $('#settings-show-log-limits'),
+  settingsShowAccessLogLimits: $('#settings-show-access-log-limits'),
+  settingsShowTools: $('#settings-show-tools'),
+  settingsShowSecurityLimits: $('#settings-show-security-limits'),
+  settingsShowStreamDefaults: $('#settings-show-stream-defaults'),
   casDefault: $('#cas-default'),
   btnApplyCas: $('#btn-apply-cas'),
   licenseMeta: $('#license-meta'),
@@ -1235,6 +1242,32 @@ function getSettingBool(key, fallback) {
     return fallback;
   }
   return value === true || value === 1 || value === '1';
+}
+
+function hasSettingValue(key) {
+  if (!state.settings) return false;
+  if (!Object.prototype.hasOwnProperty.call(state.settings, key)) {
+    return false;
+  }
+  const value = state.settings[key];
+  return value !== undefined && value !== null && value !== '';
+}
+
+function syncToggleTargets() {
+  $$('[data-toggle-target]').forEach((toggle) => {
+    const targetId = toggle.dataset.toggleTarget;
+    if (!targetId) return;
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    target.hidden = !toggle.checked;
+  });
+}
+
+function bindToggleTargets() {
+  $$('[data-toggle-target]').forEach((toggle) => {
+    toggle.addEventListener('change', syncToggleTargets);
+  });
+  syncToggleTargets();
 }
 
 function updateStreamGroupOptions() {
@@ -9642,6 +9675,48 @@ function applySettingsToUI() {
     elements.authOverlimitPolicy.value = getSettingString('auth_overlimit_policy', 'deny_new');
   }
 
+  if (elements.settingsShowEpg) {
+    elements.settingsShowEpg.checked = getSettingNumber('epg_export_interval_sec', 0) > 0;
+  }
+  if (elements.settingsShowWebhook) {
+    elements.settingsShowWebhook.checked = getSettingString('event_request', '') !== '';
+  }
+  if (elements.settingsShowLogLimits) {
+    const logMax = getSettingNumber('log_max_entries', 0);
+    const logRetention = getSettingNumber('log_retention_sec', 0);
+    elements.settingsShowLogLimits.checked = logMax > 0 || logRetention > 0;
+  }
+  if (elements.settingsShowAccessLogLimits) {
+    const accessMax = getSettingNumber('access_log_max_entries', 0);
+    const accessRetention = getSettingNumber('access_log_retention_sec', 0);
+    elements.settingsShowAccessLogLimits.checked = accessMax > 0 || accessRetention > 0;
+  }
+  if (elements.settingsShowTools) {
+    const ffmpegPath = getSettingString('ffmpeg_path', '');
+    const ffprobePath = getSettingString('ffprobe_path', '');
+    elements.settingsShowTools.checked = !!(ffmpegPath || ffprobePath);
+  }
+  if (elements.settingsShowSecurityLimits) {
+    const securityKeys = ['auth_session_ttl_sec', 'rate_limit_login_per_min', 'rate_limit_login_window_sec'];
+    elements.settingsShowSecurityLimits.checked = securityKeys.some((key) => hasSettingValue(key));
+  }
+  if (elements.settingsShowStreamDefaults) {
+    const defaultKeys = [
+      'no_data_timeout_sec',
+      'probe_interval_sec',
+      'stable_ok_sec',
+      'backup_initial_delay_sec',
+      'backup_start_delay_sec',
+      'backup_return_delay_sec',
+      'backup_stop_if_all_inactive_sec',
+      'backup_active_warm_max',
+      'http_keep_active',
+    ];
+    elements.settingsShowStreamDefaults.checked = defaultKeys.some((key) => hasSettingValue(key));
+  }
+
+  syncToggleTargets();
+
   renderGroups();
   renderSoftcams();
   renderServers();
@@ -11810,6 +11885,8 @@ function bindEvents() {
       event.preventDefault();
     }
   });
+
+  bindToggleTargets();
 }
 
 bindEvents();

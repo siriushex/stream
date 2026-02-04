@@ -818,20 +818,38 @@
                 <input type="checkbox" id="settings-show-buffer" />
                 <span>Show Buffer tools</span>
               </label>
-              <label class="field">
-                <span>EPG export interval (sec)</span>
-                <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-epg" data-toggle-target="settings-epg-fields" />
+                <span>Show EPG export settings</span>
               </label>
+              <div class="form-grid" id="settings-epg-fields">
+                <label class="field">
+                  <span>EPG export interval (sec)</span>
+                  <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
+                </label>
+              </div>
               <div class="panel-title">Monitoring &amp; Logs</div>
-              <label class="field">
-                <span>Event webhook URL</span>
-                <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-webhook" data-toggle-target="settings-webhook-fields" />
+                <span>Show event webhook settings</span>
               </label>
+              <div class="form-grid" id="settings-webhook-fields">
+                <label class="field">
+                  <span>Event webhook URL</span>
+                  <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
+                </label>
+              </div>
               <div class="form-grid">
                 <label class="field">
                   <span>Analyze concurrency limit</span>
                   <input type="number" id="settings-monitor-analyze-max" placeholder="4" />
                 </label>
+              </div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-log-limits" data-toggle-target="settings-log-limit-fields" />
+                <span>Show log limits</span>
+              </label>
+              <div class="form-grid" id="settings-log-limit-fields">
                 <label class="field">
                   <span>Log max entries</span>
                   <input type="number" id="settings-log-max-entries" placeholder="0 (unlimited)" />
@@ -840,6 +858,12 @@
                   <span>Log retention (sec)</span>
                   <input type="number" id="settings-log-retention-sec" placeholder="0 (unlimited)" />
                 </label>
+              </div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-access-log-limits" data-toggle-target="settings-access-log-limit-fields" />
+                <span>Show access log limits</span>
+              </label>
+              <div class="form-grid" id="settings-access-log-limit-fields">
                 <label class="field">
                   <span>Access log max entries</span>
                   <input type="number" id="settings-access-log-max-entries" placeholder="0 (unlimited)" />
@@ -851,10 +875,10 @@
               </div>
               <div class="panel-title">Telegram Alerts</div>
               <label class="checkline">
-                <input type="checkbox" id="settings-telegram-enabled" />
+                <input type="checkbox" id="settings-telegram-enabled" data-toggle-target="settings-telegram-fields" />
                 <span>Enable Telegram alerts</span>
               </label>
-              <div class="form-grid">
+              <div class="form-grid" id="settings-telegram-fields">
                 <label class="field">
                   <span>Level</span>
                   <select id="settings-telegram-level">
@@ -882,58 +906,70 @@
               </div>
               <div class="panel-title">InfluxDB export</div>
               <label class="checkline">
-                <input type="checkbox" id="settings-influx-enabled" />
+                <input type="checkbox" id="settings-influx-enabled" data-toggle-target="settings-influx-fields" />
                 <span>Enable InfluxDB export</span>
               </label>
-              <div class="form-grid">
-                <label class="field">
-                  <span>Influx URL</span>
-                  <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
-                </label>
-                <label class="field">
-                  <span>Org</span>
-                  <input type="text" id="settings-influx-org" placeholder="my-org" />
-                </label>
-                <label class="field">
-                  <span>Bucket</span>
-                  <input type="text" id="settings-influx-bucket" placeholder="astra" />
-                </label>
-                <label class="field">
-                  <span>Token</span>
-                  <input type="password" id="settings-influx-token" placeholder="optional" />
-                </label>
-                <label class="field">
-                  <span>Instance name</span>
-                  <input type="text" id="settings-influx-instance" placeholder="astra-1" />
-                </label>
-                <label class="field">
-                  <span>Measurement</span>
-                  <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
-                </label>
-                <label class="field">
-                  <span>Interval (sec)</span>
-                  <input type="number" id="settings-influx-interval" placeholder="30" />
-                </label>
+              <div id="settings-influx-fields">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Influx URL</span>
+                    <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
+                  </label>
+                  <label class="field">
+                    <span>Org</span>
+                    <input type="text" id="settings-influx-org" placeholder="my-org" />
+                  </label>
+                  <label class="field">
+                    <span>Bucket</span>
+                    <input type="text" id="settings-influx-bucket" placeholder="astra" />
+                  </label>
+                  <label class="field">
+                    <span>Token</span>
+                    <input type="password" id="settings-influx-token" placeholder="optional" />
+                  </label>
+                  <label class="field">
+                    <span>Instance name</span>
+                    <input type="text" id="settings-influx-instance" placeholder="astra-1" />
+                  </label>
+                  <label class="field">
+                    <span>Measurement</span>
+                    <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
+                  </label>
+                  <label class="field">
+                    <span>Interval (sec)</span>
+                    <input type="number" id="settings-influx-interval" placeholder="30" />
+                  </label>
+                </div>
+                <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
               </div>
-              <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
               <div class="panel-title">Transcode tools</div>
-              <div class="form-grid">
-                <label class="field">
-                  <span>FFmpeg path</span>
-                  <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
-                </label>
-                <label class="field">
-                  <span>FFprobe path</span>
-                  <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
-                </label>
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-tools" data-toggle-target="settings-tools-fields" />
+                <span>Show tool path overrides</span>
+              </label>
+              <div id="settings-tools-fields">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>FFmpeg path</span>
+                    <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
+                  </label>
+                  <label class="field">
+                    <span>FFprobe path</span>
+                    <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
+                  </label>
+                </div>
+                <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
               </div>
-              <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
               <div class="panel-title">Security &amp; Sessions</div>
               <label class="checkline">
                 <input type="checkbox" id="settings-http-csrf" />
                 <span>Enable CSRF protection for cookie sessions</span>
               </label>
-              <div class="form-grid">
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-security-limits" data-toggle-target="settings-security-fields" />
+                <span>Show session &amp; rate limits</span>
+              </label>
+              <div class="form-grid" id="settings-security-fields">
                 <label class="field">
                   <span>Session TTL (sec)</span>
                   <input type="number" id="settings-auth-session-ttl" placeholder="3600" />
@@ -948,7 +984,11 @@
                 </label>
               </div>
               <div class="panel-title">Stream defaults</div>
-              <div class="form-grid">
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-stream-defaults" data-toggle-target="settings-stream-defaults-fields" />
+                <span>Show stream default overrides</span>
+              </label>
+              <div class="form-grid" id="settings-stream-defaults-fields">
                 <label class="field">
                   <span>No data timeout (sec)</span>
                   <input type="number" id="settings-default-no-data-timeout" placeholder="3" />
