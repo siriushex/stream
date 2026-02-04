@@ -105,6 +105,16 @@ select {
   min-width: 0;
 }
 
+.ui-stamp {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  white-space: nowrap;
+}
+
 .top-nav {
   display: flex;
   align-items: center;
