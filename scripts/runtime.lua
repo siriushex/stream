@@ -728,6 +728,18 @@ function runtime.apply_streams(rows, force)
     return errors
 end
 
+function runtime.apply_stream_row(row, force)
+    if not row or not row.id then
+        return false, "stream row required"
+    end
+    local all_rows = config.list_streams()
+    http_output_keepalive = build_http_output_keepalive(all_rows)
+    local ok, err = apply_stream(row.id, row, force)
+    cleanup_http_output_instances()
+    http_output_keepalive = nil
+    return ok, err
+end
+
 function runtime.refresh(force)
     local start_ms = clock_ms()
     local rows = config.list_streams()
