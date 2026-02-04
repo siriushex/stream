@@ -53,6 +53,7 @@ const state = {
   logLevelFilter: 'all',
   logTextFilter: '',
   logStreamFilter: '',
+  logPaused: false,
   sessionFilterText: '',
   sessionGroupBy: false,
   sessionLimit: 200,
@@ -223,6 +224,7 @@ const elements = {
   configLkgRevision: $('#config-lkg-revision'),
   btnConfigRefresh: $('#btn-config-refresh'),
   logOutput: $('#log-output'),
+  logPause: $('#log-pause'),
   logClear: $('#log-clear'),
   logLevel: $('#log-level-filter'),
   logFilter: $('#log-text-filter'),
@@ -8488,7 +8490,9 @@ function renderLogs() {
     line.textContent = `${formatLogTime(entry.ts)} [${entry.level}] ${entry.message}`;
     elements.logOutput.appendChild(line);
   });
-  elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
+  if (!state.logPaused) {
+    elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
+  }
 }
 
 function buildLogQuery(since, limit) {
@@ -8542,6 +8546,9 @@ async function loadLogs(reset = false) {
 }
 
 function startLogPolling() {
+  if (state.logPaused) {
+    return;
+  }
   if (state.logTimer) {
     clearInterval(state.logTimer);
   }
@@ -8553,6 +8560,18 @@ function stopLogPolling() {
   if (state.logTimer) {
     clearInterval(state.logTimer);
     state.logTimer = null;
+  }
+}
+
+function setLogPaused(paused) {
+  state.logPaused = paused;
+  if (elements.logPause) {
+    elements.logPause.textContent = paused ? 'Resume' : 'Pause';
+  }
+  if (paused) {
+    stopLogPolling();
+  } else {
+    startLogPolling();
   }
 }
 
@@ -10744,11 +10763,21 @@ function bindEvents() {
     });
   }
 
+  if (elements.logPause) {
+    elements.logPause.addEventListener('click', () => {
+      setLogPaused(!state.logPaused);
+    });
+  }
+
   if (elements.logFilter) {
     elements.logFilter.addEventListener('input', () => {
       state.logTextFilter = elements.logFilter.value;
       state.logCursor = 0;
-      loadLogs(true);
+      if (state.logPaused) {
+        renderLogs();
+      } else {
+        loadLogs(true);
+      }
     });
   }
 
@@ -10756,7 +10785,11 @@ function bindEvents() {
     elements.logStream.addEventListener('input', () => {
       state.logStreamFilter = elements.logStream.value;
       state.logCursor = 0;
-      loadLogs(true);
+      if (state.logPaused) {
+        renderLogs();
+      } else {
+        loadLogs(true);
+      }
     });
   }
 
@@ -10764,7 +10797,11 @@ function bindEvents() {
     elements.logLevel.addEventListener('change', () => {
       state.logLevelFilter = elements.logLevel.value;
       state.logCursor = 0;
-      loadLogs(true);
+      if (state.logPaused) {
+        renderLogs();
+      } else {
+        loadLogs(true);
+      }
     });
   }
 
