@@ -195,6 +195,14 @@ const state = {
   streamCompactRows: {},
 };
 
+const POLL_STATUS_MS = 5000;
+const POLL_ADAPTER_MS = 5000;
+const POLL_SESSION_MS = 10000;
+const POLL_ACCESS_MS = 8000;
+const POLL_LOG_MS = 8000;
+const POLL_SPLITTER_MS = 10000;
+const POLL_BUFFER_MS = 10000;
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const createEl = (tag, className, text) => {
@@ -969,7 +977,9 @@ function setView(name) {
   }
   if (name === 'adapters') {
     loadDvbAdapters().catch(() => {});
-    startDvbPolling();
+    if (!document.hidden) {
+      startDvbPolling();
+    }
   } else {
     stopDvbPolling();
   }
@@ -6007,7 +6017,7 @@ function startAdapterPolling() {
   if (state.adapterTimer) {
     clearInterval(state.adapterTimer);
   }
-  state.adapterTimer = setInterval(loadAdapterStatus, 2000);
+  state.adapterTimer = setInterval(loadAdapterStatus, POLL_ADAPTER_MS);
   loadAdapterStatus();
 }
 
@@ -6671,7 +6681,7 @@ function startSplitterPolling() {
   if (state.splitterTimer) {
     clearInterval(state.splitterTimer);
   }
-  state.splitterTimer = setInterval(loadSplitters, 5000);
+  state.splitterTimer = setInterval(loadSplitters, POLL_SPLITTER_MS);
   loadSplitters();
 }
 
@@ -7759,7 +7769,7 @@ function startBufferPolling() {
   if (state.bufferTimer) {
     clearInterval(state.bufferTimer);
   }
-  state.bufferTimer = setInterval(loadBuffers, 5000);
+  state.bufferTimer = setInterval(loadBuffers, POLL_BUFFER_MS);
   loadBuffers();
 }
 
@@ -8794,7 +8804,7 @@ function startStatusPolling() {
   if (state.statusTimer) {
     clearInterval(state.statusTimer);
   }
-  state.statusTimer = setInterval(loadStreamStatus, 2000);
+  state.statusTimer = setInterval(loadStreamStatus, POLL_STATUS_MS);
   loadStreamStatus();
 }
 
@@ -9333,7 +9343,7 @@ function startSessionPolling() {
   if (state.sessionTimer) {
     clearInterval(state.sessionTimer);
   }
-  state.sessionTimer = setInterval(loadSessions, 5000);
+  state.sessionTimer = setInterval(loadSessions, POLL_SESSION_MS);
   loadSessions();
 }
 
@@ -9613,7 +9623,7 @@ function startAccessLogPolling() {
   if (state.accessLogTimer) {
     clearInterval(state.accessLogTimer);
   }
-  state.accessLogTimer = setInterval(() => loadAccessLog(false), 4000);
+  state.accessLogTimer = setInterval(() => loadAccessLog(false), POLL_ACCESS_MS);
   loadAccessLog(true);
 }
 
@@ -9622,6 +9632,31 @@ function stopAccessLogPolling() {
     clearInterval(state.accessLogTimer);
     state.accessLogTimer = null;
   }
+}
+
+function pauseAllPolling() {
+  stopStatusPolling();
+  stopAdapterPolling();
+  stopDvbPolling();
+  stopSplitterPolling();
+  stopBufferPolling();
+  stopSessionPolling();
+  stopLogPolling();
+  stopAccessLogPolling();
+}
+
+function resumeAllPolling() {
+  if (document.hidden) return;
+  startStatusPolling();
+  startAdapterPolling();
+  if (state.currentView === 'adapters') {
+    startDvbPolling();
+  }
+  startSplitterPolling();
+  startBufferPolling();
+  startSessionPolling();
+  startLogPolling();
+  startAccessLogPolling();
 }
 
 function setAccessPaused(paused) {
@@ -9756,7 +9791,7 @@ function startLogPolling() {
   if (state.logTimer) {
     clearInterval(state.logTimer);
   }
-  state.logTimer = setInterval(() => loadLogs(false), 3000);
+  state.logTimer = setInterval(() => loadLogs(false), POLL_LOG_MS);
   loadLogs(true);
 }
 
@@ -11205,14 +11240,7 @@ async function logout() {
   }
   state.token = null;
   localStorage.removeItem('astra_token');
-  stopStatusPolling();
-  stopAdapterPolling();
-  stopDvbPolling();
-  stopSplitterPolling();
-  stopBufferPolling();
-  stopSessionPolling();
-  stopLogPolling();
-  stopAccessLogPolling();
+  pauseAllPolling();
   setOverlay(elements.loginOverlay, true);
 }
 
@@ -11232,13 +11260,7 @@ async function refreshAll() {
     await loadSessions();
     await loadAccessLog(true);
     setOverlay(elements.loginOverlay, false);
-    startStatusPolling();
-    startAdapterPolling();
-    startSplitterPolling();
-    startBufferPolling();
-    startSessionPolling();
-    startLogPolling();
-    startAccessLogPolling();
+    resumeAllPolling();
   } catch (err) {
     setOverlay(elements.loginOverlay, true);
   }
@@ -12668,6 +12690,14 @@ function bindEvents() {
     if (event.key.toLowerCase() === 's') {
       elements.searchInput.focus();
       event.preventDefault();
+    }
+  });
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      pauseAllPolling();
+    } else {
+      resumeAllPolling();
     }
   });
 
