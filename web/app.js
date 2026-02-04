@@ -1051,6 +1051,21 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function parseCommaList(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).filter(Boolean);
+  }
+  return String(value)
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function formatCommaList(values) {
+  return (values || []).filter(Boolean).join(', ');
+}
+
 function debounce(fn, delay = 250) {
   let timer = null;
   return (...args) => {
@@ -9235,11 +9250,30 @@ function renderSessions() {
       row.appendChild(cell);
     });
     const action = document.createElement('div');
+    action.className = 'session-actions';
+
+    const allowBtn = document.createElement('button');
+    allowBtn.className = 'btn ghost tiny';
+    allowBtn.dataset.action = 'allow-ip';
+    allowBtn.dataset.ip = session.ip || '';
+    allowBtn.textContent = 'Whitelist';
+    allowBtn.disabled = !session.ip;
+
+    const blockBtn = document.createElement('button');
+    blockBtn.className = 'btn danger tiny';
+    blockBtn.dataset.action = 'block-ip';
+    blockBtn.dataset.ip = session.ip || '';
+    blockBtn.textContent = 'Block';
+    blockBtn.disabled = !session.ip;
+
     const button = document.createElement('button');
     button.className = 'icon-btn';
     button.dataset.action = 'disconnect';
     button.dataset.id = session.id;
     button.textContent = 'x';
+
+    action.appendChild(allowBtn);
+    action.appendChild(blockBtn);
     action.appendChild(button);
     row.appendChild(action);
     fragment.appendChild(row);
@@ -12590,12 +12624,37 @@ function bindEvents() {
   }
 
   elements.sessionTable.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-action="disconnect"]');
+    const button = event.target.closest('[data-action]');
     if (!button) return;
-    const id = button.dataset.id;
-    apiJson(`/api/v1/sessions/${id}`, { method: 'DELETE' })
-      .then(loadSessions)
-      .catch((err) => setStatus(err.message));
+    const action = button.dataset.action;
+    if (action === 'disconnect') {
+      const id = button.dataset.id;
+      apiJson(`/api/v1/sessions/${id}`, { method: 'DELETE' })
+        .then(loadSessions)
+        .catch((err) => setStatus(err.message));
+      return;
+    }
+    if (action === 'allow-ip' || action === 'block-ip') {
+      const ip = button.dataset.ip;
+      if (!ip) return;
+      const allowList = parseCommaList(getSettingString('http_auth_allow', ''));
+      const denyList = parseCommaList(getSettingString('http_auth_deny', ''));
+      let nextAllow = allowList.slice();
+      let nextDeny = denyList.slice();
+      if (action === 'allow-ip') {
+        if (!nextAllow.includes(ip)) nextAllow.push(ip);
+        nextDeny = nextDeny.filter((item) => item !== ip);
+      } else {
+        if (!nextDeny.includes(ip)) nextDeny.push(ip);
+        nextAllow = nextAllow.filter((item) => item !== ip);
+      }
+      saveSettings({
+        http_auth_allow: formatCommaList(nextAllow),
+        http_auth_deny: formatCommaList(nextDeny),
+      }).then(() => {
+        setStatus(action === 'allow-ip' ? `IP ${ip} added to whitelist` : `IP ${ip} added to block list`);
+      }).catch((err) => setStatus(err.message));
+    }
   });
 
   document.addEventListener('keydown', (event) => {

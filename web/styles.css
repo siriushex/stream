@@ -1066,6 +1066,12 @@ select {
   cursor: pointer;
 }
 
+.btn.tiny {
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .btn:hover {
   border-color: var(--accent-strong);
   color: var(--accent);
@@ -1104,6 +1110,13 @@ select {
 .panel-title {
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.session-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .adapter-shell {
