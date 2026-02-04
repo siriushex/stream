@@ -820,6 +820,18 @@ function telegram.send_test()
     return enqueue_text("✅ Telegram alerts: test message from Astra Clone", { bypass_throttle = true })
 end
 
+function telegram.send_backup_now()
+    if not telegram.config.available then
+        return false, "telegram disabled"
+    end
+    local now = os.time()
+    local ok = run_backup(now)
+    if not ok then
+        return false, "backup failed"
+    end
+    return true
+end
+
 telegram._test = {
     normalize_level = normalize_level,
     resolve_severity = resolve_severity,

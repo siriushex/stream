@@ -2283,6 +2283,17 @@ local function telegram_test(server, client)
     json_response(server, client, 200, { status = "queued" })
 end
 
+local function telegram_backup(server, client)
+    if not telegram or not telegram.send_backup_now then
+        return error_response(server, client, 400, "telegram notifier unavailable")
+    end
+    local ok, err = telegram.send_backup_now()
+    if not ok then
+        return error_response(server, client, 400, err or "telegram disabled")
+    end
+    json_response(server, client, 200, { status = "queued" })
+end
+
 local function resolve_server_entry(body)
     if type(body) ~= "table" then
         return nil, "invalid json"
@@ -3266,6 +3277,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/test" and method == "POST" then
         return telegram_test(server, client)
+    end
+    if path == "/api/v1/notifications/telegram/backup" and method == "POST" then
+        return telegram_backup(server, client)
     end
     if path == "/api/v1/servers/test" and method == "POST" then
         return server_test(server, client, request)
