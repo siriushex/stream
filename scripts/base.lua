@@ -1390,10 +1390,12 @@ function dvb_tune(conf)
         if conf.lnb then
             local a = string.split(conf.lnb, ":")
             if #a ~= 3 then
-                log.error("[dvb_tune " .. instance_id .. "] option 'lnb' has wrong format")
-                astra.abort()
+                log.warning("[dvb_tune " .. instance_id .. "] option 'lnb' has wrong format, ignoring")
+                conf.lnb = nil
+                conf.lof1, conf.lof2, conf.slof = nil, nil, nil
+            else
+                conf.lof1, conf.lof2, conf.slof = a[1], a[2], a[3]
             end
-            conf.lof1, conf.lof2, conf.slof = a[1], a[2], a[3]
         end
 
         if conf.unicable then
