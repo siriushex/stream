@@ -1442,6 +1442,45 @@ select {
   color: var(--danger);
 }
 
+.adapter-detected-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.adapter-detected-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.adapter-detected-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.adapter-detected-badge.free {
+  border-color: rgba(63, 191, 107, 0.4);
+  color: var(--success);
+}
+
+.adapter-detected-badge.busy {
+  border-color: rgba(255, 156, 41, 0.5);
+  color: var(--warning);
+}
+
+.adapter-detected-badge.error,
+.adapter-detected-badge.missing {
+  border-color: rgba(255, 93, 93, 0.5);
+  color: var(--danger);
+}
+
 .adapter-busy-warning {
   color: var(--danger);
 }
