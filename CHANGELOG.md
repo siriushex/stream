@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Ensured DVB list polling only starts when Adapters view is active.
+  - Added status prefix in Detected DVB options for clearer BUSY/FREE visibility.
+  - Updated UI build stamp to 20260205m.
+- Tests:
+  - Not run (UI-only).
+### 2026-02-05
+- Changes:
   - Clarified HTTP auth allow/deny placeholders with CIDR examples.
   - Updated UI build stamp to 20260205l.
 - Tests:
