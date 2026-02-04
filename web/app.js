@@ -5592,15 +5592,16 @@ function updateAdapterScanAvailability() {
     || (Number(status.snr) > 0)
   );
   let reason = '';
+  let warning = '';
   if (!adapterId || isNew) {
     reason = 'Save adapter to enable scan.';
   } else if (!status) {
-    reason = 'Adapter status unavailable.';
+    warning = 'Adapter status unavailable; scan may fail.';
   } else if (!locked && !hasSignal) {
-    reason = 'Signal lock required.';
+    warning = 'Signal not locked; scan may fail.';
   }
   elements.adapterScan.disabled = !!reason;
-  elements.adapterScan.title = reason || (hasSignal && !locked ? 'Signal not locked; scan may fail.' : '');
+  elements.adapterScan.title = reason || warning || '';
 }
 
 function closeAdapterScanModal() {

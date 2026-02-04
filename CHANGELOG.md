@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Scan button is now enabled even without status; shows a warning instead of blocking.
+  - Updated UI build stamp to 20260205k.
+- Tests:
+  - Not run (UI-only).
+### 2026-02-05
+- Changes:
   - Stream status polling now runs only when Dashboard is open.
   - Updated UI build stamp to 20260205j.
 - Tests:
