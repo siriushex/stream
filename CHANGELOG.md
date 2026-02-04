@@ -33,6 +33,12 @@
   - Not run (docs only).
 ### 2026-02-04
 - Changes:
+  - Added CI checks for branch naming and CHANGELOG updates.
+  - Updated workflow docs and agent instructions for PR-first flow.
+- Tests:
+  - Not run (CI/docs only).
+### 2026-02-04
+- Changes:
   - Added CODEOWNERS ownership map and CI guard for required ownership entries.
   - Added strict team workflow documentation and PR template.
 - Tests:

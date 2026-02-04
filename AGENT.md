@@ -27,7 +27,7 @@
 5. Run `./configure.sh` on the server (Linux) before building, then run smoke tests.
 6. Record the result (update the CHANGELOG entry with tests/status). Re-upload if it changes.
 
-## Multi-agent workflow (direct push to main)
+## Multi-agent workflow (PR-first)
 - Branch naming: `codex/<agent>/<topic>` (required).
 - Start steps:
   - `git fetch origin`
@@ -37,14 +37,11 @@
 - Work steps:
   - Commit frequently.
   - Push often: `git push -u origin codex/<agent>/<topic>` to prevent loss.
-- Integration steps (fast-forward only):
-  - `git fetch origin`
-  - `git rebase origin/main`
-  - Run required tests (see Gates below).
-  - `git checkout main`
-  - `git pull --rebase`
-  - `git merge --ff-only codex/<agent>/<topic>`
-  - `git push origin main`
+- Integration steps (PR required):
+  - Open a PR from `codex/<agent>/<topic>` to `main`.
+  - Ensure CI is green and CODEOWNERS approvals are present.
+  - Rebase if required by branch protection rules.
+  - Merge using fast-forward or linear history (no merge commits).
 - Conflict policy:
   - Resolve conflicts only on the feature branch.
   - Never force-push to `main`.

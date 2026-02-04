@@ -31,6 +31,10 @@ This repo is developed by multiple agents in parallel. These rules are mandatory
 - Rebase onto the latest `origin/main` and resolve conflicts on the branch.
 - `main` merges are fast-forward only.
 
+## CI Guardrails
+- CI enforces branch naming (`codex/<agent>/<topic>`).
+- CI enforces a `CHANGELOG.md` update on every PR.
+
 ## Conflict Policy
 - Conflicts must be resolved on the feature branch.
 - Never force-push to `main`.
