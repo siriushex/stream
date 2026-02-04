@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added LNB sanitization for adapters to prevent startup aborts on invalid format.
+  - DVB adapter UI now refreshes on view with busy badge + refresh button.
+- Tests:
+  - Not run (Lua + UI changes).
+### 2026-02-04
+- Changes:
   - Updated `AGENT.md` and `SKILL.md` for multi-agent coordination and ownership rules.
 - Tests:
   - Not run (docs only).

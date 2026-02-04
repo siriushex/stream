@@ -183,6 +183,40 @@ local function json_decode(value)
     return decoded
 end
 
+local function parse_lnb(value)
+    if value == nil then
+        return nil
+    end
+    local str = tostring(value)
+    local a, b, c = str:match("^%s*([^:]+):([^:]+):([^:]+)%s*$")
+    if not a then
+        return nil
+    end
+    if tonumber(a) == nil or tonumber(b) == nil or tonumber(c) == nil then
+        return nil
+    end
+    return { a, b, c }
+end
+
+local function sanitize_adapter_config(id, cfg)
+    if type(cfg) ~= "table" then
+        return cfg, false
+    end
+    local changed = false
+    if cfg.lnb ~= nil then
+        local parts = parse_lnb(cfg.lnb)
+        if not parts then
+            log.warning("[config] adapter " .. tostring(id) .. " invalid lnb format, clearing")
+            cfg.lnb = nil
+            cfg.lof1 = nil
+            cfg.lof2 = nil
+            cfg.slof = nil
+            changed = true
+        end
+    end
+    return cfg, changed
+end
+
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
@@ -461,6 +495,25 @@ function config.init(opts)
         log.warning("[config] sqlite upsert not supported, using compatibility mode")
     end
     config.ensure_admin()
+    config.sanitize_adapters()
+end
+
+function config.sanitize_adapters()
+    local rows = db_query(config.db, "SELECT id, config_json FROM adapters;")
+    local updated = 0
+    for _, row in ipairs(rows) do
+        local cfg = json_decode(row.config_json)
+        local cleaned, changed = sanitize_adapter_config(row.id, cfg)
+        if changed then
+            local payload = json_encode(cleaned)
+            db_exec(config.db, "UPDATE adapters SET config_json='" ..
+                sql_escape(payload) .. "' WHERE id='" .. sql_escape(row.id) .. "';")
+            updated = updated + 1
+        end
+    end
+    if updated > 0 then
+        log.warning("[config] sanitized adapters with invalid lnb: " .. tostring(updated))
+    end
 end
 
 function config.migrate()
