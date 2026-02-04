@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260204d" />
+  <link rel="stylesheet" href="/styles.css?v=20260204e" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script defer src="/app.js?v=20260204d"></script>
+  <script defer src="/app.js?v=20260204e"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260204d</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260204e</div>
       </div>
     </header>
 
@@ -809,224 +809,294 @@
       <section class="view" id="view-settings">
         <div class="settings-shell">
           <div class="settings-section active" data-section="general">
-            <div class="form-stack">
-              <div class="panel-title">Features</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-splitter" />
-                <span>Show HLSSplitter tools</span>
-              </label>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-buffer" />
-                <span>Show Buffer tools</span>
-              </label>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-epg" data-toggle-target="settings-epg-fields" />
-                <span>Show EPG export settings</span>
-              </label>
-              <div class="form-grid" id="settings-epg-fields">
-                <label class="field">
-                  <span>EPG export interval (sec)</span>
-                  <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
-                </label>
-              </div>
-              <div class="panel-title">Monitoring &amp; Logs</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-webhook" data-toggle-target="settings-webhook-fields" />
-                <span>Show event webhook settings</span>
-              </label>
-              <div class="form-grid" id="settings-webhook-fields">
-                <label class="field">
-                  <span>Event webhook URL</span>
-                  <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
-                </label>
-              </div>
-              <div class="form-grid">
-                <label class="field">
-                  <span>Analyze concurrency limit</span>
-                  <input type="number" id="settings-monitor-analyze-max" placeholder="4" />
-                </label>
-              </div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-log-limits" data-toggle-target="settings-log-limit-fields" />
-                <span>Show log limits</span>
-              </label>
-              <div class="form-grid" id="settings-log-limit-fields">
-                <label class="field">
-                  <span>Log max entries</span>
-                  <input type="number" id="settings-log-max-entries" placeholder="0 (unlimited)" />
-                </label>
-                <label class="field">
-                  <span>Log retention (sec)</span>
-                  <input type="number" id="settings-log-retention-sec" placeholder="0 (unlimited)" />
-                </label>
-              </div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-access-log-limits" data-toggle-target="settings-access-log-limit-fields" />
-                <span>Show access log limits</span>
-              </label>
-              <div class="form-grid" id="settings-access-log-limit-fields">
-                <label class="field">
-                  <span>Access log max entries</span>
-                  <input type="number" id="settings-access-log-max-entries" placeholder="0 (unlimited)" />
-                </label>
-                <label class="field">
-                  <span>Access log retention (sec)</span>
-                  <input type="number" id="settings-access-log-retention-sec" placeholder="0 (unlimited)" />
-                </label>
-              </div>
-              <div class="panel-title">Telegram Alerts</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-telegram-enabled" data-toggle-target="settings-telegram-fields" />
-                <span>Enable Telegram alerts</span>
-              </label>
-              <div class="form-grid" id="settings-telegram-fields">
-                <label class="field">
-                  <span>Level</span>
-                  <select id="settings-telegram-level">
-                    <option value="OFF">OFF</option>
-                    <option value="CRITICAL">CRITICAL</option>
-                    <option value="ERROR">ERROR</option>
-                    <option value="WARNING">WARNING</option>
-                    <option value="INFO">INFO</option>
-                    <option value="DEBUG">DEBUG</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Bot Token</span>
-                  <input type="password" id="settings-telegram-token" placeholder="123456:ABCDEF" />
-                  <small class="form-hint" id="settings-telegram-token-hint"></small>
-                </label>
-                <label class="field">
-                  <span>Chat ID / Channel</span>
-                  <input type="text" id="settings-telegram-chat-id" placeholder="-1001234567890 or @channel" />
-                </label>
-                <div class="field">
-                  <span>&nbsp;</span>
-                  <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
+            <div class="form-stack settings-general">
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Features</div>
+                    <div class="settings-group-sub">Show or hide main tools</div>
+                  </div>
+                </div>
+                <div class="settings-group-body">
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-splitter" />
+                    <span>Show HLSSplitter tools</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-buffer" />
+                    <span>Show Buffer tools</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-epg" data-toggle-target="settings-epg-fields" />
+                    <span>Show EPG export settings</span>
+                  </label>
+                  <div class="form-grid" id="settings-epg-fields">
+                    <label class="field">
+                      <span>EPG export interval (sec)</span>
+                      <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
+                    </label>
+                  </div>
                 </div>
               </div>
-              <div class="panel-title">InfluxDB export</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-influx-enabled" data-toggle-target="settings-influx-fields" />
-                <span>Enable InfluxDB export</span>
-              </label>
-              <div id="settings-influx-fields">
-                <div class="form-grid">
-                  <label class="field">
-                    <span>Influx URL</span>
-                    <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
-                  </label>
-                  <label class="field">
-                    <span>Org</span>
-                    <input type="text" id="settings-influx-org" placeholder="my-org" />
-                  </label>
-                  <label class="field">
-                    <span>Bucket</span>
-                    <input type="text" id="settings-influx-bucket" placeholder="astra" />
-                  </label>
-                  <label class="field">
-                    <span>Token</span>
-                    <input type="password" id="settings-influx-token" placeholder="optional" />
-                  </label>
-                  <label class="field">
-                    <span>Instance name</span>
-                    <input type="text" id="settings-influx-instance" placeholder="astra-1" />
-                  </label>
-                  <label class="field">
-                    <span>Measurement</span>
-                    <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
-                  </label>
-                  <label class="field">
-                    <span>Interval (sec)</span>
-                    <input type="number" id="settings-influx-interval" placeholder="30" />
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Monitoring &amp; Logs</div>
+                    <div class="settings-group-sub">Events, limits, diagnostics</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-monitoring" data-toggle-target="settings-monitoring-fields" />
+                    <span>Show options</span>
                   </label>
                 </div>
-                <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
-              </div>
-              <div class="panel-title">Transcode tools</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-tools" data-toggle-target="settings-tools-fields" />
-                <span>Show tool path overrides</span>
-              </label>
-              <div id="settings-tools-fields">
-                <div class="form-grid">
-                  <label class="field">
-                    <span>FFmpeg path</span>
-                    <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
+                <div class="settings-group-body" id="settings-monitoring-fields">
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-webhook" data-toggle-target="settings-webhook-fields" />
+                    <span>Show event webhook settings</span>
                   </label>
-                  <label class="field">
-                    <span>FFprobe path</span>
-                    <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
+                  <div class="form-grid" id="settings-webhook-fields">
+                    <label class="field">
+                      <span>Event webhook URL</span>
+                      <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
+                    </label>
+                  </div>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Analyze concurrency limit</span>
+                      <input type="number" id="settings-monitor-analyze-max" placeholder="4" />
+                    </label>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-log-limits" data-toggle-target="settings-log-limit-fields" />
+                    <span>Show log limits</span>
+                  </label>
+                  <div class="form-grid" id="settings-log-limit-fields">
+                    <label class="field">
+                      <span>Log max entries</span>
+                      <input type="number" id="settings-log-max-entries" placeholder="0 (unlimited)" />
+                    </label>
+                    <label class="field">
+                      <span>Log retention (sec)</span>
+                      <input type="number" id="settings-log-retention-sec" placeholder="0 (unlimited)" />
+                    </label>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-access-log-limits" data-toggle-target="settings-access-log-limit-fields" />
+                    <span>Show access log limits</span>
+                  </label>
+                  <div class="form-grid" id="settings-access-log-limit-fields">
+                    <label class="field">
+                      <span>Access log max entries</span>
+                      <input type="number" id="settings-access-log-max-entries" placeholder="0 (unlimited)" />
+                    </label>
+                    <label class="field">
+                      <span>Access log retention (sec)</span>
+                      <input type="number" id="settings-access-log-retention-sec" placeholder="0 (unlimited)" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Telegram Alerts</div>
+                    <div class="settings-group-sub">Short notifications in Telegram</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-telegram-enabled" data-toggle-target="settings-telegram-fields" />
+                    <span>Enable</span>
                   </label>
                 </div>
-                <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
+                <div class="settings-group-body" id="settings-telegram-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Level</span>
+                      <select id="settings-telegram-level">
+                        <option value="OFF">OFF</option>
+                        <option value="CRITICAL">CRITICAL</option>
+                        <option value="ERROR">ERROR</option>
+                        <option value="WARNING">WARNING</option>
+                        <option value="INFO">INFO</option>
+                        <option value="DEBUG">DEBUG</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Bot Token</span>
+                      <input type="password" id="settings-telegram-token" placeholder="123456:ABCDEF" />
+                      <small class="form-hint" id="settings-telegram-token-hint"></small>
+                    </label>
+                    <label class="field">
+                      <span>Chat ID / Channel</span>
+                      <input type="text" id="settings-telegram-chat-id" placeholder="-1001234567890 or @channel" />
+                    </label>
+                    <div class="field">
+                      <span>&nbsp;</span>
+                      <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="panel-title">Security &amp; Sessions</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-http-csrf" />
-                <span>Enable CSRF protection for cookie sessions</span>
-              </label>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-security-limits" data-toggle-target="settings-security-fields" />
-                <span>Show session &amp; rate limits</span>
-              </label>
-              <div class="form-grid" id="settings-security-fields">
-                <label class="field">
-                  <span>Session TTL (sec)</span>
-                  <input type="number" id="settings-auth-session-ttl" placeholder="3600" />
-                </label>
-                <label class="field">
-                  <span>Login rate limit (per min)</span>
-                  <input type="number" id="settings-login-rate-limit" placeholder="30" />
-                </label>
-                <label class="field">
-                  <span>Login rate limit window (sec)</span>
-                  <input type="number" id="settings-login-rate-window" placeholder="60" />
-                </label>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">InfluxDB export</div>
+                    <div class="settings-group-sub">Metrics export (HTTP)</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-influx-enabled" data-toggle-target="settings-influx-fields" />
+                    <span>Enable</span>
+                  </label>
+                </div>
+                <div class="settings-group-body" id="settings-influx-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Influx URL</span>
+                      <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
+                    </label>
+                    <label class="field">
+                      <span>Org</span>
+                      <input type="text" id="settings-influx-org" placeholder="my-org" />
+                    </label>
+                    <label class="field">
+                      <span>Bucket</span>
+                      <input type="text" id="settings-influx-bucket" placeholder="astra" />
+                    </label>
+                    <label class="field">
+                      <span>Token</span>
+                      <input type="password" id="settings-influx-token" placeholder="optional" />
+                    </label>
+                    <label class="field">
+                      <span>Instance name</span>
+                      <input type="text" id="settings-influx-instance" placeholder="astra-1" />
+                    </label>
+                    <label class="field">
+                      <span>Measurement</span>
+                      <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
+                    </label>
+                    <label class="field">
+                      <span>Interval (sec)</span>
+                      <input type="number" id="settings-influx-interval" placeholder="30" />
+                    </label>
+                  </div>
+                  <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
+                </div>
               </div>
-              <div class="panel-title">Stream defaults</div>
-              <label class="checkline">
-                <input type="checkbox" id="settings-show-stream-defaults" data-toggle-target="settings-stream-defaults-fields" />
-                <span>Show stream default overrides</span>
-              </label>
-              <div class="form-grid" id="settings-stream-defaults-fields">
-                <label class="field">
-                  <span>No data timeout (sec)</span>
-                  <input type="number" id="settings-default-no-data-timeout" placeholder="3" />
-                </label>
-                <label class="field">
-                  <span>Probe interval (sec)</span>
-                  <input type="number" id="settings-default-probe-interval" placeholder="3" />
-                </label>
-                <label class="field">
-                  <span>Stable OK window (sec)</span>
-                  <input type="number" id="settings-default-stable-ok" placeholder="5" />
-                </label>
-                <label class="field">
-                  <span>Backup initial delay (sec)</span>
-                  <input type="number" id="settings-default-backup-initial" placeholder="0" />
-                </label>
-                <label class="field">
-                  <span>Backup start delay (sec)</span>
-                  <input type="number" id="settings-default-backup-start" placeholder="5" />
-                </label>
-                <label class="field">
-                  <span>Backup return delay (sec)</span>
-                  <input type="number" id="settings-default-backup-return" placeholder="10" />
-                </label>
-                <label class="field">
-                  <span>Stop if all inactive (sec)</span>
-                  <input type="number" id="settings-default-backup-stop" placeholder="20" />
-                </label>
-                <label class="field">
-                  <span>Active warm inputs max</span>
-                  <input type="number" id="settings-default-backup-warm-max" placeholder="2" />
-                </label>
-                <label class="field">
-                  <span>HTTP keep active (sec, -1=always)</span>
-                  <input type="number" id="settings-default-http-keep-active" placeholder="0" />
-                </label>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Transcode tools</div>
+                    <div class="settings-group-sub">Override bundled binaries</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-tools" data-toggle-target="settings-tools-fields" />
+                    <span>Show paths</span>
+                  </label>
+                </div>
+                <div class="settings-group-body" id="settings-tools-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>FFmpeg path</span>
+                      <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
+                    </label>
+                    <label class="field">
+                      <span>FFprobe path</span>
+                      <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
+                    </label>
+                  </div>
+                  <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
+                </div>
               </div>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Security &amp; Sessions</div>
+                    <div class="settings-group-sub">Session controls and limits</div>
+                  </div>
+                </div>
+                <div class="settings-group-body">
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-http-csrf" />
+                    <span>Enable CSRF protection for cookie sessions</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-security-limits" data-toggle-target="settings-security-fields" />
+                    <span>Show session &amp; rate limits</span>
+                  </label>
+                  <div class="form-grid" id="settings-security-fields">
+                    <label class="field">
+                      <span>Session TTL (sec)</span>
+                      <input type="number" id="settings-auth-session-ttl" placeholder="3600" />
+                    </label>
+                    <label class="field">
+                      <span>Login rate limit (per min)</span>
+                      <input type="number" id="settings-login-rate-limit" placeholder="30" />
+                    </label>
+                    <label class="field">
+                      <span>Login rate limit window (sec)</span>
+                      <input type="number" id="settings-login-rate-window" placeholder="60" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">Stream defaults</div>
+                    <div class="settings-group-sub">Fallbacks for new streams</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-show-stream-defaults" data-toggle-target="settings-stream-defaults-fields" />
+                    <span>Show defaults</span>
+                  </label>
+                </div>
+                <div class="settings-group-body" id="settings-stream-defaults-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>No data timeout (sec)</span>
+                      <input type="number" id="settings-default-no-data-timeout" placeholder="3" />
+                    </label>
+                    <label class="field">
+                      <span>Probe interval (sec)</span>
+                      <input type="number" id="settings-default-probe-interval" placeholder="3" />
+                    </label>
+                    <label class="field">
+                      <span>Stable OK window (sec)</span>
+                      <input type="number" id="settings-default-stable-ok" placeholder="5" />
+                    </label>
+                    <label class="field">
+                      <span>Backup initial delay (sec)</span>
+                      <input type="number" id="settings-default-backup-initial" placeholder="0" />
+                    </label>
+                    <label class="field">
+                      <span>Backup start delay (sec)</span>
+                      <input type="number" id="settings-default-backup-start" placeholder="5" />
+                    </label>
+                    <label class="field">
+                      <span>Backup return delay (sec)</span>
+                      <input type="number" id="settings-default-backup-return" placeholder="10" />
+                    </label>
+                    <label class="field">
+                      <span>Stop if all inactive (sec)</span>
+                      <input type="number" id="settings-default-backup-stop" placeholder="20" />
+                    </label>
+                    <label class="field">
+                      <span>Active warm inputs max</span>
+                      <input type="number" id="settings-default-backup-warm-max" placeholder="2" />
+                    </label>
+                    <label class="field">
+                      <span>HTTP keep active (sec, -1=always)</span>
+                      <input type="number" id="settings-default-http-keep-active" placeholder="0" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
               <div class="apply-row">
                 <button class="btn" type="button" id="btn-apply-general">Apply</button>
               </div>
