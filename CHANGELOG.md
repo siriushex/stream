@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Collapsed General settings with an “Show advanced settings” toggle.
+  - Sessions list now filters inactive/ended entries in the UI.
+  - Updated UI build stamp to 20260205e.
+- Tests:
+  - Not run (UI-only).
+### 2026-02-05
+- Changes:
   - Added `-pass` option to reset admin password to default (admin/admin).
   - Reset now bypasses password policy via a force-set path.
   - Added dashboard notice for scan add feedback.
