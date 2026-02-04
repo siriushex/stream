@@ -46,13 +46,13 @@
       <button class="settings-item" data-section="buffer">Buffer</button>
       <button class="settings-item" data-section="http-auth">HTTP Authentication</button>
       <button class="settings-item" data-section="softcam">Softcam</button>
-      <button class="settings-item" data-section="cas" hidden>CAS</button>
+      <button class="settings-item" data-section="cas">CAS</button>
       <button class="settings-item" data-section="servers">Servers</button>
       <button class="settings-item" data-section="groups">Groups</button>
       <button class="settings-item" data-section="import">Import</button>
       <button class="settings-item" data-section="edit-config">Edit Config</button>
       <button class="settings-item" data-section="config-history">Config History</button>
-      <button class="settings-item" data-section="license" hidden>License</button>
+      <button class="settings-item" data-section="license">License</button>
       <button class="settings-item" data-section="restart">Restart</button>
     </div>
 
@@ -1278,10 +1278,18 @@
             </div>
           </div>
 
-          <div class="settings-section" data-section="cas" hidden>
+          <div class="settings-section" data-section="cas">
             <div class="panel">
-              <div class="muted">
-                CAS settings are not wired in Astral yet. Use JSON config for CAS options.
+              <div class="panel-title">CAS Defaults</div>
+              <label class="checkline">
+                <input type="checkbox" id="cas-default" />
+                <span>Pass CA tables (cas) by default</span>
+              </label>
+              <div class="form-hint">
+                Applies only when a stream input does not specify <code>cas</code> explicitly.
+              </div>
+              <div class="apply-row">
+                <button class="btn" type="button" id="btn-apply-cas">Apply</button>
               </div>
             </div>
           </div>
@@ -1379,9 +1387,11 @@
             </div>
           </div>
 
-          <div class="settings-section" data-section="license" hidden>
+          <div class="settings-section" data-section="license">
             <div class="panel">
-              <div class="muted">License management is not implemented in Astral.</div>
+              <div class="panel-title">License</div>
+              <div class="muted" id="license-meta">Loading...</div>
+              <pre class="code-block" id="license-text">Loading...</pre>
             </div>
           </div>
 

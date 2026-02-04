@@ -143,6 +143,7 @@ const state = {
   inputEditingIndex: null,
   inputExtras: {},
   settingsSection: 'general',
+  licenseLoaded: false,
   configRevisions: [],
   player: null,
   statusTimer: null,
@@ -201,6 +202,10 @@ const elements = {
   settingsItems: $$('#settings-menu .settings-item'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
+  casDefault: $('#cas-default'),
+  btnApplyCas: $('#btn-apply-cas'),
+  licenseMeta: $('#license-meta'),
+  licenseText: $('#license-text'),
   btnApplyGeneral: $('#btn-apply-general'),
   viewMenu: $('#view-menu'),
   viewOptions: $$('#view-menu .view-option'),
@@ -930,6 +935,9 @@ function setSettingsSection(section) {
   });
   if (section === 'config-history') {
     loadConfigHistory();
+  }
+  if (section === 'license') {
+    loadLicense();
   }
 }
 
@@ -9060,6 +9068,9 @@ function applySettingsToUI() {
   if (elements.settingsDefaultHttpKeepActive) {
     elements.settingsDefaultHttpKeepActive.value = getSettingNumber('http_keep_active', '');
   }
+  if (elements.casDefault) {
+    elements.casDefault.checked = getSettingBool('cas_default', false);
+  }
   if (elements.passwordMinLength) {
     elements.passwordMinLength.value = getSettingNumber('password_min_length', 8);
   }
@@ -9371,6 +9382,11 @@ function collectGeneralSettings() {
   return payload;
 }
 
+function collectCasSettings() {
+  if (!elements.casDefault) return {};
+  return { cas_default: elements.casDefault.checked };
+}
+
 function collectPasswordPolicySettings() {
   const minLength = toNumber(elements.passwordMinLength && elements.passwordMinLength.value);
   if (minLength !== undefined && minLength < 0) {
@@ -9599,6 +9615,28 @@ async function loadConfigHistory() {
     state.configRevisions = [];
     renderConfigHistory();
     setStatus(err.message || 'Failed to load config history');
+  }
+}
+
+async function loadLicense() {
+  if (!elements.licenseText || state.licenseLoaded) return;
+  if (elements.licenseMeta) elements.licenseMeta.textContent = 'Loading...';
+  elements.licenseText.textContent = 'Loading...';
+  try {
+    const info = await apiJson('/api/v1/license');
+    state.licenseLoaded = true;
+    const name = info.name || 'License';
+    const spdx = info.spdx ? ` (${info.spdx})` : '';
+    const path = info.path ? `Source: ${info.path}` : '';
+    if (elements.licenseMeta) {
+      const meta = [name + spdx, path].filter(Boolean).join(' · ');
+      elements.licenseMeta.textContent = meta || name;
+    }
+    elements.licenseText.textContent = info.text || '';
+  } catch (err) {
+    state.licenseLoaded = false;
+    if (elements.licenseMeta) elements.licenseMeta.textContent = 'Failed to load license';
+    elements.licenseText.textContent = err.message || 'Failed to load license';
   }
 }
 
@@ -10533,6 +10571,16 @@ function bindEvents() {
     elements.btnApplyGeneral.addEventListener('click', async () => {
       try {
         await saveSettings(collectGeneralSettings());
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
+
+  if (elements.btnApplyCas) {
+    elements.btnApplyCas.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectCasSettings());
       } catch (err) {
         setStatus(err.message);
       }
