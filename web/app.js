@@ -6143,7 +6143,13 @@ function readAdapterForm() {
   }
   if (type.startsWith('S')) {
     config.tp = elements.adapterTp.value.trim();
-    config.lnb = elements.adapterLnb.value.trim();
+    const lnbValue = elements.adapterLnb.value.trim();
+    if (lnbValue) {
+      if (!/^\d+:\d+:\d+$/.test(lnbValue)) {
+        throw new Error('LNB must be in format LOF1:LOF2:SLOF (e.g. 9750:10600:11700)');
+      }
+      config.lnb = lnbValue;
+    }
     config.lnb_sharing = elements.adapterLnbSharing.checked || undefined;
     config.diseqc = toNumber(elements.adapterDiseqc.value);
     config.tone = elements.adapterTone.checked || undefined;
