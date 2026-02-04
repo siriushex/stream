@@ -1,0 +1,18 @@
+[Unit]
+Description=ASTRAL Streaming Server (%i)
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/home/hex/astra
+EnvironmentFile=/etc/astral/%i.env
+ExecStart=/bin/sh -lc 'exec /home/hex/astra/astral -c "$CONFIG" -p "$PORT" $EXTRA_OPTS'
+Restart=on-failure
+RestartSec=2
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

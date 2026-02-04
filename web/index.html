@@ -1655,7 +1655,122 @@
       <section class="view" id="view-help">
         <div class="panel">
           <div class="panel-title">Help</div>
-          <div class="panel-body">Press S to focus the search field.</div>
+          <div class="panel-body">
+            <p><strong>Astral</strong> is a web UI to manage streams, adapters, HLS, buffers, and monitoring.</p>
+
+            <h4>Quick keys</h4>
+            <ul>
+              <li><strong>S</strong> — focus the global search.</li>
+              <li><strong>Esc</strong> — close menus/dialogs.</li>
+            </ul>
+
+            <h4>Views</h4>
+            <ul>
+              <li><strong>Cards</strong> — visual tiles for streams.</li>
+              <li><strong>Compact</strong> — minimal list with key status.</li>
+              <li><strong>Table</strong> — detailed table view.</li>
+              <li><strong>Tiles mode</strong> — Compact / Expanded inside Cards view.</li>
+            </ul>
+
+            <h4>Streams</h4>
+            <ul>
+              <li><strong>New Stream</strong> — create a channel with inputs/outputs.</li>
+              <li><strong>Apply</strong> — save and apply changes.</li>
+              <li><strong>Analyze</strong> — run quick input analysis.</li>
+              <li><strong>Inputs/Outputs</strong> — inline edit URLs; order matters for failover.</li>
+            </ul>
+
+            <h4>Adapters</h4>
+            <ul>
+              <li><strong>Detected DVB</strong> — list of adapters in the system.</li>
+              <li><strong>Busy badge</strong> — indicates in-use adapters.</li>
+              <li><strong>Scan</strong> — scan transponder and add channels (if supported).</li>
+            </ul>
+
+            <h4>Sessions & Access</h4>
+            <ul>
+              <li><strong>Sessions</strong> — active logins; one‑click block/allow by IP.</li>
+              <li><strong>Access</strong> — audit of access events.</li>
+            </ul>
+
+            <h4>Settings</h4>
+            <ul>
+              <li><strong>General</strong> — feature toggles, HTTP play, auth, alerts.</li>
+              <li><strong>Telegram Alerts</strong> — notifications & test message.</li>
+              <li><strong>Transcode</strong> — FFmpeg path overrides.</li>
+            </ul>
+
+            <h4>Feature toggles (Settings → General)</h4>
+            <ul>
+              <li><strong>Show HLSSplitter tools</strong> — show Splitter UI & settings.</li>
+              <li><strong>Show Buffer tools</strong> — show Buffer UI & settings.</li>
+              <li><strong>Show EPG export settings</strong> — show EPG export interval and options.</li>
+            </ul>
+
+            <h4>HTTP Play</h4>
+            <ul>
+              <li><code>/play/&lt;stream_id&gt;</code> — play a stream by ID.</li>
+              <li><code>/play/playlist.m3u8</code> — HLS playlist of all streams.</li>
+              <li><code>/stream/&lt;stream_id&gt;</code> — legacy alias.</li>
+            </ul>
+
+            <h4>CLI</h4>
+            <ul>
+              <li><code>astral /path/config.json -p 9060</code></li>
+              <li><code>astral -c /path/config.json -p 9060</code></li>
+              <li>Default data dir: <code>/etc/astral/&lt;config&gt;.data</code></li>
+            </ul>
+
+            <h4>CLI options</h4>
+            <ul>
+              <li><code>-a 0.0.0.0</code> — listen address (default 0.0.0.0).</li>
+              <li><code>-p 9060</code> — UI/API port.</li>
+              <li><code>--data-dir /path</code> — override data directory.</li>
+              <li><code>--web-dir /path</code> — override UI directory.</li>
+              <li><code>--hls-dir /path</code> — HLS output directory.</li>
+              <li><code>--hls-route /hls</code> — HLS URL prefix.</li>
+              <li><code>--import-mode merge|replace</code> — config import mode.</li>
+            </ul>
+
+            <h4>Applications (CLI)</h4>
+            <ul>
+              <li><code>--stream</code> — main server (default).</li>
+              <li><code>--relay</code> — HTTP relay mode.</li>
+              <li><code>--analyze</code> — MPEG‑TS analyzer.</li>
+              <li><code>--dvbls</code> — list DVB adapters.</li>
+              <li><code>--femon</code> — DVB signal monitor.</li>
+              <li><code>SCRIPT.lua</code> — run custom Lua script.</li>
+            </ul>
+
+            <h4>Relay options</h4>
+            <ul>
+              <li><code>--pass login:password</code> — basic auth for relay stats.</li>
+            </ul>
+
+            <h4>HTTP Authentication</h4>
+            <ul>
+              <li><strong>Allow Basic auth (users table)</strong> — enable HTTP Basic auth for UI/API and play links.</li>
+              <li><strong>Allowed IPs</strong> — if set, only listed IPs can access HTTP streams.</li>
+              <li><strong>Denied IPs</strong> — always blocked (takes priority over allow list).</li>
+              <li>Play links honor allow/deny filters: <code>/play/*</code>, <code>/stream/*</code>, playlists.</li>
+            </ul>
+
+            <h4>Failover (inputs)</h4>
+            <ul>
+              <li>Inputs are ordered; the first is primary.</li>
+              <li>Default backup mode is <strong>passive</strong>: only one active input, others start on failure.</li>
+              <li>Use <code>backup_type</code> to switch behavior (active, passive, disabled).</li>
+              <li>Timeouts: <code>no_data_timeout_sec</code>, <code>probe_interval_sec</code>, <code>stable_ok_sec</code>.</li>
+            </ul>
+
+            <h4>DVB Scan</h4>
+            <ul>
+              <li>Select adapter and transponder. Wait for signal lock.</li>
+              <li>Click <strong>Scan</strong> to list services.</li>
+              <li>Select channels and click <strong>Add selected</strong> to create streams.</li>
+              <li>After adding, refresh the stream list if needed.</li>
+            </ul>
+          </div>
         </div>
       </section>
     </main>

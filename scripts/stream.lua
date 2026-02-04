@@ -3270,5 +3270,5 @@ options = {
 }
 
 function main()
-    log.info("Starting Astra " .. astra.version)
+    log.info("Starting " .. astra_brand_version())
 end

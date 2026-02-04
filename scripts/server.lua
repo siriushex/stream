@@ -1,17 +1,39 @@
 -- Astra API server entrypoint
 
-dofile("scripts/base.lua")
-dofile("scripts/auth.lua")
-dofile("scripts/stream.lua")
-dofile("scripts/config.lua")
-dofile("scripts/transcode.lua")
-dofile("scripts/splitter.lua")
-dofile("scripts/buffer.lua")
-dofile("scripts/epg.lua")
-dofile("scripts/runtime.lua")
-dofile("scripts/telegram.lua")
-dofile("scripts/watchdog.lua")
-dofile("scripts/api.lua")
+local script_dir = "scripts/"
+do
+    local info = debug.getinfo(1, "S")
+    if info and info.source then
+        local src = info.source
+        if src:sub(1, 1) == "@" then
+            src = src:sub(2)
+        end
+        local dir = src:match("^(.*[/\\])")
+        if dir and dir ~= "" then
+            script_dir = dir
+        end
+    end
+    if script_dir:sub(-1) ~= "/" and script_dir:sub(-1) ~= "\\" then
+        script_dir = script_dir .. "/"
+    end
+end
+
+local function script_path(name)
+    return script_dir .. name
+end
+
+dofile(script_path("base.lua"))
+dofile(script_path("auth.lua"))
+dofile(script_path("stream.lua"))
+dofile(script_path("config.lua"))
+dofile(script_path("transcode.lua"))
+dofile(script_path("splitter.lua"))
+dofile(script_path("buffer.lua"))
+dofile(script_path("epg.lua"))
+dofile(script_path("runtime.lua"))
+dofile(script_path("telegram.lua"))
+dofile(script_path("watchdog.lua"))
+dofile(script_path("api.lua"))
 
 local opt = {
     addr = "0.0.0.0",
@@ -54,6 +76,7 @@ options_usage = [[
     --web-dir PATH      web ui directory (default: ./web)
     --hls-dir PATH      hls output directory (default: data-dir/hls)
     --hls-route PATH    hls url prefix (default: /hls)
+    -c PATH             alias for --config
     --config PATH       import config (.json or .lua) before start
     --import PATH       legacy alias for --config (json)
     --import-mode MODE  import mode: merge or replace (default: merge)
@@ -93,6 +116,14 @@ options = {
     end,
     ["--hls-route"] = function(idx)
         opt.hls_route = argv[idx + 1]
+        return 1
+    end,
+    ["-c"] = function(idx)
+        opt.config_path = argv[idx + 1]
+        return 1
+    end,
+    ["-\209\129"] = function(idx)
+        opt.config_path = argv[idx + 1]
         return 1
     end,
     ["--config"] = function(idx)
@@ -544,8 +575,15 @@ local function http_play_stream_id(path)
     return rest
 end
 
+local function http_favicon(server, client, request)
+    if not request or request.method ~= "GET" then
+        return server:abort(client, 405)
+    end
+    server:send(client, { code = 204, headers = { "Content-Length: 0" } })
+end
+
 function main()
-    log.info("Starting Astra " .. astra.version)
+    log.info("Starting " .. astra_brand_version())
     math.randomseed(os.time())
 
     if opt.config_path and opt.config_path ~= "" then
@@ -556,12 +594,20 @@ function main()
             local env_web_dir = os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
             if env_web_dir and env_web_dir ~= "" then
                 opt.web_dir = env_web_dir
-            end
-            local cfg_dir = split_path(opt.config_path)
-            local candidate = join_path(cfg_dir, "web")
-            local stat = utils.stat(candidate)
-            if stat and not stat.error and stat.type == "directory" then
-                opt.web_dir = candidate
+            else
+                local cfg_dir = split_path(opt.config_path)
+                local candidate = join_path(cfg_dir, "web")
+                local stat = utils.stat(candidate)
+                if stat and not stat.error and stat.type == "directory" then
+                    opt.web_dir = candidate
+                else
+                    local base = script_dir:gsub("[/\\]scripts[/\\]?$", "")
+                    local root_candidate = join_path(base, "web")
+                    local root_stat = utils.stat(root_candidate)
+                    if root_stat and not root_stat.error and root_stat.type == "directory" then
+                        opt.web_dir = root_candidate
+                    end
+                end
             end
         end
     end
@@ -1203,6 +1249,7 @@ function main()
         table.insert(routes, { xspf_path, http_play_xspf })
         table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
         table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
+        table.insert(routes, { "/favicon.ico", http_favicon })
         if http_play_allow then
             table.insert(routes, { "/stream/*", http_play_stream })
             table.insert(routes, { "/play/*", http_play_stream })
@@ -1222,6 +1269,7 @@ function main()
 
     local main_routes = {
         { "/api/*", api.handle_request },
+        { "/favicon.ico", http_favicon },
         { "/index.html", web_static },
     }
 
