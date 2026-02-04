@@ -60,6 +60,9 @@ const state = {
   accessEventFilter: 'all',
   accessTextFilter: '',
   accessLimit: 200,
+  groups: [],
+  groupEditing: null,
+  groupIdAuto: false,
   userEditing: null,
   userMode: 'edit',
   activeAnalyzeId: null,
@@ -224,6 +227,18 @@ const elements = {
   accessEvent: $('#access-event-filter'),
   accessFilter: $('#access-text-filter'),
   accessLimit: $('#access-limit'),
+  groupNew: $('#group-new'),
+  groupTable: $('#group-table'),
+  groupEmpty: $('#group-empty'),
+  groupOverlay: $('#group-overlay'),
+  groupTitle: $('#group-title'),
+  groupForm: $('#group-form'),
+  groupId: $('#group-id'),
+  groupName: $('#group-name'),
+  groupSave: $('#group-save'),
+  groupCancel: $('#group-cancel'),
+  groupClose: $('#group-close'),
+  groupError: $('#group-error'),
   settingsEpgInterval: $('#settings-epg-interval'),
   settingsEventRequest: $('#settings-event-request'),
   settingsMonitorAnalyzeMax: $('#settings-monitor-analyze-max'),
@@ -285,6 +300,8 @@ const elements = {
   streamEnabled: $('#stream-enabled'),
   streamMpts: $('#stream-mpts'),
   streamDesc: $('#stream-desc'),
+  streamGroup: $('#stream-group'),
+  streamGroupList: $('#stream-group-list'),
   streamServiceType: $('#stream-service-type'),
   streamServiceCodepage: $('#stream-service-codepage'),
   streamServiceProvider: $('#stream-service-provider'),
@@ -791,6 +808,35 @@ function slugifyStreamId(name) {
   return slug;
 }
 
+function slugifyGroupId(name) {
+  const source = String(name || '').toLowerCase();
+  let slug = source.replace(/[^a-z0-9_-]+/g, '_');
+  slug = slug.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  if (!slug) {
+    slug = `group_${Date.now()}`;
+  }
+  return slug;
+}
+
+function normalizeGroups(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  value.forEach((entry) => {
+    if (!entry) return;
+    if (typeof entry === 'string') {
+      const name = entry.trim();
+      if (!name) return;
+      out.push({ id: slugifyGroupId(name), name });
+      return;
+    }
+    const id = String(entry.id || '').trim();
+    const name = String(entry.name || '').trim();
+    if (!id && !name) return;
+    out.push({ id: id || slugifyGroupId(name), name: name || id });
+  });
+  return out;
+}
+
 function getSettingNumber(key, fallback) {
   const value = Number(state.settings[key]);
   return Number.isFinite(value) ? value : fallback;
@@ -810,6 +856,162 @@ function getSettingBool(key, fallback) {
     return fallback;
   }
   return value === true || value === 1 || value === '1';
+}
+
+function updateStreamGroupOptions() {
+  if (!elements.streamGroupList) return;
+  elements.streamGroupList.innerHTML = '';
+  const groups = Array.isArray(state.groups) ? state.groups : [];
+  groups.forEach((group) => {
+    if (!group || !group.id) return;
+    const option = document.createElement('option');
+    option.value = group.id;
+    option.label = group.name ? `${group.name} (${group.id})` : group.id;
+    elements.streamGroupList.appendChild(option);
+  });
+}
+
+function renderGroups() {
+  if (!elements.groupTable || !elements.groupEmpty) return;
+  const header = `
+    <div class="table-row header">
+      <div>ID</div>
+      <div>Name</div>
+      <div></div>
+    </div>
+  `;
+  elements.groupTable.innerHTML = header;
+
+  const groups = (Array.isArray(state.groups) ? state.groups : [])
+    .slice()
+    .sort((a, b) => {
+      const al = (a.name || a.id || '').toLowerCase();
+      const bl = (b.name || b.id || '').toLowerCase();
+      return al.localeCompare(bl);
+    });
+
+  if (!groups.length) {
+    elements.groupEmpty.hidden = false;
+    return;
+  }
+  elements.groupEmpty.hidden = true;
+
+  groups.forEach((group) => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    const idCell = createEl('div', '', group.id || '');
+    const nameCell = createEl('div', '', group.name || '');
+    const actionCell = document.createElement('div');
+
+    const editBtn = createEl('button', 'btn ghost', 'Edit');
+    editBtn.type = 'button';
+    editBtn.dataset.action = 'group-edit';
+    editBtn.dataset.id = group.id || '';
+
+    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.dataset.action = 'group-delete';
+    deleteBtn.dataset.id = group.id || '';
+
+    actionCell.appendChild(editBtn);
+    actionCell.appendChild(deleteBtn);
+    row.appendChild(idCell);
+    row.appendChild(nameCell);
+    row.appendChild(actionCell);
+    elements.groupTable.appendChild(row);
+  });
+}
+
+function openGroupModal(group) {
+  state.groupEditing = group ? { ...group } : null;
+  state.groupIdAuto = !group;
+  if (elements.groupTitle) {
+    elements.groupTitle.textContent = group ? 'Edit group' : 'New group';
+  }
+  if (elements.groupId) {
+    elements.groupId.value = group ? group.id || '' : '';
+  }
+  if (elements.groupName) {
+    elements.groupName.value = group ? group.name || '' : '';
+  }
+  if (elements.groupError) {
+    elements.groupError.textContent = '';
+  }
+  setOverlay(elements.groupOverlay, true);
+}
+
+function closeGroupModal() {
+  state.groupEditing = null;
+  state.groupIdAuto = false;
+  setOverlay(elements.groupOverlay, false);
+}
+
+function syncGroupIdFromName() {
+  if (!state.groupIdAuto) return;
+  if (!elements.groupName || !elements.groupId) return;
+  const name = elements.groupName.value.trim();
+  const nextId = name ? slugifyGroupId(name) : '';
+  if (elements.groupId.value !== nextId) {
+    elements.groupId.value = nextId;
+  }
+}
+
+function handleGroupIdInput() {
+  if (!elements.groupId) return;
+  const current = elements.groupId.value.trim();
+  if (!current) {
+    state.groupIdAuto = true;
+    syncGroupIdFromName();
+    return;
+  }
+  state.groupIdAuto = false;
+}
+
+function handleGroupNameInput() {
+  syncGroupIdFromName();
+}
+
+async function saveGroup() {
+  const id = elements.groupId ? elements.groupId.value.trim() : '';
+  const name = elements.groupName ? elements.groupName.value.trim() : '';
+  if (!id) throw new Error('Group id is required');
+  if (!name) throw new Error('Group name is required');
+
+  const groups = Array.isArray(state.groups) ? state.groups.slice() : [];
+  const existingIdx = groups.findIndex((g) => g && g.id === id);
+  if (state.groupEditing && state.groupEditing.id && state.groupEditing.id !== id) {
+    if (existingIdx !== -1) {
+      throw new Error(`Group id "${id}" already exists`);
+    }
+    const currentIdx = groups.findIndex((g) => g && g.id === state.groupEditing.id);
+    if (currentIdx !== -1) {
+      groups[currentIdx] = { id, name };
+    } else {
+      groups.push({ id, name });
+    }
+  } else if (!state.groupEditing) {
+    if (existingIdx !== -1) {
+      throw new Error(`Group id "${id}" already exists`);
+    }
+    groups.push({ id, name });
+  } else {
+    groups[existingIdx] = { id, name };
+  }
+
+  await saveSettings({ groups });
+  state.groups = normalizeGroups(state.settings.groups);
+  renderGroups();
+  updateStreamGroupOptions();
+  closeGroupModal();
+}
+
+async function deleteGroup(id) {
+  const groups = Array.isArray(state.groups) ? state.groups.slice() : [];
+  const next = groups.filter((g) => g && g.id !== id);
+  await saveSettings({ groups: next });
+  state.groups = normalizeGroups(state.settings.groups);
+  renderGroups();
+  updateStreamGroupOptions();
 }
 
 function formatBitrate(value) {
@@ -5959,6 +6161,7 @@ function openEditor(stream, isNew) {
   state.transcodeOutputEditingIndex = null;
   state.transcodeOutputMonitorIndex = null;
   state.transcodeWatchdogDefaults = normalizeOutputWatchdog(null, TRANSCODE_WATCHDOG_DEFAULTS);
+  updateStreamGroupOptions();
   elements.streamId.value = stream.id || '';
   elements.streamId.disabled = false;
   elements.streamName.value = config.name || '';
@@ -5975,6 +6178,9 @@ function openEditor(stream, isNew) {
   elements.streamMpts.checked = config.mpts === true;
   updateMptsFields();
   elements.streamDesc.value = config.description || '';
+  if (elements.streamGroup) {
+    elements.streamGroup.value = config.group || config.category || '';
+  }
   if (elements.streamServiceType) {
     elements.streamServiceType.value = config.service_type_id || '';
   }
@@ -6331,6 +6537,10 @@ function readStreamForm() {
     description: description || undefined,
     mpts: elements.streamMpts.checked || undefined,
   };
+  const group = (elements.streamGroup && elements.streamGroup.value || '').trim();
+  if (group) {
+    config.group = group;
+  }
   if (outputs.length) {
     config.output = outputs;
   }
@@ -8197,6 +8407,8 @@ function applySettingsToUI() {
     elements.authOverlimitPolicy.value = getSettingString('auth_overlimit_policy', 'deny_new');
   }
 
+  renderGroups();
+  updateStreamGroupOptions();
   applyFeatureVisibility();
 }
 
@@ -8453,6 +8665,7 @@ async function loadSettings() {
   } catch (err) {
     state.settings = {};
   }
+  state.groups = normalizeGroups(state.settings.groups);
 
   applySettingsToUI();
   if (elements.configPreview) {
@@ -9257,6 +9470,51 @@ function bindEvents() {
     elements.bufferCopyUrl.addEventListener('click', () => {
       const url = elements.bufferOutputUrl.textContent || '';
       copyText(url);
+    });
+  }
+
+  if (elements.groupNew) {
+    elements.groupNew.addEventListener('click', () => openGroupModal(null));
+  }
+  if (elements.groupClose) {
+    elements.groupClose.addEventListener('click', closeGroupModal);
+  }
+  if (elements.groupCancel) {
+    elements.groupCancel.addEventListener('click', closeGroupModal);
+  }
+  if (elements.groupId) {
+    elements.groupId.addEventListener('input', handleGroupIdInput);
+  }
+  if (elements.groupName) {
+    elements.groupName.addEventListener('input', handleGroupNameInput);
+  }
+  if (elements.groupForm) {
+    elements.groupForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await saveGroup();
+      } catch (err) {
+        if (elements.groupError) {
+          elements.groupError.textContent = err.message || 'Failed to save group';
+        }
+      }
+    });
+  }
+  if (elements.groupTable) {
+    elements.groupTable.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const id = target.dataset.id;
+      if (action === 'group-edit') {
+        const group = (state.groups || []).find((g) => g && g.id === id);
+        if (group) openGroupModal(group);
+      }
+      if (action === 'group-delete') {
+        const confirmed = window.confirm(`Delete group ${id}? Streams using it will keep the old value.`);
+        if (!confirmed) return;
+        deleteGroup(id).catch((err) => setStatus(err.message || 'Delete failed'));
+      }
     });
   }
 

@@ -1326,18 +1326,19 @@
           </div>
 
           <div class="settings-section" data-section="groups">
-            <div class="form-stack">
-              <label class="field">
-                <span>Category</span>
-                <input type="text" placeholder="New Category" />
-              </label>
-              <label class="field">
-                <span>Name</span>
-                <input type="text" placeholder="Category Name" />
-              </label>
-              <div class="apply-row">
-                <button class="btn">Apply</button>
+            <div class="panel users-panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Groups</div>
+                <button class="text-link" type="button" id="group-new">NEW GROUP</button>
               </div>
+              <div class="table" id="group-table">
+                <div class="table-row header">
+                  <div>ID</div>
+                  <div>Name</div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="muted" id="group-empty">No groups yet</div>
             </div>
           </div>
 
@@ -1580,7 +1581,14 @@
         </div>
 
         <div class="tab-content" data-tab-content="groups" data-tab-scope="stream-editor">
-          <div class="panel subtle">No group configuration yet.</div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Group</span>
+              <input type="text" id="stream-group" list="stream-group-list" placeholder="news" />
+              <datalist id="stream-group-list"></datalist>
+            </label>
+          </div>
+          <div class="form-hint">Used as playlist group-title. Leave empty to skip grouping.</div>
         </div>
         <div class="tab-content" data-tab-content="service" data-tab-scope="stream-editor">
           <div class="form-grid">
@@ -2884,6 +2892,34 @@
             <button class="btn" type="submit" id="buffer-allow-save">Save</button>
             <button class="btn ghost" type="button" id="buffer-allow-cancel">Cancel</button>
             <div class="form-note" id="buffer-allow-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="group-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="group-title">New group</div>
+        <button class="icon-btn" id="group-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="group-form">
+        <label class="field">
+          <span>ID</span>
+          <input type="text" id="group-id" placeholder="news" />
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="group-name" placeholder="News" />
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="group-save">Save</button>
+            <button class="btn ghost" type="button" id="group-cancel">Cancel</button>
+            <div class="form-note" id="group-error"></div>
           </div>
         </div>
       </form>

@@ -139,6 +139,8 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   - Stream defaults: `no_data_timeout_sec`, `probe_interval_sec`, `stable_ok_sec`,
     `backup_initial_delay_sec`, `backup_start_delay_sec`, `backup_return_delay_sec`,
     `backup_stop_if_all_inactive_sec`, `backup_active_warm_max`, `http_keep_active`.
+  - Groups: `groups` (array of `{id,name}` used for playlist group-title).
+  - Telegram alerts: `telegram_enabled`, `telegram_level`, `telegram_bot_token`, `telegram_chat_id`.
 - NOTE: policy is enforced on user create/reset; defaults require min length 8,
   at least one letter + number, and no spaces. Default admin remains `admin`
   until changed.

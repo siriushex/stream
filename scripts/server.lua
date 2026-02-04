@@ -822,10 +822,38 @@ function main()
         end
         table.insert(lines, header)
 
+        local group_map = nil
+        local function resolve_group_label(value)
+            if value == nil or value == "" then
+                return ""
+            end
+            if group_map == nil then
+                group_map = {}
+                local stored = config and config.get_setting and config.get_setting("groups") or nil
+                if type(stored) == "table" then
+                    for _, item in ipairs(stored) do
+                        if type(item) == "table" then
+                            local id = item.id or item.name
+                            local name = item.name or item.id
+                            if id and name then
+                                group_map[tostring(id)] = tostring(name)
+                            end
+                        elseif type(item) == "string" then
+                            group_map[item] = item
+                        end
+                    end
+                end
+            end
+            return group_map[value] or value
+        end
+
         for _, entry in ipairs(collect_playlist_streams()) do
             local cfg = entry.config or {}
             local name = cfg.name or entry.id
             local group = cfg.category or cfg.group or http_play_arrange or ""
+            if group ~= "" then
+                group = resolve_group_label(group)
+            end
             local logo = resolve_asset_url(http_play_logos, cfg.logo or cfg.logo_url or cfg.icon, entry.id .. ".png")
             local screen = resolve_asset_url(http_play_screens, cfg.screenshot or cfg.screen, entry.id .. ".jpg")
             local attrs = {
