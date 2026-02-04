@@ -12,6 +12,19 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added minimal GitHub Actions CI (build + smoke + telegram unit).
+- Tests:
+  - Not run (CI only).
+### 2026-02-04
+- Changes:
+  - Added core docs: ARCHITECTURE, TESTING, OPERATIONS, ROADMAP.
+  - Renamed parity matrix to `docs/PARITY.md` and linked it from README/PLAN/SKILL.
+- Tests:
+  - `./configure.sh`
+  - `make`
+  - `contrib/ci/smoke.sh`
+### 2026-02-04
+- Changes:
   - Added Servers settings UI with test endpoint and remote health check.
 - Tests:
   - Not run (UI + API change).

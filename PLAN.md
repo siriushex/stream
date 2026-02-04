@@ -3,6 +3,10 @@
 ## Goal
 Build a Linux-first (Ubuntu) streaming platform based on this codebase that matches Cesbo Astra features and web UI behavior, with HLS and web interface as the highest priority.
 
+## Source of truth
+- Parity matrix: `docs/PARITY.md`
+- Roadmap: `docs/ROADMAP.md`
+
 ## Feature Map (from Cesbo docs)
 ### Adapter Configuration
 - Adapter id for dvb:// references, adapter index, FE device.
@@ -71,7 +75,7 @@ Build a Linux-first (Ubuntu) streaming platform based on this codebase that matc
 
 ## Development Plan (detailed, HLS + UI first)
 ### Phase 0 - Parity audit + docs (in progress)
-- Maintain `docs/astral-parity.md` (Docs → Astral matrix).
+- Maintain `docs/PARITY.md` (Docs → Astral matrix).
 - Keep `SKILL.md`/`PLAN.md` in sync with implemented features.
 
 ### Phase 1 - Baseline Service + Config API (done)

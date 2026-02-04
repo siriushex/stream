@@ -14,6 +14,13 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Binary: `./astra`
 - NOTE: `configure.sh` regenerates `Makefile` and `config.h`.
 
+## Docs
+- `docs/ARCHITECTURE.md` - module map and data flow.
+- `docs/PARITY.md` - feature parity matrix.
+- `docs/ROADMAP.md` - staged improvement plan.
+- `docs/TESTING.md` - local and server smoke tests.
+- `docs/OPERATIONS.md` - systemd and ops basics.
+
 ## Run UI/API server
 - `./astra scripts/server.lua [options]`
 - `./astra <config.json|config.lua> [options]` (auto-runs `scripts/server.lua --config <path>`)
