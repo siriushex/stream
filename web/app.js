@@ -5586,16 +5586,21 @@ function updateAdapterScanAvailability() {
   const isNew = state.adapterEditing && state.adapterEditing.isNew;
   const status = adapterId ? getAdapterStatusEntry(adapterId, adapter && adapter.config) : null;
   const locked = adapterId ? isAdapterLocked(adapterId, adapter && adapter.config) : false;
+  const hasSignal = status && (
+    (Number(status.status) > 0)
+    || (Number(status.signal) > 0)
+    || (Number(status.snr) > 0)
+  );
   let reason = '';
   if (!adapterId || isNew) {
     reason = 'Save adapter to enable scan.';
   } else if (!status) {
     reason = 'Adapter status unavailable.';
-  } else if (!locked) {
+  } else if (!locked && !hasSignal) {
     reason = 'Signal lock required.';
   }
   elements.adapterScan.disabled = !!reason;
-  elements.adapterScan.title = reason;
+  elements.adapterScan.title = reason || (hasSignal && !locked ? 'Signal not locked; scan may fail.' : '');
 }
 
 function closeAdapterScanModal() {
