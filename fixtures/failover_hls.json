@@ -1,0 +1,30 @@
+{
+  "settings": {
+    "http_play_hls": true,
+    "http_play_allow": false,
+    "hls_dir": "./data_failover_hls/hls",
+    "hls_base_url": "/hls",
+    "hls_duration": 2,
+    "hls_quantity": 3
+  },
+  "make_stream": [
+    {
+      "id": "failover_hls",
+      "name": "Failover HLS",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12000",
+        "udp://127.0.0.1:12001"
+      ],
+      "backup_type": "active",
+      "backup_start_delay": 0,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 2,
+      "output": [
+        { "format": "hls" }
+      ]
+    }
+  ]
+}

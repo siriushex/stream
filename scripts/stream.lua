@@ -788,6 +788,20 @@ end
 
 local channel_audio_fix_on_input_switch
 
+local function mark_hls_discontinuity(channel_data)
+    if not channel_data or type(channel_data.output) ~= "table" then
+        return
+    end
+    for _, output_data in ipairs(channel_data.output) do
+        if output_data and output_data.config and output_data.config.format == "hls" then
+            local out = output_data.output
+            if out and out.discontinuity then
+                pcall(function() out:discontinuity() end)
+            end
+        end
+    end
+end
+
 local function channel_prepare_input(channel_data, input_id, opts)
     opts = opts or {}
     local input_data = channel_data.input[input_id]
@@ -909,6 +923,9 @@ local function channel_activate_input(channel_data, input_id, reason)
                 reason = reason,
                 ts = now,
             }
+        end
+        if prev_id > 0 and reason ~= "start" then
+            mark_hls_discontinuity(channel_data)
         end
         if prev_id > 0 and reason ~= "start" then
             emit_stream_alert(channel_data, "WARNING", "INPUT_SWITCH", "input switch", {
