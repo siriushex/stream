@@ -1985,7 +1985,9 @@ function http_output_client(server, client, request, output_data)
         if entry then
             log_http_access("disconnect", entry, nil)
         end
-        http_output_client_list[client_data.client_id] = nil
+        if client_data.client_id ~= nil then
+            http_output_client_list[client_data.client_id] = nil
+        end
         client_data.client_id = nil
         return nil
     end

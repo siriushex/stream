@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Guarded HTTP play client cleanup to avoid nil index crash on disconnect.
+- Tests:
+  - Not run (server change).
+### 2026-02-04
+- Changes:
   - Fixed HTTP play streaming response to return valid HTTP 200 status headers.
 - Tests:
   - Not run (server change).
