@@ -1595,6 +1595,22 @@ function config.get_revision(id)
     return normalize_revision_row(rows[1])
 end
 
+function config.delete_revision(id)
+    local rev_id = tonumber(id)
+    if not rev_id or rev_id <= 0 then
+        return nil
+    end
+    local row = config.get_revision(rev_id)
+    if not row then
+        return nil
+    end
+    if row.snapshot_path and row.snapshot_path ~= "" then
+        os.remove(row.snapshot_path)
+    end
+    db_exec(config.db, "DELETE FROM config_revisions WHERE id=" .. rev_id .. ";")
+    return row
+end
+
 function config.list_revisions(limit)
     local max = tonumber(limit) or 50
     if max < 1 then
@@ -1607,6 +1623,17 @@ function config.list_revisions(limit)
         normalize_revision_row(row)
     end
     return rows
+end
+
+function config.delete_all_revisions()
+    local rows = db_query(config.db, "SELECT id, snapshot_path FROM config_revisions;")
+    for _, row in ipairs(rows) do
+        if row.snapshot_path and row.snapshot_path ~= "" then
+            os.remove(row.snapshot_path)
+        end
+    end
+    db_exec(config.db, "DELETE FROM config_revisions;")
+    return #rows
 end
 
 function config.prune_revisions(max_keep)

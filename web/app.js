@@ -353,6 +353,7 @@ const elements = {
   configActiveRevision: $('#config-active-revision'),
   configLkgRevision: $('#config-lkg-revision'),
   btnConfigRefresh: $('#btn-config-refresh'),
+  btnConfigDeleteAll: $('#btn-config-delete-all'),
   logOutput: $('#log-output'),
   logPause: $('#log-pause'),
   logClear: $('#log-clear'),
@@ -5025,6 +5026,109 @@ function formatDvbStatus(item) {
   return { label: 'Free', className: 'free', hint: 'Adapter is available' };
 }
 
+function normalizeAdapterValue(value) {
+  if (value === undefined || value === null || value === '') return '';
+  const num = Number(value);
+  return Number.isFinite(num) ? String(num) : String(value).trim();
+}
+
+function getDvbAdapterMap() {
+  const map = new Map();
+  (state.dvbAdapters || []).forEach((item) => {
+    if (!item || item.adapter === undefined || item.adapter === null) return;
+    const adapterValue = normalizeAdapterValue(item.adapter);
+    if (!adapterValue) return;
+    if (!map.has(adapterValue)) map.set(adapterValue, []);
+    map.get(adapterValue).push(item);
+  });
+  map.forEach((items) => {
+    items.sort((a, b) => Number(a.device || 0) - Number(b.device || 0));
+  });
+  return map;
+}
+
+function renderAdapterIndexSelect(selectedAdapter) {
+  if (!elements.adapterIndex) return '';
+  const adapterValue = normalizeAdapterValue(selectedAdapter || elements.adapterIndex.value);
+  const adapterMap = getDvbAdapterMap();
+  const adapters = Array.from(adapterMap.keys()).sort((a, b) => Number(a) - Number(b));
+
+  elements.adapterIndex.innerHTML = '';
+
+  const hasOptions = adapters.length > 0;
+  if (!state.dvbAdaptersLoaded || !hasOptions) {
+    const option = document.createElement('option');
+    option.value = adapterValue;
+    option.textContent = adapterValue ? `adapter${adapterValue} (missing)` : 'No DVB adapters detected';
+    elements.adapterIndex.appendChild(option);
+    elements.adapterIndex.value = adapterValue;
+    elements.adapterIndex.disabled = true;
+    return adapterValue;
+  }
+
+  adapters.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = `adapter${value}`;
+    elements.adapterIndex.appendChild(option);
+  });
+
+  let nextValue = adapterValue || adapters[0] || '';
+  if (nextValue && !adapterMap.has(nextValue)) {
+    const option = document.createElement('option');
+    option.value = nextValue;
+    option.textContent = `adapter${nextValue} (missing)`;
+    elements.adapterIndex.appendChild(option);
+  }
+  elements.adapterIndex.value = nextValue;
+  elements.adapterIndex.disabled = false;
+  return nextValue;
+}
+
+function renderAdapterDeviceSelect(adapterValue, selectedDevice) {
+  if (!elements.adapterDevice) return;
+  const deviceValue = normalizeAdapterValue(selectedDevice || elements.adapterDevice.value);
+  const adapterMap = getDvbAdapterMap();
+  const items = adapterValue ? (adapterMap.get(String(adapterValue)) || []) : [];
+  const devices = Array.from(new Set(items.map((item) => normalizeAdapterValue(item.device || 0))))
+    .filter((value) => value !== '')
+    .sort((a, b) => Number(a) - Number(b));
+
+  elements.adapterDevice.innerHTML = '';
+
+  if (!state.dvbAdaptersLoaded || devices.length === 0) {
+    const option = document.createElement('option');
+    option.value = deviceValue || '0';
+    option.textContent = deviceValue ? `fe${deviceValue} (missing)` : 'fe0';
+    elements.adapterDevice.appendChild(option);
+    elements.adapterDevice.value = option.value;
+    elements.adapterDevice.disabled = !state.dvbAdaptersLoaded;
+    return;
+  }
+
+  devices.forEach((value) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = `fe${value}`;
+    elements.adapterDevice.appendChild(option);
+  });
+
+  let nextValue = deviceValue || devices[0] || '0';
+  if (nextValue && !devices.includes(nextValue)) {
+    const option = document.createElement('option');
+    option.value = nextValue;
+    option.textContent = `fe${nextValue} (missing)`;
+    elements.adapterDevice.appendChild(option);
+  }
+  elements.adapterDevice.value = nextValue;
+  elements.adapterDevice.disabled = false;
+}
+
+function renderAdapterHardwareSelects(selectedAdapter, selectedDevice) {
+  const adapterValue = renderAdapterIndexSelect(selectedAdapter);
+  renderAdapterDeviceSelect(adapterValue, selectedDevice);
+}
+
 function renderDvbDetectedSelect() {
   if (!elements.adapterDetected) return;
   elements.adapterDetected.innerHTML = '';
@@ -5058,6 +5162,7 @@ function renderDvbDetectedSelect() {
     elements.adapterDetected.appendChild(option);
   });
 
+  renderAdapterHardwareSelects();
   if (!state.adapterEditing || !state.adapterEditing.adapter) {
     elements.adapterDetected.value = '';
     if (elements.adapterDetectedHint) {
@@ -5097,6 +5202,14 @@ function updateAdapterBusyWarningFromFields() {
       .map((input) => input && input.closest('.field'))
       .filter(Boolean);
     fields.forEach((field) => field.classList.remove('warn'));
+    if (elements.adapterDetectedHint) {
+      elements.adapterDetectedHint.textContent = 'DVB adapter list is unavailable.';
+      elements.adapterDetectedHint.className = 'form-hint adapter-detected-hint missing';
+    }
+    if (elements.adapterDetectedBadge) {
+      elements.adapterDetectedBadge.textContent = '';
+      elements.adapterDetectedBadge.className = 'adapter-detected-badge';
+    }
     return;
   }
   const adapterValue = elements.adapterIndex.value;
@@ -5112,6 +5225,21 @@ function updateAdapterBusyWarningFromFields() {
       elements.adapterBusyWarning.textContent = 'Selected adapter is busy. Choose a free adapter or release it.';
     } else {
       elements.adapterBusyWarning.textContent = '';
+    }
+  }
+  if (elements.adapterDetected) {
+    const key = normalizeDvbKey(adapterValue, deviceValue);
+    const hasOption = key && elements.adapterDetected.querySelector(`option[value="${key}"]`);
+    elements.adapterDetected.value = hasOption ? key : '';
+    if (elements.adapterDetectedHint) {
+      const status = formatDvbStatus(item);
+      elements.adapterDetectedHint.textContent = status.hint;
+      elements.adapterDetectedHint.className = `form-hint adapter-detected-hint ${status.className}`;
+    }
+    if (elements.adapterDetectedBadge) {
+      const status = formatDvbStatus(item);
+      elements.adapterDetectedBadge.textContent = item ? status.label : '';
+      elements.adapterDetectedBadge.className = `adapter-detected-badge ${item ? status.className : ''}`.trim();
     }
   }
 }
@@ -5308,13 +5436,16 @@ function openAdapterEditor(adapter, isNew) {
   const config = (adapter && adapter.config) || {};
   const id = adapter ? adapter.id : '';
 
+  state.adapterEditing = { adapter, isNew };
   renderAdapterSelect(id, isNew);
   elements.adapterError.textContent = '';
   elements.adapterEnabled.checked = !adapter || adapter.enabled !== false;
   elements.adapterId.value = id || '';
   elements.adapterId.disabled = false;
-  elements.adapterIndex.value = config.adapter !== undefined ? config.adapter : '';
-  elements.adapterDevice.value = config.device !== undefined ? config.device : 0;
+  renderAdapterHardwareSelects(
+    config.adapter !== undefined ? config.adapter : '',
+    config.device !== undefined ? config.device : 0,
+  );
   elements.adapterType.value = config.type || 'S2';
   elements.adapterModulation.value = config.modulation || 'AUTO';
   elements.adapterCaPmtDelay.value = config.ca_pmt_delay !== undefined ? config.ca_pmt_delay : '';
@@ -5353,7 +5484,6 @@ function openAdapterEditor(adapter, isNew) {
   setAdapterGroup(elements.adapterType.value);
   renderDvbDetectedSelect();
   updateAdapterBusyWarningFromFields();
-  state.adapterEditing = { adapter, isNew };
   if (elements.adapterDelete) {
     elements.adapterDelete.style.visibility = isNew ? 'hidden' : 'visible';
   }
@@ -10048,6 +10178,11 @@ function renderConfigHistory() {
       detailsBtn.dataset.revisionId = String(rev.id || '');
       actionCell.appendChild(detailsBtn);
     }
+    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.dataset.action = 'config-delete';
+    deleteBtn.dataset.revisionId = String(rev.id || '');
+    actionCell.appendChild(deleteBtn);
 
     row.appendChild(idCell);
     row.appendChild(statusCell);
@@ -10090,6 +10225,35 @@ function openConfigErrorModal(revision) {
     elements.configErrorBody.textContent = revision.error_text || '';
   }
   setConfigErrorOverlay(true);
+}
+
+async function deleteConfigRevision(revisionId) {
+  const idValue = Number(revisionId);
+  if (!Number.isFinite(idValue)) {
+    setStatus('Invalid revision id');
+    return;
+  }
+  const confirmed = window.confirm(`Delete config revision ${idValue}?`);
+  if (!confirmed) return;
+  try {
+    await apiJson(`/api/v1/config/revisions/${idValue}`, { method: 'DELETE' });
+    await loadConfigHistory();
+    setStatus(`Deleted config revision ${idValue}`);
+  } catch (err) {
+    setStatus(err.message || 'Delete failed');
+  }
+}
+
+async function deleteAllConfigRevisions() {
+  const confirmed = window.confirm('Delete all saved config revisions? This cannot be undone.');
+  if (!confirmed) return;
+  try {
+    await apiJson('/api/v1/config/revisions', { method: 'DELETE' });
+    await loadConfigHistory();
+    setStatus('Deleted all config revisions');
+  } catch (err) {
+    setStatus(err.message || 'Delete failed');
+  }
 }
 
 async function loadConfigHistory() {
@@ -10567,7 +10731,6 @@ async function refreshAll() {
     setOverlay(elements.loginOverlay, false);
     startStatusPolling();
     startAdapterPolling();
-    startDvbPolling();
     startSplitterPolling();
     startBufferPolling();
     startSessionPolling();
@@ -10644,6 +10807,12 @@ function bindEvents() {
       loadConfigHistory();
     });
   }
+  if (elements.btnConfigDeleteAll) {
+    elements.btnConfigDeleteAll.addEventListener('click', (event) => {
+      event.preventDefault();
+      deleteAllConfigRevisions();
+    });
+  }
 
   if (elements.configHistoryTable) {
     elements.configHistoryTable.addEventListener('click', (event) => {
@@ -10661,6 +10830,14 @@ function bindEvents() {
         const revision = state.configRevisions.find((rev) => Number(rev.id) === revisionId);
         if (revision) {
           openConfigErrorModal(revision);
+        }
+        return;
+      }
+      const deleteTarget = event.target.closest('[data-action="config-delete"]');
+      if (deleteTarget) {
+        const revisionId = deleteTarget.dataset.revisionId;
+        if (revisionId) {
+          deleteConfigRevision(revisionId);
         }
       }
     });
@@ -11611,8 +11788,7 @@ function bindEvents() {
       const [adapterStr, deviceStr] = value.split('.');
       const item = findDvbAdapter(adapterStr, deviceStr);
       if (!item) return;
-      elements.adapterIndex.value = item.adapter;
-      elements.adapterDevice.value = item.device || 0;
+      renderAdapterHardwareSelects(item.adapter, item.device || 0);
       if (item.type) {
         const current = elements.adapterType.value;
         if (!(current === 'S2' && item.type === 'S')) {
@@ -11651,10 +11827,13 @@ function bindEvents() {
   }
 
   if (elements.adapterIndex) {
-    elements.adapterIndex.addEventListener('input', updateAdapterBusyWarningFromFields);
+    elements.adapterIndex.addEventListener('change', () => {
+      renderAdapterDeviceSelect(elements.adapterIndex.value);
+      updateAdapterBusyWarningFromFields();
+    });
   }
   if (elements.adapterDevice) {
-    elements.adapterDevice.addEventListener('input', updateAdapterBusyWarningFromFields);
+    elements.adapterDevice.addEventListener('change', updateAdapterBusyWarningFromFields);
   }
 
   if (elements.adapterCancel) {
