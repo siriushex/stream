@@ -10283,7 +10283,7 @@ function collectGeneralSettings() {
   if (telegramToken) payload.telegram_bot_token = telegramToken;
   if (elements.settingsTelegramBackupEnabled) payload.telegram_backup_enabled = telegramBackupEnabled;
   if (elements.settingsTelegramBackupSchedule) {
-    payload.telegram_backup_schedule = telegramBackupEnabled ? (telegramBackupSchedule || 'DAILY') : 'OFF';
+    payload.telegram_backup_schedule = telegramBackupSchedule || 'DAILY';
   }
   if (elements.settingsTelegramBackupTime) payload.telegram_backup_time = telegramBackupTime || '03:00';
   if (telegramBackupWeekday !== undefined) payload.telegram_backup_weekday = telegramBackupWeekday;
