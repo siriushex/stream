@@ -665,10 +665,11 @@ function main()
     end
 
     if opt.reset_pass then
-        local ok, err = config.set_user_password("admin", "admin")
+        local setter = config.set_user_password_force or config.set_user_password
+        local ok, err = setter("admin", "admin")
         if not ok and err == "user not found" then
             config.ensure_admin()
-            ok, err = config.set_user_password("admin", "admin")
+            ok, err = setter("admin", "admin")
         end
         config.update_user("admin", { enabled = true, is_admin = true })
         local admin = config.get_user_by_username("admin")

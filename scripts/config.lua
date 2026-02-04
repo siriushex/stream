@@ -819,6 +819,25 @@ function config.set_user_password(username, password)
     return true
 end
 
+function config.set_user_password_force(username, password)
+    if not username or username == "" then
+        return false, "invalid username"
+    end
+    if not password or password == "" then
+        return false, "invalid password"
+    end
+    local user = config.get_user_by_username(username)
+    if not user then
+        return false, "user not found"
+    end
+    local salt = random_token(12)
+    local hash = hash_password(password, salt)
+    db_exec(config.db, "UPDATE users SET password_hash='" .. sql_escape(hash) ..
+        "', password_salt='" .. sql_escape(salt) ..
+        "' WHERE username='" .. sql_escape(username) .. "';")
+    return true
+end
+
 function config.count_admins()
     local rows = db_query(config.db, "SELECT COUNT(*) as total FROM users WHERE is_admin=1 AND enabled=1;")
     if #rows == 0 then
