@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Stream apply now uses targeted runtime update instead of full reload.
+- Tests:
+  - Not run (runtime change).
+### 2026-02-04
+- Changes:
   - Added Sessions table actions to add client IPs to whitelist/block list.
 - Tests:
   - Not run (UI change).

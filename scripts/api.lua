@@ -449,7 +449,23 @@ local function apply_config_change(server, client, request, opts)
         end
     end
 
-    local ok, reload_err = reload_runtime(true)
+    local ok = true
+    local reload_err = nil
+    if type(opts.runtime_apply) == "function" then
+        local apply_ok, apply_err
+        local safe, res_ok, res_err = pcall(opts.runtime_apply)
+        if not safe then
+            apply_ok = false
+            apply_err = res_ok
+        else
+            apply_ok = (res_ok ~= false)
+            apply_err = res_err
+        end
+        ok = apply_ok
+        reload_err = apply_err
+    else
+        ok, reload_err = reload_runtime(true)
+    end
     if not ok then
         if revision_id > 0 then
             config.update_revision(revision_id, {
@@ -569,6 +585,16 @@ local function upsert_stream(server, client, id, request)
         apply = function()
             config.upsert_stream(id, enabled, cfg)
         end,
+        runtime_apply = function()
+            if not runtime or not runtime.apply_stream_row then
+                return false, "runtime apply not available"
+            end
+            local row = config.get_stream(id)
+            if not row then
+                return false, "stream not found after update"
+            end
+            return runtime.apply_stream_row(row, true)
+        end,
         after = function()
             if epg and epg.export_all then
                 epg.export_all("stream change")
@@ -582,6 +608,12 @@ local function delete_stream(server, client, id, request)
         comment = "stream " .. id .. " delete",
         apply = function()
             config.delete_stream(id)
+        end,
+        runtime_apply = function()
+            if not runtime or not runtime.apply_stream_row then
+                return false, "runtime apply not available"
+            end
+            return runtime.apply_stream_row({ id = id, enabled = 0, config = {} }, true)
         end,
         after = function()
             if epg and epg.export_all then
