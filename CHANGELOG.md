@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Documented DVB adapter UX polish in ROADMAP and PARITY.
+- Tests:
+  - Not run (docs-only).
+### 2026-02-05
+- Changes:
   - Expanded Help tab with failover and DVB scan instructions.
   - Updated UI build stamp to 20260205n.
 - Tests:

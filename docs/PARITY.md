@@ -9,7 +9,7 @@ Legend: DONE, PARTIAL, TODO
 | --- | --- | --- | --- | --- | --- | --- |
 | Dashboard tiles/table/compact views | DONE | DONE | N/A | DONE | manual | |
 | Streams editor (tabs + basic fields) | DONE | DONE | DONE | DONE | manual | |
-| Adapter editor shell | PARTIAL | DONE | DONE | PARTIAL | N/A | DVB not tested on server |
+| Adapter editor shell | PARTIAL | DONE | DONE | PARTIAL | N/A | Detected DVB list + BUSY labels + scan flow; DVB hardware not tested on server |
 | Sessions view | DONE | DONE | DONE | DONE | manual | |
 | Access log view | DONE | DONE | DONE | DONE | manual | |
 | Logs view | DONE | DONE | DONE | DONE | manual | |

@@ -4,6 +4,7 @@
 | Task | Goal | Acceptance Criteria | Risk | Code Areas |
 | --- | --- | --- | --- | --- |
 | Docs + CI baseline | Single source of truth and automated checks | `docs/*` present, CI green on push | Low | docs/, .github/workflows |
+| DVB adapter UX polish (DONE) | Safer DVB operations in UI | Detected DVB list refreshes on tab open, BUSY/FREE labels, scan feedback to Dashboard | Low | web/ |
 | Settings UI parity audit (DONE) | Remove placeholder UI or wire it to settings/runtime | Softcam wired; CAS/License hidden | Low | web/, scripts/api.lua |
 | MPTS runtime apply (DONE) | Apply MPTS config to runtime where supported | MPTS config mapped to channel options with warnings for unsupported fields | Medium | scripts/stream.lua |
 | Backup default deviation documented | Avoid surprise behavior | `docs/PARITY.md` lists deviation | Low | docs/ |
