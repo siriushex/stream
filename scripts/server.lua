@@ -521,8 +521,12 @@ local function http_play_stream_id(path)
     if not path then
         return nil
     end
-    local prefix = "/stream/"
-    if path:sub(1, #prefix) ~= prefix then
+    local prefix = nil
+    if path:sub(1, 8) == "/stream/" then
+        prefix = "/stream/"
+    elseif path:sub(1, 6) == "/play/" then
+        prefix = "/play/"
+    else
         return nil
     end
     local rest = path:sub(#prefix + 1)
@@ -1181,8 +1185,11 @@ function main()
         end
         table.insert(routes, { http_play_playlist_name, http_play_playlist })
         table.insert(routes, { xspf_path, http_play_xspf })
+        table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
+        table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
         if http_play_allow then
             table.insert(routes, { "/stream/*", http_play_stream })
+            table.insert(routes, { "/play/*", http_play_stream })
         end
         if include_hls_route and http_play_hls then
             table.insert(routes, { opt.hls_route .. "/*", hls_route_handler })
