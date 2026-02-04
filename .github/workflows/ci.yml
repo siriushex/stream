@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Verify CODEOWNERS
+        run: scripts/ci/check_codeowners.sh
       - name: Install deps
         run: |
           sudo apt-get update
