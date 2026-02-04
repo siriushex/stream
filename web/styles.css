@@ -969,6 +969,18 @@ select {
   align-items: start;
 }
 
+.settings-advanced-groups {
+  display: contents;
+}
+
+.settings-advanced-groups[hidden] {
+  display: none;
+}
+
+.settings-advanced-toggle {
+  grid-column: 1 / -1;
+}
+
 .settings-group.span-2 {
   grid-column: 1 / -1;
 }

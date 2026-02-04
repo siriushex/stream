@@ -3,6 +3,13 @@ const TILE_EXPANDED_KEY = 'ui_tiles_expanded';
 const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
+const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
+
+function getStoredBool(key, fallback) {
+  const value = localStorage.getItem(key);
+  if (value === null || value === undefined || value === '') return fallback;
+  return value === '1' || value === 'true';
+}
 
 function normalizeTilesMode(value) {
   const mode = String(value || '').toLowerCase();
@@ -248,6 +255,7 @@ const elements = {
   settingsShowTools: $('#settings-show-tools'),
   settingsShowSecurityLimits: $('#settings-show-security-limits'),
   settingsShowStreamDefaults: $('#settings-show-stream-defaults'),
+  settingsShowAdvanced: $('#settings-show-advanced'),
   casDefault: $('#cas-default'),
   btnApplyCas: $('#btn-apply-cas'),
   licenseMeta: $('#license-meta'),
@@ -1373,7 +1381,12 @@ function syncToggleTargets() {
 
 function bindToggleTargets() {
   $$('[data-toggle-target]').forEach((toggle) => {
-    toggle.addEventListener('change', syncToggleTargets);
+    toggle.addEventListener('change', () => {
+      if (toggle.id === 'settings-show-advanced') {
+        localStorage.setItem(SETTINGS_ADVANCED_KEY, toggle.checked ? '1' : '0');
+      }
+      syncToggleTargets();
+    });
   });
   syncToggleTargets();
 }
@@ -9543,10 +9556,22 @@ function buildSessionQuery() {
   return params.length ? `?${params.join('&')}` : '';
 }
 
+function isActiveSession(session) {
+  if (!session) return false;
+  if (session.active === false) return false;
+  if (session.ended_at || session.ended) return false;
+  const status = session.status ? String(session.status).toLowerCase() : '';
+  if (status && (status.includes('end') || status.includes('closed') || status.includes('inactive'))) {
+    return false;
+  }
+  return true;
+}
+
 async function loadSessions() {
   try {
     const data = await apiJson(`/api/v1/sessions${buildSessionQuery()}`);
-    state.sessions = Array.isArray(data) ? data : [];
+    const list = Array.isArray(data) ? data : [];
+    state.sessions = list.filter(isActiveSession);
     renderSessions();
   } catch (err) {
     state.sessions = [];
@@ -10535,6 +10560,9 @@ function applySettingsToUI() {
       'http_keep_active',
     ];
     elements.settingsShowStreamDefaults.checked = defaultKeys.some((key) => hasSettingValue(key));
+  }
+  if (elements.settingsShowAdvanced) {
+    elements.settingsShowAdvanced.checked = getStoredBool(SETTINGS_ADVANCED_KEY, false);
   }
 
   updateTelegramBackupScheduleFields();
