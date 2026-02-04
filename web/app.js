@@ -164,6 +164,7 @@ const state = {
   accessEventFilter: 'all',
   accessTextFilter: '',
   accessLimit: 200,
+  accessPaused: false,
   groups: [],
   groupEditing: null,
   groupIdAuto: false,
@@ -348,6 +349,7 @@ const elements = {
   accessEvent: $('#access-event-filter'),
   accessFilter: $('#access-text-filter'),
   accessLimit: $('#access-limit'),
+  accessCount: $('#access-count'),
   groupNew: $('#group-new'),
   groupTable: $('#group-table'),
   groupEmpty: $('#group-empty'),
@@ -8539,6 +8541,9 @@ function renderAccessLog() {
 
   elements.accessTable.innerHTML = header;
   elements.accessTotal.textContent = String(entries.length);
+  if (elements.accessCount) {
+    elements.accessCount.textContent = String(entries.length);
+  }
 
   if (!entries.length) {
     const row = document.createElement('div');
@@ -8548,6 +8553,7 @@ function renderAccessLog() {
     return;
   }
 
+  const fragment = document.createDocumentFragment();
   entries.forEach((entry) => {
     const row = document.createElement('div');
     row.className = 'table-row';
@@ -8570,8 +8576,9 @@ function renderAccessLog() {
       cell.textContent = value;
       row.appendChild(cell);
     });
-    elements.accessTable.appendChild(row);
+    fragment.appendChild(row);
   });
+  elements.accessTable.appendChild(fragment);
 }
 
 function buildAccessLogQuery(since, limit) {
@@ -8592,8 +8599,9 @@ function appendAccessLogEntries(entries) {
     return;
   }
   state.accessLogEntries = state.accessLogEntries.concat(entries);
-  if (state.accessLogEntries.length > 2000) {
-    state.accessLogEntries = state.accessLogEntries.slice(state.accessLogEntries.length - 2000);
+  const maxEntries = Math.max(50, Number(state.accessLimit) || 200);
+  if (state.accessLogEntries.length > maxEntries) {
+    state.accessLogEntries = state.accessLogEntries.slice(state.accessLogEntries.length - maxEntries);
   }
   renderAccessLog();
 }
@@ -8601,7 +8609,7 @@ function appendAccessLogEntries(entries) {
 async function loadAccessLog(reset = false) {
   try {
     const since = reset ? 0 : state.accessLogCursor;
-    const limit = toNumber(state.accessLimit) || 200;
+    const limit = Math.max(50, Math.min(500, Number(state.accessLimit) || 200));
     const data = await apiJson(`/api/v1/access-log?${buildAccessLogQuery(since, limit)}`);
     const entries = data.entries || [];
     if (reset) {
@@ -8622,6 +8630,9 @@ async function loadAccessLog(reset = false) {
 }
 
 function startAccessLogPolling() {
+  if (state.accessPaused) {
+    return;
+  }
   if (state.accessLogTimer) {
     clearInterval(state.accessLogTimer);
   }
@@ -8633,6 +8644,15 @@ function stopAccessLogPolling() {
   if (state.accessLogTimer) {
     clearInterval(state.accessLogTimer);
     state.accessLogTimer = null;
+  }
+}
+
+function setAccessPaused(paused) {
+  state.accessPaused = paused;
+  if (paused) {
+    stopAccessLogPolling();
+  } else {
+    startAccessLogPolling();
   }
 }
 
@@ -11132,7 +11152,11 @@ function bindEvents() {
     elements.accessEvent.addEventListener('change', () => {
       state.accessEventFilter = elements.accessEvent.value;
       state.accessLogCursor = 0;
-      loadAccessLog(true);
+      if (state.accessPaused) {
+        renderAccessLog();
+      } else {
+        loadAccessLog(true);
+      }
     });
   }
 
@@ -11140,7 +11164,11 @@ function bindEvents() {
     elements.accessFilter.addEventListener('input', () => {
       state.accessTextFilter = elements.accessFilter.value;
       state.accessLogCursor = 0;
-      loadAccessLog(true);
+      if (state.accessPaused) {
+        renderAccessLog();
+      } else {
+        loadAccessLog(true);
+      }
     });
   }
 
@@ -11149,7 +11177,14 @@ function bindEvents() {
     elements.accessLimit.addEventListener('change', () => {
       state.accessLimit = toNumber(elements.accessLimit.value) || 200;
       state.accessLogCursor = 0;
-      loadAccessLog(true);
+      if (state.accessLogEntries.length > state.accessLimit) {
+        state.accessLogEntries = state.accessLogEntries.slice(state.accessLogEntries.length - state.accessLimit);
+      }
+      if (state.accessPaused) {
+        renderAccessLog();
+      } else {
+        loadAccessLog(true);
+      }
     });
   }
 
