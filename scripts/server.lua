@@ -765,6 +765,17 @@ function main()
         path = opt.web_dir,
         headers = { "Cache-Control: no-cache" },
     })
+    local function web_index(server, client, request)
+        if request and (request.path == "/" or request.path == "") then
+            local req = {}
+            for key, value in pairs(request) do
+                req[key] = value
+            end
+            req.path = "/index.html"
+            return web_static(server, client, req)
+        end
+        return web_static(server, client, request)
+    end
 
     local http_play_allow = setting_bool("http_play_allow", false)
     local http_play_hls = setting_bool("http_play_hls", false)
@@ -1192,7 +1203,7 @@ function main()
     end
 
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
-    table.insert(main_routes, { "/", http_redirect({ location = "/index.html" }) })
+    table.insert(main_routes, { "/", web_index })
     table.insert(main_routes, { "/*", web_static })
 
     http_server({
