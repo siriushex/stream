@@ -1,0 +1,29 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_test",
+      "name": "MPTS Test",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12345"
+      ],
+      "output": [
+        "udp://127.0.0.1:12346"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "codepage": "utf-8",
+          "provider_name": "Astral",
+          "tsid": 1
+        },
+        "advanced": {
+          "pass_sdt": true,
+          "pass_eit": true
+        }
+      }
+    }
+  ]
+}

@@ -233,6 +233,64 @@ local function apply_stream_defaults(channel_config)
     end
 end
 
+local function apply_mpts_config(channel_config)
+    if not channel_config or type(channel_config.mpts_config) ~= "table" then
+        return
+    end
+    local mpts = channel_config.mpts_config
+    local general = type(mpts.general) == "table" and mpts.general or {}
+    local nit = type(mpts.nit) == "table" and mpts.nit or {}
+    local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
+
+    if general.codepage and channel_config.codepage == nil then
+        channel_config.codepage = tostring(general.codepage)
+    end
+    if general.provider_name and channel_config.service_provider == nil then
+        channel_config.service_provider = tostring(general.provider_name)
+    end
+    if general.tsid ~= nil and channel_config.set_tsid == nil then
+        local tsid = tonumber(general.tsid)
+        if tsid ~= nil then
+            channel_config.set_tsid = tsid
+        end
+    end
+    if adv.pass_sdt and channel_config.pass_sdt == nil then
+        channel_config.pass_sdt = true
+    end
+    if adv.pass_eit and channel_config.pass_eit == nil then
+        channel_config.pass_eit = true
+    end
+
+    local unsupported = {}
+    local function note(label)
+        unsupported[#unsupported + 1] = label
+    end
+    if general.country ~= nil then note("general.country") end
+    if general.utc_offset ~= nil then note("general.utc_offset") end
+    if general.network_id ~= nil then note("general.network_id") end
+    if general.network_name ~= nil then note("general.network_name") end
+    if general.onid ~= nil then note("general.onid") end
+    if nit.lcn_version ~= nil then note("nit.lcn_version") end
+    if nit.delivery ~= nil and nit.delivery ~= "" then note("nit.delivery") end
+    if nit.frequency ~= nil then note("nit.frequency") end
+    if nit.symbolrate ~= nil then note("nit.symbolrate") end
+    if nit.fec ~= nil and nit.fec ~= "" then note("nit.fec") end
+    if nit.modulation ~= nil and nit.modulation ~= "" then note("nit.modulation") end
+    if nit.network_search ~= nil and nit.network_search ~= "" then note("nit.network_search") end
+    if adv.si_interval_ms ~= nil then note("advanced.si_interval_ms") end
+    if adv.pat_version ~= nil then note("advanced.pat_version") end
+    if adv.nit_version ~= nil then note("advanced.nit_version") end
+    if adv.cat_version ~= nil then note("advanced.cat_version") end
+    if adv.sdt_version ~= nil then note("advanced.sdt_version") end
+    if adv.pass_nit then note("advanced.pass_nit") end
+    if adv.pass_tdt then note("advanced.pass_tdt") end
+    if adv.disable_auto_remap then note("advanced.disable_auto_remap") end
+    if #unsupported > 0 then
+        log.warning("[" .. channel_config.name .. "] mpts_config fields not supported: " ..
+            table.concat(unsupported, ", "))
+    end
+end
+
 local function normalize_backup_type(value, has_multiple)
     if value == nil or value == "" then
         if has_multiple then
@@ -2755,6 +2813,7 @@ function make_channel(channel_config)
     if channel_config.output == nil then channel_config.output = {} end
     ensure_auto_hls_output(channel_config)
     apply_stream_defaults(channel_config)
+    apply_mpts_config(channel_config)
     if channel_config.timeout == nil then channel_config.timeout = 0 end
     if channel_config.enable == nil then channel_config.enable = true end
     if channel_config.http_keep_active == nil then channel_config.http_keep_active = 0 end
