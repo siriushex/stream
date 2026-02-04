@@ -19,6 +19,13 @@
   - Not run (docs + UI + API/runtime change).
 ### 2026-02-04
 - Changes:
+  - Added pause/refresh controls for Sessions and pause/clear for Access logs.
+  - Debounced filters and reduced DOM churn for sessions/logs rendering.
+  - Marked Sessions/Logs UX polish as done in `PLAN.md`.
+- Tests:
+  - Not run (UI change).
+### 2026-02-04
+- Changes:
   - Added access log visible count and limit clamp.
 - Tests:
   - Not run (UI change).

@@ -93,7 +93,7 @@ Gates/Tests:
 - Server smoke checklist in `AGENT.md` for any runtime/C changes.
 
 ### 1-2 Months (Productization)
-- [PARTIAL] Sessions/Logs UX polish (filters + perf).
+- [DONE] Sessions/Logs UX polish (filters, pause/refresh, perf optimizations).
 - [TODO] HLS failover resilience (no broken segments during input switch).
 - [PARTIAL] Config history UX (revision list + meaningful error text).
 - [DONE] Monitoring exports (Influx/Webhook documented and wired).

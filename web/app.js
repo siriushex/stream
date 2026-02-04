@@ -161,6 +161,7 @@ const state = {
   sessionFilterText: '',
   sessionGroupBy: false,
   sessionLimit: 200,
+  sessionPaused: false,
   accessLogCursor: 0,
   accessEventFilter: 'all',
   accessTextFilter: '',
@@ -351,10 +352,14 @@ const elements = {
   sessionFilter: $('#session-filter'),
   sessionGroup: $('#session-group'),
   sessionLimit: $('#session-limit'),
+  sessionPause: $('#session-pause'),
+  sessionRefresh: $('#session-refresh'),
   accessEvent: $('#access-event-filter'),
   accessFilter: $('#access-text-filter'),
   accessLimit: $('#access-limit'),
   accessCount: $('#access-count'),
+  accessPause: $('#access-pause'),
+  accessClear: $('#access-clear'),
   groupNew: $('#group-new'),
   groupTable: $('#group-table'),
   groupEmpty: $('#group-empty'),
@@ -976,6 +981,17 @@ function toNumber(value) {
   if (typeof value === 'string' && value.trim() === '') return undefined;
   const num = Number(value);
   return Number.isFinite(num) ? num : undefined;
+}
+
+function debounce(fn, delay = 250) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, delay);
+  };
 }
 
 function slugifyStreamId(name) {
@@ -8282,7 +8298,19 @@ function renderSessions() {
     </div>
   `;
 
-  elements.sessionTable.innerHTML = header;
+  const fragment = document.createDocumentFragment();
+  const headerRow = document.createElement('div');
+  headerRow.className = 'table-row header';
+  headerRow.innerHTML = `
+    <div>Server</div>
+    <div>Stream</div>
+    <div>IP</div>
+    <div>Login</div>
+    <div>Uptime (hour:min)</div>
+    <div>User-Agent</div>
+    <div></div>
+  `;
+  fragment.appendChild(headerRow);
   const totalCount = state.sessions.length;
   const filteredCount = sessions.length;
   elements.sessionTotal.textContent = (filteredCount === totalCount)
@@ -8295,7 +8323,9 @@ function renderSessions() {
     row.innerHTML = filterText
       ? '<div class="muted">No sessions match the filter</div>'
       : '<div class="muted">No sessions yet</div>';
-    elements.sessionTable.appendChild(row);
+    fragment.appendChild(row);
+    elements.sessionTable.innerHTML = '';
+    elements.sessionTable.appendChild(fragment);
     return;
   }
 
@@ -8324,7 +8354,7 @@ function renderSessions() {
     button.textContent = 'x';
     action.appendChild(button);
     row.appendChild(action);
-    elements.sessionTable.appendChild(row);
+    fragment.appendChild(row);
   };
 
   if (state.sessionGroupBy) {
@@ -8340,12 +8370,14 @@ function renderSessions() {
       const groupRow = document.createElement('div');
       groupRow.className = 'table-row group';
       groupRow.innerHTML = `<div>${label} (${groups[label].length})</div>`;
-      elements.sessionTable.appendChild(groupRow);
+      fragment.appendChild(groupRow);
       groups[label].forEach(renderRow);
     });
   } else {
     sessions.forEach(renderRow);
   }
+  elements.sessionTable.innerHTML = '';
+  elements.sessionTable.appendChild(fragment);
 }
 
 function buildSessionQuery() {
@@ -8373,6 +8405,9 @@ async function loadSessions() {
 }
 
 function startSessionPolling() {
+  if (state.sessionPaused) {
+    return;
+  }
   if (state.sessionTimer) {
     clearInterval(state.sessionTimer);
   }
@@ -8384,6 +8419,18 @@ function stopSessionPolling() {
   if (state.sessionTimer) {
     clearInterval(state.sessionTimer);
     state.sessionTimer = null;
+  }
+}
+
+function setSessionPaused(paused) {
+  state.sessionPaused = paused;
+  if (elements.sessionPause) {
+    elements.sessionPause.textContent = paused ? 'Resume' : 'Pause';
+  }
+  if (paused) {
+    stopSessionPolling();
+  } else {
+    startSessionPolling();
   }
 }
 
@@ -8657,6 +8704,9 @@ function stopAccessLogPolling() {
 
 function setAccessPaused(paused) {
   state.accessPaused = paused;
+  if (elements.accessPause) {
+    elements.accessPause.textContent = paused ? 'Resume' : 'Pause';
+  }
   if (paused) {
     stopAccessLogPolling();
   } else {
@@ -11122,26 +11172,34 @@ function bindEvents() {
   }
 
   if (elements.logFilter) {
-    elements.logFilter.addEventListener('input', () => {
-      state.logTextFilter = elements.logFilter.value;
+    const applyLogFilter = debounce(() => {
       state.logCursor = 0;
       if (state.logPaused) {
         renderLogs();
       } else {
         loadLogs(true);
       }
+    }, 300);
+    elements.logFilter.addEventListener('input', () => {
+      state.logTextFilter = elements.logFilter.value;
+      renderLogs();
+      applyLogFilter();
     });
   }
 
   if (elements.logStream) {
-    elements.logStream.addEventListener('input', () => {
-      state.logStreamFilter = elements.logStream.value;
+    const applyStreamFilter = debounce(() => {
       state.logCursor = 0;
       if (state.logPaused) {
         renderLogs();
       } else {
         loadLogs(true);
       }
+    }, 300);
+    elements.logStream.addEventListener('input', () => {
+      state.logStreamFilter = elements.logStream.value;
+      renderLogs();
+      applyStreamFilter();
     });
   }
 
@@ -11174,10 +11232,15 @@ function bindEvents() {
   }
 
   if (elements.sessionFilter) {
+    const applySessionFilter = debounce(() => {
+      if (!state.sessionPaused) {
+        loadSessions();
+      }
+    }, 300);
     elements.sessionFilter.addEventListener('input', () => {
       state.sessionFilterText = elements.sessionFilter.value;
       renderSessions();
-      loadSessions();
+      applySessionFilter();
     });
   }
 
@@ -11192,31 +11255,41 @@ function bindEvents() {
     elements.sessionLimit.value = String(state.sessionLimit || 200);
     elements.sessionLimit.addEventListener('change', () => {
       state.sessionLimit = toNumber(elements.sessionLimit.value) || 200;
-      loadSessions();
+      if (state.sessionPaused) {
+        renderSessions();
+      } else {
+        loadSessions();
+      }
     });
   }
 
   if (elements.accessEvent) {
-    elements.accessEvent.addEventListener('change', () => {
-      state.accessEventFilter = elements.accessEvent.value;
+    const applyAccessFilter = debounce(() => {
       state.accessLogCursor = 0;
       if (state.accessPaused) {
         renderAccessLog();
       } else {
         loadAccessLog(true);
       }
+    }, 300);
+    elements.accessEvent.addEventListener('change', () => {
+      state.accessEventFilter = elements.accessEvent.value;
+      applyAccessFilter();
     });
   }
 
   if (elements.accessFilter) {
-    elements.accessFilter.addEventListener('input', () => {
-      state.accessTextFilter = elements.accessFilter.value;
+    const applyAccessText = debounce(() => {
       state.accessLogCursor = 0;
       if (state.accessPaused) {
         renderAccessLog();
       } else {
         loadAccessLog(true);
       }
+    }, 300);
+    elements.accessFilter.addEventListener('input', () => {
+      state.accessTextFilter = elements.accessFilter.value;
+      applyAccessText();
     });
   }
 
@@ -11233,6 +11306,31 @@ function bindEvents() {
       } else {
         loadAccessLog(true);
       }
+    });
+  }
+
+  if (elements.sessionPause) {
+    elements.sessionPause.addEventListener('click', () => {
+      setSessionPaused(!state.sessionPaused);
+    });
+  }
+
+  if (elements.sessionRefresh) {
+    elements.sessionRefresh.addEventListener('click', () => {
+      loadSessions();
+    });
+  }
+
+  if (elements.accessPause) {
+    elements.accessPause.addEventListener('click', () => {
+      setAccessPaused(!state.accessPaused);
+    });
+  }
+
+  if (elements.accessClear) {
+    elements.accessClear.addEventListener('click', () => {
+      state.accessLogEntries = [];
+      renderAccessLog();
     });
   }
 
