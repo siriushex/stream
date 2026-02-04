@@ -5,6 +5,19 @@
 - Connect with: `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.2`
 - The server has no DVB support; do not test adapters or any DVB-related flows there.
 - Do not add secrets to the repo. Do not commit `.env` files or keys.
+- Follow the strict team workflow in `docs/engineering/TEAM_WORKFLOW.md` and ownership in `.github/CODEOWNERS`.
+
+## Codex environment setup (multi-agent)
+- Use a separate working tree per agent to avoid file collisions:
+  - `git worktree add ../astra-<agent> -b codex/<agent>/<topic>`
+- Configure a unique Git identity per agent:
+  - `git config user.name "<agent>"`
+  - `git config user.email "<agent>@users.noreply.github.com"`
+- Prefer rebasing by default:
+  - `git config pull.rebase true`
+- Ensure SSH access is configured for server deploys:
+  - Key at `~/.ssh/root_blast` and port `40242`.
+- Full checklist: `docs/engineering/CODEX_SETUP.md`.
 
 ## Strict workflow
 1. Plan (when the change is not trivial).
@@ -39,10 +52,15 @@
   - Only one agent merges to `main` at a time.
   - Declare the merge in the shared chat before starting and after finishing.
 
+## Ownership & Reviews
+- `.github/CODEOWNERS` defines required reviewers by path.
+- Changes that touch owned paths must be approved by owners before merge.
+- If a change spans multiple owned areas, approvals are required from each.
+
 ## Local parallelization (worktrees)
 - Use `git worktree` for separate branches on the same machine:
-  - `git worktree add ../astral-<agent> -b codex/<agent>/<topic>`
-  - `cd ../astral-<agent>`
+  - `git worktree add ../astra-<agent> -b codex/<agent>/<topic>`
+  - `cd ../astra-<agent>`
   - Work and push from the worktree as usual.
 
 ## Gates (pre-push)

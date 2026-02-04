@@ -35,6 +35,12 @@
 - UI существующих фич не удаляем. Добавляем новые поля/вкладки.
 - Никаких правок прямо на сервере: изменения только в репо, затем деплой.
 
+## Multi-agent coordination
+- Следовать `docs/engineering/TEAM_WORKFLOW.md` и `.github/CODEOWNERS`.
+- Ветки только `codex/<agent>/<topic>`, изменения — небольшими коммитами.
+- Если затрагиваешь чужую зону ownership — согласуй и получи review.
+- Всегда обновляй `CHANGELOG.md` и `docs/PARITY.md` (если меняется функционал).
+
 ## Репозиторий (ключевые точки входа)
 - `main.c` — entrypoint бинарника.
 - `scripts/server.lua` — HTTP сервер, UI, API, HLS/HTTP Play.

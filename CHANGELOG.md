@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Updated `AGENT.md` and `SKILL.md` for multi-agent coordination and ownership rules.
+- Tests:
+  - Not run (docs only).
+### 2026-02-04
+- Changes:
   - Added CODEOWNERS ownership map and CI guard for required ownership entries.
   - Added strict team workflow documentation and PR template.
 - Tests:
