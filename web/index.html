@@ -893,6 +893,18 @@
                 </label>
               </div>
               <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
+              <div class="panel-title">Transcode tools</div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>FFmpeg path</span>
+                  <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
+                </label>
+                <label class="field">
+                  <span>FFprobe path</span>
+                  <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
+                </label>
+              </div>
+              <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
               <div class="panel-title">Security &amp; Sessions</div>
               <label class="checkline">
                 <input type="checkbox" id="settings-http-csrf" />
