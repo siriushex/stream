@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added Astral watchdog templates + installer for CPU/RAM monitoring.
+  - Documented watchdog installation and configuration in `docs/OPERATIONS.md`.
+- Tests:
+  - Not run (ops scripts + docs).
+### 2026-02-04
+- Changes:
   - Synced `PLAN.md` with `docs/PARITY.md`/`docs/ROADMAP.md` and added phase DoD/gates.
   - Implemented CAS defaults in settings + stream runtime; added License view with `/api/v1/license`.
   - Extended CI smoke to hit the license endpoint.

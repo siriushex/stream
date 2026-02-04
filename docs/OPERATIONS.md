@@ -4,6 +4,9 @@
 Templates are in `contrib/systemd/`:
 - `astra.service`
 - `astra.env`
+- `astral-watchdog.service`
+- `astral-watchdog.timer`
+- `astral-watchdog.env`
 
 Example locations (adjust as needed):
 - Binary: `/opt/astra/astra`
@@ -15,6 +18,26 @@ Service command (from template):
 ```
 ExecStart=/opt/astra/astra scripts/server.lua --config ${ASTRA_CONFIG} \
   -p ${ASTRA_HTTP_PORT} --data-dir ${ASTRA_DATA_DIR} --web-dir ${ASTRA_WEB_DIR}
+```
+
+## Watchdog (CPU/RAM)
+The watchdog restarts the process if it exceeds CPU or RSS thresholds for
+several consecutive checks.
+
+Install:
+```
+sudo scripts/ops/install_watchdog.sh
+```
+
+Configuration:
+- `/etc/astral-watchdog.env`
+- Defaults: `CPU_LIMIT=300`, `RSS_LIMIT_MB=1500`, `HITS_THRESHOLD=2`
+- You can also set `ASTRA_CMD` or `ASTRA_PGREP` for custom run patterns.
+
+Status:
+```
+systemctl status astral-watchdog.timer
+journalctl -u astral-watchdog.service -n 50
 ```
 
 ## Upgrade Flow

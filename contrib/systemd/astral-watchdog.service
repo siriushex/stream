@@ -1,0 +1,7 @@
+[Unit]
+Description=Astral watchdog (CPU/RAM) for Astra process
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/astral-watchdog.sh
