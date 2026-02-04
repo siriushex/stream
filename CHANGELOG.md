@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Adjusted bundle build script to avoid bash readarray dependency.
+- Tests:
+  - Not run (script change).
+### 2026-02-04
+- Changes:
   - Added ASTRAL bundle build script and ffmpeg source manifest (SHA256 enforced).
   - Added bundle smoke test and transcode fixture for bundled ffmpeg.
   - Added transcode bundle documentation and README link.

@@ -206,7 +206,7 @@ if [[ -z "$FFMPEG_LOCAL" ]]; then
       echo "Missing $SOURCE_JSON" >&2
       exit 1
     fi
-    readarray -t source_line < <(SOURCE_JSON="$SOURCE_JSON" ARCH="$ARCH" PROFILE="$PROFILE" python3 - <<'PY'
+    SOURCE_LINE="$(SOURCE_JSON="$SOURCE_JSON" ARCH="$ARCH" PROFILE="$PROFILE" python3 - <<'PY'
 import json, os, sys
 root = os.environ.get('SOURCE_JSON')
 arch = os.environ.get('ARCH')
@@ -217,16 +217,14 @@ entry = data.get(arch, {}).get(profile)
 if not entry:
     print('', file=sys.stderr)
     sys.exit(1)
-print(entry['url'])
-print(entry['sha256'])
+print(f\"{entry['url']}|{entry['sha256']}\")
 PY
-    )
-    if [[ ${#source_line[@]} -lt 2 ]]; then
+    )"
+    IFS='|' read -r FFMPEG_SRC_URL FFMPEG_SHA <<<"$SOURCE_LINE"
+    if [[ -z "$FFMPEG_SRC_URL" || -z "$FFMPEG_SHA" ]]; then
       echo "No ffmpeg source for $ARCH/$PROFILE" >&2
       exit 1
     fi
-    FFMPEG_SRC_URL="${source_line[0]}"
-    FFMPEG_SHA="${source_line[1]}"
   fi
 
   ARCHIVE="$WORK_DIR/ffmpeg_bundle.tar"
