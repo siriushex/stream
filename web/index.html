@@ -1293,35 +1293,22 @@
           </div>
 
           <div class="settings-section" data-section="servers">
-            <div class="form-stack">
-              <label class="checkline">
-                <input type="checkbox" />
-                <span>Enable</span>
-              </label>
-              <label class="field">
-                <span>Server name</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Address</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Port</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Login</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Password</span>
-                <input type="password" />
-              </label>
-              <div class="apply-row">
-                <button class="btn">Apply</button>
-                <button class="btn ghost">Test</button>
+            <div class="panel users-panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Servers</div>
+                <button class="text-link" type="button" id="server-new">NEW SERVER</button>
               </div>
+              <div class="table" id="server-table">
+                <div class="table-row header">
+                  <div>ID</div>
+                  <div>Name</div>
+                  <div>Address</div>
+                  <div>Login</div>
+                  <div>Status</div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="muted" id="server-empty">No servers yet</div>
             </div>
           </div>
 
@@ -2920,6 +2907,56 @@
             <button class="btn" type="submit" id="group-save">Save</button>
             <button class="btn ghost" type="button" id="group-cancel">Cancel</button>
             <div class="form-note" id="group-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="server-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="server-title">New server</div>
+        <button class="icon-btn" id="server-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="server-form">
+        <label class="checkline">
+          <input type="checkbox" id="server-enabled" checked />
+          <span>Enable</span>
+        </label>
+        <label class="field">
+          <span>ID</span>
+          <input type="text" id="server-id" placeholder="astra-main" />
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="server-name" placeholder="Main server" />
+        </label>
+        <label class="field">
+          <span>Address</span>
+          <input type="text" id="server-host" placeholder="http://127.0.0.1" />
+        </label>
+        <label class="field">
+          <span>Port</span>
+          <input type="number" id="server-port" placeholder="8000" />
+        </label>
+        <label class="field">
+          <span>Login</span>
+          <input type="text" id="server-login" placeholder="admin" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="server-password" placeholder="(leave empty to keep)" />
+          <small class="form-hint" id="server-password-hint"></small>
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="server-save">Save</button>
+            <button class="btn ghost" type="button" id="server-cancel">Cancel</button>
+            <button class="btn ghost" type="button" id="server-test">Test</button>
+            <div class="form-note" id="server-error"></div>
           </div>
         </div>
       </form>

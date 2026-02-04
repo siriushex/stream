@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added Servers settings UI with test endpoint and remote health check.
+- Tests:
+  - Not run (UI + API change).
+### 2026-02-04
+- Changes:
   - Added Groups settings UI with stream group assignment and playlist group-title mapping.
 - Tests:
   - Not run (UI + server change).

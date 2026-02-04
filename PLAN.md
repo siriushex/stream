@@ -84,6 +84,7 @@ Build a Linux-first (Ubuntu) streaming platform based on this codebase that matc
 - Stream editor modal with tabs, inputs/outputs list.
 - Output modal and UI styling to match Cesbo.
 - Groups settings + stream group assignment: done.
+- Servers settings + test endpoint: done.
 
 ### Phase 3 - Live Metrics + Analyze (done, pending server verification)
 - Persist analyze stats per input (bitrate, CC/PES errors, on_air).
