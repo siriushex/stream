@@ -799,6 +799,11 @@ function toggleSettingsMenu() {
 }
 
 function setSettingsSection(section) {
+  const sectionEl = document.querySelector(`.settings-section[data-section="${section}"]`);
+  const menuEl = elements.settingsItems.find((item) => item.dataset.section === section);
+  if (!sectionEl || sectionEl.hidden || (menuEl && menuEl.hidden)) {
+    section = 'general';
+  }
   state.settingsSection = section;
   $$('.settings-section').forEach((item) => {
     item.classList.toggle('active', item.dataset.section === section);
