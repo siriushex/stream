@@ -1032,6 +1032,7 @@ function setView(name) {
   } else {
     stopDvbPolling();
   }
+  syncPollingForView();
 }
 
 function openSettingsMenu() {
@@ -9883,6 +9884,39 @@ function stopAccessLogPolling() {
   }
 }
 
+function syncPollingForView() {
+  if (state.currentView === 'sessions') {
+    startSessionPolling();
+  } else {
+    stopSessionPolling();
+  }
+  if (state.currentView === 'log') {
+    startLogPolling();
+  } else {
+    stopLogPolling();
+  }
+  if (state.currentView === 'access') {
+    startAccessLogPolling();
+  } else {
+    stopAccessLogPolling();
+  }
+  if (state.currentView === 'adapters') {
+    startAdapterPolling();
+  } else {
+    stopAdapterPolling();
+  }
+  if (state.currentView === 'buffers') {
+    startBufferPolling();
+  } else {
+    stopBufferPolling();
+  }
+  if (state.currentView === 'splitters') {
+    startSplitterPolling();
+  } else {
+    stopSplitterPolling();
+  }
+}
+
 function pauseAllPolling() {
   stopStatusPolling();
   stopAdapterPolling();
@@ -9898,15 +9932,10 @@ function pauseAllPolling() {
 function resumeAllPolling() {
   if (document.hidden) return;
   startStatusPolling();
-  startAdapterPolling();
+  syncPollingForView();
   if (state.currentView === 'adapters') {
     startDvbPolling();
   }
-  startSplitterPolling();
-  startBufferPolling();
-  startSessionPolling();
-  startLogPolling();
-  startAccessLogPolling();
 }
 
 function setAccessPaused(paused) {
