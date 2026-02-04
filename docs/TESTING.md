@@ -25,6 +25,16 @@ What it does:
 ./astra scripts/tests/telegram_unit.lua
 ```
 
+## Bundle Smoke (transcode)
+Build or provide a bundle, then run:
+```sh
+contrib/ci/smoke_bundle_transcode.sh
+```
+
+Environment:
+- `BUNDLE_TAR=/path/to/astral-transcode-<version>-linux-<arch>-<profile>.tar.gz`
+- `PORT=9065` (optional)
+
 ## Server Verification (required for release)
 All final verification must run on the target server in `/home/hex`.
 See `AGENT.md` for the full checklist and constraints (no DVB tests).

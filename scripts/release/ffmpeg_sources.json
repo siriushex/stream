@@ -1,0 +1,22 @@
+{
+  "linux-x86_64": {
+    "lgpl": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-lgpl.tar.xz",
+      "sha256": "77e78e0f4068803b7f2c4291d7b8f9c8065a226429668185c99ee45b1b098b98"
+    },
+    "gpl": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
+      "sha256": "eee9ec34b2ebd4aa0c3660572b180cb05d42272f13b8860f94ef2b86a86aad0c"
+    }
+  },
+  "linux-aarch64": {
+    "lgpl": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-lgpl.tar.xz",
+      "sha256": "0fa0afab0ed2b16120f1552c170dff914a84e99d5a92d47cbed4c9d0dbaf5e4a"
+    },
+    "gpl": {
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
+      "sha256": "f6232bf1444342e3b55cf0e4d5ad0130a761b0826b7061761e6a83f2702e5a8e"
+    }
+  }
+}

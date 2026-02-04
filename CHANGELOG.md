@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added ASTRAL bundle build script and ffmpeg source manifest (SHA256 enforced).
+  - Added bundle smoke test and transcode fixture for bundled ffmpeg.
+  - Added transcode bundle documentation and README link.
+- Tests:
+  - Not run (bundle packaging).
+### 2026-02-04
+- Changes:
   - Added General settings fields for ffmpeg/ffprobe path overrides.
 - Tests:
   - Not run (UI change).
