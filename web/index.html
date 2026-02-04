@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260205m</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260205n</div>
       </div>
     </header>
 
@@ -1740,6 +1740,20 @@
               <li><code>/play/&lt;stream_id&gt;</code> — play a stream by ID.</li>
               <li><code>/play/playlist.m3u8</code> — HLS playlist of all streams.</li>
               <li><code>/stream/&lt;stream_id&gt;</code> — legacy alias.</li>
+            </ul>
+
+            <h4>Failover (Inputs)</h4>
+            <ul>
+              <li><strong>Input order</strong> defines priority (first input is active).</li>
+              <li><strong>Backup mode</strong> default is passive; backups activate only on failure.</li>
+              <li>Tune sensitivity via <strong>probe interval</strong> and <strong>no data timeout</strong>.</li>
+            </ul>
+
+            <h4>DVB Scan</h4>
+            <ul>
+              <li>Save adapter first, then press <strong>Scan</strong>.</li>
+              <li><strong>Add selected</strong> creates streams by PNR (duplicates skipped).</li>
+              <li>Busy adapters are marked <strong>BUSY</strong> in Detected DVB list.</li>
             </ul>
 
             <h4>CLI</h4>
