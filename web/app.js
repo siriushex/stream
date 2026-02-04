@@ -5712,9 +5712,10 @@ async function pollAdapterScan(jobId) {
   }
 }
 
-async function startAdapterScan(adapterId) {
+async function startAdapterScan(adapterId, opts) {
   if (!adapterId) return;
-  if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = 'Starting scan...';
+  const warning = opts && opts.warning ? `${opts.warning} ` : '';
+  if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = `${warning}Starting scan...`;
   if (elements.adapterScanSignal) {
     const status = getAdapterStatusEntry(adapterId);
     elements.adapterScanSignal.textContent = formatScanSignalLine(status);
@@ -12676,16 +12677,20 @@ function bindEvents() {
         setStatus('Save adapter to enable scan');
         return;
       }
-      if (!isAdapterLocked(adapterId)) {
-        setStatus('Signal lock required');
-        return;
+      const status = getAdapterStatusEntry(adapterId, adapter && adapter.config);
+      const locked = isAdapterLocked(adapterId, adapter && adapter.config);
+      let warning = '';
+      if (!status) {
+        warning = 'Adapter status unavailable; scan may fail.';
+      } else if (!locked) {
+        warning = 'Signal not locked; scan may fail.';
       }
       if (elements.adapterScanSub) {
         elements.adapterScanSub.textContent = `Adapter: ${adapterId}`;
       }
       setOverlay(elements.adapterScanOverlay, true);
       try {
-        await startAdapterScan(adapterId);
+        await startAdapterScan(adapterId, warning ? { warning } : null);
       } catch (err) {
         if (elements.adapterScanStatus) {
           elements.adapterScanStatus.textContent = formatNetworkError(err) || err.message || 'Scan failed.';

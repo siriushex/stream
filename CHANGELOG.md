@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Allow adapter scan even when lock/status is missing (with warning message).
+- Tests:
+  - Not run (UI-only).
+### 2026-02-05
+- Changes:
   - Documented DVB adapter UX polish in ROADMAP and PARITY.
 - Tests:
   - Not run (docs-only).
