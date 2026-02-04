@@ -66,8 +66,8 @@ Legend: DONE, PARTIAL, TODO
 | Feature | Status | UI | API | Runtime | Tests | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | Softcam settings (list + apply) | DONE | DONE | DONE | DONE | manual | |
-| CAS settings | TODO (hidden) | HIDDEN | TODO | TODO | N/A | Hidden until backend exists |
-| License view | TODO (hidden) | HIDDEN | TODO | TODO | N/A | Hidden until backend exists |
+| CAS settings | DONE | DONE | DONE | DONE | manual | Default CAS passthrough applied via settings. |
+| License view | DONE | DONE | DONE | DONE | manual | Read-only license via `/api/v1/license` (COPYING). |
 
 ## Monitoring / Integrations
 | Feature | Status | UI | API | Runtime | Tests | Notes |

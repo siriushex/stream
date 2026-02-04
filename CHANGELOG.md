@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Synced `PLAN.md` with `docs/PARITY.md`/`docs/ROADMAP.md` and added phase DoD/gates.
+  - Implemented CAS defaults in settings + stream runtime; added License view with `/api/v1/license`.
+  - Extended CI smoke to hit the license endpoint.
+- Tests:
+  - Not run (docs + UI + API/runtime change).
+### 2026-02-04
+- Changes:
   - Added access log visible count and limit clamp.
 - Tests:
   - Not run (UI change).
