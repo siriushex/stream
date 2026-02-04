@@ -1409,7 +1409,17 @@
             </select>
             <input type="text" id="log-stream-filter" placeholder="Stream id..." />
             <input type="text" id="log-text-filter" placeholder="Filter logs..." />
+            <label class="session-limit log-limit">
+              <span>Limit</span>
+              <select id="log-limit">
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500" selected>500</option>
+                <option value="1000">1000</option>
+              </select>
+            </label>
           </div>
+          <div class="log-count muted">Shown: <span id="log-count">0</span></div>
           <button class="link-btn" id="log-pause">Pause</button>
           <button class="link-btn" id="log-clear">Clear</button>
         </div>

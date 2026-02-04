@@ -156,6 +156,7 @@ const state = {
   logTextFilter: '',
   logStreamFilter: '',
   logPaused: false,
+  logLimit: 500,
   sessionFilterText: '',
   sessionGroupBy: false,
   sessionLimit: 200,
@@ -339,6 +340,8 @@ const elements = {
   logLevel: $('#log-level-filter'),
   logFilter: $('#log-text-filter'),
   logStream: $('#log-stream-filter'),
+  logLimit: $('#log-limit'),
+  logCount: $('#log-count'),
   sessionFilter: $('#session-filter'),
   sessionGroup: $('#session-group'),
   sessionLimit: $('#session-limit'),
@@ -8671,14 +8674,24 @@ function renderLogs() {
   elements.logOutput.textContent = '';
   if (!entries.length) {
     elements.logOutput.textContent = state.logEntries.length ? 'No logs match the filter.' : 'No logs yet.';
+    if (elements.logCount) {
+      const total = state.logEntries.length;
+      elements.logCount.textContent = total ? `0/${total}` : '0';
+    }
     return;
   }
+  const fragment = document.createDocumentFragment();
   entries.forEach((entry) => {
     const line = document.createElement('div');
     line.className = `log-line ${logLevelClass(entry.level)}`;
     line.textContent = `${formatLogTime(entry.ts)} [${entry.level}] ${entry.message}`;
-    elements.logOutput.appendChild(line);
+    fragment.appendChild(line);
   });
+  elements.logOutput.appendChild(fragment);
+  if (elements.logCount) {
+    const total = state.logEntries.length;
+    elements.logCount.textContent = entries.length === total ? String(total) : `${entries.length}/${total}`;
+  }
   if (!state.logPaused) {
     elements.logOutput.scrollTop = elements.logOutput.scrollHeight;
   }
@@ -8706,16 +8719,18 @@ function appendLogEntries(entries) {
     return;
   }
   state.logEntries = state.logEntries.concat(entries);
-  if (state.logEntries.length > 2000) {
-    state.logEntries = state.logEntries.slice(state.logEntries.length - 2000);
+  const maxEntries = Math.max(50, Number(state.logLimit) || 500);
+  if (state.logEntries.length > maxEntries) {
+    state.logEntries = state.logEntries.slice(state.logEntries.length - maxEntries);
   }
   renderLogs();
 }
 
 async function loadLogs(reset = false) {
   try {
+    const fetchLimit = Math.max(50, Math.min(500, Number(state.logLimit) || 200));
     const since = reset ? 0 : state.logCursor;
-    const data = await apiJson(`/api/v1/logs?${buildLogQuery(since, 200)}`);
+    const data = await apiJson(`/api/v1/logs?${buildLogQuery(since, fetchLimit)}`);
     const entries = data.entries || [];
     if (reset) {
       state.logEntries = [];
@@ -11065,6 +11080,22 @@ function bindEvents() {
   if (elements.logLevel) {
     elements.logLevel.addEventListener('change', () => {
       state.logLevelFilter = elements.logLevel.value;
+      state.logCursor = 0;
+      if (state.logPaused) {
+        renderLogs();
+      } else {
+        loadLogs(true);
+      }
+    });
+  }
+
+  if (elements.logLimit) {
+    elements.logLimit.value = String(state.logLimit || 500);
+    elements.logLimit.addEventListener('change', () => {
+      state.logLimit = toNumber(elements.logLimit.value) || 500;
+      if (state.logEntries.length > state.logLimit) {
+        state.logEntries = state.logEntries.slice(state.logEntries.length - state.logLimit);
+      }
       state.logCursor = 0;
       if (state.logPaused) {
         renderLogs();
