@@ -22,6 +22,8 @@
 
 #include <astra.h>
 #include "inscript.h"
+#include <limits.h>
+#include <unistd.h>
 
 static const char __module_name[] = "inscript";
 
@@ -81,6 +83,63 @@ static bool is_config_path(const char *value)
     return false;
 }
 
+static bool is_server_app_option(const char *value)
+{
+    if(!value || value[0] == '\0')
+        return false;
+    if(value[0] != '-')
+        return false;
+    if(!strcmp(value, "--stream"))
+        return false;
+    if(!strcmp(value, "--analyze"))
+        return false;
+    if(!strcmp(value, "--relay"))
+        return false;
+    if(!strcmp(value, "--xproxy"))
+        return false;
+    if(!strcmp(value, "--dvbls"))
+        return false;
+    if(!strcmp(value, "--femon"))
+        return false;
+    if(!strcmp(value, "-"))
+        return false;
+    return true;
+}
+
+static bool resolve_server_script(char *out, size_t out_len)
+{
+    if(access("scripts/server.lua", R_OK) == 0)
+    {
+        if(out_len < sizeof("scripts/server.lua"))
+            return false;
+        memcpy(out, "scripts/server.lua", sizeof("scripts/server.lua"));
+        return true;
+    }
+#ifndef _WIN32
+    char exe_path[PATH_MAX];
+    const ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if(len > 0)
+    {
+        exe_path[len] = '\0';
+        char *slash = strrchr(exe_path, '/');
+        if(slash)
+        {
+            *slash = '\0';
+            const size_t exe_len = strlen(exe_path);
+            const char *suffix = "/scripts/server.lua";
+            const size_t suffix_len = strlen(suffix);
+            if(exe_len + suffix_len + 1 > out_len)
+                return false;
+            memcpy(out, exe_path, exe_len);
+            memcpy(out + exe_len, suffix, suffix_len + 1);
+            if(access(out, R_OK) == 0)
+                return true;
+        }
+    }
+#endif
+    return false;
+}
+
 static int fn_inscript_callback(lua_State *L)
 {
     __uarg(L);
@@ -110,18 +169,31 @@ static int fn_inscript_callback(lua_State *L)
     const char *script = luaL_checkstring(lua, -1);
     lua_pop(lua, 1); // script
 
-    if(is_config_path(script))
+    const bool config_path = is_config_path(script);
+    const bool server_opts = is_server_app_option(script);
+
+    if(config_path || server_opts)
     {
+        char server_script[PATH_MAX];
+        if(!resolve_server_script(server_script, sizeof(server_script)))
+        {
+            luaL_error(lua, "[main] server.lua isn't found (scripts/server.lua)");
+        }
+
         lua_newtable(lua);
         int new_idx = 1;
-        lua_pushstring(lua, "scripts/server.lua");
+        lua_pushstring(lua, server_script);
         lua_rawseti(lua, -2, new_idx++);
-        lua_pushstring(lua, "--config");
-        lua_rawseti(lua, -2, new_idx++);
-        lua_pushstring(lua, script);
-        lua_rawseti(lua, -2, new_idx++);
+        if(config_path)
+        {
+            lua_pushstring(lua, "--config");
+            lua_rawseti(lua, -2, new_idx++);
+            lua_pushstring(lua, script);
+            lua_rawseti(lua, -2, new_idx++);
+        }
 
-        for(int i = 2; i <= argc; i++)
+        const int start_idx = config_path ? 2 : 1;
+        for(int i = start_idx; i <= argc; i++)
         {
             lua_rawgeti(lua, -2, i);
             lua_rawseti(lua, -2, new_idx++);
@@ -130,7 +202,7 @@ static int fn_inscript_callback(lua_State *L)
         lua_setglobal(lua, "argv");
         lua_pop(lua, 1); // argv
         argc = new_idx - 1;
-        script = "scripts/server.lua";
+        script = server_script;
     }
     else
     {

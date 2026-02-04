@@ -54,7 +54,7 @@ options = {
 }
 
 function main()
-    log.info("Starting Astra " .. astra.version)
+    log.info("Starting " .. astra_brand_version())
 
     if not dvb_conf.adapter and not dvb_conf.mac then
         astra_usage()

@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Refreshed `SKILL.md` and `AGENT.md` to reflect current UX updates, single-owner governance, and CI guardrails.
+- Tests:
+  - Not run (docs only).
+### 2026-02-04
+- Changes:
   - Default data directory now uses /etc/astral/<config>.data unless overridden by ASTRA_DATA_ROOT.
   - Added astral symlink alongside astra binary for simplified запуск.
   - Added ASTRA_WEB_DIR/ASTRAL_WEB_DIR override for UI path.

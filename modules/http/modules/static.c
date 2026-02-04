@@ -279,6 +279,16 @@ static int module_call(module_data_t *mod)
     free(filename);
     if(client->response->file_fd == -1)
     {
+        if(path && !strcmp(path, "/favicon.ico"))
+        {
+            free(client->response);
+            client->response = NULL;
+            http_response_code(client, 204, NULL);
+            http_response_header(client, "Content-Length: 0");
+            http_response_send(client);
+            return 0;
+        }
+
         http_client_warning(client, "file not found %s", path);
 
         free(client->response);

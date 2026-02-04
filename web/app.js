@@ -20,7 +20,7 @@ function parseTilesIdList(value) {
 }
 
 function loadTilesUiState() {
-  const mode = normalizeTilesMode(localStorage.getItem(TILE_MODE_KEY) || 'expanded');
+  const mode = normalizeTilesMode(localStorage.getItem(TILE_MODE_KEY) || 'compact');
   const expandedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_EXPANDED_KEY)));
   const collapsedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_COLLAPSED_KEY)));
   return { mode, expandedIds, collapsedIds };
@@ -5552,7 +5552,9 @@ async function createStreamsFromScan(adapterId) {
     .map((item) => item.dataset.pnr)
     .filter(Boolean);
   if (!list.length) {
-    setStatus('Select at least one channel');
+    const message = 'Select at least one channel';
+    setStatus(message);
+    if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
     return;
   }
   const existingPnrs = collectExistingDvbPnrs(adapterId);
@@ -5609,17 +5611,25 @@ async function createStreamsFromScan(adapterId) {
       ? 'Streams created, but refresh failed. Reload later.'
       : (err && err.message ? err.message : 'Streams created, but refresh failed');
     setStatus(message);
+    if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
+    closeAdapterScanModal();
+    setView('streams');
     return;
   }
   const skippedLabel = skipped.length ? `, skipped ${skipped.length} existing (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})` : '';
+  let message = '';
   if (failures.length) {
     console.warn('Scan add failures', failures);
-    setStatus(`Created ${results.length} stream(s)${skippedLabel}, ${failures.length} failed`);
+    message = `Created ${results.length} stream(s)${skippedLabel}, ${failures.length} failed`;
   } else if (results.length === 0 && skipped.length) {
-    setStatus(`All selected channels already exist (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})`);
+    message = `All selected channels already exist (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})`;
   } else {
-    setStatus(`Created ${results.length} stream(s)${skippedLabel}`);
+    message = `Created ${results.length} stream(s)${skippedLabel}`;
   }
+  setStatus(message);
+  if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
+  closeAdapterScanModal();
+  setView('streams');
 }
 
 const FE_HAS_SIGNAL = 1;

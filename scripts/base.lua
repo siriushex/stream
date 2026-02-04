@@ -127,6 +127,16 @@ local function resolve_bundle_candidate(name)
     return nil
 end
 
+function astra_brand_version()
+    local name = os.getenv("ASTRAL_NAME")
+        or os.getenv("ASTRA_NAME")
+        or "Astral"
+    local version = os.getenv("ASTRAL_VERSION")
+        or os.getenv("ASTRA_VERSION")
+        or "1.0"
+    return name .. " " .. version
+end
+
 function resolve_tool_path(name, opts)
     opts = opts or {}
     local prefer = opts.prefer
@@ -747,6 +757,65 @@ end
 
 http_user_agent = "Astra"
 http_input_instance_list = {}
+https_input_instance_list = {}
+https_bridge_port_map = {}
+
+local function https_instance_key(conf)
+    if conf.source_url and conf.source_url ~= "" then
+        return conf.source_url
+    end
+    if conf.url and conf.url ~= "" then
+        return conf.url
+    end
+    local host = conf.host or conf.addr or ""
+    local port = conf.port or ""
+    local path = conf.path or ""
+    return tostring(conf.format or "https") .. "://" .. host .. ":" .. tostring(port) .. tostring(path)
+end
+
+local function hash_string(text)
+    local h = 0
+    if not text then
+        return h
+    end
+    for i = 1, #text do
+        h = (h * 131 + text:byte(i)) % 2147483647
+    end
+    return h
+end
+
+local function ensure_https_bridge_port(conf)
+    local port = tonumber(conf.bridge_port)
+    if port then
+        return port
+    end
+    local key = https_instance_key(conf)
+    if key == "" then
+        return nil
+    end
+    local cached = https_bridge_port_map[key]
+    if cached then
+        conf.bridge_port = cached
+        return cached
+    end
+    local base_port = 20000
+    local range = 30000
+    local start = base_port + (hash_string(key) % range)
+    local bind_host = conf.bridge_addr or "127.0.0.1"
+    for i = 0, range - 1 do
+        local candidate = base_port + ((start - base_port + i) % range)
+        local ok = true
+        if utils and utils.can_bind then
+            ok = utils.can_bind(bind_host, candidate)
+        end
+        if ok then
+            https_bridge_port_map[key] = candidate
+            conf.bridge_port = candidate
+            return candidate
+        end
+    end
+    return nil
+end
 
 init_input_module.http = function(conf)
     local instance_id = conf.host .. ":" .. conf.port .. conf.path
@@ -848,6 +917,106 @@ init_input_module.http = function(conf)
 
     instance.clients = instance.clients + 1
     return instance.transmit
+end
+
+local function start_https_bridge(conf)
+    if not process or type(process.spawn) ~= "function" then
+        log.error("[" .. conf.name .. "] process module not available")
+        return false
+    end
+
+    local bridge_port = ensure_https_bridge_port(conf)
+    if not bridge_port then
+        log.error("[" .. conf.name .. "] https bridge_port is required or no free port found")
+        return false
+    end
+
+    local bridge_addr = conf.bridge_addr or "127.0.0.1"
+    local source_url = build_bridge_source_url(conf)
+    if not source_url then
+        log.error("[" .. conf.name .. "] source url is required")
+        return false
+    end
+
+    local udp_url = build_bridge_udp_url(conf, bridge_addr, bridge_port)
+    local bin = resolve_tool_path("ffmpeg", {
+        setting_key = "ffmpeg_path",
+        env_key = "ASTRA_FFMPEG_PATH",
+        prefer = conf.bridge_bin,
+    })
+    local args = {
+        bin,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        conf.bridge_log_level or "warning",
+    }
+    local ua = conf.user_agent or conf.ua
+    if ua and ua ~= "" then
+        args[#args + 1] = "-user_agent"
+        args[#args + 1] = tostring(ua)
+    end
+    append_bridge_args(args, conf.bridge_input_args)
+    args[#args + 1] = "-i"
+    args[#args + 1] = source_url
+    args[#args + 1] = "-c"
+    args[#args + 1] = "copy"
+    args[#args + 1] = "-f"
+    args[#args + 1] = "mpegts"
+    append_bridge_args(args, conf.bridge_output_args)
+    args[#args + 1] = udp_url
+
+    local ok, proc = pcall(process.spawn, args)
+    if not ok or not proc then
+        log.error("[" .. conf.name .. "] https bridge spawn failed")
+        return false
+    end
+
+    conf.__bridge_proc = proc
+    conf.__bridge_args = args
+    conf.__bridge_udp_conf = {
+        addr = bridge_addr,
+        port = bridge_port,
+        localaddr = conf.bridge_localaddr or conf.localaddr,
+        socket_size = tonumber(conf.bridge_socket_size) or conf.socket_size,
+        renew = conf.renew,
+    }
+    return true
+end
+
+init_input_module.https = function(conf)
+    local instance_id = https_instance_key(conf)
+    local instance = https_input_instance_list[instance_id]
+    if not instance then
+        if conf.ua and not conf.user_agent then
+            conf.user_agent = conf.ua
+        end
+        if not start_https_bridge(conf) then
+            return nil
+        end
+        instance = { clients = 0, config = conf }
+        https_input_instance_list[instance_id] = instance
+    end
+
+    instance.clients = instance.clients + 1
+    return init_input_module.udp(conf.__bridge_udp_conf)
+end
+
+kill_input_module.https = function(module, conf)
+    local instance_id = https_instance_key(conf)
+    local instance = https_input_instance_list[instance_id]
+    if not instance then
+        return
+    end
+
+    instance.clients = instance.clients - 1
+    if conf.__bridge_udp_conf then
+        kill_input_module.udp(module, conf.__bridge_udp_conf)
+    end
+    if instance.clients <= 0 then
+        stop_bridge_process(conf)
+        https_input_instance_list[instance_id] = nil
+    end
 end
 
 kill_input_module.http = function(module)
@@ -1525,7 +1694,7 @@ end
 -- o888ooooo88   88ooo88 o88o  o888o o888ooo88
 
 function astra_usage()
-    log.info("Astra " .. astra.version)
+    log.info(astra_brand_version())
     print([[
 
 Usage: astra APP [OPTIONS]
@@ -1559,7 +1728,7 @@ Astra Options:
 end
 
 function astra_version()
-    log.info("Astra " .. astra.version)
+    log.info(astra_brand_version())
     astra.exit()
 end
 

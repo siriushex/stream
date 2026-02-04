@@ -431,7 +431,7 @@ function main()
         log.error("--xproxy option is deprecated. use --relay instead")
     end
 
-    log.info("Starting Astra " .. astra.version)
+    log.info("Starting " .. astra_brand_version())
     log.info("Astra Relay started on " .. relay_addr .. ":" .. relay_port)
 
     local route = {

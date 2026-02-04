@@ -27,7 +27,11 @@
 - Groups settings + stream group field (playlist group-title).
 - Servers settings + test endpoint.
 - Softcam settings UI (list + modal) backed by settings.
-- CAS/License sections marked as not implemented (clarity only).
+- CAS settings wired; License view read-only via `/api/v1/license`.
+- Dashboard stream tiles: compact/expanded modes with persisted state (localStorage).
+- Apply UX: “Applying…” indicator + partial list refresh (no full re-render).
+- Root UI path `/` (serves UI without `/index.html`).
+- Reduced UI polling frequency + pause when tab hidden; 1s cache for `/api/v1/stream-status`.
 
 ## Invariants (не нарушать)
 - API `/api/v1/*` не ломаем. Новые эндпоинты — только add‑only.
@@ -38,9 +42,10 @@
 ## Multi-agent coordination
 - Следовать `docs/engineering/TEAM_WORKFLOW.md` и `.github/CODEOWNERS`.
 - Ветки только `codex/<agent>/<topic>`, изменения — небольшими коммитами.
-- Если затрагиваешь чужую зону ownership — согласуй и получи review.
+- Все изменения утверждает single owner: `@siriushex`.
 - Всегда обновляй `CHANGELOG.md` и `docs/PARITY.md` (если меняется функционал).
 - PR обязателен, прямые пуши в `main` запрещены.
+- CI проверяет формат ветки и наличие записи в `CHANGELOG.md`.
 
 ## Репозиторий (ключевые точки входа)
 - `main.c` — entrypoint бинарника.
@@ -55,6 +60,11 @@
 ## Где смотреть полный реестр API/настроек
 - Полный API и settings — в `README.md`.
 - Полный workflow и smoke‑tests — в `AGENT.md`.
+
+## План и паритет
+- План разработки: `PLAN.md`
+- Roadmap: `docs/ROADMAP.md`
+- Матрица паритета: `docs/PARITY.md`
 
 ## Правила доработок (чтобы не терялись обновления)
 - Всегда обновлять `CHANGELOG.md` на каждое изменение.

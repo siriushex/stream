@@ -42,6 +42,7 @@
   - Ensure CI is green and CODEOWNERS approvals are present.
   - Rebase if required by branch protection rules.
   - Merge using fast-forward or linear history (no merge commits).
+- Direct merge without PR is запрещён.
 - Conflict policy:
   - Resolve conflicts only on the feature branch.
   - Never force-push to `main`.
@@ -50,9 +51,12 @@
   - Declare the merge in the shared chat before starting and after finishing.
 
 ## Ownership & Reviews
-- `.github/CODEOWNERS` defines required reviewers by path.
-- Changes that touch owned paths must be approved by owners before merge.
-- If a change spans multiple owned areas, approvals are required from each.
+- `.github/CODEOWNERS` sets a single owner: `@siriushex`.
+- Any change requires approval from `@siriushex` before merge.
+
+## CI guardrails
+- CI enforces branch naming: `codex/<agent>/<topic>`.
+- CI enforces a `CHANGELOG.md` update in every PR.
 
 ## Local parallelization (worktrees)
 - Use `git worktree` for separate branches on the same machine:
@@ -63,6 +67,11 @@
 ## Gates (pre-push)
 - Always run `contrib/ci/smoke.sh` locally or rely on CI for non-runtime changes.
 - If changes affect runtime/C or core streaming behavior, run the full server smoke checklist in this file.
+
+## Planning context
+- Plan: `PLAN.md`
+- Roadmap: `docs/ROADMAP.md`
+- Parity matrix: `docs/PARITY.md`
 
 ## Upload
 - Target directory: `/home/hex/astra`
