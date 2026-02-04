@@ -107,7 +107,7 @@ static void fe_read_status(dvb_fe_t *fe, fe_status_t fe_status)
             }
             else
             {
-                asc_log_info(MSG("fe has no lock. status:%c%c%c%c%c "
+                asc_log_info(MSG("fe has lock. status:%c%c%c%c%c "
                                  "signal:-%ddBm snr:%d.%ddB ber:%d unc:%d"),
                     ss, sc, sv, sy, sl,
                     fe->signal, fe->snr / 10, fe->snr % 10,
