@@ -5745,7 +5745,6 @@ function readAdapterForm() {
     adapter: adapterIndex,
     device: toNumber(elements.adapterDevice.value) || 0,
     type: elements.adapterType.value,
-    modulation: elements.adapterModulation.value,
     ca_pmt_delay: toNumber(elements.adapterCaPmtDelay.value),
     buffer_size: toNumber(elements.adapterBufferSize.value),
     budget: elements.adapterBudget.checked || undefined,
@@ -5755,6 +5754,14 @@ function readAdapterForm() {
   };
 
   const type = (config.type || '').toUpperCase();
+  const modulation = elements.adapterModulation.value;
+  if (type.startsWith('S')) {
+    if (modulation && modulation.toUpperCase() !== 'AUTO') {
+      config.modulation = modulation;
+    }
+  } else if (modulation) {
+    config.modulation = modulation;
+  }
   if (type.startsWith('S')) {
     config.tp = elements.adapterTp.value.trim();
     config.lnb = elements.adapterLnb.value.trim();

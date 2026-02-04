@@ -203,6 +203,8 @@ local function sanitize_adapter_config(id, cfg)
         return cfg, false
     end
     local changed = false
+    local adapter_type = tostring(cfg.type or "")
+    local is_sat = adapter_type:match("^[sS]") or adapter_type:lower():find("dvb%-s", 1, true)
     if cfg.lnb ~= nil then
         local parts = parse_lnb(cfg.lnb)
         if not parts then
@@ -211,6 +213,14 @@ local function sanitize_adapter_config(id, cfg)
             cfg.lof1 = nil
             cfg.lof2 = nil
             cfg.slof = nil
+            changed = true
+        end
+    end
+    if is_sat and cfg.modulation ~= nil then
+        local modulation = tostring(cfg.modulation)
+        if modulation:upper() == "AUTO" or modulation:upper() == "QAM_AUTO" then
+            log.warning("[config] adapter " .. tostring(id) .. " modulation AUTO is invalid for DVB-S/S2, clearing")
+            cfg.modulation = nil
             changed = true
         end
     end
