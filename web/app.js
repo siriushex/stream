@@ -5052,10 +5052,10 @@ function findDvbAdapter(adapter, device) {
 }
 
 function formatDvbStatus(item) {
-  if (!item) return { label: 'Missing', className: 'missing', hint: 'Adapter not detected' };
-  if (item.error) return { label: 'Error', className: 'error', hint: item.error };
-  if (item.busy) return { label: 'Busy', className: 'busy', hint: 'Adapter is in use' };
-  return { label: 'Free', className: 'free', hint: 'Adapter is available' };
+  if (!item) return { label: 'MISSING', className: 'missing', hint: 'Adapter not detected' };
+  if (item.error) return { label: 'ERROR', className: 'error', hint: item.error };
+  if (item.busy) return { label: 'BUSY', className: 'busy', hint: 'Adapter is in use' };
+  return { label: 'FREE', className: 'free', hint: 'Adapter is available' };
 }
 
 function normalizeAdapterValue(value) {
@@ -5183,16 +5183,46 @@ function renderDvbDetectedSelect() {
   }
 
   const list = Array.isArray(state.dvbAdapters) ? state.dvbAdapters : [];
+  const groups = {
+    free: [],
+    busy: [],
+    error: [],
+  };
   list.forEach((item) => {
-    const option = document.createElement('option');
-    const key = normalizeDvbKey(item.adapter, item.device);
-    const status = formatDvbStatus(item);
-    const type = item.type || 'Unknown';
-    const name = item.frontend ? ` · ${item.frontend}` : '';
-    option.value = key || '';
-    option.textContent = `adapter${item.adapter}.fe${item.device} · ${type} · ${status.label}${name}`;
-    elements.adapterDetected.appendChild(option);
+    if (item && item.error) {
+      groups.error.push(item);
+    } else if (item && item.busy) {
+      groups.busy.push(item);
+    } else {
+      groups.free.push(item);
+    }
   });
+
+  const renderGroup = (label, items) => {
+    if (!items.length) return;
+    items.sort((a, b) => {
+      const aKey = normalizeDvbKey(a.adapter, a.device) || '';
+      const bKey = normalizeDvbKey(b.adapter, b.device) || '';
+      return aKey.localeCompare(bKey, undefined, { numeric: true });
+    });
+    const group = document.createElement('optgroup');
+    group.label = label;
+    items.forEach((item) => {
+      const option = document.createElement('option');
+      const key = normalizeDvbKey(item.adapter, item.device);
+      const status = formatDvbStatus(item);
+      const type = item.type || 'Unknown';
+      const name = item.frontend ? ` · ${item.frontend}` : '';
+      option.value = key || '';
+      option.textContent = `adapter${item.adapter}.fe${item.device} · ${type} · ${status.label}${name}`;
+      group.appendChild(option);
+    });
+    elements.adapterDetected.appendChild(group);
+  };
+
+  renderGroup('FREE', groups.free);
+  renderGroup('BUSY', groups.busy);
+  renderGroup('ERROR', groups.error);
 
   renderAdapterHardwareSelects();
   if (!state.adapterEditing || !state.adapterEditing.adapter) {
