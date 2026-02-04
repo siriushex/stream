@@ -772,7 +772,7 @@ local function update_adapter_status(id, stats)
     if type(stats) ~= "table" then
         return
     end
-    runtime.adapter_status[id] = {
+    local entry = {
         status = tonumber(stats.status) or 0,
         signal = tonumber(stats.signal),
         snr = tonumber(stats.snr),
@@ -780,6 +780,13 @@ local function update_adapter_status(id, stats)
         unc = tonumber(stats.unc),
         updated_at = os.time(),
     }
+    local meta = runtime.adapters and runtime.adapters[id]
+    if meta then
+        entry.adapter = meta.adapter
+        entry.device = meta.device
+        entry.adapter_key = meta.adapter_key
+    end
+    runtime.adapter_status[id] = entry
 end
 
 local function apply_adapter(id, row, force)
@@ -829,7 +836,21 @@ local function apply_adapter(id, row, force)
         adapter_key = tostring(cfg.adapter) .. "." .. tostring(cfg.device or 0)
     end
 
-    runtime.adapters[id] = { instance = instance, hash = hash, adapter_key = adapter_key }
+    local adapter_num = cfg.adapter
+    local device_num = cfg.device or 0
+    if instance.__options and instance.__options.adapter ~= nil then
+        adapter_num = instance.__options.adapter
+    end
+    if instance.__options and instance.__options.device ~= nil then
+        device_num = instance.__options.device
+    end
+    runtime.adapters[id] = {
+        instance = instance,
+        hash = hash,
+        adapter_key = adapter_key,
+        adapter = adapter_num,
+        device = device_num,
+    }
     _G[id] = instance
 end
 
