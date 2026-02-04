@@ -32,7 +32,7 @@ local msg_up = t.build_message({
 assert(msg_up and msg_up:find("UP"), "stream up message")
 
 -- Dedupe & throttle
-telegram.config.enabled = true
+telegram.config.available = true
 telegram.curl_available = true
 telegram.config.dedupe_window_sec = 60
 telegram.config.throttle_limit = 1

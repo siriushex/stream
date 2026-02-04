@@ -936,6 +936,45 @@
                       <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
                     </div>
                   </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-telegram-backup-enabled" data-toggle-target="settings-telegram-backup-fields" />
+                    <span>Send config backups</span>
+                  </label>
+                  <div class="form-grid" id="settings-telegram-backup-fields">
+                    <label class="field">
+                      <span>Schedule</span>
+                      <select id="settings-telegram-backup-schedule">
+                        <option value="DAILY">Daily</option>
+                        <option value="WEEKLY">Weekly</option>
+                        <option value="MONTHLY">Monthly</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Time</span>
+                      <input type="time" id="settings-telegram-backup-time" />
+                    </label>
+                    <label class="field" id="settings-telegram-backup-weekday-field">
+                      <span>Weekday</span>
+                      <select id="settings-telegram-backup-weekday">
+                        <option value="1">Monday</option>
+                        <option value="2">Tuesday</option>
+                        <option value="3">Wednesday</option>
+                        <option value="4">Thursday</option>
+                        <option value="5">Friday</option>
+                        <option value="6">Saturday</option>
+                        <option value="7">Sunday</option>
+                      </select>
+                    </label>
+                    <label class="field" id="settings-telegram-backup-monthday-field">
+                      <span>Month day</span>
+                      <input type="number" id="settings-telegram-backup-monthday" min="1" max="31" />
+                    </label>
+                    <label class="checkline">
+                      <input type="checkbox" id="settings-telegram-backup-secrets" />
+                      <span>Include secrets in backup</span>
+                    </label>
+                    <small class="form-hint">Backups are sent as a JSON file to the same chat.</small>
+                  </div>
                 </div>
               </div>
 

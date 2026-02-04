@@ -15,6 +15,13 @@ telegram = {
         queue_max = 200,
         timeout_sec = 10,
         connect_timeout_sec = 5,
+        backup_enabled = false,
+        backup_schedule = "OFF",
+        backup_time = "03:00",
+        backup_weekday = 1,
+        backup_monthday = 1,
+        backup_include_secrets = false,
+        backup_last_ts = 0,
     },
     queue = {},
     inflight = nil,
@@ -24,6 +31,7 @@ telegram = {
     timer = nil,
     curl_available = nil,
     last_error_ts = 0,
+    backup_next_ts = nil,
 }
 
 local LEVEL_RANK = {
@@ -89,6 +97,47 @@ local function normalize_level(value)
         return text
     end
     return "OFF"
+end
+
+local function normalize_schedule(value)
+    local text = tostring(value or ""):upper()
+    if text == "DAILY" or text == "WEEKLY" or text == "MONTHLY" then
+        return text
+    end
+    return "OFF"
+end
+
+local function clamp_number(value, min, max, fallback)
+    local num = tonumber(value)
+    if not num then
+        return fallback
+    end
+    if min and num < min then
+        return min
+    end
+    if max and num > max then
+        return max
+    end
+    return num
+end
+
+local function parse_time(value, fallback)
+    local text = tostring(value or "")
+    local h, m = text:match("^(%d%d?):(%d%d)$")
+    h = clamp_number(h, 0, 23, nil)
+    m = clamp_number(m, 0, 59, nil)
+    if not h or not m then
+        return parse_time(fallback or "03:00")
+    end
+    return h, m
+end
+
+local function days_in_month(year, month)
+    local next_year = month == 12 and (year + 1) or year
+    local next_month = month == 12 and 1 or (month + 1)
+    local t = os.time({ year = next_year, month = next_month, day = 1, hour = 0, min = 0, sec = 0 })
+    local prev = os.date("*t", t - 86400)
+    return prev and prev.day or 28
 end
 
 local function trim_text(text, max_len)
@@ -319,7 +368,7 @@ end
 
 local function enqueue_text(text, opts)
     local cfg = telegram.config
-    if not cfg.enabled then
+    if not cfg.available then
         return false, "disabled"
     end
     if not ensure_curl_available() then
@@ -378,15 +427,203 @@ local function start_timer()
     })
 end
 
+local function write_file(path, content)
+    local file, err = io.open(path, "wb")
+    if not file then
+        return nil, err
+    end
+    file:write(content or "")
+    file:close()
+    return true
+end
+
+local function ensure_dir(path)
+    if not path or path == "" then
+        return
+    end
+    local stat = utils and utils.stat and utils.stat(path)
+    if stat and stat.type == "directory" then
+        return
+    end
+    os.execute("mkdir -p " .. path)
+end
+
+local function mask_backup_payload(payload)
+    if type(payload) ~= "table" then
+        return
+    end
+    if type(payload.settings) == "table" then
+        payload.settings.telegram_bot_token = nil
+        payload.settings.influx_token = nil
+    end
+    if type(payload.users) == "table" then
+        for _, user in pairs(payload.users) do
+            if type(user) == "table" then
+                user.password_hash = nil
+                user.password_salt = nil
+                user.cipher = nil
+            end
+        end
+    end
+    if type(payload.softcam) == "table" then
+        for _, cam in ipairs(payload.softcam) do
+            if type(cam) == "table" then
+                cam.pass = nil
+            end
+        end
+    end
+end
+
+local function build_backup_payload()
+    if not config or not config.export_astra then
+        return nil, "config export unavailable"
+    end
+    local payload = config.export_astra()
+    if not telegram.config.backup_include_secrets then
+        mask_backup_payload(payload)
+    end
+    return payload
+end
+
+local function create_backup_file()
+    local payload, err = build_backup_payload()
+    if not payload then
+        return nil, err
+    end
+    local base = config and config.config_backup_dir or "./data/backups/config"
+    ensure_dir(base)
+    local stamp = os.date("%Y%m%d-%H%M%S", os.time())
+    local path = base .. "/telegram_backup_" .. stamp .. ".json"
+    local ok, write_err = write_file(path, json.encode(payload))
+    if not ok then
+        return nil, write_err
+    end
+    return path
+end
+
+local function enqueue_document(path, caption, opts)
+    local cfg = telegram.config
+    if not cfg or not cfg.available then
+        return false, "telegram disabled"
+    end
+    if not ensure_curl_available() then
+        return false, "curl unavailable"
+    end
+    local stat = utils and utils.stat and utils.stat(path)
+    if not stat or stat.type ~= "file" then
+        return false, "file missing"
+    end
+    if #telegram.queue >= (cfg.queue_max or 200) then
+        return false, "queue full"
+    end
+    local now = os.time()
+    table.insert(telegram.queue, {
+        document_path = path,
+        caption = caption,
+        attempts = 0,
+        next_try = now,
+        bypass_throttle = opts and opts.bypass_throttle,
+    })
+    return true
+end
+
+local function compute_next_backup_ts(now)
+    local cfg = telegram.config
+    if not cfg.backup_enabled or cfg.backup_schedule == "OFF" then
+        return nil
+    end
+    local hour, minute = parse_time(cfg.backup_time or "03:00")
+    local t = os.date("*t", now)
+    if cfg.backup_schedule == "DAILY" then
+        local candidate = os.time({
+            year = t.year, month = t.month, day = t.day,
+            hour = hour, min = minute, sec = 0
+        })
+        if candidate <= now then
+            candidate = candidate + 86400
+        end
+        return candidate
+    elseif cfg.backup_schedule == "WEEKLY" then
+        local weekday = clamp_number(cfg.backup_weekday, 1, 7, 1)
+        local target_wday = ((weekday % 7) + 1) -- 1=Mon -> 2, 7=Sun -> 1
+        local today = t.wday
+        local delta = (target_wday - today + 7) % 7
+        local candidate = os.time({
+            year = t.year, month = t.month, day = t.day,
+            hour = hour, min = minute, sec = 0
+        }) + delta * 86400
+        if candidate <= now then
+            candidate = candidate + 7 * 86400
+        end
+        return candidate
+    elseif cfg.backup_schedule == "MONTHLY" then
+        local day = clamp_number(cfg.backup_monthday, 1, 31, 1)
+        local max_day = days_in_month(t.year, t.month)
+        if day > max_day then
+            day = max_day
+        end
+        local candidate = os.time({
+            year = t.year, month = t.month, day = day,
+            hour = hour, min = minute, sec = 0
+        })
+        if candidate <= now then
+            local next_month = t.month == 12 and 1 or (t.month + 1)
+            local next_year = t.month == 12 and (t.year + 1) or t.year
+            local max_next = days_in_month(next_year, next_month)
+            if day > max_next then
+                day = max_next
+            end
+            candidate = os.time({
+                year = next_year, month = next_month, day = day,
+                hour = hour, min = minute, sec = 0
+            })
+        end
+        return candidate
+    end
+    return nil
+end
+
+local function backup_due(now)
+    local cfg = telegram.config
+    if not cfg.backup_enabled or cfg.backup_schedule == "OFF" then
+        return false
+    end
+    if not cfg.available then
+        return false
+    end
+    if not telegram.backup_next_ts then
+        telegram.backup_next_ts = compute_next_backup_ts(now)
+    end
+    return telegram.backup_next_ts and now >= telegram.backup_next_ts
+end
+
+local function run_backup(now)
+    local cfg = telegram.config
+    local path, err = create_backup_file()
+    if not path then
+        if (now - telegram.last_error_ts) > 30 then
+            telegram.last_error_ts = now
+            log.warning("[telegram] backup failed: " .. tostring(err or "unknown"))
+        end
+        return false
+    end
+    local stamp = os.date("%Y-%m-%d %H:%M", now)
+    local caption = "🗄️ Config backup " .. stamp
+    local ok = enqueue_document(path, caption, { bypass_throttle = true })
+    if ok then
+        cfg.backup_last_ts = now
+        if config and config.set_setting then
+            config.set_setting("telegram_backup_last_ts", now)
+        end
+        telegram.backup_next_ts = compute_next_backup_ts(now)
+    end
+    return ok
+end
+
 local function spawn_send(item)
     local cfg = telegram.config
     local url = (cfg.api_base or "https://api.telegram.org")
     url = url:gsub("/+$", "")
-    url = url .. "/bot" .. cfg.token .. "/sendMessage"
-    local payload = json.encode({
-        chat_id = cfg.chat_id,
-        text = item.text,
-    })
     local args = {
         "curl",
         "-sS",
@@ -395,14 +632,32 @@ local function spawn_send(item)
         tostring(cfg.timeout_sec or 10),
         "--connect-timeout",
         tostring(cfg.connect_timeout_sec or 5),
-        "-H",
-        "Content-Type: application/json",
-        "-X",
-        "POST",
-        url,
-        "-d",
-        payload,
     }
+    if item.document_path then
+        url = url .. "/bot" .. cfg.token .. "/sendDocument"
+        table.insert(args, url)
+        table.insert(args, "-F")
+        table.insert(args, "chat_id=" .. cfg.chat_id)
+        table.insert(args, "-F")
+        table.insert(args, "document=@" .. item.document_path)
+        if item.caption and item.caption ~= "" then
+            table.insert(args, "-F")
+            table.insert(args, "caption=" .. item.caption)
+        end
+    else
+        url = url .. "/bot" .. cfg.token .. "/sendMessage"
+        local payload = json.encode({
+            chat_id = cfg.chat_id,
+            text = item.text,
+        })
+        table.insert(args, "-H")
+        table.insert(args, "Content-Type: application/json")
+        table.insert(args, "-X")
+        table.insert(args, "POST")
+        table.insert(args, url)
+        table.insert(args, "-d")
+        table.insert(args, payload)
+    end
     local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
     if not ok or not proc then
         return nil, "spawn failed"
@@ -412,8 +667,13 @@ end
 
 function telegram.tick()
     local cfg = telegram.config
-    if not cfg.enabled then
+    if not cfg.available then
         return
+    end
+
+    local now = os.time()
+    if backup_due(now) then
+        run_backup(now)
     end
 
     if telegram.inflight then
@@ -451,7 +711,6 @@ function telegram.tick()
         return
     end
 
-    local now = os.time()
     if #telegram.queue == 0 then
         return
     end
@@ -477,25 +736,42 @@ function telegram.tick()
 end
 
 function telegram.configure()
-    local enabled = setting_bool("telegram_enabled", false)
+    local alerts_enabled = setting_bool("telegram_enabled", false)
     local level = normalize_level(setting_string("telegram_level", "OFF"))
     local token = setting_string("telegram_bot_token", "")
     local chat_id = setting_string("telegram_chat_id", "")
     local api_base = os.getenv("TELEGRAM_API_BASE_URL") or "https://api.telegram.org"
+    local backup_enabled = setting_bool("telegram_backup_enabled", false)
+    local backup_schedule = normalize_schedule(setting_string("telegram_backup_schedule", "OFF"))
+    local backup_time = setting_string("telegram_backup_time", "03:00")
+    local backup_weekday = clamp_number(get_setting("telegram_backup_weekday"), 1, 7, 1)
+    local backup_monthday = clamp_number(get_setting("telegram_backup_monthday"), 1, 31, 1)
+    local backup_include_secrets = setting_bool("telegram_backup_include_secrets", false)
+    local backup_last_ts = tonumber(get_setting("telegram_backup_last_ts") or 0) or 0
 
-    telegram.config.enabled = enabled and token ~= "" and chat_id ~= ""
+    telegram.config.alerts_enabled = alerts_enabled
+    telegram.config.available = token ~= "" and chat_id ~= ""
     telegram.config.level = level
     telegram.config.token = token
     telegram.config.chat_id = chat_id
     telegram.config.api_base = api_base
     telegram.curl_available = nil
+    telegram.config.backup_enabled = backup_enabled
+    telegram.config.backup_schedule = backup_schedule
+    telegram.config.backup_time = backup_time
+    telegram.config.backup_weekday = backup_weekday
+    telegram.config.backup_monthday = backup_monthday
+    telegram.config.backup_include_secrets = backup_include_secrets
+    telegram.config.backup_last_ts = backup_last_ts
 
-    if telegram.config.enabled and not ensure_curl_available() then
-        telegram.config.enabled = false
+    if telegram.config.available and not ensure_curl_available() then
+        telegram.config.available = false
         log.warning("[telegram] curl not available, notifier disabled")
     end
 
-    if telegram.config.enabled then
+    telegram.backup_next_ts = nil
+
+    if telegram.config.available and (telegram.config.alerts_enabled or telegram.config.backup_enabled) then
         start_timer()
     end
 end
@@ -519,6 +795,9 @@ function telegram.on_alert(event)
     if not event then
         return false
     end
+    if not telegram.config.alerts_enabled or not telegram.config.available then
+        return false
+    end
     local severity = resolve_severity(event)
     local min_level = telegram.config.level or "OFF"
     if not level_allowed(min_level, severity) then
@@ -532,7 +811,7 @@ function telegram.on_alert(event)
 end
 
 function telegram.send_test()
-    if not telegram.config.enabled then
+    if not telegram.config.available then
         return false, "telegram disabled"
     end
     return enqueue_text("✅ Telegram alerts: test message from Astra Clone", { bypass_throttle = true })

@@ -2256,7 +2256,10 @@ local function set_settings(server, client, request)
             end
             if telegram and telegram.configure
                 and (body.telegram_enabled ~= nil or body.telegram_level ~= nil
-                    or body.telegram_bot_token ~= nil or body.telegram_chat_id ~= nil)
+                    or body.telegram_bot_token ~= nil or body.telegram_chat_id ~= nil
+                    or body.telegram_backup_enabled ~= nil or body.telegram_backup_schedule ~= nil
+                    or body.telegram_backup_time ~= nil or body.telegram_backup_weekday ~= nil
+                    or body.telegram_backup_monthday ~= nil or body.telegram_backup_include_secrets ~= nil)
             then
                 telegram.configure()
             end

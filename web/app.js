@@ -443,6 +443,14 @@ const elements = {
   settingsTelegramTokenHint: $('#settings-telegram-token-hint'),
   settingsTelegramChatId: $('#settings-telegram-chat-id'),
   settingsTelegramTest: $('#settings-telegram-test'),
+  settingsTelegramBackupEnabled: $('#settings-telegram-backup-enabled'),
+  settingsTelegramBackupSchedule: $('#settings-telegram-backup-schedule'),
+  settingsTelegramBackupTime: $('#settings-telegram-backup-time'),
+  settingsTelegramBackupWeekday: $('#settings-telegram-backup-weekday'),
+  settingsTelegramBackupMonthday: $('#settings-telegram-backup-monthday'),
+  settingsTelegramBackupSecrets: $('#settings-telegram-backup-secrets'),
+  settingsTelegramBackupWeekdayField: $('#settings-telegram-backup-weekday-field'),
+  settingsTelegramBackupMonthdayField: $('#settings-telegram-backup-monthday-field'),
   settingsInfluxEnabled: $('#settings-influx-enabled'),
   settingsInfluxUrl: $('#settings-influx-url'),
   settingsInfluxOrg: $('#settings-influx-org'),
@@ -1282,6 +1290,17 @@ function bindToggleTargets() {
     toggle.addEventListener('change', syncToggleTargets);
   });
   syncToggleTargets();
+}
+
+function updateTelegramBackupScheduleFields() {
+  if (!elements.settingsTelegramBackupSchedule) return;
+  const schedule = elements.settingsTelegramBackupSchedule.value || 'DAILY';
+  if (elements.settingsTelegramBackupWeekdayField) {
+    elements.settingsTelegramBackupWeekdayField.hidden = schedule !== 'WEEKLY';
+  }
+  if (elements.settingsTelegramBackupMonthdayField) {
+    elements.settingsTelegramBackupMonthdayField.hidden = schedule !== 'MONTHLY';
+  }
 }
 
 function updateStreamGroupOptions() {
@@ -9813,6 +9832,24 @@ function applySettingsToUI() {
       ? `Token set (${tokenMasked || 'masked'})`
       : 'Token not set';
   }
+  if (elements.settingsTelegramBackupEnabled) {
+    elements.settingsTelegramBackupEnabled.checked = getSettingBool('telegram_backup_enabled', false);
+  }
+  if (elements.settingsTelegramBackupSchedule) {
+    elements.settingsTelegramBackupSchedule.value = getSettingString('telegram_backup_schedule', 'DAILY');
+  }
+  if (elements.settingsTelegramBackupTime) {
+    elements.settingsTelegramBackupTime.value = getSettingString('telegram_backup_time', '03:00');
+  }
+  if (elements.settingsTelegramBackupWeekday) {
+    elements.settingsTelegramBackupWeekday.value = String(getSettingNumber('telegram_backup_weekday', 1));
+  }
+  if (elements.settingsTelegramBackupMonthday) {
+    elements.settingsTelegramBackupMonthday.value = getSettingNumber('telegram_backup_monthday', 1);
+  }
+  if (elements.settingsTelegramBackupSecrets) {
+    elements.settingsTelegramBackupSecrets.checked = getSettingBool('telegram_backup_include_secrets', false);
+  }
   if (elements.settingsInfluxEnabled) {
     elements.settingsInfluxEnabled.checked = getSettingBool('influx_enabled', false);
   }
@@ -10083,6 +10120,7 @@ function applySettingsToUI() {
     elements.settingsShowStreamDefaults.checked = defaultKeys.some((key) => hasSettingValue(key));
   }
 
+  updateTelegramBackupScheduleFields();
   syncToggleTargets();
 
   renderGroups();
@@ -10122,12 +10160,39 @@ function collectGeneralSettings() {
   const telegramChatId = elements.settingsTelegramChatId && elements.settingsTelegramChatId.value.trim();
   const telegramToken = elements.settingsTelegramToken && elements.settingsTelegramToken.value.trim();
   const telegramTokenSet = getSettingBool('telegram_bot_token_set', false);
+  const telegramBackupEnabled = elements.settingsTelegramBackupEnabled && elements.settingsTelegramBackupEnabled.checked;
+  const telegramBackupSchedule = elements.settingsTelegramBackupSchedule && elements.settingsTelegramBackupSchedule.value;
+  const telegramBackupTime = elements.settingsTelegramBackupTime && elements.settingsTelegramBackupTime.value;
+  const telegramBackupWeekday = toNumber(elements.settingsTelegramBackupWeekday && elements.settingsTelegramBackupWeekday.value);
+  const telegramBackupMonthday = toNumber(elements.settingsTelegramBackupMonthday && elements.settingsTelegramBackupMonthday.value);
+  const telegramBackupSecrets = elements.settingsTelegramBackupSecrets && elements.settingsTelegramBackupSecrets.checked;
   if (telegramEnabled) {
     if (!telegramChatId) {
       throw new Error('Telegram chat ID is required when alerts are enabled');
     }
     if (!telegramToken && !telegramTokenSet) {
       throw new Error('Telegram bot token is required when alerts are enabled');
+    }
+  }
+  if (telegramBackupEnabled) {
+    if (!telegramChatId) {
+      throw new Error('Telegram chat ID is required when backups are enabled');
+    }
+    if (!telegramToken && !telegramTokenSet) {
+      throw new Error('Telegram bot token is required when backups are enabled');
+    }
+    if (!telegramBackupTime) {
+      throw new Error('Backup time is required');
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(telegramBackupTime)) {
+      throw new Error('Backup time must be HH:MM');
+    }
+    const schedule = (telegramBackupSchedule || 'DAILY').toUpperCase();
+    if (schedule === 'WEEKLY' && (telegramBackupWeekday === undefined || telegramBackupWeekday < 1 || telegramBackupWeekday > 7)) {
+      throw new Error('Backup weekday must be 1-7');
+    }
+    if (schedule === 'MONTHLY' && (telegramBackupMonthday === undefined || telegramBackupMonthday < 1 || telegramBackupMonthday > 31)) {
+      throw new Error('Backup month day must be 1-31');
     }
   }
   const influxEnabled = elements.settingsInfluxEnabled && elements.settingsInfluxEnabled.checked;
@@ -10195,6 +10260,14 @@ function collectGeneralSettings() {
   if (elements.settingsTelegramLevel) payload.telegram_level = telegramLevel || 'OFF';
   if (elements.settingsTelegramChatId) payload.telegram_chat_id = telegramChatId;
   if (telegramToken) payload.telegram_bot_token = telegramToken;
+  if (elements.settingsTelegramBackupEnabled) payload.telegram_backup_enabled = telegramBackupEnabled;
+  if (elements.settingsTelegramBackupSchedule) {
+    payload.telegram_backup_schedule = telegramBackupEnabled ? (telegramBackupSchedule || 'DAILY') : 'OFF';
+  }
+  if (elements.settingsTelegramBackupTime) payload.telegram_backup_time = telegramBackupTime || '03:00';
+  if (telegramBackupWeekday !== undefined) payload.telegram_backup_weekday = telegramBackupWeekday;
+  if (telegramBackupMonthday !== undefined) payload.telegram_backup_monthday = telegramBackupMonthday;
+  if (elements.settingsTelegramBackupSecrets) payload.telegram_backup_include_secrets = telegramBackupSecrets;
   if (monitorMax !== undefined) payload.monitor_analyze_max_concurrency = monitorMax;
   if (logMax !== undefined) payload.log_max_entries = logMax;
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
@@ -11532,6 +11605,13 @@ function bindEvents() {
         setStatus(err.message || 'Telegram test failed');
       }
     });
+  }
+
+  if (elements.settingsTelegramBackupSchedule) {
+    elements.settingsTelegramBackupSchedule.addEventListener('change', updateTelegramBackupScheduleFields);
+  }
+  if (elements.settingsTelegramBackupEnabled) {
+    elements.settingsTelegramBackupEnabled.addEventListener('change', updateTelegramBackupScheduleFields);
   }
 
   if (elements.btnApplyHttpPlay) {
