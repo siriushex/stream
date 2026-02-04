@@ -46,6 +46,7 @@ curl -s -c "$COOKIE_JAR" -X POST "http://127.0.0.1:${PORT}/api/v1/auth/login" \
 
 curl -s "http://127.0.0.1:${PORT}/api/v1/streams" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/settings" -b "$COOKIE_JAR"
+curl -s "http://127.0.0.1:${PORT}/api/v1/license" -b "$COOKIE_JAR" | head -n 1
 curl -s "http://127.0.0.1:${PORT}/api/v1/metrics" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/metrics?format=prometheus" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/health/process" -b "$COOKIE_JAR"

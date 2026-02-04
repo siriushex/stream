@@ -230,6 +230,62 @@ local function format_refresh_errors(errors)
     return table.concat(parts, "; ")
 end
 
+local function read_text_file(path)
+    local file, err = io.open(path, "rb")
+    if not file then
+        return nil, err
+    end
+    local content = file:read("*a")
+    file:close()
+    return content
+end
+
+local function detect_license(text)
+    if not text or text == "" then
+        return "Unknown", nil
+    end
+    if text:find("GNU GENERAL PUBLIC LICENSE") then
+        local version = text:match("Version%s+([0-9%.]+)")
+        local spdx = "GPL"
+        if version then
+            spdx = "GPL-" .. version
+            if not version:find("%.") then
+                spdx = spdx .. ".0"
+            end
+            return "GNU General Public License v" .. version, spdx
+        end
+        return "GNU General Public License", spdx
+    end
+    if text:find("GNU LESSER GENERAL PUBLIC LICENSE") then
+        local version = text:match("Version%s+([0-9%.]+)")
+        local spdx = "LGPL"
+        if version then
+            spdx = "LGPL-" .. version
+            if not version:find("%.") then
+                spdx = spdx .. ".0"
+            end
+            return "GNU Lesser General Public License v" .. version, spdx
+        end
+        return "GNU Lesser General Public License", spdx
+    end
+    return "Custom License", nil
+end
+
+local function license_info(server, client)
+    local path = "COPYING"
+    local text, err = read_text_file(path)
+    if not text then
+        return error_response(server, client, 500, "license file not found")
+    end
+    local name, spdx = detect_license(text)
+    json_response(server, client, 200, {
+        name = name,
+        spdx = spdx,
+        path = path,
+        text = text,
+    })
+end
+
 local function reload_runtime(force)
     local errors = {}
     if runtime and runtime.refresh_adapters then
@@ -2748,6 +2804,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/tools" and method == "GET" then
         return list_tools(server, client)
+    end
+    if path == "/api/v1/license" and method == "GET" then
+        return license_info(server, client)
     end
     if path == "/api/v1/alerts" and method == "GET" then
         return list_alerts(server, client, request)

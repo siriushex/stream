@@ -231,6 +231,12 @@ local function apply_stream_defaults(channel_config)
             channel_config.http_keep_active = value
         end
     end
+    if channel_config.cas == nil then
+        local value = setting_bool("cas_default", nil)
+        if value ~= nil then
+            channel_config.cas = value
+        end
+    end
 end
 
 local function apply_mpts_config(channel_config)
