@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260204c" />
+  <link rel="stylesheet" href="/styles.css?v=20260204d" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script defer src="/app.js?v=20260204c"></script>
+  <script defer src="/app.js?v=20260204d"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260204c</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260204d</div>
       </div>
     </header>
 
@@ -359,6 +359,7 @@
                 <button class="btn ghost danger" type="button" id="adapter-delete">Remove</button>
                 <div class="footer-actions">
                   <button class="btn" type="submit" id="adapter-save">Apply</button>
+                  <button class="btn ghost" type="button" id="adapter-scan" disabled>Scan</button>
                   <button class="btn ghost" type="button" id="adapter-cancel">Cancel</button>
                   <div class="form-note" id="adapter-error"></div>
                 </div>
@@ -3163,6 +3164,29 @@
         <div class="player-meta">
           <div class="pill" id="player-url">-</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="adapter-scan-overlay" aria-hidden="true">
+    <div class="modal wide scan">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">DVB scan</div>
+          <p class="modal-sub" id="adapter-scan-sub">Adapter scan</p>
+        </div>
+        <button class="icon-btn" id="adapter-scan-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <div class="scan-status" id="adapter-scan-status"></div>
+      <div class="scan-signal" id="adapter-scan-signal"></div>
+      <div class="divider"></div>
+      <div class="scan-list" id="adapter-scan-list"></div>
+      <div class="modal-footer">
+        <button class="btn" type="button" id="adapter-scan-add">Add selected</button>
+        <button class="btn ghost" type="button" id="adapter-scan-refresh">Rescan</button>
+        <button class="btn ghost" type="button" id="adapter-scan-cancel">Close</button>
       </div>
     </div>
   </div>

@@ -151,6 +151,9 @@ const state = {
   statusTimer: null,
   adapterTimer: null,
   dvbTimer: null,
+  adapterScanJobId: null,
+  adapterScanPoll: null,
+  adapterScanResults: null,
   currentView: 'streams',
   sessionTimer: null,
   accessLogTimer: null,
@@ -773,6 +776,16 @@ const elements = {
   adapterDetectedRefresh: $('#adapter-detected-refresh'),
   adapterDetectedHint: $('#adapter-detected-hint'),
   adapterBusyWarning: $('#adapter-busy-warning'),
+  adapterScan: $('#adapter-scan'),
+  adapterScanOverlay: $('#adapter-scan-overlay'),
+  adapterScanSub: $('#adapter-scan-sub'),
+  adapterScanStatus: $('#adapter-scan-status'),
+  adapterScanSignal: $('#adapter-scan-signal'),
+  adapterScanList: $('#adapter-scan-list'),
+  adapterScanAdd: $('#adapter-scan-add'),
+  adapterScanRefresh: $('#adapter-scan-refresh'),
+  adapterScanClose: $('#adapter-scan-close'),
+  adapterScanCancel: $('#adapter-scan-cancel'),
   adapterCancel: $('#adapter-cancel'),
   adapterDelete: $('#adapter-delete'),
   adapterError: $('#adapter-error'),
@@ -5244,6 +5257,222 @@ function updateAdapterBusyWarningFromFields() {
   }
 }
 
+function getAdapterStatusEntry(adapterId) {
+  if (!adapterId || !state.adapterStatus) return null;
+  return state.adapterStatus[adapterId] || null;
+}
+
+function isAdapterLocked(adapterId) {
+  const status = getAdapterStatusEntry(adapterId);
+  if (!status || status.status === undefined || status.status === null) return false;
+  return hasStatusBit(status.status, FE_HAS_LOCK);
+}
+
+function formatScanSignalLine(status) {
+  if (!status) return 'No signal data.';
+  const flags = formatStatusFlags(status.status);
+  const ber = status.ber !== undefined ? status.ber : '-';
+  const unc = status.unc !== undefined ? status.unc : '-';
+  const signal = status.signal !== undefined ? formatPercent(status.signal) : '-';
+  const snr = status.snr !== undefined ? formatPercent(status.snr) : '-';
+  return `STATUS:${flags} BER:${ber} UNC:${unc} S:${signal} C/N:${snr}`;
+}
+
+function updateAdapterScanAvailability() {
+  if (!elements.adapterScan) return;
+  const adapter = state.adapterEditing && state.adapterEditing.adapter;
+  const adapterId = adapter && adapter.id;
+  const isNew = state.adapterEditing && state.adapterEditing.isNew;
+  const status = adapterId ? getAdapterStatusEntry(adapterId) : null;
+  const locked = adapterId ? isAdapterLocked(adapterId) : false;
+  let reason = '';
+  if (!adapterId || isNew) {
+    reason = 'Save adapter to enable scan.';
+  } else if (!status) {
+    reason = 'Adapter status unavailable.';
+  } else if (!locked) {
+    reason = 'Signal lock required.';
+  }
+  elements.adapterScan.disabled = !!reason;
+  elements.adapterScan.title = reason;
+}
+
+function closeAdapterScanModal() {
+  if (state.adapterScanPoll) {
+    clearInterval(state.adapterScanPoll);
+    state.adapterScanPoll = null;
+  }
+  state.adapterScanJobId = null;
+  state.adapterScanResults = null;
+  if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = '';
+  if (elements.adapterScanSignal) elements.adapterScanSignal.textContent = '';
+  if (elements.adapterScanList) elements.adapterScanList.innerHTML = '';
+  setOverlay(elements.adapterScanOverlay, false);
+}
+
+function renderAdapterScanResults(job) {
+  if (!elements.adapterScanList) return;
+  elements.adapterScanList.innerHTML = '';
+  const channels = (job && job.channels) || [];
+  if (!channels.length) {
+    const empty = document.createElement('div');
+    empty.className = 'scan-empty';
+    empty.textContent = 'No channels found.';
+    elements.adapterScanList.appendChild(empty);
+    return;
+  }
+  channels.forEach((channel) => {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'scan-channel';
+
+    const header = document.createElement('label');
+    header.className = 'scan-channel-header';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.dataset.pnr = String(channel.pnr || '');
+    checkbox.className = 'scan-channel-checkbox';
+    const title = document.createElement('div');
+    const name = channel.name || `PNR ${channel.pnr}`;
+    const provider = channel.provider ? ` · ${channel.provider}` : '';
+    title.textContent = `PNR:${channel.pnr} ${name}${provider}`;
+    header.appendChild(checkbox);
+    header.appendChild(title);
+    wrapper.appendChild(header);
+
+    if (channel.cas && channel.cas.length) {
+      const casText = channel.cas
+        .map((entry) => `0x${Number(entry.caid).toString(16)}${entry.pid ? `, PID:${entry.pid}` : ''}`)
+        .join(', ');
+      const cas = document.createElement('div');
+      cas.className = 'scan-channel-meta';
+      cas.innerHTML = `<strong>CAS:</strong> ${casText}`;
+      wrapper.appendChild(cas);
+    }
+
+    const videos = channel.video || [];
+    if (videos.length) {
+      const vText = videos.map((v) => `VPID:${v.pid} ${v.type || ''}`.trim()).join(' · ');
+      const vEl = document.createElement('div');
+      vEl.className = 'scan-channel-meta';
+      vEl.innerHTML = `<strong>${vText}</strong>`;
+      wrapper.appendChild(vEl);
+    }
+
+    const audios = channel.audio || [];
+    if (audios.length) {
+      const aText = audios
+        .map((a) => `APID:${a.pid}${a.lang ? ` ${a.lang}` : ''}`)
+        .join(' · ');
+      const aEl = document.createElement('div');
+      aEl.className = 'scan-channel-meta';
+      aEl.innerHTML = `<strong>${aText}</strong>`;
+      wrapper.appendChild(aEl);
+    }
+
+    elements.adapterScanList.appendChild(wrapper);
+  });
+}
+
+async function pollAdapterScan(jobId) {
+  if (!jobId) return;
+  try {
+    const job = await apiJson(`/api/v1/dvb-scan/${jobId}`);
+    state.adapterScanResults = job;
+    if (elements.adapterScanStatus) {
+      elements.adapterScanStatus.textContent = job.status === 'running'
+        ? 'Scanning...'
+        : (job.status === 'done' ? 'Scan complete.' : 'Scan failed.');
+    }
+    if (elements.adapterScanSignal) {
+      elements.adapterScanSignal.textContent = formatScanSignalLine(job.signal);
+    }
+    if (job.status === 'done' || job.status === 'error') {
+      if (state.adapterScanPoll) {
+        clearInterval(state.adapterScanPoll);
+        state.adapterScanPoll = null;
+      }
+      renderAdapterScanResults(job);
+    }
+  } catch (err) {
+    if (elements.adapterScanStatus) {
+      elements.adapterScanStatus.textContent = formatNetworkError(err) || err.message || 'Scan failed.';
+    }
+    if (state.adapterScanPoll) {
+      clearInterval(state.adapterScanPoll);
+      state.adapterScanPoll = null;
+    }
+  }
+}
+
+async function startAdapterScan(adapterId) {
+  if (!adapterId) return;
+  if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = 'Starting scan...';
+  if (elements.adapterScanSignal) {
+    const status = getAdapterStatusEntry(adapterId);
+    elements.adapterScanSignal.textContent = formatScanSignalLine(status);
+  }
+  if (elements.adapterScanList) elements.adapterScanList.innerHTML = '';
+  const response = await apiJson('/api/v1/dvb-scan', {
+    method: 'POST',
+    body: JSON.stringify({ adapter_id: adapterId }),
+  });
+  state.adapterScanJobId = response.id;
+  if (state.adapterScanPoll) {
+    clearInterval(state.adapterScanPoll);
+  }
+  state.adapterScanPoll = setInterval(() => {
+    pollAdapterScan(state.adapterScanJobId);
+  }, 1000);
+  await pollAdapterScan(state.adapterScanJobId);
+}
+
+async function createStreamsFromScan(adapterId) {
+  if (!adapterId) return;
+  const list = Array.from(document.querySelectorAll('.scan-channel-checkbox'))
+    .filter((item) => item.checked)
+    .map((item) => item.dataset.pnr)
+    .filter(Boolean);
+  if (!list.length) {
+    setStatus('Select at least one channel');
+    return;
+  }
+  const existingIds = new Set((state.streams || []).map((item) => item.id));
+  const results = [];
+  const channels = (state.adapterScanResults && state.adapterScanResults.channels) || [];
+  for (const pnr of list) {
+    const channel = channels.find((item) => String(item.pnr) === String(pnr));
+    const name = channel && channel.name ? channel.name : `PNR ${pnr}`;
+    let id = slugifyStreamId(name);
+    if (!id || id === '') {
+      id = `dvb_${adapterId}_${pnr}`;
+    }
+    let unique = id;
+    let counter = 2;
+    while (existingIds.has(unique)) {
+      unique = `${id}_${counter}`;
+      counter += 1;
+    }
+    existingIds.add(unique);
+    const payload = {
+      id: unique,
+      enabled: true,
+      config: {
+        name,
+        type: 'spts',
+        input: [`dvb://${adapterId}#pnr=${pnr}`],
+        output: [],
+      },
+    };
+    await apiJson('/api/v1/streams', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    results.push(unique);
+  }
+  await loadStreams();
+  setStatus(`Created ${results.length} stream(s)`);
+}
+
 const FE_HAS_SIGNAL = 1;
 const FE_HAS_CARRIER = 2;
 const FE_HAS_VITERBI = 4;
@@ -5484,6 +5713,7 @@ function openAdapterEditor(adapter, isNew) {
   setAdapterGroup(elements.adapterType.value);
   renderDvbDetectedSelect();
   updateAdapterBusyWarningFromFields();
+  updateAdapterScanAvailability();
   if (elements.adapterDelete) {
     elements.adapterDelete.style.visibility = isNew ? 'hidden' : 'visible';
   }
@@ -5611,6 +5841,7 @@ async function loadAdapterStatus() {
     state.adapterStatus = {};
   }
   renderAdapterList();
+  updateAdapterScanAvailability();
 }
 
 async function loadDvbAdapters() {
@@ -11814,6 +12045,63 @@ function bindEvents() {
     elements.adapterDetectedRefresh.addEventListener('click', () => {
       loadDvbAdapters().catch(() => {});
     });
+  }
+
+  if (elements.adapterScan) {
+    elements.adapterScan.addEventListener('click', async () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      if (!adapterId) {
+        setStatus('Save adapter to enable scan');
+        return;
+      }
+      if (!isAdapterLocked(adapterId)) {
+        setStatus('Signal lock required');
+        return;
+      }
+      if (elements.adapterScanSub) {
+        elements.adapterScanSub.textContent = `Adapter: ${adapterId}`;
+      }
+      setOverlay(elements.adapterScanOverlay, true);
+      try {
+        await startAdapterScan(adapterId);
+      } catch (err) {
+        if (elements.adapterScanStatus) {
+          elements.adapterScanStatus.textContent = formatNetworkError(err) || err.message || 'Scan failed.';
+        }
+      }
+    });
+  }
+
+  if (elements.adapterScanAdd) {
+    elements.adapterScanAdd.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      createStreamsFromScan(adapterId).catch((err) => {
+        setStatus(formatNetworkError(err) || err.message || 'Failed to create streams');
+      });
+    });
+  }
+
+  if (elements.adapterScanRefresh) {
+    elements.adapterScanRefresh.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      if (!adapterId) return;
+      startAdapterScan(adapterId).catch((err) => {
+        if (elements.adapterScanStatus) {
+          elements.adapterScanStatus.textContent = formatNetworkError(err) || err.message || 'Scan failed.';
+        }
+      });
+    });
+  }
+
+  if (elements.adapterScanClose) {
+    elements.adapterScanClose.addEventListener('click', closeAdapterScanModal);
+  }
+
+  if (elements.adapterScanCancel) {
+    elements.adapterScanCancel.addEventListener('click', closeAdapterScanModal);
   }
 
   if (elements.adapterForm) {

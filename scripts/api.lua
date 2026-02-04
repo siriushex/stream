@@ -149,6 +149,20 @@ local rate_limits = {
     counter = 0,
 }
 
+local dvb_scan = {
+    seq = 0,
+    jobs = {},
+}
+
+local function dvb_scan_cleanup()
+    local now = os.time()
+    for id, job in pairs(dvb_scan.jobs) do
+        if job and job.status ~= "running" and job.finished_at and (now - job.finished_at) > 300 then
+            dvb_scan.jobs[id] = nil
+        end
+    end
+end
+
 local function rate_limit_check(bucket, key, limit, window_sec)
     if limit <= 0 then
         return true, nil
@@ -1252,6 +1266,327 @@ local function list_dvb_adapters(server, client)
         return error_response(server, client, 500, "failed to list dvb adapters")
     end
     json_response(server, client, 200, result or {})
+end
+
+local function dvb_scan_collect_cas(descriptors)
+    local cas = {}
+    if type(descriptors) ~= "table" then
+        return cas
+    end
+    for _, desc in ipairs(descriptors) do
+        if type(desc) == "table" and desc.type_name == "cas" then
+            local entry = {
+                caid = tonumber(desc.caid),
+                pid = tonumber(desc.pid),
+                data = desc.data,
+            }
+            table.insert(cas, entry)
+        end
+    end
+    return cas
+end
+
+local function dvb_scan_merge_cas(target, items)
+    target = target or {}
+    local seen = {}
+    for _, entry in ipairs(target) do
+        if entry.caid then
+            local key = tostring(entry.caid) .. ":" .. tostring(entry.pid or "")
+            seen[key] = true
+        end
+    end
+    for _, entry in ipairs(items or {}) do
+        if entry.caid then
+            local key = tostring(entry.caid) .. ":" .. tostring(entry.pid or "")
+            if not seen[key] then
+                table.insert(target, entry)
+                seen[key] = true
+            end
+        end
+    end
+    return target
+end
+
+local function dvb_scan_find_lang(descriptors)
+    if type(descriptors) ~= "table" then
+        return nil
+    end
+    for _, desc in ipairs(descriptors) do
+        if type(desc) == "table" and desc.type_name == "lang" and desc.lang ~= nil then
+            return tostring(desc.lang)
+        end
+    end
+    return nil
+end
+
+local function dvb_scan_add_pat(job, data)
+    if type(data.programs) ~= "table" then
+        return
+    end
+    job.programs = job.programs or {}
+    for _, program in ipairs(data.programs) do
+        local pnr = tonumber(program.pnr)
+        local pid = tonumber(program.pid)
+        if pnr and pnr ~= 0 then
+            local entry = job.programs[pnr] or { pnr = pnr }
+            entry.pmt_pid = pid or entry.pmt_pid
+            job.programs[pnr] = entry
+        end
+    end
+end
+
+local function dvb_scan_add_pmt(job, data)
+    local pnr = tonumber(data.pnr)
+    if not pnr then
+        return
+    end
+    job.programs = job.programs or {}
+    local entry = job.programs[pnr] or { pnr = pnr }
+    entry.pmt_pid = entry.pmt_pid or tonumber(data.pid)
+    entry.pcr = tonumber(data.pcr)
+    entry.streams = {}
+    entry.cas = dvb_scan_merge_cas(entry.cas, dvb_scan_collect_cas(data.descriptors))
+
+    if type(data.streams) == "table" then
+        for _, stream in ipairs(data.streams) do
+            local item = {
+                pid = tonumber(stream.pid),
+                type_id = tonumber(stream.type_id),
+                type_name = stream.type_name,
+                lang = dvb_scan_find_lang(stream.descriptors),
+                cas = dvb_scan_collect_cas(stream.descriptors),
+            }
+            entry.streams[#entry.streams + 1] = item
+            entry.cas = dvb_scan_merge_cas(entry.cas, item.cas)
+        end
+    end
+    job.programs[pnr] = entry
+end
+
+local function dvb_scan_add_sdt(job, data)
+    if type(data.services) ~= "table" then
+        return
+    end
+    job.services = job.services or {}
+    for _, service in ipairs(data.services) do
+        local sid = tonumber(service.sid)
+        if sid then
+            local name, provider = nil, nil
+            if type(service.descriptors) == "table" then
+                for _, desc in ipairs(service.descriptors) do
+                    if type(desc) == "table" and desc.type_name == "service" then
+                        name = desc.service_name or name
+                        provider = desc.service_provider or provider
+                    end
+                end
+            end
+            job.services[sid] = { name = name, provider = provider }
+        end
+    end
+end
+
+local function dvb_scan_build_channels(job)
+    local channels = {}
+    for pnr, entry in pairs(job.programs or {}) do
+        if pnr and tonumber(pnr) ~= 0 then
+            local service = (job.services and job.services[pnr]) or {}
+            local channel = {
+                pnr = tonumber(pnr),
+                name = service.name,
+                provider = service.provider,
+                pmt_pid = entry.pmt_pid,
+                cas = entry.cas or {},
+                video = {},
+                audio = {},
+            }
+            for _, stream in ipairs(entry.streams or {}) do
+                local type_name = tostring(stream.type_name or "")
+                local lower = type_name:lower()
+                if lower:find("video", 1, true) then
+                    table.insert(channel.video, {
+                        pid = stream.pid,
+                        type = type_name,
+                        type_id = stream.type_id,
+                    })
+                elseif lower:find("audio", 1, true) then
+                    table.insert(channel.audio, {
+                        pid = stream.pid,
+                        lang = stream.lang,
+                        type = type_name,
+                        type_id = stream.type_id,
+                    })
+                end
+            end
+            table.insert(channels, channel)
+        end
+    end
+    table.sort(channels, function(a, b)
+        return (a.pnr or 0) < (b.pnr or 0)
+    end)
+    job.channels = channels
+end
+
+local function dvb_scan_finish(job, status, err)
+    if job.timer then
+        job.timer:close()
+        job.timer = nil
+    end
+    if job.analyze then
+        job.analyze = nil
+    end
+    if job.input then
+        kill_input(job.input)
+        job.input = nil
+    end
+    job.finished_at = os.time()
+    job.status = status
+    if err then
+        job.error = err
+    end
+    job.signal = runtime and runtime.get_adapter_status and runtime.get_adapter_status(job.adapter_id) or nil
+    dvb_scan_build_channels(job)
+    dvb_scan_cleanup()
+end
+
+local function dvb_scan_config_from_adapter(adapter_id)
+    local row = config.get_adapter(adapter_id)
+    if not row then
+        return nil, "adapter not found"
+    end
+    local cfg = row.config or {}
+    if cfg.adapter == nil then
+        return nil, "adapter index is required"
+    end
+    local conf = {
+        name = "dvb-scan-" .. tostring(adapter_id),
+        format = "dvb",
+        adapter = cfg.adapter,
+        device = cfg.device or 0,
+        type = cfg.type,
+        tp = cfg.tp,
+        lnb = cfg.lnb,
+        lof1 = cfg.lof1,
+        lof2 = cfg.lof2,
+        slof = cfg.slof,
+        diseqc = cfg.diseqc,
+        tone = cfg.tone,
+        rolloff = cfg.rolloff,
+        uni_scr = cfg.uni_scr,
+        uni_frequency = cfg.uni_frequency,
+        frequency = cfg.frequency,
+        polarization = cfg.polarization,
+        symbolrate = cfg.symbolrate,
+        bandwidth = cfg.bandwidth,
+        guardinterval = cfg.guardinterval,
+        transmitmode = cfg.transmitmode,
+        hierarchy = cfg.hierarchy,
+        modulation = cfg.modulation,
+        budget = cfg.budget,
+    }
+    if (not conf.tp or conf.tp == "") and conf.frequency and conf.polarization and conf.symbolrate then
+        conf.tp = tostring(conf.frequency) .. ":" .. tostring(conf.polarization) .. ":" .. tostring(conf.symbolrate)
+    end
+    return conf, nil
+end
+
+local function start_dvb_scan(server, client, request)
+    local user = require_admin(request)
+    if not user then
+        return error_response(server, client, 401, "unauthorized")
+    end
+    if not analyze then
+        return error_response(server, client, 501, "analyze module is not found")
+    end
+    local body = parse_json_body(request) or {}
+    local adapter_id = body.adapter_id or body.id
+    if not adapter_id or adapter_id == "" then
+        return error_response(server, client, 400, "adapter_id is required")
+    end
+    local duration = tonumber(body.duration_sec) or 8
+    if duration < 2 then duration = 2 end
+    if duration > 30 then duration = 30 end
+
+    for _, job in pairs(dvb_scan.jobs) do
+        if job and job.status == "running" and job.adapter_id == adapter_id then
+            return json_response(server, client, 200, { id = job.id, status = job.status, adapter_id = adapter_id })
+        end
+    end
+
+    local conf, err = dvb_scan_config_from_adapter(adapter_id)
+    if not conf then
+        return error_response(server, client, 400, err or "invalid adapter config")
+    end
+
+    dvb_scan.seq = dvb_scan.seq + 1
+    local id = tostring(dvb_scan.seq)
+    local job = {
+        id = id,
+        adapter_id = adapter_id,
+        status = "running",
+        started_at = os.time(),
+        programs = {},
+        services = {},
+        channels = {},
+    }
+
+    local input = init_input(conf)
+    if not input then
+        return error_response(server, client, 500, "failed to init dvb input")
+    end
+    job.input = input
+    job.analyze = analyze({
+        upstream = input.tail:stream(),
+        name = conf.name,
+        join_pid = true,
+        callback = function(data)
+            if type(data) ~= "table" then
+                return
+            end
+            if data.error then
+                job.error = data.error
+                return
+            end
+            if data.psi == "pat" then
+                dvb_scan_add_pat(job, data)
+            elseif data.psi == "pmt" then
+                dvb_scan_add_pmt(job, data)
+            elseif data.psi == "sdt" then
+                dvb_scan_add_sdt(job, data)
+            end
+        end,
+    })
+
+    job.timer = timer({
+        interval = duration,
+        callback = function(self)
+            self:close()
+            dvb_scan_finish(job, "done")
+        end,
+    })
+
+    dvb_scan.jobs[id] = job
+    json_response(server, client, 200, { id = id, status = job.status, adapter_id = adapter_id })
+end
+
+local function get_dvb_scan(server, client, request, id)
+    local job = dvb_scan.jobs[id]
+    if not job then
+        return error_response(server, client, 404, "scan not found")
+    end
+    local payload = {
+        id = job.id,
+        status = job.status,
+        adapter_id = job.adapter_id,
+        started_at = job.started_at,
+        finished_at = job.finished_at,
+        error = job.error,
+        signal = job.signal,
+        channels = job.channels,
+    }
+    if job.status == "running" and (runtime and runtime.get_adapter_status) then
+        payload.signal = runtime.get_adapter_status(job.adapter_id) or payload.signal
+    end
+    json_response(server, client, 200, payload)
 end
 
 local function get_adapter_status(server, client, id)
@@ -2788,6 +3123,22 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/dvb-adapters" and method == "GET" then
         return list_dvb_adapters(server, client)
+    end
+    if path == "/api/v1/dvb-scan" and method == "POST" then
+        local admin = require_admin(request)
+        if not admin then
+            return error_response(server, client, 403, "forbidden")
+        end
+        return start_dvb_scan(server, client, request)
+    end
+
+    local dvb_scan_id = path:match("^/api/v1/dvb%-scan/([%w%-%_]+)$")
+    if dvb_scan_id and method == "GET" then
+        local admin = require_admin(request)
+        if not admin then
+            return error_response(server, client, 403, "forbidden")
+        end
+        return get_dvb_scan(server, client, request, dvb_scan_id)
     end
 
     local adapter_status_id = path:match("^/api/v1/adapter%-status/([%w%-%_]+)$")
