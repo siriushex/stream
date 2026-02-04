@@ -766,13 +766,15 @@ function main()
         headers = { "Cache-Control: no-cache" },
     })
     local function web_index(server, client, request)
-        if request and (request.path == "/" or request.path == "") then
-            local req = {}
-            for key, value in pairs(request) do
-                req[key] = value
-            end
-            req.path = "/index.html"
-            return web_static(server, client, req)
+        if not request then
+            return web_static(server, client, request)
+        end
+        local path = request.path or ""
+        if path == "/" or path == "" then
+            request.path = "/index.html"
+            local result = web_static(server, client, request)
+            request.path = path
+            return result
         end
         return web_static(server, client, request)
     end
@@ -1186,7 +1188,7 @@ function main()
         end
         if include_web then
             table.insert(routes, { "/index.html", web_static })
-            table.insert(routes, { "/*", web_static })
+            table.insert(routes, { "/*", web_index })
         end
         return routes
     end
@@ -1204,7 +1206,7 @@ function main()
 
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
     table.insert(main_routes, { "/", web_index })
-    table.insert(main_routes, { "/*", web_static })
+    table.insert(main_routes, { "/*", web_index })
 
     http_server({
         addr = opt.addr,
