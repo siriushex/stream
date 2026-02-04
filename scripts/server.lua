@@ -48,6 +48,7 @@ local opt = {
     hls_route = "/hls",
     config_path = nil,
     import_mode = "merge",
+    reset_pass = false,
 }
 
 if auth then
@@ -77,6 +78,7 @@ options_usage = [[
     --hls-dir PATH      hls output directory (default: data-dir/hls)
     --hls-route PATH    hls url prefix (default: /hls)
     -c PATH             alias for --config
+    -pass               reset admin password to default (admin/admin)
     --config PATH       import config (.json or .lua) before start
     --import PATH       legacy alias for --config (json)
     --import-mode MODE  import mode: merge or replace (default: merge)
@@ -121,6 +123,10 @@ options = {
     ["-c"] = function(idx)
         opt.config_path = argv[idx + 1]
         return 1
+    end,
+    ["-pass"] = function(idx)
+        opt.reset_pass = true
+        return 0
     end,
     ["-\209\129"] = function(idx)
         opt.config_path = argv[idx + 1]
@@ -655,6 +661,24 @@ function main()
                 summary.splitter_links or 0,
                 summary.splitter_allow or 0
             ))
+        end
+    end
+
+    if opt.reset_pass then
+        local ok, err = config.set_user_password("admin", "admin")
+        if not ok and err == "user not found" then
+            config.ensure_admin()
+            ok, err = config.set_user_password("admin", "admin")
+        end
+        config.update_user("admin", { enabled = true, is_admin = true })
+        local admin = config.get_user_by_username("admin")
+        if admin and config.delete_sessions_for_user then
+            config.delete_sessions_for_user(admin.id)
+        end
+        if ok then
+            log.warning("[server] admin password reset to default (admin/admin)")
+        else
+            log.error("[server] admin password reset failed: " .. tostring(err))
         end
     end
 
