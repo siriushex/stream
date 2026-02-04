@@ -131,7 +131,11 @@
 
                 <label class="field adapter-picker">
                   <span>Detected DVB</span>
-                  <select id="adapter-detected"></select>
+                  <div class="adapter-detected-row">
+                    <select id="adapter-detected"></select>
+                    <span class="adapter-detected-badge" id="adapter-detected-badge"></span>
+                    <button class="btn ghost" type="button" id="adapter-detected-refresh">Refresh</button>
+                  </div>
                   <div class="form-hint" id="adapter-detected-hint">
                     Select a detected adapter to fill Adapter/Device/Type fields.
                   </div>
