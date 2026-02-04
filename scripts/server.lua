@@ -191,7 +191,14 @@ local function default_data_dir(config_path)
     if not base or base == "" then
         base = "data"
     end
-    return join_path(dir, base .. ".data")
+    local root = os.getenv("ASTRA_DATA_ROOT") or os.getenv("ASTRAL_DATA_ROOT")
+    if not root or root == "" then
+        root = "/etc/astral"
+    end
+    if not root or root == "" then
+        return join_path(dir, base .. ".data")
+    end
+    return join_path(root, base .. ".data")
 end
 
 hls_session_list = hls_session_list or {}
@@ -546,6 +553,10 @@ function main()
             opt.data_dir = default_data_dir(opt.config_path)
         end
         if not opt.web_dir_set then
+            local env_web_dir = os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
+            if env_web_dir and env_web_dir ~= "" then
+                opt.web_dir = env_web_dir
+            end
             local cfg_dir = split_path(opt.config_path)
             local candidate = join_path(cfg_dir, "web")
             local stat = utils.stat(candidate)
