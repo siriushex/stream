@@ -2574,27 +2574,41 @@ local function remote_http_login(cfg, callback)
         "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
         "Connection: close",
     }
-    http_request({
-        host = cfg.host,
-        port = cfg.port,
-        path = build_server_path(cfg, "/api/v1/auth/login"),
-        method = "POST",
-        headers = headers,
-        content = payload,
-        callback = function(self, response)
-            if not response then
-                return callback(false, nil, "login failed (no response)")
-            end
-            if not response.code or response.code >= 400 then
-                return callback(false, nil, "login failed (" .. tostring(response.code or "unknown") .. ")")
-            end
-            local cookie = parse_cookie_from_headers(response.headers)
-            if not cookie then
-                return callback(false, nil, "login failed (no session cookie)")
-            end
-            callback(true, cookie)
-        end,
-    })
+    local paths = {
+        "/api/v1/auth/login",
+        "/api/auth/login",
+    }
+    local idx = 1
+    local function attempt()
+        local path = build_server_path(cfg, paths[idx])
+        http_request({
+            host = cfg.host,
+            port = cfg.port,
+            path = path,
+            method = "POST",
+            headers = headers,
+            content = payload,
+            callback = function(self, response)
+                if not response then
+                    return callback(false, nil, "login failed (no response)")
+                end
+                local code = response.code or 0
+                if code == 404 and idx < #paths then
+                    idx = idx + 1
+                    return attempt()
+                end
+                if not code or code >= 400 then
+                    return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
+                end
+                local cookie = parse_cookie_from_headers(response.headers)
+                if not cookie then
+                    return callback(false, nil, "login failed (no session cookie)")
+                end
+                callback(true, cookie)
+            end,
+        })
+    end
+    attempt()
 end
 
 local function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
@@ -2640,37 +2654,49 @@ local function remote_https_login(cfg, callback)
         return
     end
     local payload = json.encode({ username = cfg.login, password = cfg.password })
-    local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, "/api/v1/auth/login"))
-    local args = {
-        "curl",
-        "-sS",
-        "-D",
-        "-",
-        "-o",
-        "-",
-        "-H",
-        "Content-Type: application/json",
-        "-X",
-        "POST",
-        url,
-        "-d",
-        payload,
+    local paths = {
+        "/api/v1/auth/login",
+        "/api/auth/login",
     }
-    run_curl(args, function(status, stdout, stderr)
-        if not status then
-            return callback(false, nil, stderr or "login failed")
-        end
-        local head, _ = split_headers_body(stdout or "")
-        local code = parse_status_from_headers(head)
-        if not code or code >= 400 then
-            return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
-        end
-        local cookie = parse_cookie_from_header_text(head)
-        if not cookie then
-            return callback(false, nil, "login failed (no session cookie)")
-        end
-        callback(true, cookie)
-    end)
+    local idx = 1
+    local function attempt()
+        local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, paths[idx]))
+        local args = {
+            "curl",
+            "-sS",
+            "-D",
+            "-",
+            "-o",
+            "-",
+            "-H",
+            "Content-Type: application/json",
+            "-X",
+            "POST",
+            url,
+            "-d",
+            payload,
+        }
+        run_curl(args, function(status, stdout, stderr)
+            if not status then
+                return callback(false, nil, stderr or "login failed")
+            end
+            local head, _ = split_headers_body(stdout or "")
+            local code = parse_status_from_headers(head) or 0
+            if code == 404 and idx < #paths then
+                idx = idx + 1
+                return attempt()
+            end
+            if not code or code >= 400 then
+                return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
+            end
+            local cookie = parse_cookie_from_header_text(head)
+            if not cookie then
+                return callback(false, nil, "login failed (no session cookie)")
+            end
+            callback(true, cookie)
+        end)
+    end
+    attempt()
 end
 
 local function remote_https_fetch_json(cfg, path, cookie, method, body, callback)
@@ -3112,35 +3138,45 @@ local function pull_server_streams(server, client, request)
         if not ok then
             return error_response(server, client, 400, login_err or "login failed")
         end
-        remote_fetch_json(cfg, "/api/v1/streams", cookie, "GET", nil, function(ok2, data, fetch_err)
-            if not ok2 then
-                return error_response(server, client, 400, fetch_err or "fetch failed")
-            end
-            local payload = { make_stream = {} }
-            if type(data) == "table" and data.make_stream then
-                payload.make_stream = data.make_stream
-            elseif type(data) == "table" then
-                for _, row in ipairs(data) do
-                    if type(row) == "table" and type(row.config) == "table" then
-                        local cfgRow = row.config
-                        cfgRow.enable = row.enabled
-                        table.insert(payload.make_stream, cfgRow)
+        local paths = { "/api/v1/streams", "/api/streams" }
+        local idx = 1
+        local function fetch_next()
+            local path = paths[idx]
+            remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok2, data, fetch_err, code)
+                if not ok2 then
+                    if code == 404 and idx < #paths then
+                        idx = idx + 1
+                        return fetch_next()
+                    end
+                    return error_response(server, client, 400, fetch_err or "fetch failed")
+                end
+                local payload = { make_stream = {} }
+                if type(data) == "table" and data.make_stream then
+                    payload.make_stream = data.make_stream
+                elseif type(data) == "table" then
+                    for _, row in ipairs(data) do
+                        if type(row) == "table" and type(row.config) == "table" then
+                            local cfgRow = row.config
+                            cfgRow.enable = row.enabled
+                            table.insert(payload.make_stream, cfgRow)
+                        end
                     end
                 end
-            end
-            if #payload.make_stream == 0 then
-                return error_response(server, client, 400, "no streams received")
-            end
-            apply_config_change(server, client, request, {
-                comment = "pull streams",
-                apply = function()
-                    return config.import_astra(payload, { mode = "merge", transaction = true })
-                end,
-                success_builder = function(summary, revision_id)
-                    return { status = "ok", revision_id = revision_id, summary = summary }
-                end,
-            })
-        end)
+                if #payload.make_stream == 0 then
+                    return error_response(server, client, 400, "no streams received")
+                end
+                apply_config_change(server, client, request, {
+                    comment = "pull streams",
+                    apply = function()
+                        return config.import_astra(payload, { mode = "merge", transaction = true })
+                    end,
+                    success_builder = function(summary, revision_id)
+                        return { status = "ok", revision_id = revision_id, summary = summary }
+                    end,
+                })
+            end)
+        end
+        fetch_next()
     end)
 end
 
@@ -3184,28 +3220,47 @@ local function import_server_config(server, client, request)
         include_softcam and "1" or "0",
         include_splitters and "1" or "0"
     )
+    local legacy_query = string.format(
+        "/api/export?users=%s&settings=%s&streams=%s&adapters=%s&softcam=%s&splitters=%s",
+        include_users and "1" or "0",
+        include_settings and "1" or "0",
+        include_streams and "1" or "0",
+        include_adapters and "1" or "0",
+        include_softcam and "1" or "0",
+        include_splitters and "1" or "0"
+    )
 
     remote_login(cfg, function(ok, cookie, login_err)
         if not ok then
             return error_response(server, client, 400, login_err or "login failed")
         end
-        remote_fetch_json(cfg, query, cookie, "GET", nil, function(ok2, data, fetch_err)
-            if not ok2 then
-                return error_response(server, client, 400, fetch_err or "fetch failed")
-            end
-            if type(data) ~= "table" or next(data) == nil then
-                return error_response(server, client, 400, "empty config")
-            end
-            apply_config_change(server, client, request, {
-                comment = "import remote config",
-                apply = function()
-                    return config.import_astra(data, { mode = mode, transaction = true })
-                end,
-                success_builder = function(summary, revision_id)
-                    return { status = "ok", revision_id = revision_id, summary = summary }
-                end,
-            })
-        end)
+        local paths = { query, legacy_query }
+        local idx = 1
+        local function fetch_next()
+            local path = paths[idx]
+            remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok2, data, fetch_err, code)
+                if not ok2 then
+                    if code == 404 and idx < #paths then
+                        idx = idx + 1
+                        return fetch_next()
+                    end
+                    return error_response(server, client, 400, fetch_err or "fetch failed")
+                end
+                if type(data) ~= "table" or next(data) == nil then
+                    return error_response(server, client, 400, "empty config")
+                end
+                apply_config_change(server, client, request, {
+                    comment = "import remote config",
+                    apply = function()
+                        return config.import_astra(data, { mode = mode, transaction = true })
+                    end,
+                    success_builder = function(summary, revision_id)
+                        return { status = "ok", revision_id = revision_id, summary = summary }
+                    end,
+                })
+            end)
+        end
+        fetch_next()
     end)
 end
 
