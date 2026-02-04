@@ -20,6 +20,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - `docs/ROADMAP.md` - staged improvement plan.
 - `docs/TESTING.md` - local and server smoke tests.
 - `docs/OPERATIONS.md` - systemd and ops basics.
+- `docs/TRANSCODE_BUNDLE.md` - bundled ffmpeg/ffprobe packaging.
 
 ## Run UI/API server
 - `./astra scripts/server.lua [options]`
