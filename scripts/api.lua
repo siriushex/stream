@@ -1243,6 +1243,17 @@ local function list_adapter_status(server, client)
     json_response(server, client, 200, status)
 end
 
+local function list_dvb_adapters(server, client)
+    if not dvbls then
+        return error_response(server, client, 501, "dvbls module is not found")
+    end
+    local ok, result = pcall(dvbls)
+    if not ok then
+        return error_response(server, client, 500, "failed to list dvb adapters")
+    end
+    json_response(server, client, 200, result or {})
+end
+
 local function get_adapter_status(server, client, id)
     local status = runtime and runtime.get_adapter_status and runtime.get_adapter_status(id)
     if not status then
@@ -2737,6 +2748,9 @@ function api.handle_request(server, client, request)
 
     if path == "/api/v1/adapter-status" and method == "GET" then
         return list_adapter_status(server, client)
+    end
+    if path == "/api/v1/dvb-adapters" and method == "GET" then
+        return list_dvb_adapters(server, client)
     end
 
     local adapter_status_id = path:match("^/api/v1/adapter%-status/([%w%-%_]+)$")

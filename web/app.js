@@ -103,6 +103,8 @@ function applyTilesUiState() {
 const state = {
   streams: [],
   adapters: [],
+  dvbAdapters: [],
+  dvbAdaptersLoaded: false,
   settings: {},
   stats: {},
   adapterStatus: {},
@@ -754,6 +756,8 @@ const elements = {
   adapterNew: $('#adapter-new'),
   adapterForm: $('#adapter-form'),
   adapterSelect: $('#adapter-select'),
+  adapterDetected: $('#adapter-detected'),
+  adapterDetectedHint: $('#adapter-detected-hint'),
   adapterCancel: $('#adapter-cancel'),
   adapterDelete: $('#adapter-delete'),
   adapterError: $('#adapter-error'),
@@ -4702,6 +4706,74 @@ function adapterSummary(adapter) {
   return parts.filter(Boolean).join(' · ');
 }
 
+function normalizeDvbKey(adapter, device) {
+  const a = Number(adapter);
+  const d = device === undefined ? 0 : Number(device);
+  if (!Number.isFinite(a)) return null;
+  const deviceNum = Number.isFinite(d) ? d : 0;
+  return `${a}.${deviceNum}`;
+}
+
+function findDvbAdapter(adapter, device) {
+  const key = normalizeDvbKey(adapter, device);
+  if (!key) return null;
+  return (state.dvbAdapters || []).find((item) => normalizeDvbKey(item.adapter, item.device) === key) || null;
+}
+
+function formatDvbStatus(item) {
+  if (!item) return { label: 'Missing', className: 'missing', hint: 'Adapter not detected' };
+  if (item.error) return { label: 'Error', className: 'error', hint: item.error };
+  if (item.busy) return { label: 'Busy', className: 'busy', hint: 'Adapter is in use' };
+  return { label: 'Free', className: 'free', hint: 'Adapter is available' };
+}
+
+function renderDvbDetectedSelect() {
+  if (!elements.adapterDetected) return;
+  elements.adapterDetected.innerHTML = '';
+  const placeholder = document.createElement('option');
+  placeholder.value = '';
+  placeholder.textContent = 'Manual';
+  elements.adapterDetected.appendChild(placeholder);
+
+  if (!state.dvbAdaptersLoaded) {
+    if (elements.adapterDetectedHint) {
+      elements.adapterDetectedHint.textContent = 'DVB adapter list is unavailable.';
+      elements.adapterDetectedHint.className = 'form-hint adapter-detected-hint missing';
+    }
+    return;
+  }
+
+  const list = Array.isArray(state.dvbAdapters) ? state.dvbAdapters : [];
+  list.forEach((item) => {
+    const option = document.createElement('option');
+    const key = normalizeDvbKey(item.adapter, item.device);
+    const status = formatDvbStatus(item);
+    const type = item.type || 'Unknown';
+    const name = item.frontend ? ` · ${item.frontend}` : '';
+    option.value = key || '';
+    option.textContent = `adapter${item.adapter}.fe${item.device} · ${type} · ${status.label}${name}`;
+    elements.adapterDetected.appendChild(option);
+  });
+
+  if (!state.adapterEditing || !state.adapterEditing.adapter) {
+    elements.adapterDetected.value = '';
+    if (elements.adapterDetectedHint) {
+      elements.adapterDetectedHint.textContent = 'Select a detected adapter to fill Adapter/Device/Type fields.';
+      elements.adapterDetectedHint.className = 'form-hint';
+    }
+    return;
+  }
+  const config = state.adapterEditing.adapter.config || {};
+  const selectedKey = normalizeDvbKey(config.adapter, config.device);
+  elements.adapterDetected.value = selectedKey || '';
+  if (elements.adapterDetectedHint) {
+    const item = findDvbAdapter(config.adapter, config.device);
+    const status = formatDvbStatus(item);
+    elements.adapterDetectedHint.textContent = status.hint;
+    elements.adapterDetectedHint.className = `form-hint adapter-detected-hint ${status.className}`;
+  }
+}
+
 const FE_HAS_SIGNAL = 1;
 const FE_HAS_CARRIER = 2;
 const FE_HAS_VITERBI = 4;
@@ -4818,6 +4890,14 @@ function renderAdapterList() {
     label.textContent = adapter.enabled === false ? 'Disabled' : 'Enabled';
     status.appendChild(dot);
     status.appendChild(label);
+    if (config.adapter !== undefined && state.dvbAdaptersLoaded) {
+      const hw = findDvbAdapter(config.adapter, config.device);
+      const hwStatus = formatDvbStatus(hw);
+      const badge = document.createElement('span');
+      badge.className = `adapter-badge ${hwStatus.className}`;
+      badge.textContent = hwStatus.label;
+      status.appendChild(badge);
+    }
 
     const metrics = document.createElement('div');
     metrics.className = 'adapter-card-metrics';
@@ -4929,6 +5009,7 @@ function openAdapterEditor(adapter, isNew) {
   elements.adapterAtscFrequency.value = config.frequency !== undefined ? config.frequency : '';
 
   setAdapterGroup(elements.adapterType.value);
+  renderDvbDetectedSelect();
   state.adapterEditing = { adapter, isNew };
   if (elements.adapterDelete) {
     elements.adapterDelete.style.visibility = isNew ? 'hidden' : 'visible';
@@ -5057,6 +5138,19 @@ async function loadAdapterStatus() {
     state.adapterStatus = {};
   }
   renderAdapterList();
+}
+
+async function loadDvbAdapters() {
+  try {
+    const data = await apiJson('/api/v1/dvb-adapters');
+    state.dvbAdapters = Array.isArray(data) ? data : [];
+    state.dvbAdaptersLoaded = true;
+  } catch (err) {
+    state.dvbAdapters = [];
+    state.dvbAdaptersLoaded = false;
+  }
+  renderAdapterList();
+  renderDvbDetectedSelect();
 }
 
 function startAdapterPolling() {
@@ -10091,6 +10185,7 @@ async function refreshAll() {
     await loadSettings();
     await loadAdapters();
     await loadAdapterStatus();
+    await loadDvbAdapters();
     await loadSplitters();
     await loadBuffers();
     await loadStreams();
@@ -11114,6 +11209,36 @@ function bindEvents() {
       const adapter = state.adapters.find((item) => item.id === id);
       if (adapter) {
         openAdapterEditor(adapter, false);
+      }
+    });
+  }
+
+  if (elements.adapterDetected) {
+    elements.adapterDetected.addEventListener('change', () => {
+      const value = elements.adapterDetected.value;
+      if (!value) {
+        if (elements.adapterDetectedHint) {
+          elements.adapterDetectedHint.textContent = 'Select a detected adapter to fill Adapter/Device/Type fields.';
+          elements.adapterDetectedHint.className = 'form-hint';
+        }
+        return;
+      }
+      const [adapterStr, deviceStr] = value.split('.');
+      const item = findDvbAdapter(adapterStr, deviceStr);
+      if (!item) return;
+      elements.adapterIndex.value = item.adapter;
+      elements.adapterDevice.value = item.device || 0;
+      if (item.type) {
+        const current = elements.adapterType.value;
+        if (!(current === 'S2' && item.type === 'S')) {
+          elements.adapterType.value = item.type;
+        }
+        setAdapterGroup(elements.adapterType.value);
+      }
+      if (elements.adapterDetectedHint) {
+        const status = formatDvbStatus(item);
+        elements.adapterDetectedHint.textContent = status.hint;
+        elements.adapterDetectedHint.className = `form-hint adapter-detected-hint ${status.className}`;
       }
     });
   }
