@@ -1094,6 +1094,11 @@ function main()
             local buffer_size = math.max(128, http_play_buffer_kb)
             local buffer_fill = math.floor(buffer_size / 4)
             server:send(client, {
+                code = 200,
+                headers = {
+                    "Content-Type: video/MP2T",
+                    "Connection: close",
+                },
                 upstream = channel_data.tail:stream(),
                 buffer_size = buffer_size,
                 buffer_fill = buffer_fill,
