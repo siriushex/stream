@@ -488,18 +488,18 @@ const TValue *luaH_get (Table *t, const TValue *key) {
       lua_number2int(k, n);
       if (luai_numeq(cast_num(k), n)) /* index is int? */
         return luaH_getint(t, k);  /* use specialized version */
-      /* else go through */
+      break;
     }
-    default: {
-      Node *n = mainposition(t, key);
-      do {  /* check whether `key' is somewhere in the chain */
-        if (luaV_rawequalobj(gkey(n), key))
-          return gval(n);  /* that's it */
-        else n = gnext(n);
-      } while (n);
-      return luaO_nilobject;
-    }
+    default:
+      break;
   }
+  Node *n = mainposition(t, key);
+  do {  /* check whether `key' is somewhere in the chain */
+    if (luaV_rawequalobj(gkey(n), key))
+      return gval(n);  /* that's it */
+    else n = gnext(n);
+  } while (n);
+  return luaO_nilobject;
 }
 
 

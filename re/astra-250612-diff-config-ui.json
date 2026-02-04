@@ -1,0 +1,1185 @@
+{
+  "diffs": {
+    "input_ui_vs_runtime": {
+      "common": [
+        "addr",
+        "bridge_port",
+        "buffer_size",
+        "host",
+        "login",
+        "password",
+        "path",
+        "port",
+        "socket_size",
+        "timeout",
+        "url"
+      ],
+      "left_only": [
+        "biss",
+        "bitrate_limit",
+        "cam",
+        "cas",
+        "cc_limit",
+        "dvbId",
+        "ecm_pid",
+        "file",
+        "filter",
+        "filter~",
+        "iface",
+        "loop",
+        "map",
+        "no_analyze",
+        "no_reload",
+        "pass_eit",
+        "pass_sdt",
+        "pnr",
+        "set_pnr",
+        "set_tsid",
+        "shift",
+        "ua"
+      ],
+      "right_only": [
+        "base_url",
+        "bridge_addr",
+        "bridge_bin",
+        "bridge_input_args",
+        "bridge_localaddr",
+        "bridge_log_level",
+        "bridge_output_args",
+        "bridge_pkt_size",
+        "bridge_socket_size",
+        "bridge_ttl",
+        "buffer_fill",
+        "cbr",
+        "cleanup",
+        "filename",
+        "format",
+        "localaddr",
+        "name",
+        "naming",
+        "pass_data",
+        "playlist",
+        "prefix",
+        "query",
+        "round_duration",
+        "sctp",
+        "source_url",
+        "sync",
+        "target_duration",
+        "ts_extension",
+        "ttl",
+        "use_wall",
+        "window"
+      ]
+    },
+    "output_ui_vs_runtime": {
+      "common": [
+        "addr",
+        "base_url",
+        "bridge_port",
+        "buffer_fill",
+        "buffer_size",
+        "cbr",
+        "cleanup",
+        "filename",
+        "host",
+        "localaddr",
+        "path",
+        "playlist",
+        "port",
+        "prefix",
+        "socket_size",
+        "sync",
+        "target_duration",
+        "timeout",
+        "ttl",
+        "url",
+        "use_wall",
+        "window"
+      ],
+      "left_only": [
+        "aio",
+        "directio",
+        "keep_active",
+        "m2ts"
+      ],
+      "right_only": [
+        "bridge_addr",
+        "bridge_bin",
+        "bridge_input_args",
+        "bridge_localaddr",
+        "bridge_log_level",
+        "bridge_output_args",
+        "bridge_pkt_size",
+        "bridge_socket_size",
+        "bridge_ttl",
+        "format",
+        "login",
+        "name",
+        "naming",
+        "pass_data",
+        "password",
+        "query",
+        "round_duration",
+        "sctp",
+        "source_url",
+        "ts_extension"
+      ]
+    },
+    "settings_ui_vs_lua": {
+      "common": [
+        "auth_admin_bypass_enabled",
+        "auth_allow_no_token",
+        "auth_default_duration_sec",
+        "auth_deny_cache_sec",
+        "auth_hash_algo",
+        "auth_hls_rewrite_token",
+        "auth_on_play_url",
+        "auth_on_publish_url",
+        "auth_overlimit_policy",
+        "auth_timeout_ms",
+        "buffer_client_read_timeout_sec",
+        "buffer_enabled",
+        "buffer_listen_host",
+        "buffer_listen_port",
+        "buffer_max_clients_total",
+        "buffer_source_bind_interface",
+        "hls_cleanup",
+        "hls_duration",
+        "hls_m3u_headers",
+        "hls_naming",
+        "hls_pass_data",
+        "hls_quantity",
+        "hls_resource_path",
+        "hls_round_duration",
+        "hls_session_timeout",
+        "hls_ts_extension",
+        "hls_ts_headers",
+        "hls_ts_mime",
+        "hls_use_expires",
+        "http_auth_allow",
+        "http_auth_deny",
+        "http_auth_enabled",
+        "http_auth_realm",
+        "http_auth_tokens",
+        "http_auth_users",
+        "http_play_allow",
+        "http_play_arrange",
+        "http_play_buffer_kb",
+        "http_play_hls",
+        "http_play_logos",
+        "http_play_m3u_header",
+        "http_play_no_tls",
+        "http_play_playlist_name",
+        "http_play_port",
+        "http_play_screens",
+        "http_play_xspf_title",
+        "http_port"
+      ],
+      "left_only": [],
+      "right_only": [
+        "access_log_max_entries",
+        "access_log_retention_sec",
+        "auth_session_ttl_sec",
+        "backup_active_warm_max",
+        "event_request",
+        "gid",
+        "hls_base_url",
+        "hls_dir",
+        "http_csrf_enabled",
+        "http_play_stream",
+        "log_max_entries",
+        "log_retention_sec",
+        "password_disallow_username",
+        "password_min_length",
+        "password_require_letter",
+        "password_require_mixed_case",
+        "password_require_number",
+        "password_require_symbol",
+        "rate_limit_login_per_min",
+        "rate_limit_login_window_sec",
+        "softcam"
+      ]
+    },
+    "stream_ui_vs_runtime": {
+      "common": [
+        "name",
+        "timeout"
+      ],
+      "left_only": [
+        "auth_enabled",
+        "backup_active_warm_max",
+        "backup_initial_delay",
+        "backup_return_delay",
+        "backup_start_delay",
+        "backup_type",
+        "description",
+        "http_keep_active",
+        "id",
+        "input",
+        "map",
+        "mpts",
+        "no_data_timeout_sec",
+        "on_play",
+        "on_publish",
+        "output",
+        "probe_interval_sec",
+        "service_name",
+        "service_provider",
+        "session_keys",
+        "set_pnr",
+        "set_tsid",
+        "stable_ok_sec",
+        "transcode",
+        "type"
+      ],
+      "right_only": [
+        "addr",
+        "base_url",
+        "bridge_addr",
+        "bridge_bin",
+        "bridge_input_args",
+        "bridge_localaddr",
+        "bridge_log_level",
+        "bridge_output_args",
+        "bridge_pkt_size",
+        "bridge_port",
+        "bridge_socket_size",
+        "bridge_ttl",
+        "buffer_fill",
+        "buffer_size",
+        "cbr",
+        "cleanup",
+        "filename",
+        "format",
+        "host",
+        "localaddr",
+        "login",
+        "naming",
+        "pass_data",
+        "password",
+        "path",
+        "playlist",
+        "port",
+        "prefix",
+        "query",
+        "round_duration",
+        "sctp",
+        "socket_size",
+        "source_url",
+        "sync",
+        "target_duration",
+        "ts_extension",
+        "ttl",
+        "url",
+        "use_wall",
+        "window"
+      ]
+    },
+    "transcode_output_ui_vs_runtime": {
+      "common": [
+        "a_args",
+        "acodec",
+        "format_args",
+        "metadata",
+        "url",
+        "v_args",
+        "vcodec",
+        "vf"
+      ],
+      "left_only": [
+        "name"
+      ],
+      "right_only": []
+    },
+    "transcode_ui_vs_runtime": {
+      "common": [
+        "common_output_args",
+        "decoder_args",
+        "engine",
+        "ffmpeg_global_args",
+        "ffmpeg_path",
+        "log_file",
+        "outputs",
+        "watchdog"
+      ],
+      "left_only": [
+        "gpu_device"
+      ],
+      "right_only": [
+        "common_input_args",
+        "ffmpeg_bin"
+      ]
+    }
+  },
+  "json_schema": {
+    "splitter_allow_keys": [
+      "id",
+      "kind",
+      "value"
+    ],
+    "splitter_entry_keys": [
+      "allow",
+      "config_path",
+      "enable",
+      "id",
+      "in_interface",
+      "links",
+      "logpath",
+      "logtype",
+      "name",
+      "out_interface",
+      "port"
+    ],
+    "splitter_link_keys": [
+      "bandwidth",
+      "buffering",
+      "enable",
+      "id",
+      "url"
+    ],
+    "top_level_keys": [
+      "adapters",
+      "dvb_tune",
+      "gid",
+      "make_stream",
+      "settings",
+      "softcam",
+      "splitters",
+      "streams",
+      "users"
+    ],
+    "users_entry_keys": [
+      "cipher",
+      "comment",
+      "enable",
+      "password_hash",
+      "password_salt",
+      "type",
+      "username"
+    ]
+  },
+  "lua": {
+    "settings": {
+      "keys": [
+        "access_log_max_entries",
+        "access_log_retention_sec",
+        "auth_admin_bypass_enabled",
+        "auth_allow_no_token",
+        "auth_default_duration_sec",
+        "auth_deny_cache_sec",
+        "auth_hash_algo",
+        "auth_hls_rewrite_token",
+        "auth_on_play_url",
+        "auth_on_publish_url",
+        "auth_overlimit_policy",
+        "auth_session_ttl_sec",
+        "auth_timeout_ms",
+        "backup_active_warm_max",
+        "buffer_client_read_timeout_sec",
+        "buffer_enabled",
+        "buffer_listen_host",
+        "buffer_listen_port",
+        "buffer_max_clients_total",
+        "buffer_source_bind_interface",
+        "event_request",
+        "gid",
+        "hls_base_url",
+        "hls_cleanup",
+        "hls_dir",
+        "hls_duration",
+        "hls_m3u_headers",
+        "hls_naming",
+        "hls_pass_data",
+        "hls_quantity",
+        "hls_resource_path",
+        "hls_round_duration",
+        "hls_session_timeout",
+        "hls_ts_extension",
+        "hls_ts_headers",
+        "hls_ts_mime",
+        "hls_use_expires",
+        "http_auth_allow",
+        "http_auth_deny",
+        "http_auth_enabled",
+        "http_auth_realm",
+        "http_auth_tokens",
+        "http_auth_users",
+        "http_csrf_enabled",
+        "http_play_allow",
+        "http_play_arrange",
+        "http_play_buffer_kb",
+        "http_play_hls",
+        "http_play_logos",
+        "http_play_m3u_header",
+        "http_play_no_tls",
+        "http_play_playlist_name",
+        "http_play_port",
+        "http_play_screens",
+        "http_play_stream",
+        "http_play_xspf_title",
+        "http_port",
+        "log_max_entries",
+        "log_retention_sec",
+        "password_disallow_username",
+        "password_min_length",
+        "password_require_letter",
+        "password_require_mixed_case",
+        "password_require_number",
+        "password_require_symbol",
+        "rate_limit_login_per_min",
+        "rate_limit_login_window_sec",
+        "softcam"
+      ],
+      "sources": {
+        "access_log_max_entries": [
+          "server.lua"
+        ],
+        "access_log_retention_sec": [
+          "server.lua"
+        ],
+        "auth_admin_bypass_enabled": [
+          "auth.lua"
+        ],
+        "auth_allow_no_token": [
+          "auth.lua"
+        ],
+        "auth_default_duration_sec": [
+          "auth.lua"
+        ],
+        "auth_deny_cache_sec": [
+          "auth.lua"
+        ],
+        "auth_hash_algo": [
+          "auth.lua"
+        ],
+        "auth_hls_rewrite_token": [
+          "auth.lua"
+        ],
+        "auth_on_play_url": [
+          "auth.lua"
+        ],
+        "auth_on_publish_url": [
+          "auth.lua"
+        ],
+        "auth_overlimit_policy": [
+          "auth.lua"
+        ],
+        "auth_session_ttl_sec": [
+          "api.lua"
+        ],
+        "auth_timeout_ms": [
+          "auth.lua"
+        ],
+        "backup_active_warm_max": [
+          "stream.lua"
+        ],
+        "buffer_client_read_timeout_sec": [
+          "buffer.lua"
+        ],
+        "buffer_enabled": [
+          "buffer.lua"
+        ],
+        "buffer_listen_host": [
+          "api.lua",
+          "buffer.lua"
+        ],
+        "buffer_listen_port": [
+          "api.lua",
+          "buffer.lua"
+        ],
+        "buffer_max_clients_total": [
+          "buffer.lua"
+        ],
+        "buffer_source_bind_interface": [
+          "buffer.lua"
+        ],
+        "event_request": [
+          "stream.lua",
+          "transcode.lua"
+        ],
+        "gid": [
+          "config.lua"
+        ],
+        "hls_base_url": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "hls_cleanup": [
+          "stream.lua"
+        ],
+        "hls_dir": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "hls_duration": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "hls_m3u_headers": [
+          "server.lua"
+        ],
+        "hls_naming": [
+          "stream.lua"
+        ],
+        "hls_pass_data": [
+          "stream.lua"
+        ],
+        "hls_quantity": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "hls_resource_path": [
+          "stream.lua"
+        ],
+        "hls_round_duration": [
+          "stream.lua"
+        ],
+        "hls_session_timeout": [
+          "runtime.lua"
+        ],
+        "hls_ts_extension": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "hls_ts_headers": [
+          "server.lua"
+        ],
+        "hls_ts_mime": [
+          "server.lua"
+        ],
+        "hls_use_expires": [
+          "server.lua"
+        ],
+        "http_auth_allow": [
+          "base.lua"
+        ],
+        "http_auth_deny": [
+          "base.lua"
+        ],
+        "http_auth_enabled": [
+          "base.lua"
+        ],
+        "http_auth_realm": [
+          "base.lua"
+        ],
+        "http_auth_tokens": [
+          "base.lua"
+        ],
+        "http_auth_users": [
+          "base.lua"
+        ],
+        "http_csrf_enabled": [
+          "api.lua"
+        ],
+        "http_play_allow": [
+          "config.lua",
+          "server.lua"
+        ],
+        "http_play_arrange": [
+          "server.lua"
+        ],
+        "http_play_buffer_kb": [
+          "server.lua"
+        ],
+        "http_play_hls": [
+          "server.lua",
+          "stream.lua"
+        ],
+        "http_play_logos": [
+          "server.lua"
+        ],
+        "http_play_m3u_header": [
+          "server.lua"
+        ],
+        "http_play_no_tls": [
+          "server.lua"
+        ],
+        "http_play_playlist_name": [
+          "server.lua"
+        ],
+        "http_play_port": [
+          "buffer.lua",
+          "server.lua"
+        ],
+        "http_play_screens": [
+          "server.lua"
+        ],
+        "http_play_stream": [
+          "config.lua"
+        ],
+        "http_play_xspf_title": [
+          "server.lua"
+        ],
+        "http_port": [
+          "buffer.lua",
+          "server.lua"
+        ],
+        "log_max_entries": [
+          "server.lua"
+        ],
+        "log_retention_sec": [
+          "server.lua"
+        ],
+        "password_disallow_username": [
+          "config.lua"
+        ],
+        "password_min_length": [
+          "config.lua"
+        ],
+        "password_require_letter": [
+          "config.lua"
+        ],
+        "password_require_mixed_case": [
+          "config.lua"
+        ],
+        "password_require_number": [
+          "config.lua"
+        ],
+        "password_require_symbol": [
+          "config.lua"
+        ],
+        "rate_limit_login_per_min": [
+          "api.lua"
+        ],
+        "rate_limit_login_window_sec": [
+          "api.lua"
+        ],
+        "softcam": [
+          "config.lua",
+          "server.lua"
+        ]
+      }
+    },
+    "stream_conf_keys": [
+      "addr",
+      "base_url",
+      "bridge_addr",
+      "bridge_bin",
+      "bridge_input_args",
+      "bridge_localaddr",
+      "bridge_log_level",
+      "bridge_output_args",
+      "bridge_pkt_size",
+      "bridge_port",
+      "bridge_socket_size",
+      "bridge_ttl",
+      "buffer_fill",
+      "buffer_size",
+      "cbr",
+      "cleanup",
+      "filename",
+      "format",
+      "host",
+      "localaddr",
+      "login",
+      "name",
+      "naming",
+      "pass_data",
+      "password",
+      "path",
+      "playlist",
+      "port",
+      "prefix",
+      "query",
+      "round_duration",
+      "sctp",
+      "socket_size",
+      "source_url",
+      "sync",
+      "target_duration",
+      "timeout",
+      "ts_extension",
+      "ttl",
+      "url",
+      "use_wall",
+      "window"
+    ],
+    "transcode": {
+      "output_keys": [
+        "a_args",
+        "acodec",
+        "format_args",
+        "metadata",
+        "url",
+        "v_args",
+        "vcodec",
+        "vf"
+      ],
+      "transcode_keys": [
+        "common_input_args",
+        "common_output_args",
+        "decoder_args",
+        "engine",
+        "ffmpeg_bin",
+        "ffmpeg_global_args",
+        "ffmpeg_path",
+        "log_file",
+        "outputs",
+        "watchdog"
+      ],
+      "watchdog_keys": []
+    }
+  },
+  "ui": {
+    "adapters": {
+      "config_keys": [
+        "adapter",
+        "bandwidth",
+        "budget",
+        "buffer_size",
+        "ca_pmt_delay",
+        "device",
+        "diseqc",
+        "frequency",
+        "guardinterval",
+        "hierarchy",
+        "id",
+        "lnb",
+        "lnb_sharing",
+        "log_signal",
+        "modulation",
+        "raw_signal",
+        "rolloff",
+        "stream_id",
+        "symbolrate",
+        "tone",
+        "tp",
+        "transmitmode",
+        "type",
+        "uni_frequency",
+        "uni_scr"
+      ],
+      "top_level_keys": [
+        "id",
+        "enabled",
+        "config"
+      ]
+    },
+    "buffers": {
+      "allow_keys": [
+        "kind",
+        "value"
+      ],
+      "input_keys": [
+        "enable",
+        "priority",
+        "url"
+      ],
+      "resource_keys": [
+        "av_pts_align_enabled",
+        "av_pts_max_desync_ms",
+        "backup_probe_interval_sec",
+        "backup_return_delay_sec",
+        "backup_start_delay_sec",
+        "backup_type",
+        "bandwidth_kbps",
+        "buffering_sec",
+        "client_start_offset_sec",
+        "enable",
+        "id",
+        "keyframe_detect_mode",
+        "max_client_lag_ms",
+        "name",
+        "no_data_timeout_sec",
+        "pacing_mode",
+        "paramset_required",
+        "path",
+        "smart_lookback_ms",
+        "smart_max_lead_ms",
+        "smart_require_keyframe",
+        "smart_require_pat_pmt",
+        "smart_require_pcr",
+        "smart_start_enabled",
+        "smart_target_delay_ms",
+        "smart_wait_ready_ms",
+        "start_debug_enabled",
+        "ts_drop_corrupt_enabled",
+        "ts_resync_enabled",
+        "ts_rewrite_cc_enabled"
+      ]
+    },
+    "settings": {
+      "all_keys": [
+        "auth_admin_bypass_enabled",
+        "auth_allow_no_token",
+        "auth_default_duration_sec",
+        "auth_deny_cache_sec",
+        "auth_hash_algo",
+        "auth_hls_rewrite_token",
+        "auth_on_play_url",
+        "auth_on_publish_url",
+        "auth_overlimit_policy",
+        "auth_timeout_ms",
+        "buffer_client_read_timeout_sec",
+        "buffer_enabled",
+        "buffer_listen_host",
+        "buffer_listen_port",
+        "buffer_max_clients_total",
+        "buffer_source_bind_interface",
+        "hls_cleanup",
+        "hls_duration",
+        "hls_m3u_headers",
+        "hls_naming",
+        "hls_pass_data",
+        "hls_quantity",
+        "hls_resource_path",
+        "hls_round_duration",
+        "hls_session_timeout",
+        "hls_ts_extension",
+        "hls_ts_headers",
+        "hls_ts_mime",
+        "hls_use_expires",
+        "http_auth_allow",
+        "http_auth_deny",
+        "http_auth_enabled",
+        "http_auth_realm",
+        "http_auth_tokens",
+        "http_auth_users",
+        "http_play_allow",
+        "http_play_arrange",
+        "http_play_buffer_kb",
+        "http_play_hls",
+        "http_play_logos",
+        "http_play_m3u_header",
+        "http_play_no_tls",
+        "http_play_playlist_name",
+        "http_play_port",
+        "http_play_screens",
+        "http_play_xspf_title",
+        "http_port"
+      ],
+      "read_keys": [
+        "auth_admin_bypass_enabled",
+        "auth_allow_no_token",
+        "auth_default_duration_sec",
+        "auth_deny_cache_sec",
+        "auth_hash_algo",
+        "auth_hls_rewrite_token",
+        "auth_on_play_url",
+        "auth_on_publish_url",
+        "auth_overlimit_policy",
+        "auth_timeout_ms",
+        "buffer_client_read_timeout_sec",
+        "buffer_enabled",
+        "buffer_listen_host",
+        "buffer_listen_port",
+        "buffer_max_clients_total",
+        "buffer_source_bind_interface",
+        "hls_cleanup",
+        "hls_duration",
+        "hls_m3u_headers",
+        "hls_naming",
+        "hls_pass_data",
+        "hls_quantity",
+        "hls_resource_path",
+        "hls_round_duration",
+        "hls_session_timeout",
+        "hls_ts_extension",
+        "hls_ts_headers",
+        "hls_ts_mime",
+        "hls_use_expires",
+        "http_auth_allow",
+        "http_auth_deny",
+        "http_auth_enabled",
+        "http_auth_realm",
+        "http_auth_tokens",
+        "http_auth_users",
+        "http_play_allow",
+        "http_play_arrange",
+        "http_play_buffer_kb",
+        "http_play_hls",
+        "http_play_logos",
+        "http_play_m3u_header",
+        "http_play_no_tls",
+        "http_play_playlist_name",
+        "http_play_port",
+        "http_play_screens",
+        "http_play_xspf_title",
+        "http_port"
+      ],
+      "write_groups": {
+        "collectBufferSettings": [
+          "buffer_client_read_timeout_sec",
+          "buffer_enabled",
+          "buffer_listen_host",
+          "buffer_listen_port",
+          "buffer_max_clients_total",
+          "buffer_source_bind_interface"
+        ],
+        "collectHlsSettings": [
+          "hls_duration",
+          "hls_m3u_headers",
+          "hls_naming",
+          "hls_pass_data",
+          "hls_quantity",
+          "hls_resource_path",
+          "hls_round_duration",
+          "hls_session_timeout",
+          "hls_ts_extension",
+          "hls_ts_headers",
+          "hls_ts_mime",
+          "hls_use_expires"
+        ],
+        "collectHttpAuthSettings": [
+          "auth_admin_bypass_enabled",
+          "auth_allow_no_token",
+          "auth_default_duration_sec",
+          "auth_deny_cache_sec",
+          "auth_hash_algo",
+          "auth_hls_rewrite_token",
+          "auth_on_play_url",
+          "auth_on_publish_url",
+          "auth_overlimit_policy",
+          "auth_timeout_ms",
+          "http_auth_allow",
+          "http_auth_deny",
+          "http_auth_enabled",
+          "http_auth_realm",
+          "http_auth_tokens",
+          "http_auth_users"
+        ],
+        "collectHttpPlaySettings": [
+          "http_play_allow",
+          "http_play_arrange",
+          "http_play_buffer_kb",
+          "http_play_hls",
+          "http_play_logos",
+          "http_play_m3u_header",
+          "http_play_no_tls",
+          "http_play_playlist_name",
+          "http_play_port",
+          "http_play_screens",
+          "http_play_xspf_title"
+        ]
+      },
+      "write_keys": [
+        "auth_admin_bypass_enabled",
+        "auth_allow_no_token",
+        "auth_default_duration_sec",
+        "auth_deny_cache_sec",
+        "auth_hash_algo",
+        "auth_hls_rewrite_token",
+        "auth_on_play_url",
+        "auth_on_publish_url",
+        "auth_overlimit_policy",
+        "auth_timeout_ms",
+        "buffer_client_read_timeout_sec",
+        "buffer_enabled",
+        "buffer_listen_host",
+        "buffer_listen_port",
+        "buffer_max_clients_total",
+        "buffer_source_bind_interface",
+        "hls_duration",
+        "hls_m3u_headers",
+        "hls_naming",
+        "hls_pass_data",
+        "hls_quantity",
+        "hls_resource_path",
+        "hls_round_duration",
+        "hls_session_timeout",
+        "hls_ts_extension",
+        "hls_ts_headers",
+        "hls_ts_mime",
+        "hls_use_expires",
+        "http_auth_allow",
+        "http_auth_deny",
+        "http_auth_enabled",
+        "http_auth_realm",
+        "http_auth_tokens",
+        "http_auth_users",
+        "http_play_allow",
+        "http_play_arrange",
+        "http_play_buffer_kb",
+        "http_play_hls",
+        "http_play_logos",
+        "http_play_m3u_header",
+        "http_play_no_tls",
+        "http_play_playlist_name",
+        "http_play_port",
+        "http_play_screens",
+        "http_play_xspf_title"
+      ]
+    },
+    "splitters": {
+      "allow_keys": [
+        "kind",
+        "value"
+      ],
+      "config_keys": [
+        "config_path",
+        "enable",
+        "id",
+        "in_interface",
+        "logpath",
+        "logtype",
+        "name",
+        "out_interface",
+        "port"
+      ],
+      "link_keys": [
+        "bandwidth",
+        "buffering",
+        "enable",
+        "url"
+      ]
+    },
+    "streams": {
+      "config_keys": [
+        "auth_enabled",
+        "backup_active_warm_max",
+        "backup_initial_delay",
+        "backup_return_delay",
+        "backup_start_delay",
+        "backup_type",
+        "description",
+        "http_keep_active",
+        "id",
+        "input",
+        "map",
+        "mpts",
+        "name",
+        "no_data_timeout_sec",
+        "on_play",
+        "on_publish",
+        "output",
+        "probe_interval_sec",
+        "service_name",
+        "service_provider",
+        "session_keys",
+        "set_pnr",
+        "set_tsid",
+        "stable_ok_sec",
+        "timeout",
+        "transcode",
+        "type"
+      ],
+      "input_option_keys": [
+        "biss",
+        "bitrate_limit",
+        "bridge_port",
+        "buffer_size",
+        "cam",
+        "cas",
+        "cc_limit",
+        "ecm_pid",
+        "filter",
+        "filter~",
+        "loop",
+        "map",
+        "no_analyze",
+        "no_reload",
+        "pass_eit",
+        "pass_sdt",
+        "pnr",
+        "set_pnr",
+        "set_tsid",
+        "shift",
+        "socket_size",
+        "timeout",
+        "ua"
+      ],
+      "input_url_parts": [
+        "addr",
+        "dvbId",
+        "file",
+        "host",
+        "iface",
+        "login",
+        "password",
+        "path",
+        "port",
+        "url"
+      ],
+      "output_fields": {
+        "file": [
+          "aio",
+          "buffer_size",
+          "directio",
+          "filename",
+          "format",
+          "m2ts"
+        ],
+        "hls": [
+          "auto",
+          "base_url",
+          "cleanup",
+          "format",
+          "path",
+          "playlist",
+          "prefix",
+          "target_duration",
+          "use_wall",
+          "window"
+        ],
+        "http": [
+          "buffer_fill",
+          "buffer_size",
+          "format",
+          "host",
+          "keep_active",
+          "path",
+          "port"
+        ],
+        "np": [
+          "buffer_size",
+          "format",
+          "host",
+          "path",
+          "port",
+          "timeout"
+        ],
+        "srt": [
+          "bridge_port",
+          "format",
+          "url"
+        ],
+        "udp/rtp": [
+          "addr",
+          "cbr",
+          "format",
+          "localaddr",
+          "port",
+          "socket_size",
+          "sync",
+          "ttl"
+        ]
+      },
+      "transcode_config_keys": [
+        "common_output_args",
+        "decoder_args",
+        "engine",
+        "ffmpeg_global_args",
+        "ffmpeg_path",
+        "gpu_device",
+        "log_file",
+        "outputs",
+        "watchdog"
+      ],
+      "transcode_output_keys": [
+        "a_args",
+        "acodec",
+        "format_args",
+        "metadata",
+        "name",
+        "url",
+        "v_args",
+        "vcodec",
+        "vf"
+      ],
+      "transcode_watchdog_keys": [
+        "desync_fail_count",
+        "desync_threshold_ms",
+        "max_error_lines_per_min",
+        "max_restarts_per_10min",
+        "no_progress_timeout_sec",
+        "probe_duration_sec",
+        "probe_fail_count",
+        "probe_interval_sec",
+        "probe_timeout_sec",
+        "probe_url",
+        "restart_delay_sec"
+      ]
+    }
+  }
+}

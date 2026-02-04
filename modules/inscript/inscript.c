@@ -40,6 +40,47 @@ static int load_inscript(const char *buffer, size_t size, const char *name)
     return 0;
 }
 
+static bool has_suffix(const char *value, const char *suffix)
+{
+    if(!value || !suffix)
+        return false;
+    const size_t value_len = strlen(value);
+    const size_t suffix_len = strlen(suffix);
+    if(value_len < suffix_len)
+        return false;
+    return !strcmp(value + value_len - suffix_len, suffix);
+}
+
+static bool has_prefix(const char *value, const char *prefix)
+{
+    if(!value || !prefix)
+        return false;
+    const size_t prefix_len = strlen(prefix);
+    return strncmp(value, prefix, prefix_len) == 0;
+}
+
+static bool is_config_path(const char *value)
+{
+    if(!value || value[0] == '\0')
+        return false;
+    if(value[0] == '-')
+        return false;
+    if(has_suffix(value, ".json"))
+        return true;
+    if(has_suffix(value, ".lua"))
+    {
+        if(has_prefix(value, "scripts/")
+            || has_prefix(value, "./scripts/")
+            || has_prefix(value, "scripts\\")
+            || has_prefix(value, ".\\scripts\\"))
+        {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
 static int fn_inscript_callback(lua_State *L)
 {
     __uarg(L);
@@ -51,7 +92,7 @@ static int fn_inscript_callback(lua_State *L)
         luaL_error(lua, "[main] %s", lua_tostring(lua, -1));
 
     lua_getglobal(lua, "argv");
-    const int argc = luaL_len(lua, -1);
+    int argc = luaL_len(lua, -1);
 
     if(argc == 0)
     {
@@ -67,7 +108,34 @@ static int fn_inscript_callback(lua_State *L)
 
     lua_rawgeti(lua, -1, 1);
     const char *script = luaL_checkstring(lua, -1);
-    lua_pop(lua, 2); // script + argv
+    lua_pop(lua, 1); // script
+
+    if(is_config_path(script))
+    {
+        lua_newtable(lua);
+        int new_idx = 1;
+        lua_pushstring(lua, "scripts/server.lua");
+        lua_rawseti(lua, -2, new_idx++);
+        lua_pushstring(lua, "--config");
+        lua_rawseti(lua, -2, new_idx++);
+        lua_pushstring(lua, script);
+        lua_rawseti(lua, -2, new_idx++);
+
+        for(int i = 2; i <= argc; i++)
+        {
+            lua_rawgeti(lua, -2, i);
+            lua_rawseti(lua, -2, new_idx++);
+        }
+
+        lua_setglobal(lua, "argv");
+        lua_pop(lua, 1); // argv
+        argc = new_idx - 1;
+        script = "scripts/server.lua";
+    }
+    else
+    {
+        lua_pop(lua, 1); // argv
+    }
 
     load = load_inscript((const char *)stream, sizeof(stream), "=stream");
     if(load != 0)

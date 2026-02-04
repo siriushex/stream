@@ -31,6 +31,9 @@
  *      no_eit      - boolean, do not join EIT table
  *      cas         - boolean, join CAT, ECM, EMM tables
  *      set_pnr     - number, replace original PNR
+ *      set_tsid    - number, replace original TSID
+ *      service_provider - string, override provider name in SDT
+ *      service_name     - string, override service name in SDT
  *      map         - list, map PID by stream type, item format: "type=pid"
  *                    type: video, audio, rus, eng... and other languages code
  *                     pid: number identifier in range 32-8190
@@ -57,6 +60,8 @@ struct module_data_t
         const char *name;
         int pnr;
         int set_pnr;
+        int set_tsid;
+        bool has_set_tsid;
         bool no_sdt;
         bool no_eit;
         bool no_reload;
@@ -64,6 +69,10 @@ struct module_data_t
 
         bool pass_sdt;
         bool pass_eit;
+        const char *service_provider;
+        const char *service_name;
+        int service_type_id;
+        bool has_service_type_id;
     } config;
 
     /* */
@@ -240,7 +249,8 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     }
 
     const uint8_t pat_version = PAT_GET_VERSION(mod->custom_pat) + 1;
-    PAT_INIT(mod->custom_pat, mod->tsid, pat_version);
+    const uint16_t out_tsid = (mod->config.has_set_tsid) ? mod->config.set_tsid : mod->tsid;
+    PAT_INIT(mod->custom_pat, out_tsid, pat_version);
     memcpy(PAT_ITEMS_FIRST(mod->custom_pat), pointer, 4);
 
     mod->custom_pmt->pid = mod->pmt->pid;
@@ -607,6 +617,115 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
  *
  */
 
+static uint16_t sdt_build_item(module_data_t *mod, const uint8_t *src_item, uint8_t *dst_item)
+{
+    const bool update_service = (mod->config.service_provider != NULL)
+                             || (mod->config.service_name != NULL)
+                             || mod->config.has_service_type_id;
+    const uint16_t src_len = __SDT_ITEM_DESC_SIZE(src_item) + 5;
+
+    if(!update_service)
+    {
+        memcpy(dst_item, src_item, src_len);
+        return src_len;
+    }
+
+    memcpy(dst_item, src_item, 5);
+
+    const uint8_t *desc_ptr = SDT_ITEM_DESC_FIRST(src_item);
+    const uint8_t *desc_end = desc_ptr + __SDT_ITEM_DESC_SIZE(src_item);
+    uint8_t *out_ptr = dst_item + 5;
+    uint16_t out_len = 0;
+
+    char provider_buf[256];
+    char service_buf[256];
+    provider_buf[0] = 0x00;
+    service_buf[0] = 0x00;
+    uint8_t service_type = 1;
+    bool found_service = false;
+
+    while(desc_ptr + 1 < desc_end)
+    {
+        const uint8_t tag = desc_ptr[0];
+        const uint8_t len = desc_ptr[1];
+        const uint8_t *next = desc_ptr + 2 + len;
+        if(next > desc_end)
+            break;
+
+        if(tag == 0x48 && len >= 2)
+        {
+            found_service = true;
+            service_type = desc_ptr[2];
+            const uint8_t *ptr = desc_ptr + 3;
+            uint8_t provider_len = (ptr < next) ? ptr[0] : 0;
+            ptr++;
+            if(ptr + provider_len <= next)
+            {
+                const size_t copy_len = provider_len;
+                memcpy(provider_buf, ptr, copy_len);
+                provider_buf[copy_len] = 0x00;
+            }
+            ptr += provider_len;
+            if(ptr < next)
+            {
+                uint8_t service_len = ptr[0];
+                ptr++;
+                if(ptr + service_len <= next)
+                {
+                    const size_t copy_len = service_len;
+                    memcpy(service_buf, ptr, copy_len);
+                    service_buf[copy_len] = 0x00;
+                }
+            }
+        }
+        else
+        {
+            memcpy(&out_ptr[out_len], desc_ptr, len + 2);
+            out_len += len + 2;
+        }
+
+        desc_ptr = next;
+    }
+
+    if(!found_service)
+    {
+        provider_buf[0] = 0x00;
+        service_buf[0] = 0x00;
+    }
+
+    if(mod->config.has_service_type_id)
+        service_type = (uint8_t)mod->config.service_type_id;
+
+    const char *provider_out = mod->config.service_provider ? mod->config.service_provider : provider_buf;
+    const char *service_out = mod->config.service_name ? mod->config.service_name : service_buf;
+    size_t provider_len = strlen(provider_out);
+    size_t service_len = strlen(service_out);
+    if(provider_len > 255) provider_len = 255;
+    if(service_len > 255) service_len = 255;
+    size_t desc_len = 3 + provider_len + 1 + service_len;
+    if(desc_len > 255)
+    {
+        const size_t max_name = 255 - 4;
+        if(service_len > max_name)
+            service_len = max_name;
+        desc_len = 3 + provider_len + 1 + service_len;
+    }
+
+    out_ptr[out_len] = 0x48;
+    out_ptr[out_len + 1] = (uint8_t)desc_len;
+    out_ptr[out_len + 2] = service_type;
+    out_ptr[out_len + 3] = (uint8_t)provider_len;
+    memcpy(&out_ptr[out_len + 4], provider_out, provider_len);
+    out_ptr[out_len + 4 + provider_len] = (uint8_t)service_len;
+    memcpy(&out_ptr[out_len + 5 + provider_len], service_out, service_len);
+    out_len += (uint16_t)(2 + desc_len);
+
+    dst_item[3] = (dst_item[3] & 0xF0) | ((out_len >> 8) & 0x0F);
+    dst_item[4] = out_len & 0xFF;
+
+    return out_len + 5;
+}
+
 static void on_sdt(void *arg, mpegts_psi_t *psi)
 {
     module_data_t *mod = (module_data_t *)arg;
@@ -672,8 +791,7 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
     SDT_SET_SECTION_NUMBER(mod->custom_sdt, 0);
     SDT_SET_LAST_SECTION_NUMBER(mod->custom_sdt, 0);
 
-    const uint16_t item_length = __SDT_ITEM_DESC_SIZE(pointer) + 5;
-    memcpy(&mod->custom_sdt->buffer[11], pointer, item_length);
+    uint16_t item_length = sdt_build_item(mod, pointer, &mod->custom_sdt->buffer[11]);
     const uint16_t section_length = item_length + 8 + CRC32_SIZE;
     mod->custom_sdt->buffer_size = 3 + section_length;
 
@@ -682,6 +800,8 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
         uint8_t *custom_pointer = SDT_ITEMS_FIRST(mod->custom_sdt);
         SDT_ITEM_SET_SID(mod->custom_sdt, custom_pointer, mod->config.set_pnr);
     }
+    if(mod->config.has_set_tsid)
+        SDT_SET_TSID(mod->custom_sdt, mod->config.set_tsid);
 
     PSI_SET_SIZE(mod->custom_sdt);
     PSI_SET_CRC32(mod->custom_sdt);
@@ -718,11 +838,21 @@ static void on_eit(void *arg, mpegts_psi_t *psi)
 
     psi->cc = mod->eit_cc;
 
+    bool updated = false;
     if(mod->config.set_pnr)
     {
         EIT_SET_PNR(psi, mod->config.set_pnr);
-        PSI_SET_CRC32(psi);
+        updated = true;
     }
+    if(mod->config.has_set_tsid)
+    {
+        const uint16_t tsid = mod->config.set_tsid;
+        psi->buffer[8] = tsid >> 8;
+        psi->buffer[9] = tsid & 0xFF;
+        updated = true;
+    }
+    if(updated)
+        PSI_SET_CRC32(psi);
 
     mpegts_psi_demux(psi, (ts_callback_t)__module_stream_send, &mod->__stream);
 
@@ -814,8 +944,24 @@ static void module_init(module_data_t *mod)
     if(module_option_number("pnr", &mod->config.pnr))
     {
         module_option_number("set_pnr", &mod->config.set_pnr);
+        if(module_option_number("set_tsid", &mod->config.set_tsid))
+            mod->config.has_set_tsid = true;
 
         module_option_boolean("cas", &mod->config.cas);
+        module_option_string("service_provider", &mod->config.service_provider, NULL);
+        module_option_string("service_name", &mod->config.service_name, NULL);
+        if(module_option_number("service_type_id", &mod->config.service_type_id))
+        {
+            if(mod->config.service_type_id < 0 || mod->config.service_type_id > 255)
+            {
+                asc_log_warning(MSG("service_type_id is out of range (0-255), ignoring"));
+                mod->config.has_service_type_id = false;
+            }
+            else
+            {
+                mod->config.has_service_type_id = true;
+            }
+        }
 
         mod->pat = mpegts_psi_init(MPEGTS_PACKET_PAT, 0);
         mod->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, MAX_PID);

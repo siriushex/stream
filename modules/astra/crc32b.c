@@ -7,6 +7,12 @@
 
 #include <astra.h>
 
+#if defined(__GNUC__)
+#define ASTRA_FALLTHROUGH __attribute__((fallthrough))
+#else
+#define ASTRA_FALLTHROUGH ((void)0)
+#endif
+
 static uint32_t crc32_table[256] = {
     0x00000000, 0x04c11db7, 0x09823b6e, 0x0d4326d9, 0x130476dc, 0x17c56b6b,
     0x1a864db2, 0x1e475005, 0x2608edb8, 0x22c9f00f, 0x2f8ad6d6, 0x2b4bcb61,
@@ -63,13 +69,13 @@ uint32_t crc32b(const uint8_t *buffer, int size)
 #define STEP { crc = (crc << 8) ^ crc32_table[((crc >> 24) ^ (*buffer)) & 0xFF]; ++buffer; }
     switch(m)
     {
-        case 0: do { STEP;
-        case 7:      STEP;
-        case 6:      STEP;
-        case 5:      STEP;
-        case 4:      STEP;
-        case 3:      STEP;
-        case 2:      STEP;
+        case 0: do { STEP; ASTRA_FALLTHROUGH;
+        case 7:      STEP; ASTRA_FALLTHROUGH;
+        case 6:      STEP; ASTRA_FALLTHROUGH;
+        case 5:      STEP; ASTRA_FALLTHROUGH;
+        case 4:      STEP; ASTRA_FALLTHROUGH;
+        case 3:      STEP; ASTRA_FALLTHROUGH;
+        case 2:      STEP; ASTRA_FALLTHROUGH;
         case 1:      STEP;
                    } while (--n > 0);
     }

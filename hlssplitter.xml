@@ -1,0 +1,1324 @@
+<resources>
+
+<!-- RTVI  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.110:8080/1003-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.110:8080/1003-800</link>
+<!-- 5 KANAL  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.110:8080/1005-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.110:8080/1005-800</link>
+<!-- CHE  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.110:8080/1007-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.110:8080/1007-800</link>
+<!-- DOMASHNIY  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.110:8080/1008-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.110:8080/1008-800</link>
+<!-- TVC  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.110:8080/1009-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.110:8080/1009-800</link>
+<!-- ТВ3  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1013-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1013-800</link>
+<!-- Zvezda  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1014-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1014-800</link>
+<!-- RTR Planeta  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8080/1015-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8080/1015-800</link>
+<!-- NTV Stil  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1016-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1016-800</link>
+<!--  1+1 International  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1075-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1075-800</link>
+<!--  СТС-Baltic  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1076-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1076-800</link>
+<!--  ДОМАШНИЕ ЖИВОТНЫЕ  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1078-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1078-800</link>
+<!-- Viasat Sport Baltic LV  -->
+<!--    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8085/1079-1800</link> -->
+<!--    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8085/1079-800</link> -->
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/384</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1955</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/987</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/926</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/923</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/924</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/931</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/580</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/583</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/2411-1300</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1142</link>
+<!-- Kinokomedia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1017-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1017-800</link>
+<!-- Kinoseria  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1018-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1018-800</link>
+<!-- V gostah u skazki  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1090-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1090-800</link>
+<!-- TNV Planeta  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1093-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1093-800</link>
+<!-- NTV Pravo  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8080/1019-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8080/1019-800</link>
+<!-- 1TVRUS  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8081/1020-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8081/1020-800</link>
+<!-- ROSSIA24  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8082/1021-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8082/1021-800</link>
+<!-- TNT4  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8083/1022-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8083/1022-800</link>
+<!-- KHL  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8084/1023-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8084/1023-800</link>
+<!-- DOM KINO  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8085/1024-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8085/1024-800</link>
+<!-- KINO TV  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8086/1105-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.201:8086/1105-800</link>
+<!-- 365  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8080/1119-1800</link>
+    <link bandwidth="800000" buffering="10">http://192.168.241.201:8080/1119-800</link>
+<!-- KVN  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.201:8080/1113-1800</link>
+    <link bandwidth="800000" buffering="10">http://192.168.241.201:8080/1113-800</link>
+<!-- Наше новое кино  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1140-1800</link>
+    <link bandwidth="800000" buffering="10">http://192.168.241.129:8080/1140-800</link>
+<!-- U-TV  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1025-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1025-800</link>
+<!-- СТС Love  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1026-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1026-800</link>
+<!-- RBC  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1027-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1027-800</link>
+<!-- NTV Mir  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1028-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1028-800</link>
+<!-- Euronews  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1029-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1029-800</link>
+<!-- Match!Boec  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8081/1030-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8081/1030-800</link>
+<!-- ОТР  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.202:8083/1031-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.202:8083/1031-800</link>
+<!-- Kinosemya  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8083/1032-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8083/1032-800</link>
+<!-- Zhivi  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8084/1033-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8084/1033-800</link>
+<!-- Mir Basketbola  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8085/1034-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8085/1034-800</link>
+<!-- Bridge  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8086/1095-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8086/1095-800</link>
+<!-- Bridge rus hit  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8087/1097-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8087/1097-800</link>
+<!-- Bridge classic -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8088/1098-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8088/1098-800</link>
+<!-- TV XXI  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.204:8089/1100-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.204:8089/1100-800</link>
+<!-- Oruzhie  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8081/1035-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8081/1035-800</link>
+<!-- Sarafan  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8082/1036-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8082/1036-800</link>
+<!-- NSTV  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8083/1037-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8083/1037-800</link>
+<!-- TVCi  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8084/1038-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8084/1038-800</link>
+<!-- БОБЁР  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8085/1039-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8085/1039-800</link>
+<!-- TNT Music  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8086/1103-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8086/1103-800</link>
+<!-- Nat Geo Wild  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8087/1114-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8087/1114-800</link>
+<!-- Multilandia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8088/1115-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8088/1115-800</link>
+<!-- Moya stihiya  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.205:8089/1116-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.205:8089/1116-800</link>
+<!-- НАУКА 20  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8081/1040-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.206:8081/1040-800</link>
+<!-- КИНОСВИДАНИЕ  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8082/1041-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.206:8082/1041-800</link>
+<!-- Кинозал (кинохит)  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8083/1042-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.206:8083/1042-800</link>
+<!-- Кинозал (новое кино)  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8084/1043-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.206:8084/1043-800</link>
+<!-- Кинозал (еврокино)  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8085/1044-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.206:8085/1044-800</link>
+<!-- Freedom  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8086/1104-1800</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8086/1104-800</link>
+<!-- Unikum  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8087/1108-1800</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8087/1108-800</link>
+<!-- Usadba  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8088/1110-1800</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8088/1110-800</link>
+<!-- Mama  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8089/1120-1800</link>
+    <link bandwidth="1800000" buffering="10">http://192.168.241.206:8089/1120-800</link>
+<!-- РУССКИЙ ИЛЛЮЗИОН  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8081/1045-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8081/1045-800</link>
+<!-- ИНДИЙСКОЕ КИНО  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8082/1046-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8082/1046-800</link>
+<!-- Мужское кино  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8083/1047-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8083/1047-800</link>
+<!-- Ohota ribalka  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8084/1048-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8084/1048-800</link>
+<!-- КУЛЬТУРА  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8085/1049-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8085/1049-800</link>
+<!-- TLC  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8086/1117-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8086/1117-800</link>
+<!-- Sapfir  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8087/1106-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8087/1106-800</link>
+<!-- 2x2  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.208:8088/1121-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.208:8088/1121-800</link>
+<!-- Istoria  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1099-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1099-800</link>
+<!-- Время  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8081/1050-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8081/1050-800</link>
+<!-- TV1 ARMENIA  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8082/1051-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8082/1051-800</link>
+<!-- МАТЧ! Наш спорт  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8083/1052-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8083/1052-800</link>
+<!-- Кто есть кто  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1053-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1053-800</link>
+<!-- RU TV  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8085/1054-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8085/1054-800</link>
+<!-- Grozniy  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8086/1096-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8086/1096-800</link>
+<!-- Zvezda+  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.209:8087/1118-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.209:8087/1118-800</link>
+<!-- Zhara  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1153-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1153-800</link>
+<!-- Solnce  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1152-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1152-800</link>
+<!-- ШАНСОН ТВ  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8086/1055-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8086/1055-800</link>
+<!-- Moskva 24   -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8087/1094-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8087/1094-800</link>
+<!-- TVR International  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8088/1101-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8088/1101-800</link>
+<!-- ProTV Chisinau MD  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8089/1159-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8089/1159-800</link>
+<!-- TV3 Latvia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8082/1056-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8082/1056-800</link>
+<!-- TV 6 Latvija  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8083/1071-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8083/1071-800</link>
+<!-- LTV1  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8084/1058-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8084/1058-800</link>
+<!-- LTV7  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8085/1059-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8085/1059-800</link>
+<!-- 3 Life Latvija  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8081/1072-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8081/1072-800</link>
+<!-- 3 Mini  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8086/1074-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8086/1074-800</link>
+<!-- 3+ Baltic   -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.210:8087/1077-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.210:8087/1077-800</link>
+<!-- Cinema  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8081/1060-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8081/1060-800</link>
+<!-- 24 ТЕХНО  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8082/1061-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8082/1061-800</link>
+<!-- Живая Планета  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8083/1062-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8083/1062-800</link>
+<!-- Охотник и Рыболов  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8084/1063-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8084/1063-800</link>
+<!-- РЕТРО  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.211:8085/1064-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.211:8085/1064-800</link>
+<!-- TK Football  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8081/1065-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8081/1065-800</link>
+<!-- Mult  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8082/1066-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8082/1066-800</link>
+<!-- Rus Roman  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8083/1067-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8083/1067-800</link>
+<!-- Rus Bestseller  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8084/1068-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8084/1068-800</link>
+<!-- Rus Detektiv  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8085/1069-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8085/1069-800</link>
+<!-- Здоровое  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8086/1128-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8086/1128-800</link>
+<!-- Здоровье  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8087/1091-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8087/1091-800</link>
+<!-- Спас  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8088/1111-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8088/1111-800</link>
+<!-- TBN Russia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.207:8089/1150-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.207:8089/1150-800</link>
+<!-- Inter+  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.214:8081/1070-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.214:8081/1070-800</link>
+<!-- Kinomiks  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.214:8082/1141-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.214:8082/1141-800</link>
+<!-- Epic Drama  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.214:8083/1190-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.214:8083/1190-800</link>
+<!-- Voprosi i Otveti  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.214:8084/1073-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.214:8084/1073-800</link>
+<!-- Supertennis  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.214:8085/1138-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.214:8085/1138-800</link>
+<!-- Balticum Auksinis  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.129:8080/1154-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.129:8080/1154-800</link>
+
+<!-- 8 канал  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8081/1080-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8081/1080-800</link>
+<!-- Победа  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8082/1081-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8082/1081-800</link>
+<!-- Nostalgia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8083/1082-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8083/1082-800</link>
+<!-- La Minor  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8084/1083-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8084/1083-800</link>
+<!-- Sov Sekretno  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8085/1084-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8085/1084-800</link>
+<!-- 5 канал  Int   -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8086/1127-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8086/1127-800</link>
+<!--  Перец Int  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8087/1123-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8087/1123-800</link>
+<!-- РенТВ Int  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8088/1124-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8088/1124-800</link>
+<!-- СТС Int  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.212:8089/1126-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.212:8089/1126-800</link>
+<!-- TV RUS  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8081/1085-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8081/1085-800</link>
+<!-- Супер  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8082/1086-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8082/1086-800</link>
+<!-- ТЕЛЕКАФЕ  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8083/1087-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8083/1087-800</link>
+<!-- Бокс ТВ  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8084/1088-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8084/1088-800</link>
+<!-- Drive  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8085/1089-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8085/1089-800</link>
+<!-- Muzika  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8086/1057-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8086/1057-800</link>
+<!-- GO3 Sports3  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8087/1129-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8087/1129-800</link>
+<!-- GO3 Sports4  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.213:8088/1130-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.213:8088/1130-800</link>
+<!-- Kidzone    -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8081/1146-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8081/1146-800</link>
+<!-- Siauliu TV  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8082/1147-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8082/1147-800</link>
+<!-- Polonia 1  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8083/1148-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8083/1148-800</link>
+<!-- TVP Polonia  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8084/1149-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8084/1149-800</link>
+<!-- Moldova 1  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8085/1157-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8085/1157-800</link>
+<!-- Moldova 2  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8086/1155-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8086/1155-800</link>
+<!-- TV8 MD  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8087/1156-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8087/1156-800</link>
+<!-- N24 MD  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8088/1158-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8088/1158-800</link>
+<!-- Trwam  -->
+    <link bandwidth="1800000" buffering="10">http://192.168.241.103:8089/636-1800</link>
+    <link bandwidth="800000"  buffering="10">http://192.168.241.103:8089/636-800</link>
+    
+    <link bandwidth="3500000"  buffering="10">http://192.168.241.101:8080/1010-1080</link>
+    <link bandwidth="3500000"  buffering="10">http://192.168.241.101:8080/1011-1080</link>
+    <link bandwidth="3500000"  buffering="10">http://192.168.241.101:8080/1012-1080</link>
+<!--  ___________________________________________________________________________________ -->
+
+<!-- tc-010 -->
+<!--    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-ru-5kanal-1800</link> 
+    <link bandwidth="700000" buffering="10">http://185.216.46.199:8001/vl-ru-5kanal-800</link> 
+    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-ru-che-1800</link>
+    <link bandwidth="700000" buffering="10">http://185.216.46.199:8001/vl-ru-che-800</link>
+    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-ru-domashniy-1800</link>
+    <link bandwidth="700000" buffering="10">http://185.216.46.199:8001/vl-ru-domashniy-800</link>
+    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-ru-tvc-1800</link>
+    <link bandwidth="700000" buffering="10">http://185.216.46.199:8001/vl-ru-tvc-800</link>
+    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-ru-rtvi-1800</link>
+    <link bandwidth="700000" buffering="10">http://185.216.46.199:8001/vl-ru-rtvi-800</link>
+-->
+
+<!-- ztc-107 -->
+    <link bandwidth="1900000" buffering="10">http://185.216.46.199:8001/vl-lv-3plus-1800</link> 
+    <link bandwidth="700000"  buffering="10">http://185.216.46.199:8001/vl-lv-3plus-800</link> 
+
+
+<!-- NEW -->
+<!--
+    <link bandwidth="5000000" buffering="10">http://185.216.46.212:8080/100-5000</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.212:8080/100-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.212:8080/100-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/100-5000</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/100-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/100-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/100-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/100-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/100-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/101-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/101-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/101-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/102-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/102-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/102-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/103-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/103-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/103-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/103-1300</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/103-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/103-5000</link>
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/104-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/104-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/104-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/105-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/105-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/105-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/106-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/106-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/106-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/106-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/106-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/106-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/107-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/107-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/107-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/108-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/108-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/108-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/109-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/109-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/109-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/110-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/110-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/110-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/111-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/111-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/111-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/112-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/112-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/112-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/113-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/113-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/113-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/113-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/113-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/113-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/114-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/114-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/114-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/115-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/115-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/115-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/116-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/116-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/116-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/117-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/117-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/117-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/118-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/118-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/118-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/119-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/119-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/119-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/120-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/120-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/120-1300</link>
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/120-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/120-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/120-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/121-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/121-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/121-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/122-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/122-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/122-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/123-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/123-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/123-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/124-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/124-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/124-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/125-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/125-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/125-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/126-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/126-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/126-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/127-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/127-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/127-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/127-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/127-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/127-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/128-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/128-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/128-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/129-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/129-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/129-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/130-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/130-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/130-1300</link> 
+<!--    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/130-5000</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/130-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/130-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/131-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/131-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/131-1300</link> 
+<!--    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/131-5000</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/131-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/131-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/132-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/132-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/132-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/133-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/133-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/133-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.122:8080/134-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.122:8080/134-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.122:8080/134-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/134-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/134-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/134-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/423-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/423-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/423-1300</link> 
+
+<!-- TESLA4 -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/135-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/135-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/135-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/136-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/136-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/136-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/136-1300</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/136-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/136-5000</link>
+-->        
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/137-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/137-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/137-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/138-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/138-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/138-1300</link> 
+
+<!--    <link bandwidth="5000000" buffering="10">http://185.216.46.199:8000/138-5000</link>
+    <link bandwidth="3500000" buffering="10">http://185.216.46.199:8000/138-3500</link>
+    <link bandwidth="1300000" buffering="10">http://185.216.46.199:8000/138-1300</link>  
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/139-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/139-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/139-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/140-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/140-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/140-1300</link> 
+
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/141-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/141-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/141-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/141-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/141-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/141-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/143-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/143-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/143-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/144-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/144-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/144-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/145-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/145-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/145-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/146-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/146-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/146-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/147-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/147-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/147-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/148-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/148-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/148-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/149-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/149-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/149-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/149-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/149-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/149-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/150-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/150-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/150-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/151-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/151-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/151-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/152-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/152-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/152-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/153-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/153-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/153-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/154-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/154-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/154-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/155-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/155-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/155-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/156-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/156-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/156-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/156-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/156-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/156-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.129:8080/157-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/157-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.129:8080/157-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/158-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/158-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/158-1300</link> 
+-->
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/159-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/159-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/159-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/22-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/22-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/22-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.129:8080/25-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/25-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.129:8080/25-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/39-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/39-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/39-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/2464-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/2464-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/2464-1300</link> 
+
+<!-- From IL server -->
+<!-- 9 ch -->
+    <link bandwidth="5000000" buffering="10">http://62.3.59.52:8080/162-5000</link>
+    <link bandwidth="3500000" buffering="10">http://62.3.59.52:8080/162-3500</link>
+    <link bandwidth="1300000" buffering="10">http://62.3.59.52:8080/162-1300</link> 
+<!-- 11 ch -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/159-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/159-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/159-1300</link> 
+<!-- 14 ch -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/158-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/158-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/158-1300</link> 
+<!-- 12 ch -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/160-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/160-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/160-1300</link> 
+<!-- 13 ch -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/161-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/161-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/161-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/407-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/407-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/407-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/408-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/408-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/408-1300</link> 
+-->
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/165-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/165-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/165-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/165-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/165-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/165-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/166-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/166-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/166-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/167-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/167-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/167-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/168-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/168-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/168-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/169-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/169-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/169-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/170-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/170-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/170-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/201-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/201-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/201-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.124:8080/202-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.124:8080/202-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.124:8080/202-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/202-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/202-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/202-1300</link> 
+
+<!-- TESLA6 -->
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/300-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/300-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/300-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/301-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/301-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/301-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/302-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/302-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/302-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/303-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/303-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/303-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/304-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/304-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/304-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/305-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/305-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/305-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.129:8080/306-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/306-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.129:8080/306-1300</link> 
+<!--   
+     <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/306-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/306-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/306-1300</link> 
+    -->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/307-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/307-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/307-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/308-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/308-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/308-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/309-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/309-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/309-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/200-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/200-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/200-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/203-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/203-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/203-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/204-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/204-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/204-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/205-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/205-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/205-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/206-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/206-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/206-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/207-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/207-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/207-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/208-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/208-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/208-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/209-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/209-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/209-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/209-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/209-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/209-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/163-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/163-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/163-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/164-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/164-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/164-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/173-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/173-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/173-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/174-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/174-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/174-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/174-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/174-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/174-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/175-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/175-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/175-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/176-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/176-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/176-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/177-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/177-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/177-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/178-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/178-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/178-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/179-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/179-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/179-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/180-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/180-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/180-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/181-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/181-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/181-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/181-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/181-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/181-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/182-5000</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/182-1300</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/182-3500</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/183-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/183-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/183-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/184-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/184-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/184-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/185-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/185-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/185-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/186-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/186-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/186-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.126:8080/142-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.126:8080/142-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.126:8080/142-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/142-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/142-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/142-1300</link> 
+
+<!-- TESLA2 -->
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/187-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/187-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/187-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/188-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/188-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/188-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/189-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/189-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/189-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/190-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/190-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/190-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/191-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/191-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/191-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/192-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/192-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/192-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/193-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/193-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/193-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/193-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/193-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/193-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/194-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/194-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/194-1300</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/195-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/195-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/195-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/196-5000</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/196-1300</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/196-3500</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/197-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/197-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/197-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/198-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/198-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/198-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/400-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/400-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/400-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/401-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/401-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/401-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/402-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/402-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/402-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/403-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/403-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/403-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/404-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/404-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/404-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/405-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/405-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/405-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/406-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/406-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/406-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/406-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/406-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/406-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/407-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/407-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/407-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/408-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/408-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/408-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/409-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/409-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/409-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/410-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/410-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/410-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/411-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/411-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/411-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/412-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/412-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/412-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/413-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/413-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/413-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/413-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/413-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/413-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/416-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/416-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/416-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/417-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/417-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/417-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/418-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/418-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/418-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/418-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/418-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/418-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.129:8080/419-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/419-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.129:8080/419-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/420-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/420-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/420-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.129:8080/421-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.129:8080/421-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.129:8080/421-1300</link> 
+    
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/210-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/210-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/210-1300</link> 
+<!--
+    <link bandwidth="5000000" buffering="10">http://192.168.241.123:8080/211-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.123:8080/211-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.123:8080/211-1300</link> 
+-->
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/211-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/211-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/211-1300</link> 
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/171-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/171-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/171-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/172-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/172-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/172-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/422-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/422-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/422-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/424-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/424-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/424-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/425-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/425-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/425-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/426-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/426-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/426-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/427-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/427-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/427-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/428-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/428-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/428-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/429-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/429-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/429-1300</link> 
+    <link bandwidth="5000000" buffering="10">http://192.168.241.128:8080/430-5000</link> 
+    <link bandwidth="3500000" buffering="10">http://192.168.241.128:8080/430-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.128:8080/430-1300</link> 
+
+<!-- NUR -->
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/310-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/310-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/310-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/311-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/311-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/311-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/312-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/312-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/312-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/313-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/313-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/313-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/314-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/314-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/314-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/315-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/315-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/315-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/316-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/316-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/316-1300</link>
+    
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/317-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/317-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/317-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/318-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/318-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/318-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/319-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/319-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/319-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/320-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/320-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/320-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/321-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/321-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/321-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/322-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/322-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/322-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/323-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/323-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/323-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/324-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/324-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/324-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/325-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/325-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/325-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/326-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/326-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/326-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/327-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/327-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/327-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/328-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/328-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/328-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/329-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/329-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/329-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/330-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/330-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/330-1300</link>
+    
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/331-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/331-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/331-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/332-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/332-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/332-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/333-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/333-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/333-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/334-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/334-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/334-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/335-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/335-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/335-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/336-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/336-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/336-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/337-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/337-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/337-1300</link>
+
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/338-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/338-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/338-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/339-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/339-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/339-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/340-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/340-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/340-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/341-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/341-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/341-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/342-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/342-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/342-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/343-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/343-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/343-1300</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.133:8080/344-5000</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/344-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/344-1300</link>
+    <link bandwidth="3500000" buffering="10">http://192.168.241.133:8080/357-3500</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.133:8080/357-1300</link>
+    <link bandwidth="1300000" buffering="10">http://192.168.241.109:8080/2</link>
+
+
+    <link bandwidth="2000000" buffering="10">http://192.168.241.135:8080/110-540</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.135:8080/110-1080</link>
+    <link bandwidth="2000000" buffering="10">http://192.168.241.135:8080/112-540</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.135:8080/112-1080</link>
+    <link bandwidth="2000000" buffering="10">http://192.168.241.135:8080/113-540</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.135:8080/113-1080</link>
+    <link bandwidth="2000000" buffering="10">http://192.168.241.135:8080/111-540</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.135:8080/111-1080</link>
+
+<!-- 4K test -->
+
+<!--
+    <link bandwidth="12000000" buffering="10">http://185.216.46.212:8080/999-12000</link>
+    <link bandwidth="5000000" buffering="10">http://185.216.46.212:8080/999-5000</link>
+    <link bandwidth="1000000" buffering="10">http://185.216.46.212:8080/999-1000</link>
+-->
+<!--
+    <link bandwidth="12000000" buffering="10">http://185.216.46.212:8080/900-12000</link>
+    <link bandwidth="5000000" buffering="10">http://185.216.46.212:8080/900-5000</link>
+    <link bandwidth="1000000" buffering="10">http://185.216.46.212:8080/900-1000</link>
+-->
+<!--
+    <link bandwidth="12000000" buffering="10">http://185.216.46.212:8080/901-12000</link>
+    <link bandwidth="5000000" buffering="10">http://185.216.46.212:8080/901-5000</link>
+    <link bandwidth="1000000" buffering="10">http://185.216.46.212:8080/901-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://185.216.46.212:8080/902-12000</link>
+    <link bandwidth="5000000" buffering="10">http://185.216.46.212:8080/902-5000</link>
+    <link bandwidth="1000000" buffering="10">http://185.216.46.212:8080/902-1000</link>
+-->
+    <link bandwidth="12000000" buffering="10">http://192.168.241.130:8080/901-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.130:8080/901-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.130:8080/901-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.130:8080/902-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.130:8080/902-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.130:8080/902-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.130:8080/904-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.130:8080/904-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.130:8080/904-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.130:8080/905-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.130:8080/905-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.130:8080/905-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.131:8080/906-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.131:8080/906-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.131:8080/906-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.131:8080/907-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.131:8080/907-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.131:8080/907-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.131:8080/908-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.131:8080/908-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.131:8080/908-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.131:8080/909-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.131:8080/909-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.131:8080/909-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.132:8080/903-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.132:8080/903-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.132:8080/903-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.132:8080/910-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.132:8080/910-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.132:8080/910-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.132:8080/911-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.132:8080/911-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.132:8080/911-1000</link>
+
+    <link bandwidth="12000000" buffering="10">http://192.168.241.132:8080/912-12000</link>
+    <link bandwidth="5000000" buffering="10">http://192.168.241.132:8080/912-5000</link>
+    <link bandwidth="1000000" buffering="10">http://192.168.241.132:8080/912-1000</link>
+
+
+<!-- football 1,2 UKR from kiev -->
+
+    <link bandwidth="2500000" buffering="10">http://192.168.241.213:8000/228</link>
+
+    <allow>0.0.0.0</allow>
+</resources>
+

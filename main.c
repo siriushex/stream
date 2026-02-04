@@ -141,7 +141,7 @@ astra_reload_entry:
 #define GC_TIMEOUT (1 * 1000 * 1000)
 
     uint64_t current_time = asc_utime();
-    uint64_t gc_check_timeout = current_time;
+    volatile uint64_t gc_check_timeout = current_time;
 
     /* start */
     const int main_loop_status = setjmp(main_loop);

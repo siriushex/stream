@@ -1,0 +1,6 @@
+Feb 03 12:25:12: INFO: Starting Astra 4.4.187
+Feb 03 12:25:12: ERROR: [core/socket 5] bind() to 0.0.0.0:8010 failed [48: Address already in use]
+Feb 03 12:25:12: ERROR: [main] abort execution
+Feb 03 12:25:12: ERROR: [main] Lua backtrace:
+Feb 03 12:25:12: ERROR: [main] 1: scripts/server.lua:1131 -- <unknown> [Lua]
+Feb 03 12:25:12: ERROR: [main] 2: [C]:-1 -- <unknown> [C]

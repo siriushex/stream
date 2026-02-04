@@ -56,15 +56,15 @@ char * base64_encode(const void *in, size_t in_size, size_t *out_size)
         out[j++] = base64_list[(triple >> 0 * 6) & 0x3F];
     }
 
-    switch(in_size % 3)
+    const size_t rem = in_size % 3;
+    if(rem == 1)
     {
-        case 0:
-            break;
-        case 1:
-            out[size - 2] = '=';
-        case 2:
-            out[size - 1] = '=';
-            break;
+        out[size - 2] = '=';
+        out[size - 1] = '=';
+    }
+    else if(rem == 2)
+    {
+        out[size - 1] = '=';
     }
     out[size] = 0;
 

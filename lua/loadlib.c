@@ -139,7 +139,14 @@ static void *ll_load (lua_State *L, const char *path, int seeglb) {
 
 
 static lua_CFunction ll_sym (lua_State *L, void *lib, const char *sym) {
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#endif
   lua_CFunction f = (lua_CFunction)dlsym(lib, sym);
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
   if (f == NULL) lua_pushstring(L, dlerror());
   return f;
 }
@@ -722,4 +729,3 @@ LUAMOD_API int luaopen_package (lua_State *L) {
   lua_pop(L, 1);  /* pop global table */
   return 1;  /* return 'package' table */
 }
-

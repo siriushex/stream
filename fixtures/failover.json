@@ -1,0 +1,72 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "failover_passive",
+      "name": "Failover Passive",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12000",
+        "udp://127.0.0.1:12001"
+      ],
+      "backup_type": "passive",
+      "backup_initial_delay": 0,
+      "backup_start_delay": 1,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 3,
+      "output": []
+    },
+    {
+      "id": "failover_active",
+      "name": "Failover Active",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12000",
+        "udp://127.0.0.1:12001"
+      ],
+      "backup_type": "active",
+      "backup_active_warm_max": 1,
+      "backup_start_delay": 0,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 2,
+      "output": []
+    },
+    {
+      "id": "failover_active_stop",
+      "name": "Failover Active Stop",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12000",
+        "udp://127.0.0.1:12001"
+      ],
+      "backup_type": "active_stop_if_all_inactive",
+      "backup_start_delay": 1,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 2,
+      "stop_if_all_inactive_sec": 6,
+      "output": []
+    },
+    {
+      "id": "failover_disabled",
+      "name": "Failover Disabled",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12000",
+        "udp://127.0.0.1:12001"
+      ],
+      "backup_type": "disabled",
+      "backup_start_delay": 1,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 2,
+      "output": []
+    }
+  ]
+}
