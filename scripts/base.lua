@@ -429,9 +429,6 @@ function http_auth_check(request)
         return true, {}
     end
     local enabled = http_auth_bool(config.get_setting("http_auth_enabled"), false)
-    if not enabled then
-        return true, {}
-    end
 
     local info = {
         basic = http_auth_bool(config.get_setting("http_auth_users"), true),
@@ -447,6 +444,10 @@ function http_auth_check(request)
     end
     if #allow > 0 and not http_auth_has(allow, ip) then
         return false, info
+    end
+
+    if not enabled then
+        return true, info
     end
 
     local headers = request and request.headers or {}
