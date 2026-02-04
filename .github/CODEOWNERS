@@ -1,19 +1,4 @@
-# Ownership map for Astra. Replace @astra/... with real GitHub teams/users.
-# See docs/engineering/TEAM_WORKFLOW.md for policy details.
+# Ownership map for Astra.
+# Single owner for all paths.
 
-# Default owners
-* @astra/maintainers
-
-# Web UI
-/web/ @astra/ui-owners
-
-# Runtime / API / scripts
-/scripts/ @astra/runtime-owners
-/modules/ @astra/core-owners
-/core/ @astra/core-owners
-/lua/ @astra/core-owners
-/main.c @astra/core-owners
-/Makefile @astra/core-owners
-
-# Docs
-/docs/ @astra/docs-owners
+* @siriushex

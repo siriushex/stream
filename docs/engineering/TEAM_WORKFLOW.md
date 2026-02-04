@@ -16,9 +16,8 @@ This repo is developed by multiple agents in parallel. These rules are mandatory
   - `git checkout -b codex/<agent>/<topic>`
 
 ## Ownership & Reviews
-- `.github/CODEOWNERS` defines folder ownership.
-- Any change touching an owned path must be approved by its owners.
-- If a change crosses multiple ownership areas, approvals are required from each.
+- `.github/CODEOWNERS` defines ownership.
+- Current policy: a single owner (`@siriushex`) approves all changes.
 
 ## Merge Lock
 - Only one agent merges to `main` at a time.
