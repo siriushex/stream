@@ -986,22 +986,44 @@ function runtime.list_sessions()
         http_output_client_list = {}
     end
 
+    local stale_http = nil
     for id, item in pairs(http_output_client_list) do
-        local req = item.request or {}
-        local headers = req.headers or {}
-        local user_agent = headers["user-agent"] or headers["User-Agent"] or ""
-        local host = headers["host"] or headers["Host"] or ""
+        local ok = true
+        if not item.server or not item.client or type(item.server.data) ~= "function" then
+            ok = false
+        else
+            local safe, data = pcall(item.server.data, item.server, item.client)
+            if not safe or data == nil then
+                ok = false
+            end
+        end
+        if not ok then
+            if not stale_http then
+                stale_http = {}
+            end
+            stale_http[id] = true
+        else
+            local req = item.request or {}
+            local headers = req.headers or {}
+            local user_agent = headers["user-agent"] or headers["User-Agent"] or ""
+            local host = headers["host"] or headers["Host"] or ""
 
-        table.insert(sessions, {
-            id = id,
-            server = host,
-            stream_id = item.stream_id,
-            stream_name = item.stream_name,
-            ip = req.addr,
-            login = (req.query and (req.query.user or req.query.login)) or "",
-            started_at = item.st,
-            user_agent = user_agent,
-        })
+            table.insert(sessions, {
+                id = id,
+                server = host,
+                stream_id = item.stream_id,
+                stream_name = item.stream_name,
+                ip = req.addr,
+                login = (req.query and (req.query.user or req.query.login)) or "",
+                started_at = item.st,
+                user_agent = user_agent,
+            })
+        end
+    end
+    if stale_http then
+        for id in pairs(stale_http) do
+            http_output_client_list[id] = nil
+        end
     end
 
     if hls_session_list then
