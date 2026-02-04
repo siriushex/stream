@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added General settings fields for ffmpeg/ffprobe path overrides.
+- Tests:
+  - Not run (UI change).
+### 2026-02-04
+- Changes:
   - Added ffmpeg/ffprobe path resolver with settings/env/bundle defaults.
   - Added `/api/v1/tools` and startup log for resolved tools/edition.
 - Tests:

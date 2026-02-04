@@ -308,6 +308,8 @@ const elements = {
   settingsInfluxInstance: $('#settings-influx-instance'),
   settingsInfluxMeasurement: $('#settings-influx-measurement'),
   settingsInfluxInterval: $('#settings-influx-interval'),
+  settingsFfmpegPath: $('#settings-ffmpeg-path'),
+  settingsFfprobePath: $('#settings-ffprobe-path'),
   settingsHttpCsrf: $('#settings-http-csrf'),
   settingsAuthSessionTtl: $('#settings-auth-session-ttl'),
   settingsLoginRateLimit: $('#settings-login-rate-limit'),
@@ -8765,6 +8767,12 @@ function applySettingsToUI() {
   if (elements.settingsInfluxInterval) {
     elements.settingsInfluxInterval.value = getSettingNumber('influx_interval_sec', 30);
   }
+  if (elements.settingsFfmpegPath) {
+    elements.settingsFfmpegPath.value = getSettingString('ffmpeg_path', '');
+  }
+  if (elements.settingsFfprobePath) {
+    elements.settingsFfprobePath.value = getSettingString('ffprobe_path', '');
+  }
   if (elements.settingsHttpCsrf) {
     elements.settingsHttpCsrf.checked = getSettingBool('http_csrf_enabled', true);
   }
@@ -9085,6 +9093,8 @@ function collectGeneralSettings() {
   if (elements.settingsInfluxInstance) payload.influx_instance = elements.settingsInfluxInstance.value.trim();
   if (elements.settingsInfluxMeasurement) payload.influx_measurement = elements.settingsInfluxMeasurement.value.trim();
   if (influxInterval !== undefined) payload.influx_interval_sec = influxInterval;
+  if (elements.settingsFfmpegPath) payload.ffmpeg_path = elements.settingsFfmpegPath.value.trim();
+  if (elements.settingsFfprobePath) payload.ffprobe_path = elements.settingsFfprobePath.value.trim();
   if (influxEnabled) {
     const influxUrl = elements.settingsInfluxUrl ? elements.settingsInfluxUrl.value.trim() : '';
     if (!influxUrl || !/^https?:\/\//i.test(influxUrl)) {
