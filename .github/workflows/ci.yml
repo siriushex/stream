@@ -11,6 +11,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify CODEOWNERS
         run: scripts/ci/check_codeowners.sh
+      - name: Verify branch name
+        run: scripts/ci/check_branch_name.sh
+      - name: Verify CHANGELOG update
+        run: scripts/ci/check_changelog.sh
       - name: Install deps
         run: |
           sudo apt-get update
