@@ -936,11 +936,11 @@
                       <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
                     </div>
                   </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-telegram-backup-enabled" data-toggle-target="settings-telegram-backup-fields" />
-                    <span>Send config backups</span>
-                  </label>
-                  <div class="form-grid" id="settings-telegram-backup-fields">
+                    <label class="checkline">
+                      <input type="checkbox" id="settings-telegram-backup-enabled" data-toggle-target="settings-telegram-backup-fields" />
+                      <span>Send config backups</span>
+                    </label>
+                    <div class="form-grid" id="settings-telegram-backup-fields">
                     <label class="field">
                       <span>Schedule</span>
                       <select id="settings-telegram-backup-schedule">
@@ -973,6 +973,10 @@
                       <input type="checkbox" id="settings-telegram-backup-secrets" />
                       <span>Include secrets in backup</span>
                     </label>
+                    <div class="field">
+                      <span>&nbsp;</span>
+                      <button class="btn ghost" type="button" id="settings-telegram-backup-now">Send backup now</button>
+                    </div>
                     <small class="form-hint">Backups are sent as a JSON file to the same chat.</small>
                   </div>
                 </div>

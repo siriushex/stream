@@ -451,6 +451,7 @@ const elements = {
   settingsTelegramBackupSecrets: $('#settings-telegram-backup-secrets'),
   settingsTelegramBackupWeekdayField: $('#settings-telegram-backup-weekday-field'),
   settingsTelegramBackupMonthdayField: $('#settings-telegram-backup-monthday-field'),
+  settingsTelegramBackupNow: $('#settings-telegram-backup-now'),
   settingsInfluxEnabled: $('#settings-influx-enabled'),
   settingsInfluxUrl: $('#settings-influx-url'),
   settingsInfluxOrg: $('#settings-influx-org'),
@@ -11654,6 +11655,20 @@ function bindEvents() {
         setStatus('Telegram test message queued');
       } catch (err) {
         setStatus(err.message || 'Telegram test failed');
+      }
+    });
+  }
+
+  if (elements.settingsTelegramBackupNow) {
+    elements.settingsTelegramBackupNow.addEventListener('click', async () => {
+      try {
+        await apiJson('/api/v1/notifications/telegram/backup', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        setStatus('Telegram backup queued');
+      } catch (err) {
+        setStatus(err.message || 'Telegram backup failed');
       }
     });
   }
