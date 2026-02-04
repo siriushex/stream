@@ -1,0 +1,24 @@
+name: remote-smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  http-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check public UI
+        run: |
+          set -euo pipefail
+          URL="http://178.212.236.6:9060/index.html"
+          echo "Checking $URL"
+          for i in 1 2 3 4 5; do
+            if curl -fsS -I --max-time 10 "$URL" | head -n 1 | grep -q "200"; then
+              echo "OK: $URL"
+              exit 0
+            fi
+            echo "Retry $i failed, sleeping..."
+            sleep 3
+          done
+          echo "ERROR: $URL is not reachable or not returning 200"
+          exit 1
