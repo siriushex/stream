@@ -5476,6 +5476,43 @@ async function startAdapterScan(adapterId) {
   await pollAdapterScan(state.adapterScanJobId);
 }
 
+function extractDvbPnr(input, adapterId) {
+  if (!input) return null;
+  if (typeof input === 'string') {
+    if (!input.startsWith('dvb://')) return null;
+    if (adapterId && !input.startsWith(`dvb://${adapterId}`)) return null;
+    const match = input.match(/(?:[#?&])pnr=([^&]+)/i);
+    return match ? match[1] : null;
+  }
+  if (typeof input === 'object') {
+    const format = String(input.format || '').toLowerCase();
+    if (format !== 'dvb') return null;
+    const pnr = input.pnr !== undefined ? input.pnr : null;
+    if (pnr !== null) return pnr;
+    const addr = input.addr || input.url || '';
+    if (typeof addr === 'string') {
+      if (adapterId && !addr.startsWith(String(adapterId))) return null;
+      const match = addr.match(/(?:[#?&])pnr=([^&]+)/i);
+      return match ? match[1] : null;
+    }
+  }
+  return null;
+}
+
+function collectExistingDvbPnrs(adapterId) {
+  const pnrs = new Set();
+  (state.streams || []).forEach((stream) => {
+    const inputs = (stream.config && Array.isArray(stream.config.input)) ? stream.config.input : [];
+    inputs.forEach((input) => {
+      const pnr = extractDvbPnr(input, adapterId);
+      if (pnr !== null && pnr !== undefined && pnr !== '') {
+        pnrs.add(String(pnr));
+      }
+    });
+  });
+  return pnrs;
+}
+
 async function createStreamsFromScan(adapterId) {
   if (!adapterId) return;
   const list = Array.from(document.querySelectorAll('.scan-channel-checkbox'))
@@ -5486,11 +5523,17 @@ async function createStreamsFromScan(adapterId) {
     setStatus('Select at least one channel');
     return;
   }
+  const existingPnrs = collectExistingDvbPnrs(adapterId);
   const existingIds = new Set((state.streams || []).map((item) => item.id));
   const results = [];
   const failures = [];
+  const skipped = [];
   const channels = (state.adapterScanResults && state.adapterScanResults.channels) || [];
   for (const pnr of list) {
+    if (existingPnrs.has(String(pnr))) {
+      skipped.push(String(pnr));
+      continue;
+    }
     const channel = channels.find((item) => String(item.pnr) === String(pnr));
     const name = channel && channel.name ? channel.name : `PNR ${pnr}`;
     let id = slugifyStreamId(name);
@@ -5536,11 +5579,14 @@ async function createStreamsFromScan(adapterId) {
     setStatus(message);
     return;
   }
+  const skippedLabel = skipped.length ? `, skipped ${skipped.length} existing (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})` : '';
   if (failures.length) {
     console.warn('Scan add failures', failures);
-    setStatus(`Created ${results.length} stream(s), ${failures.length} failed`);
+    setStatus(`Created ${results.length} stream(s)${skippedLabel}, ${failures.length} failed`);
+  } else if (results.length === 0 && skipped.length) {
+    setStatus(`All selected channels already exist (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})`);
   } else {
-    setStatus(`Created ${results.length} stream(s)`);
+    setStatus(`Created ${results.length} stream(s)${skippedLabel}`);
   }
 }
 
