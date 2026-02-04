@@ -218,6 +218,7 @@ const state = {
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
+  dashboardNoticeTimer: null,
   streamIndex: {},
   streamTableRows: {},
   streamCompactRows: {},
@@ -981,6 +982,10 @@ function setStatus(message, mode) {
 
 function showDashboardNotice(message, ttl) {
   if (!elements.dashboardNotice) return;
+  if (state.dashboardNoticeTimer) {
+    clearTimeout(state.dashboardNoticeTimer);
+    state.dashboardNoticeTimer = null;
+  }
   if (!message) {
     elements.dashboardNotice.classList.remove('active');
     elements.dashboardNotice.textContent = '';
@@ -990,7 +995,10 @@ function showDashboardNotice(message, ttl) {
   elements.dashboardNotice.classList.add('active');
   const timeout = Number.isFinite(ttl) ? ttl : 6000;
   if (timeout > 0) {
-    setTimeout(() => showDashboardNotice(''), timeout);
+    state.dashboardNoticeTimer = setTimeout(() => {
+      state.dashboardNoticeTimer = null;
+      showDashboardNotice('');
+    }, timeout);
   }
 }
 
@@ -5856,7 +5864,7 @@ async function createStreamsFromScan(adapterId) {
   if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
   closeAdapterScanModal();
   setView('dashboard');
-  showDashboardNotice(message);
+  showDashboardNotice(message, 10000);
   setStatus(message, 'sticky');
   setTimeout(() => setStatus(''), 6000);
 }
