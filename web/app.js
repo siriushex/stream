@@ -5492,14 +5492,17 @@ function updateAdapterBusyWarningFromFields() {
   }
 }
 
-function getAdapterStatusEntry(adapterId) {
+function getAdapterStatusEntry(adapterId, cfg) {
   if (!adapterId || !state.adapterStatus) return null;
   const direct = state.adapterStatus[adapterId];
   if (direct) return direct;
-  const adapter = state.adapterEditing && state.adapterEditing.adapter;
-  const cfg = adapter && adapter.config ? adapter.config : null;
-  const adapterNum = cfg && cfg.adapter !== undefined ? String(cfg.adapter) : null;
-  const deviceNum = cfg && cfg.device !== undefined ? String(cfg.device) : null;
+  let config = cfg || null;
+  if (!config) {
+    const adapter = state.adapterEditing && state.adapterEditing.adapter;
+    config = adapter && adapter.config ? adapter.config : null;
+  }
+  const adapterNum = config && config.adapter !== undefined ? String(config.adapter) : null;
+  const deviceNum = config && config.device !== undefined ? String(config.device) : null;
   if (!adapterNum) return null;
   const list = Object.values(state.adapterStatus);
   for (const entry of list) {
@@ -5511,8 +5514,8 @@ function getAdapterStatusEntry(adapterId) {
   return null;
 }
 
-function isAdapterLocked(adapterId) {
-  const status = getAdapterStatusEntry(adapterId);
+function isAdapterLocked(adapterId, cfg) {
+  const status = getAdapterStatusEntry(adapterId, cfg);
   if (!status || status.status === undefined || status.status === null) return false;
   return hasStatusBit(status.status, FE_HAS_LOCK);
 }
@@ -5532,8 +5535,8 @@ function updateAdapterScanAvailability() {
   const adapter = state.adapterEditing && state.adapterEditing.adapter;
   const adapterId = adapter && adapter.id;
   const isNew = state.adapterEditing && state.adapterEditing.isNew;
-  const status = adapterId ? getAdapterStatusEntry(adapterId) : null;
-  const locked = adapterId ? isAdapterLocked(adapterId) : false;
+  const status = adapterId ? getAdapterStatusEntry(adapterId, adapter && adapter.config) : null;
+  const locked = adapterId ? isAdapterLocked(adapterId, adapter && adapter.config) : false;
   let reason = '';
   if (!adapterId || isNew) {
     reason = 'Save adapter to enable scan.';
@@ -5882,7 +5885,7 @@ function renderAdapterList() {
 
   adapters.forEach((adapter) => {
     const config = adapter.config || {};
-    const statusData = getAdapterStatusEntry(adapter.id) || {};
+    const statusData = getAdapterStatusEntry(adapter.id, config) || {};
     const rawSignal = config.raw_signal === true;
     const signalPercent = rawSignal ? 0 : toPercent(statusData.signal);
     const snrPercent = rawSignal ? 0 : toPercent(statusData.snr);
