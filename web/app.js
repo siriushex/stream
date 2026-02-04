@@ -66,6 +66,9 @@ const state = {
   servers: [],
   serverEditing: null,
   serverIdAuto: false,
+  softcams: [],
+  softcamEditing: null,
+  softcamIdAuto: false,
   userEditing: null,
   userMode: 'edit',
   activeAnalyzeId: null,
@@ -242,6 +245,29 @@ const elements = {
   groupCancel: $('#group-cancel'),
   groupClose: $('#group-close'),
   groupError: $('#group-error'),
+  softcamNew: $('#softcam-new'),
+  softcamTable: $('#softcam-table'),
+  softcamEmpty: $('#softcam-empty'),
+  softcamOverlay: $('#softcam-overlay'),
+  softcamTitle: $('#softcam-title'),
+  softcamForm: $('#softcam-form'),
+  softcamEnabled: $('#softcam-enabled'),
+  softcamId: $('#softcam-id'),
+  softcamName: $('#softcam-name'),
+  softcamType: $('#softcam-type'),
+  softcamHost: $('#softcam-host'),
+  softcamPort: $('#softcam-port'),
+  softcamUser: $('#softcam-user'),
+  softcamPass: $('#softcam-pass'),
+  softcamPassHint: $('#softcam-pass-hint'),
+  softcamDisableEmm: $('#softcam-disable-emm'),
+  softcamSplitCam: $('#softcam-split-cam'),
+  softcamShift: $('#softcam-shift'),
+  softcamComment: $('#softcam-comment'),
+  softcamSave: $('#softcam-save'),
+  softcamCancel: $('#softcam-cancel'),
+  softcamClose: $('#softcam-close'),
+  softcamError: $('#softcam-error'),
   serverNew: $('#server-new'),
   serverTable: $('#server-table'),
   serverEmpty: $('#server-empty'),
@@ -902,6 +928,59 @@ function normalizeServers(value) {
   return out;
 }
 
+function slugifySoftcamId(name) {
+  const source = String(name || '').toLowerCase();
+  let slug = source.replace(/[^a-z0-9_-]+/g, '_');
+  slug = slug.replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+  if (!slug) {
+    slug = `softcam_${Date.now()}`;
+  }
+  return slug;
+}
+
+function normalizeSoftcams(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  value.forEach((entry) => {
+    if (!entry) return;
+    if (typeof entry === 'string') {
+      const name = entry.trim();
+      if (!name) return;
+      out.push({ id: slugifySoftcamId(name), name, type: 'newcamd', host: name, enable: true });
+      return;
+    }
+    const idRaw = String(entry.id || '').trim();
+    const nameRaw = String(entry.name || '').trim();
+    const typeRaw = String(entry.type || '').trim();
+    const hostRaw = String(entry.host || '').trim();
+    if (!idRaw && !nameRaw && !hostRaw) return;
+    const id = idRaw || slugifySoftcamId(nameRaw || hostRaw || typeRaw || 'softcam');
+    const name = nameRaw || id;
+    const port = entry.port !== undefined ? Number(entry.port) : undefined;
+    const enableVal = entry.enable !== undefined ? entry.enable : entry.enabled;
+    const enabled = enableVal === undefined ? true : (enableVal === true || enableVal === 1 || enableVal === '1');
+    const disableEmm = entry.disable_emm === true || entry.disable_emm === 1 || entry.disable_emm === '1';
+    const splitCam = entry.split_cam === true || entry.split_cam === 1 || entry.split_cam === '1';
+    const shift = entry.shift !== undefined && entry.shift !== null ? String(entry.shift) : '';
+    const comment = entry.comment ? String(entry.comment) : '';
+    out.push({
+      id,
+      name,
+      type: typeRaw,
+      host: hostRaw,
+      port: Number.isFinite(port) ? port : undefined,
+      user: entry.user || '',
+      pass: entry.pass || '',
+      enable: enabled,
+      disable_emm: disableEmm,
+      split_cam: splitCam,
+      shift,
+      comment,
+    });
+  });
+  return out;
+}
+
 function getSettingNumber(key, fallback) {
   const value = Number(state.settings[key]);
   return Number.isFinite(value) ? value : fallback;
@@ -985,6 +1064,102 @@ function renderGroups() {
     row.appendChild(actionCell);
     elements.groupTable.appendChild(row);
   });
+}
+
+function renderSoftcams() {
+  if (!elements.softcamTable || !elements.softcamEmpty) return;
+  const header = `
+    <div class="table-row header">
+      <div>ID</div>
+      <div>Name</div>
+      <div>Type</div>
+      <div>Address</div>
+      <div>User</div>
+      <div>Status</div>
+      <div></div>
+    </div>
+  `;
+  elements.softcamTable.innerHTML = header;
+
+  const softcams = (Array.isArray(state.softcams) ? state.softcams : [])
+    .slice()
+    .sort((a, b) => {
+      const al = (a.name || a.id || '').toLowerCase();
+      const bl = (b.name || b.id || '').toLowerCase();
+      return al.localeCompare(bl);
+    });
+
+  if (!softcams.length) {
+    elements.softcamEmpty.hidden = false;
+    return;
+  }
+  elements.softcamEmpty.hidden = true;
+
+  softcams.forEach((softcam) => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    const idCell = createEl('div', '', softcam.id || '');
+    const nameCell = createEl('div', '', softcam.name || '');
+    const typeCell = createEl('div', '', softcam.type || '-');
+    const address = softcam.host ? `${softcam.host}${softcam.port ? `:${softcam.port}` : ''}` : '-';
+    const hostCell = createEl('div', '', address);
+    const userCell = createEl('div', '', softcam.user || '-');
+    const statusCell = createEl('div', '', softcam.enable !== false ? 'Enabled' : 'Disabled');
+    const actionCell = document.createElement('div');
+
+    const editBtn = createEl('button', 'btn ghost', 'Edit');
+    editBtn.type = 'button';
+    editBtn.dataset.action = 'softcam-edit';
+    editBtn.dataset.id = softcam.id || '';
+
+    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.dataset.action = 'softcam-delete';
+    deleteBtn.dataset.id = softcam.id || '';
+
+    actionCell.appendChild(editBtn);
+    actionCell.appendChild(deleteBtn);
+
+    row.appendChild(idCell);
+    row.appendChild(nameCell);
+    row.appendChild(typeCell);
+    row.appendChild(hostCell);
+    row.appendChild(userCell);
+    row.appendChild(statusCell);
+    row.appendChild(actionCell);
+    elements.softcamTable.appendChild(row);
+  });
+}
+
+function openSoftcamModal(softcam) {
+  state.softcamEditing = softcam ? { ...softcam } : null;
+  state.softcamIdAuto = !softcam;
+  if (elements.softcamTitle) {
+    elements.softcamTitle.textContent = softcam ? 'Edit softcam' : 'New softcam';
+  }
+  if (elements.softcamEnabled) elements.softcamEnabled.checked = softcam ? softcam.enable !== false : true;
+  if (elements.softcamId) elements.softcamId.value = softcam ? softcam.id || '' : '';
+  if (elements.softcamName) elements.softcamName.value = softcam ? softcam.name || '' : '';
+  if (elements.softcamType) elements.softcamType.value = softcam ? softcam.type || '' : '';
+  if (elements.softcamHost) elements.softcamHost.value = softcam ? softcam.host || '' : '';
+  if (elements.softcamPort) elements.softcamPort.value = softcam && softcam.port ? String(softcam.port) : '';
+  if (elements.softcamUser) elements.softcamUser.value = softcam ? softcam.user || '' : '';
+  if (elements.softcamPass) elements.softcamPass.value = '';
+  if (elements.softcamPassHint) {
+    elements.softcamPassHint.textContent = softcam && softcam.pass ? 'Password set (stored)' : 'Password not set';
+  }
+  if (elements.softcamDisableEmm) elements.softcamDisableEmm.checked = softcam ? !!softcam.disable_emm : false;
+  if (elements.softcamSplitCam) elements.softcamSplitCam.checked = softcam ? !!softcam.split_cam : false;
+  if (elements.softcamShift) elements.softcamShift.value = softcam && softcam.shift ? String(softcam.shift) : '';
+  if (elements.softcamComment) elements.softcamComment.value = softcam ? softcam.comment || '' : '';
+  if (elements.softcamError) elements.softcamError.textContent = '';
+  setOverlay(elements.softcamOverlay, true);
+}
+
+function closeSoftcamModal() {
+  state.softcamEditing = null;
+  state.softcamIdAuto = false;
+  setOverlay(elements.softcamOverlay, false);
 }
 
 function openGroupModal(group) {
@@ -1199,6 +1374,104 @@ async function deleteServer(id) {
   await saveSettings({ servers: next });
   state.servers = normalizeServers(state.settings.servers);
   renderServers();
+}
+
+function syncSoftcamIdFromName() {
+  if (!state.softcamIdAuto || !elements.softcamId || !elements.softcamName) return;
+  const nextId = slugifySoftcamId(elements.softcamName.value);
+  if (nextId) {
+    elements.softcamId.value = nextId;
+  }
+}
+
+function handleSoftcamIdInput() {
+  if (!elements.softcamId) return;
+  const current = elements.softcamId.value.trim();
+  if (!current) {
+    state.softcamIdAuto = true;
+    syncSoftcamIdFromName();
+    return;
+  }
+  state.softcamIdAuto = false;
+}
+
+function handleSoftcamNameInput() {
+  syncSoftcamIdFromName();
+}
+
+async function saveSoftcam() {
+  const id = elements.softcamId ? elements.softcamId.value.trim() : '';
+  const name = elements.softcamName ? elements.softcamName.value.trim() : '';
+  const type = elements.softcamType ? elements.softcamType.value.trim() : '';
+  const host = elements.softcamHost ? elements.softcamHost.value.trim() : '';
+  const port = toNumber(elements.softcamPort && elements.softcamPort.value);
+  const user = elements.softcamUser ? elements.softcamUser.value.trim() : '';
+  const pass = elements.softcamPass ? elements.softcamPass.value : '';
+  const enable = elements.softcamEnabled ? elements.softcamEnabled.checked : true;
+  const disableEmm = elements.softcamDisableEmm ? elements.softcamDisableEmm.checked : false;
+  const splitCam = elements.softcamSplitCam ? elements.softcamSplitCam.checked : false;
+  const shift = elements.softcamShift ? elements.softcamShift.value.trim() : '';
+  const comment = elements.softcamComment ? elements.softcamComment.value.trim() : '';
+
+  if (!id) throw new Error('Softcam id is required');
+  if (!type) throw new Error('Softcam type is required');
+
+  const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
+  const existingIdx = softcams.findIndex((s) => s && s.id === id);
+  const payload = {
+    id,
+    name: name || id,
+    type,
+    host,
+    port,
+    user,
+    pass,
+    enable,
+    disable_emm: disableEmm,
+    split_cam: splitCam,
+    shift,
+    comment,
+  };
+
+  if (state.softcamEditing && state.softcamEditing.id && state.softcamEditing.id !== id) {
+    if (existingIdx !== -1) {
+      throw new Error(`Softcam id \"${id}\" already exists`);
+    }
+    const currentIdx = softcams.findIndex((s) => s && s.id === state.softcamEditing.id);
+    if (currentIdx !== -1) {
+      const existing = softcams[currentIdx];
+      softcams[currentIdx] = {
+        ...payload,
+        pass: pass || (existing && existing.pass) || '',
+      };
+    } else {
+      softcams.push(payload);
+    }
+  } else if (!state.softcamEditing) {
+    if (existingIdx !== -1) {
+      throw new Error(`Softcam id \"${id}\" already exists`);
+    }
+    softcams.push(payload);
+  } else {
+    const existing = softcams[existingIdx];
+    softcams[existingIdx] = {
+      ...payload,
+      pass: pass || (existing && existing.pass) || '',
+    };
+  }
+
+  await saveSettings({ softcam: softcams });
+  state.softcams = normalizeSoftcams(state.settings.softcam);
+  renderSoftcams();
+  closeSoftcamModal();
+}
+
+async function deleteSoftcam(id) {
+  const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
+  const next = softcams.filter((s) => s && s.id !== id);
+  await saveSettings({ softcam: next });
+  state.softcams = normalizeSoftcams(state.settings.softcam);
+  renderSoftcams();
 }
 
 async function testServer(id, payload) {
@@ -8690,6 +8963,7 @@ function applySettingsToUI() {
   }
 
   renderGroups();
+  renderSoftcams();
   renderServers();
   updateStreamGroupOptions();
   applyFeatureVisibility();
@@ -8950,6 +9224,7 @@ async function loadSettings() {
   }
   state.groups = normalizeGroups(state.settings.groups);
   state.servers = normalizeServers(state.settings.servers);
+  state.softcams = normalizeSoftcams(state.settings.softcam);
 
   applySettingsToUI();
   if (elements.configPreview) {
@@ -9798,6 +10073,51 @@ function bindEvents() {
         const confirmed = window.confirm(`Delete group ${id}? Streams using it will keep the old value.`);
         if (!confirmed) return;
         deleteGroup(id).catch((err) => setStatus(err.message || 'Delete failed'));
+      }
+    });
+  }
+
+  if (elements.softcamNew) {
+    elements.softcamNew.addEventListener('click', () => openSoftcamModal(null));
+  }
+  if (elements.softcamClose) {
+    elements.softcamClose.addEventListener('click', closeSoftcamModal);
+  }
+  if (elements.softcamCancel) {
+    elements.softcamCancel.addEventListener('click', closeSoftcamModal);
+  }
+  if (elements.softcamId) {
+    elements.softcamId.addEventListener('input', handleSoftcamIdInput);
+  }
+  if (elements.softcamName) {
+    elements.softcamName.addEventListener('input', handleSoftcamNameInput);
+  }
+  if (elements.softcamForm) {
+    elements.softcamForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await saveSoftcam();
+      } catch (err) {
+        if (elements.softcamError) {
+          elements.softcamError.textContent = err.message || 'Failed to save softcam';
+        }
+      }
+    });
+  }
+  if (elements.softcamTable) {
+    elements.softcamTable.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const id = target.dataset.id;
+      if (action === 'softcam-edit') {
+        const softcam = (state.softcams || []).find((s) => s && s.id === id);
+        if (softcam) openSoftcamModal(softcam);
+      }
+      if (action === 'softcam-delete') {
+        const confirmed = window.confirm(`Delete softcam ${id}?`);
+        if (!confirmed) return;
+        deleteSoftcam(id).catch((err) => setStatus(err.message || 'Delete failed'));
       }
     });
   }

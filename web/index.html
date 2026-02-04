@@ -1238,56 +1238,33 @@
           </div>
 
           <div class="settings-section" data-section="softcam">
-            <div class="form-stack">
-              <label class="field">
-                <span>Softcam name</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Protocol</span>
-                <input type="text" placeholder="NewCAMd" />
-              </label>
-              <label class="field">
-                <span>Address</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Port</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Login</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Password</span>
-                <input type="password" />
-              </label>
-              <div class="apply-row">
-                <button class="btn">Apply</button>
-                <button class="btn ghost">Test</button>
-                <button class="btn ghost" disabled>Clone</button>
-                <button class="btn ghost" disabled>Streams</button>
+            <div class="panel users-panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Softcam</div>
+                <button class="text-link" type="button" id="softcam-new">NEW SOFTCAM</button>
               </div>
+              <div class="table" id="softcam-table">
+                <div class="table-row header">
+                  <div>ID</div>
+                  <div>Name</div>
+                  <div>Type</div>
+                  <div>Address</div>
+                  <div>User</div>
+                  <div>Status</div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="muted" id="softcam-empty">No softcam entries yet</div>
+            </div>
+            <div class="muted">
+              Softcam entries are stored in settings and applied on save.
             </div>
           </div>
 
           <div class="settings-section" data-section="cas">
-            <div class="form-stack">
-              <label class="field">
-                <span>CAS name</span>
-                <input type="text" />
-              </label>
-              <label class="field">
-                <span>Super CAS ID (hex)</span>
-                <input type="text" />
-              </label>
-              <label class="checkline">
-                <input type="checkbox" />
-                <span>Start stream ID with 1</span>
-              </label>
-              <div class="apply-row">
-                <button class="btn">Apply</button>
+            <div class="panel">
+              <div class="muted">
+                CAS settings are not wired in Astral yet. Use JSON config for CAS options.
               </div>
             </div>
           </div>
@@ -2957,6 +2934,75 @@
             <button class="btn ghost" type="button" id="server-cancel">Cancel</button>
             <button class="btn ghost" type="button" id="server-test">Test</button>
             <div class="form-note" id="server-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="softcam-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="softcam-title">New softcam</div>
+        <button class="icon-btn" id="softcam-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="softcam-form">
+        <label class="checkline">
+          <input type="checkbox" id="softcam-enabled" checked />
+          <span>Enable</span>
+        </label>
+        <label class="field">
+          <span>ID</span>
+          <input type="text" id="softcam-id" placeholder="cam_main" />
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="softcam-name" placeholder="Main softcam" />
+        </label>
+        <label class="field">
+          <span>Type</span>
+          <input type="text" id="softcam-type" placeholder="newcamd" />
+        </label>
+        <label class="field">
+          <span>Host</span>
+          <input type="text" id="softcam-host" placeholder="127.0.0.1" />
+        </label>
+        <label class="field">
+          <span>Port</span>
+          <input type="number" id="softcam-port" placeholder="10000" />
+        </label>
+        <label class="field">
+          <span>User</span>
+          <input type="text" id="softcam-user" placeholder="user" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="softcam-pass" placeholder="(leave empty to keep)" />
+          <small class="form-hint" id="softcam-pass-hint"></small>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="softcam-disable-emm" />
+          <span>Disable EMM</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="softcam-split-cam" />
+          <span>Split CAM</span>
+        </label>
+        <label class="field">
+          <span>Shift</span>
+          <input type="text" id="softcam-shift" placeholder="0" />
+        </label>
+        <label class="field">
+          <span>Comment</span>
+          <input type="text" id="softcam-comment" placeholder="Optional note" />
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="softcam-save">Save</button>
+            <button class="btn ghost" type="button" id="softcam-cancel">Cancel</button>
+            <div class="form-note" id="softcam-error"></div>
           </div>
         </div>
       </form>
