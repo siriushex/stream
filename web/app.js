@@ -5457,6 +5457,7 @@ async function createStreamsFromScan(adapterId) {
   }
   const existingIds = new Set((state.streams || []).map((item) => item.id));
   const results = [];
+  const failures = [];
   const channels = (state.adapterScanResults && state.adapterScanResults.channels) || [];
   for (const pnr of list) {
     const channel = channels.find((item) => String(item.pnr) === String(pnr));
@@ -5482,14 +5483,34 @@ async function createStreamsFromScan(adapterId) {
         output: [],
       },
     };
-    await apiJson('/api/v1/streams', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-    results.push(unique);
+    try {
+      await apiJson('/api/v1/streams', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      results.push(unique);
+    } catch (err) {
+      failures.push({
+        pnr,
+        message: err && err.message ? err.message : 'create failed',
+      });
+    }
   }
-  await loadStreams();
-  setStatus(`Created ${results.length} stream(s)`);
+  try {
+    await loadStreams();
+  } catch (err) {
+    const message = err && err.network
+      ? 'Streams created, but refresh failed. Reload later.'
+      : (err && err.message ? err.message : 'Streams created, but refresh failed');
+    setStatus(message);
+    return;
+  }
+  if (failures.length) {
+    console.warn('Scan add failures', failures);
+    setStatus(`Created ${results.length} stream(s), ${failures.length} failed`);
+  } else {
+    setStatus(`Created ${results.length} stream(s)`);
+  }
 }
 
 const FE_HAS_SIGNAL = 1;
