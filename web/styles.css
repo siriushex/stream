@@ -970,6 +970,13 @@ select {
   color: var(--text);
 }
 
+.field.warn input,
+.field.warn select,
+.field.warn textarea {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1px rgba(255, 93, 93, 0.2);
+}
+
 .field select {
   appearance: none;
   background-image:
@@ -1433,6 +1440,14 @@ select {
 .adapter-detected-hint.error,
 .adapter-detected-hint.missing {
   color: var(--danger);
+}
+
+.adapter-busy-warning {
+  color: var(--danger);
+}
+
+.adapter-busy-warning:empty {
+  display: none;
 }
 
 .adapter-card-metrics {
