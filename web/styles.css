@@ -2262,6 +2262,20 @@ select {
   display: block;
 }
 
+.dashboard-notice {
+  display: none;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.dashboard-notice.active {
+  display: block;
+}
+
 .analyze-header {
   display: flex;
   align-items: center;

@@ -853,6 +853,7 @@ const elements = {
   analyzeRate: $('#analyze-rate'),
   analyzeCc: $('#analyze-cc'),
   analyzePes: $('#analyze-pes'),
+  dashboardNotice: $('#dashboard-notice'),
   playerOverlay: $('#player-overlay'),
   playerVideo: $('#player-video'),
   playerClose: $('#player-close'),
@@ -948,6 +949,21 @@ function setStatus(message, mode) {
   elements.status.classList.add('active');
   if (mode !== 'sticky') {
     setTimeout(() => setStatus(''), 3000);
+  }
+}
+
+function showDashboardNotice(message, ttl) {
+  if (!elements.dashboardNotice) return;
+  if (!message) {
+    elements.dashboardNotice.classList.remove('active');
+    elements.dashboardNotice.textContent = '';
+    return;
+  }
+  elements.dashboardNotice.textContent = message;
+  elements.dashboardNotice.classList.add('active');
+  const timeout = Number.isFinite(ttl) ? ttl : 6000;
+  if (timeout > 0) {
+    setTimeout(() => showDashboardNotice(''), timeout);
   }
 }
 
@@ -5799,6 +5815,7 @@ async function createStreamsFromScan(adapterId) {
   if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
   closeAdapterScanModal();
   setView('dashboard');
+  showDashboardNotice(message);
   setStatus(message, 'sticky');
   setTimeout(() => setStatus(''), 6000);
 }
