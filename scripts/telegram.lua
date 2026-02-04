@@ -757,6 +757,9 @@ function telegram.configure()
     telegram.config.api_base = api_base
     telegram.curl_available = nil
     telegram.config.backup_enabled = backup_enabled
+    if backup_enabled and backup_schedule == "OFF" then
+        backup_schedule = "DAILY"
+    end
     telegram.config.backup_schedule = backup_schedule
     telegram.config.backup_time = backup_time
     telegram.config.backup_weekday = backup_weekday
