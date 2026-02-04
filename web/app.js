@@ -5882,7 +5882,7 @@ function renderAdapterList() {
 
   adapters.forEach((adapter) => {
     const config = adapter.config || {};
-    const statusData = (state.adapterStatus && state.adapterStatus[adapter.id]) || {};
+    const statusData = getAdapterStatusEntry(adapter.id) || {};
     const rawSignal = config.raw_signal === true;
     const signalPercent = rawSignal ? 0 : toPercent(statusData.signal);
     const snrPercent = rawSignal ? 0 : toPercent(statusData.snr);
