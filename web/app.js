@@ -1,6 +1,8 @@
 const TILE_MODE_KEY = 'ui_tiles_mode';
 const TILE_EXPANDED_KEY = 'ui_tiles_expanded';
 const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
+const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
+const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 
 function normalizeTilesMode(value) {
   const mode = String(value || '').toLowerCase();
@@ -20,10 +22,27 @@ function parseTilesIdList(value) {
 }
 
 function loadTilesUiState() {
-  const mode = normalizeTilesMode(localStorage.getItem(TILE_MODE_KEY) || 'compact');
+  const storedMode = localStorage.getItem(TILE_MODE_KEY);
+  const version = localStorage.getItem(TILE_DEFAULT_VERSION_KEY);
+  const mode = normalizeTilesMode((storedMode && version === '20260205') ? storedMode : 'compact');
+  if (version !== '20260205') {
+    localStorage.setItem(TILE_MODE_KEY, mode);
+    localStorage.setItem(TILE_DEFAULT_VERSION_KEY, '20260205');
+  }
   const expandedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_EXPANDED_KEY)));
   const collapsedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_COLLAPSED_KEY)));
   return { mode, expandedIds, collapsedIds };
+}
+
+function loadViewModeState() {
+  const stored = localStorage.getItem('astra.viewMode');
+  const version = localStorage.getItem(VIEW_DEFAULT_VERSION_KEY);
+  const mode = normalizeViewMode((stored && version === '20260205') ? stored : 'cards');
+  if (version !== '20260205') {
+    localStorage.setItem('astra.viewMode', mode);
+    localStorage.setItem(VIEW_DEFAULT_VERSION_KEY, '20260205');
+  }
+  return mode;
 }
 
 function saveTilesUiState() {
@@ -189,7 +208,7 @@ const state = {
   userEditing: null,
   userMode: 'edit',
   activeAnalyzeId: null,
-  viewMode: localStorage.getItem('astra.viewMode') || 'cards',
+  viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
   streamIndex: {},
