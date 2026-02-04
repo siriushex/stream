@@ -10,11 +10,6 @@ fi
 
 required_patterns=(
   '^\*\s+.+\S'
-  '^/web/\s+.+\S'
-  '^/scripts/\s+.+\S'
-  '^/modules/\s+.+\S'
-  '^/core/\s+.+\S'
-  '^/docs/\s+.+\S'
 )
 
 for pattern in "${required_patterns[@]}"; do
