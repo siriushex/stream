@@ -139,6 +139,13 @@ const elements = {
   splitterLinkTable: $('#splitter-link-table'),
   splitterLinkEmpty: $('#splitter-link-empty'),
   splitterConfigOverlay: $('#splitter-config-overlay'),
+  configErrorOverlay: $('#config-error-overlay'),
+  configErrorTitle: $('#config-error-title'),
+  configErrorMeta: $('#config-error-meta'),
+  configErrorBody: $('#config-error-body'),
+  configErrorClose: $('#config-error-close'),
+  configErrorDone: $('#config-error-done'),
+  configErrorCopy: $('#config-error-copy'),
   splitterConfigPreview: $('#splitter-config-preview'),
   splitterConfigError: $('#splitter-config-error'),
   splitterConfigClose: $('#splitter-config-close'),
@@ -9298,7 +9305,12 @@ function renderConfigHistory() {
     const commentCell = createEl('div', '', rev.comment || '—');
     const createdCell = createEl('div', '', formatTimestamp(rev.created_ts));
     const appliedCell = createEl('div', '', formatTimestamp(rev.applied_ts));
-    const errorCell = createEl('div', '', rev.error_text || '—');
+    const errorText = rev.error_text || '';
+    const errorShort = errorText ? truncateText(errorText, 80) : '—';
+    const errorCell = createEl('div', '', errorShort);
+    if (errorText) {
+      errorCell.title = errorText;
+    }
 
     const actionCell = document.createElement('div');
     actionCell.className = 'revision-action';
@@ -9307,6 +9319,13 @@ function renderConfigHistory() {
     restoreBtn.dataset.action = 'config-restore';
     restoreBtn.dataset.revisionId = String(rev.id || '');
     actionCell.appendChild(restoreBtn);
+    if (errorText) {
+      const detailsBtn = createEl('button', 'btn ghost', 'Details');
+      detailsBtn.type = 'button';
+      detailsBtn.dataset.action = 'config-error';
+      detailsBtn.dataset.revisionId = String(rev.id || '');
+      actionCell.appendChild(detailsBtn);
+    }
 
     row.appendChild(idCell);
     row.appendChild(statusCell);
@@ -9326,6 +9345,29 @@ function renderConfigHistory() {
   if (elements.configLkgRevision) {
     elements.configLkgRevision.textContent = lkgId ? String(lkgId) : '—';
   }
+}
+
+function setConfigErrorOverlay(show) {
+  if (!elements.configErrorOverlay) return;
+  setOverlay(elements.configErrorOverlay, show);
+}
+
+function openConfigErrorModal(revision) {
+  if (!revision) return;
+  const id = revision.id ? `#${revision.id}` : '';
+  const status = formatRevisionStatus(revision.status, false, false);
+  if (elements.configErrorTitle) {
+    elements.configErrorTitle.textContent = `Config error ${id}`;
+  }
+  if (elements.configErrorMeta) {
+    const user = revision.created_by || '—';
+    const created = formatTimestamp(revision.created_ts);
+    elements.configErrorMeta.textContent = `Status: ${status.label} · User: ${user} · Created: ${created}`;
+  }
+  if (elements.configErrorBody) {
+    elements.configErrorBody.textContent = revision.error_text || '';
+  }
+  setConfigErrorOverlay(true);
 }
 
 async function loadConfigHistory() {
@@ -9825,11 +9867,35 @@ function bindEvents() {
 
   if (elements.configHistoryTable) {
     elements.configHistoryTable.addEventListener('click', (event) => {
-      const target = event.target.closest('[data-action="config-restore"]');
-      if (!target) return;
-      const revisionId = target.dataset.revisionId;
-      if (revisionId) {
-        restoreConfigRevision(revisionId);
+      const restoreTarget = event.target.closest('[data-action="config-restore"]');
+      if (restoreTarget) {
+        const revisionId = restoreTarget.dataset.revisionId;
+        if (revisionId) {
+          restoreConfigRevision(revisionId);
+        }
+        return;
+      }
+      const errorTarget = event.target.closest('[data-action="config-error"]');
+      if (errorTarget) {
+        const revisionId = Number(errorTarget.dataset.revisionId);
+        const revision = state.configRevisions.find((rev) => Number(rev.id) === revisionId);
+        if (revision) {
+          openConfigErrorModal(revision);
+        }
+      }
+    });
+  }
+
+  if (elements.configErrorClose) {
+    elements.configErrorClose.addEventListener('click', () => setConfigErrorOverlay(false));
+  }
+  if (elements.configErrorDone) {
+    elements.configErrorDone.addEventListener('click', () => setConfigErrorOverlay(false));
+  }
+  if (elements.configErrorCopy) {
+    elements.configErrorCopy.addEventListener('click', () => {
+      if (elements.configErrorBody) {
+        copyText(elements.configErrorBody.textContent || '', 'Copied error text');
       }
     });
   }
