@@ -7,7 +7,7 @@
 | Settings UI parity audit (DONE) | Remove placeholder UI or wire it to settings/runtime | Softcam wired; CAS/License hidden | Low | web/, scripts/api.lua |
 | MPTS runtime apply (DONE) | Apply MPTS config to runtime where supported | MPTS config mapped to channel options with warnings for unsupported fields | Medium | scripts/stream.lua |
 | Backup default deviation documented | Avoid surprise behavior | `docs/PARITY.md` lists deviation | Low | docs/ |
-| Smoke coverage refresh | Ensure basic runtime checks remain reliable | `contrib/ci/smoke.sh` updated if needed | Low | contrib/ci |
+| Smoke coverage refresh (DONE) | Ensure basic runtime checks remain reliable | Added `smoke_mpts.sh` and CI job | Low | contrib/ci |
 
 ## 1-2 Months (Productization)
 | Task | Goal | Acceptance Criteria | Risk | Code Areas |

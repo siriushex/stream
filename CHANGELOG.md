@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added CI job for MPTS smoke coverage.
+- Tests:
+  - Not run (CI change).
+### 2026-02-04
+- Changes:
   - Hid CAS/License placeholder sections in UI.
   - Added best-effort runtime mapping for MPTS config fields.
   - Added MPTS smoke fixture/script and testing doc note.
