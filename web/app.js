@@ -1160,6 +1160,62 @@ function normalizeSoftcams(value) {
   return out;
 }
 
+function formatSoftcamOptionLabel(softcam) {
+  if (!softcam) return '';
+  const id = String(softcam.id || '');
+  const name = String(softcam.name || '');
+  let label = id;
+  if (name && name !== id) {
+    label = `${name} (${id})`;
+  }
+  if (softcam.enable === false) {
+    label = `${label} [disabled]`;
+  }
+  return label;
+}
+
+function refreshInputCamOptions(selectedValue) {
+  if (!elements.inputCamId) return;
+  const select = elements.inputCamId;
+  const desired = selectedValue !== undefined ? String(selectedValue || '') : String(select.value || '');
+  const softcams = (Array.isArray(state.softcams) ? state.softcams : [])
+    .slice()
+    .sort((a, b) => {
+      const al = (a.name || a.id || '').toLowerCase();
+      const bl = (b.name || b.id || '').toLowerCase();
+      return al.localeCompare(bl);
+    });
+
+  const fragment = document.createDocumentFragment();
+  const addOption = (value, label, disabled) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    if (disabled) option.disabled = true;
+    fragment.appendChild(option);
+    return option;
+  };
+
+  addOption('', 'None');
+  let hasSelected = false;
+  softcams.forEach((softcam) => {
+    const id = softcam && softcam.id ? String(softcam.id) : '';
+    if (!id) return;
+    addOption(id, formatSoftcamOptionLabel(softcam));
+    if (id === desired) {
+      hasSelected = true;
+    }
+  });
+
+  if (desired && !hasSelected) {
+    addOption(desired, `Unknown: ${desired}`);
+    hasSelected = true;
+  }
+
+  select.replaceChildren(fragment);
+  select.value = hasSelected ? desired : '';
+}
+
 function getSettingNumber(key, fallback) {
   const value = Number(state.settings[key]);
   return Number.isFinite(value) ? value : fallback;
@@ -1642,6 +1698,7 @@ async function saveSoftcam() {
   await saveSettings({ softcam: softcams });
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
+  refreshInputCamOptions();
   closeSoftcamModal();
 }
 
@@ -1651,6 +1708,7 @@ async function deleteSoftcam(id) {
   await saveSettings({ softcam: next });
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
+  refreshInputCamOptions();
 }
 
 async function testServer(id, payload) {
@@ -4771,7 +4829,8 @@ function openInputModal(index) {
   elements.inputSetPnr.value = opts.set_pnr || '';
   elements.inputSetTsid.value = opts.set_tsid || '';
   elements.inputBiss.value = opts.biss || '';
-  elements.inputCamId.value = (opts.cam && opts.cam !== true && opts.cam !== 'true') ? opts.cam : '';
+  const camValue = (opts.cam && opts.cam !== true && opts.cam !== 'true') ? String(opts.cam) : '';
+  refreshInputCamOptions(camValue);
   elements.inputEcmPid.value = opts.ecm_pid || '';
   elements.inputShift.value = opts.shift || '';
   elements.inputMap.value = opts.map || '';
@@ -9853,6 +9912,7 @@ async function loadSettings() {
   state.groups = normalizeGroups(state.settings.groups);
   state.servers = normalizeServers(state.settings.servers);
   state.softcams = normalizeSoftcams(state.settings.softcam);
+  refreshInputCamOptions();
 
   applySettingsToUI();
   if (elements.configPreview) {
