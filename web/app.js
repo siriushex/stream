@@ -1,3 +1,105 @@
+const TILE_MODE_KEY = 'ui_tiles_mode';
+const TILE_EXPANDED_KEY = 'ui_tiles_expanded';
+const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
+
+function normalizeTilesMode(value) {
+  const mode = String(value || '').toLowerCase();
+  if (mode === 'compact' || mode === 'expanded') return mode;
+  return 'expanded';
+}
+
+function parseTilesIdList(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((id) => String(id));
+  } catch (err) {
+    return [];
+  }
+}
+
+function loadTilesUiState() {
+  const mode = normalizeTilesMode(localStorage.getItem(TILE_MODE_KEY) || 'expanded');
+  const expandedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_EXPANDED_KEY)));
+  const collapsedIds = new Set(parseTilesIdList(localStorage.getItem(TILE_COLLAPSED_KEY)));
+  return { mode, expandedIds, collapsedIds };
+}
+
+function saveTilesUiState() {
+  if (!state.tilesUi) return;
+  localStorage.setItem(TILE_MODE_KEY, state.tilesUi.mode);
+  localStorage.setItem(TILE_EXPANDED_KEY, JSON.stringify(Array.from(state.tilesUi.expandedIds)));
+  localStorage.setItem(TILE_COLLAPSED_KEY, JSON.stringify(Array.from(state.tilesUi.collapsedIds)));
+}
+
+function isTileExpanded(streamId) {
+  const id = String(streamId);
+  if (!state.tilesUi) return true;
+  if (state.tilesUi.mode === 'compact') {
+    return state.tilesUi.expandedIds.has(id);
+  }
+  return !state.tilesUi.collapsedIds.has(id);
+}
+
+function setTileExpanded(streamId, expanded) {
+  if (!state.tilesUi) return;
+  const id = String(streamId);
+  if (state.tilesUi.mode === 'compact') {
+    if (expanded) {
+      state.tilesUi.expandedIds.add(id);
+    } else {
+      state.tilesUi.expandedIds.delete(id);
+    }
+  } else {
+    if (expanded) {
+      state.tilesUi.collapsedIds.delete(id);
+    } else {
+      state.tilesUi.collapsedIds.add(id);
+    }
+  }
+  saveTilesUiState();
+  applyTilesUiState();
+}
+
+function setTilesMode(mode, opts) {
+  if (!state.tilesUi) return;
+  const next = normalizeTilesMode(mode);
+  state.tilesUi.mode = next;
+  if (!opts || opts.persist !== false) {
+    saveTilesUiState();
+  }
+  applyTilesUiState();
+  updateViewMenuSelection();
+}
+
+function applyTileUiState(tile) {
+  if (!tile || !state.tilesUi) return;
+  const id = tile.dataset.id;
+  if (!id) return;
+  const expanded = isTileExpanded(id);
+  tile.classList.toggle('is-expanded', expanded);
+  tile.classList.toggle('is-compact', !expanded);
+  const toggleBtn = tile.querySelector('[data-action="tile-toggle"]');
+  if (toggleBtn) {
+    toggleBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggleBtn.textContent = expanded ? '⯆' : '⯈';
+    toggleBtn.title = expanded ? 'Collapse' : 'Expand';
+  }
+  const details = tile.querySelector('.tile-details');
+  if (details) {
+    details.setAttribute('aria-hidden', expanded ? 'false' : 'true');
+  }
+}
+
+function applyTilesUiState() {
+  if (elements && elements.dashboardStreams) {
+    elements.dashboardStreams.dataset.tilesMode = state.tilesUi.mode;
+  }
+  if (!elements || !elements.dashboardStreams || state.viewMode !== 'cards') return;
+  $$('.tile').forEach(applyTileUiState);
+}
+
 const state = {
   streams: [],
   adapters: [],
@@ -75,6 +177,7 @@ const state = {
   activeAnalyzeId: null,
   viewMode: localStorage.getItem('astra.viewMode') || 'cards',
   themeMode: localStorage.getItem('astra.theme') || 'auto',
+  tilesUi: loadTilesUiState(),
   streamIndex: {},
   streamTableRows: {},
   streamCompactRows: {},
@@ -1649,9 +1752,14 @@ function updateViewMenuSelection() {
   elements.viewOptions.forEach((option) => {
     const viewMode = option.dataset.viewMode;
     const themeMode = option.dataset.theme;
+    const tilesMode = option.dataset.tilesMode;
     const isActive = viewMode
       ? viewMode === state.viewMode
-      : themeMode === state.themeMode;
+      : themeMode
+      ? themeMode === state.themeMode
+      : tilesMode
+      ? (state.tilesUi && tilesMode === state.tilesUi.mode)
+      : false;
     option.classList.toggle('active', isActive);
   });
   updateViewButtonLabel();
@@ -1670,6 +1778,7 @@ function setViewMode(mode, opts) {
   if (!opts || opts.render !== false) {
     renderStreams();
   }
+  applyTilesUiState();
 }
 
 function setThemeMode(mode, opts) {
@@ -2042,6 +2151,31 @@ function getInputState(input, index, activeIndex) {
   }
   if (onAir) return 'STANDBY';
   return 'DOWN';
+}
+
+function summarizeInputStates(inputs, activeIndex) {
+  let okCount = 0;
+  let downCount = 0;
+  let unkCount = 0;
+  inputs.forEach((input, index) => {
+    const stateValue = String(getInputState(input, index, activeIndex) || '').toUpperCase();
+    if (stateValue === 'ACTIVE' || stateValue === 'STANDBY' || stateValue === 'OK') {
+      okCount += 1;
+      return;
+    }
+    if (stateValue === 'DOWN') {
+      downCount += 1;
+      return;
+    }
+    unkCount += 1;
+  });
+  return { okCount, downCount, unkCount };
+}
+
+function formatInputSummary(inputs, activeIndex) {
+  if (!inputs.length) return 'Inputs: -';
+  const summary = summarizeInputStates(inputs, activeIndex);
+  return `Inputs: ${summary.okCount} OK • ${summary.downCount} DOWN • ${summary.unkCount} UNK`;
 }
 
 function isTranscodeStream(stream) {
@@ -7440,6 +7574,7 @@ function updateTiles() {
   }
   $$('.tile').forEach((tile) => {
     const id = tile.dataset.id;
+    applyTileUiState(tile);
     const stream = state.streamIndex[id];
     const enabled = stream ? stream.enabled !== false : tile.dataset.enabled === '1';
     tile.dataset.enabled = enabled ? '1' : '0';
@@ -7452,6 +7587,15 @@ function updateTiles() {
     const onAir = enabled && isRunning;
     const rateEl = tile.querySelector('.tile-rate');
     const metaEl = tile.querySelector('.tile-meta');
+    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+    const activeIndex = getActiveInputIndex(stats);
+    const activeLabel = getActiveInputLabel(inputs, activeIndex);
+    const statusInfo = stream
+      ? getStreamStatusInfo(stream, stats)
+      : {
+        label: enabled ? (onAir ? 'Online' : 'Offline') : 'Disabled',
+        className: enabled ? (onAir ? 'ok' : 'warn') : 'disabled',
+      };
 
     if (rateEl) {
       if (transcodeState) {
@@ -7481,11 +7625,27 @@ function updateTiles() {
           metaEl.textContent = `Transcode: ${transcodeState}`;
         }
       } else {
-        const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-        const activeLabel = getActiveInputLabel(inputs, getActiveInputIndex(stats));
         metaEl.textContent = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
       }
     }
+
+    const compactStatus = tile.querySelector('[data-role="tile-compact-status"]');
+    if (compactStatus) {
+      compactStatus.className = `tile-compact-status stream-status-badge ${statusInfo.className}`;
+      const statusLabel = compactStatus.querySelector('[data-role="tile-compact-status-label"]');
+      if (statusLabel) statusLabel.textContent = statusInfo.label;
+    }
+    const compactInput = tile.querySelector('[data-role="tile-compact-input"]');
+    if (compactInput) {
+      compactInput.textContent = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
+      const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
+      compactInput.title = activeInput && activeInput.url ? activeInput.url : '';
+    }
+    const compactSummary = tile.querySelector('[data-role="tile-compact-input-summary"]');
+    if (compactSummary) {
+      compactSummary.textContent = formatInputSummary(inputs, activeIndex);
+    }
+
     updateTileInputs(tile, stats);
     tile.classList.toggle('ok', enabled && onAir);
     tile.classList.toggle('warn', enabled && !onAir);
@@ -7994,20 +8154,42 @@ function renderStreams() {
     const tileState = enabled ? (onAir ? 'ok' : 'warn') : 'disabled';
     const rateState = enabled ? (onAir ? '' : 'warn') : 'disabled';
     const metaText = enabled ? (onAir ? 'Active' : 'Inactive') : 'Disabled';
+    const statusInfo = getStreamStatusInfo(stream, stats);
+    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+    const activeIndex = getActiveInputIndex(stats);
+    const activeLabel = getActiveInputLabel(inputs, activeIndex);
+    const compactInputText = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
+    const inputSummaryText = formatInputSummary(inputs, activeIndex);
     tile.className = `tile ${tileState}`;
     tile.dataset.id = stream.id;
     tile.dataset.enabled = enabled ? '1' : '0';
 
     const displayName = (stream.config && stream.config.name) || stream.id;
+    const detailsId = `tile-details-${stream.id}`;
 
     tile.innerHTML = `
-      <div class="tile-head">
-        <div class="tile-title" data-autofit="true" data-autofit-min="12" data-autofit-max="14">${displayName}</div>
-        <button class="kebab" data-action="menu" aria-label="Menu"><span></span></button>
+      <div class="tile-header">
+        <div class="tile-head">
+          <div class="tile-title" data-autofit="true" data-autofit-min="12" data-autofit-max="14">${displayName}</div>
+          <div class="tile-actions">
+            <button class="tile-toggle" data-action="tile-toggle" aria-expanded="false" aria-controls="${detailsId}">⯈</button>
+            <button class="kebab" data-action="menu" aria-label="Menu"><span></span></button>
+          </div>
+        </div>
+        <div class="tile-summary">
+          <div class="tile-rate ${rateState}" data-autofit="true" data-autofit-min="11" data-autofit-max="14">${formatBitrate(stats.bitrate || 0)}</div>
+          <div class="tile-meta" data-autofit="true" data-autofit-min="11" data-autofit-max="12">${metaText}</div>
+          <div class="tile-compact-status stream-status-badge ${statusInfo.className}" data-role="tile-compact-status">
+            <span class="stream-status-dot"></span>
+            <span data-role="tile-compact-status-label">${statusInfo.label}</span>
+          </div>
+          <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
+          <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
+        </div>
       </div>
-      <div class="tile-rate ${rateState}" data-autofit="true" data-autofit-min="11" data-autofit-max="14">${formatBitrate(stats.bitrate || 0)}</div>
-      <div class="tile-meta" data-autofit="true" data-autofit-min="11" data-autofit-max="12">${metaText}</div>
-      <div class="tile-inputs" data-role="tile-inputs"></div>
+      <div class="tile-details" id="${detailsId}">
+        <div class="tile-inputs" data-role="tile-inputs"></div>
+      </div>
       <div class="tile-menu">
         <button class="menu-item" data-action="edit">Edit</button>
         ${getPlaylistUrl(stream) ? '<button class="menu-item" data-action="preview">Preview</button>' : ''}
@@ -9832,11 +10014,18 @@ function bindEvents() {
       option.addEventListener('click', (event) => {
         const viewMode = option.dataset.viewMode;
         const themeMode = option.dataset.theme;
+        const tilesMode = option.dataset.tilesMode;
         if (viewMode) {
           setViewMode(viewMode);
         }
         if (themeMode) {
           setThemeMode(themeMode);
+        }
+        if (tilesMode) {
+          const nextMode = (state.tilesUi && state.tilesUi.mode === 'compact')
+            ? 'expanded'
+            : 'compact';
+          setTilesMode(nextMode);
         }
         closeViewMenu();
         event.stopPropagation();
@@ -10438,10 +10627,24 @@ function bindEvents() {
       return;
     }
 
+    const toggleButton = event.target.closest('[data-action="tile-toggle"]');
+    if (toggleButton) {
+      const expanded = isTileExpanded(stream.id);
+      setTileExpanded(stream.id, !expanded);
+      return;
+    }
+
     const action = event.target.closest('.menu-item');
     if (action) {
       handleStreamAction(stream, action.dataset.action);
       closeTileMenus();
+      return;
+    }
+
+    const header = event.target.closest('.tile-header');
+    if (header) {
+      const expanded = isTileExpanded(stream.id);
+      setTileExpanded(stream.id, !expanded);
       return;
     }
 
@@ -10947,4 +11150,5 @@ bindEvents();
 setViewMode(state.viewMode, { persist: false, render: false });
 setThemeMode(state.themeMode, { persist: false });
 setSettingsSection(state.settingsSection);
+applyTilesUiState();
 refreshAll();
