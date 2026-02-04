@@ -5449,7 +5449,8 @@ function renderDvbDetectedSelect() {
       const type = item.type || 'Unknown';
       const name = item.frontend ? ` · ${item.frontend}` : '';
       option.value = key || '';
-      option.textContent = `adapter${item.adapter}.fe${item.device} · ${type} · ${status.label}${name}`;
+      option.textContent = `${status.label} · adapter${item.adapter}.fe${item.device} · ${type}${name}`;
+      option.dataset.status = status.className || '';
       group.appendChild(option);
     });
     elements.adapterDetected.appendChild(group);
@@ -6272,6 +6273,7 @@ function stopAdapterPolling() {
 }
 
 function startDvbPolling() {
+  if (state.currentView !== 'adapters') return;
   if (state.dvbTimer) {
     clearInterval(state.dvbTimer);
   }
