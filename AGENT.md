@@ -286,6 +286,52 @@ rm -rf ./data_failover
 # NOTE: do not test adapters or DVB-related endpoints on this server (no DVB).
 ```
 
+## Smoke tests for HLS failover (discontinuity)
+Run from the server in `/home/hex/astra`:
+```sh
+cd /home/hex/astra
+
+# Start two local MPEG-TS generators (primary + backup).
+ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
+  -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts \
+  "udp://127.0.0.1:12000?pkt_size=1316" &
+PRIMARY_FF=$!
+ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
+  -f lavfi -i sine=frequency=800 -c:v mpeg2video -c:a mp2 -f mpegts \
+  "udp://127.0.0.1:12001?pkt_size=1316" &
+BACKUP_FF=$!
+
+./astra ./fixtures/failover_hls.json -p 9052 --data-dir ./data_failover_hls --web-dir ./web &
+PID=$!
+sleep 6
+
+# Ensure playlist is available.
+curl -s http://127.0.0.1:9052/hls/failover_hls/index.m3u8 | head -n 5
+
+# Force switch to backup and expect discontinuity.
+kill "$PRIMARY_FF" 2>/dev/null || true
+
+attempts=10
+while [ "$attempts" -gt 0 ]; do
+  if curl -s http://127.0.0.1:9052/hls/failover_hls/index.m3u8 | grep -q '#EXT-X-DISCONTINUITY'; then
+    break
+  fi
+  attempts=$((attempts - 1))
+  sleep 2
+done
+test "$attempts" -gt 0
+
+# Fetch the newest segment to ensure it is readable.
+segment=$(curl -s http://127.0.0.1:9052/hls/failover_hls/index.m3u8 | grep -v '^#' | tail -n 1)
+curl -I "http://127.0.0.1:9052/hls/failover_hls/${segment}" | head -n 1
+
+kill "$PID"
+kill "$BACKUP_FF"
+rm -rf ./data_failover_hls
+
+# NOTE: do not test adapters or DVB-related endpoints on this server (no DVB).
+```
+
 ## Smoke tests for HLS + HTTP Play settings
 Run from the server in `/home/hex/astra`:
 ```sh

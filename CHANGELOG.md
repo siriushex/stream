@@ -43,6 +43,13 @@
   - Not run (docs change).
 ### 2026-02-04
 - Changes:
+  - Added HLS discontinuity handling on input switch.
+  - Added HLS failover smoke fixture and AGENT steps.
+  - Marked HLS failover resilience as done in `PLAN.md`.
+- Tests:
+  - Not run (C/runtime + docs change).
+### 2026-02-04
+- Changes:
   - Added access log visible count and limit clamp.
 - Tests:
   - Not run (UI change).

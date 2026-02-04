@@ -42,6 +42,7 @@ typedef struct
     int64_t seq;
     double duration;
     char name[128];
+    bool discontinuity;
 } hls_segment_t;
 
 struct module_data_t
@@ -75,6 +76,7 @@ struct module_data_t
     FILE *segment_fp;
     char segment_name[128];
     size_t segment_packets;
+    bool discontinuity_pending;
 
     asc_list_t *segments;
     size_t segments_count;
@@ -151,6 +153,8 @@ static void hls_write_playlist(module_data_t *mod)
             fprintf(fp, "#EXT-X-MEDIA-SEQUENCE:%lld\n", (long long)media_seq);
         }
 
+        if(seg->discontinuity)
+            fprintf(fp, "#EXT-X-DISCONTINUITY\n");
         fprintf(fp, "#EXTINF:%.3f,\n", seg->duration);
         if(mod->base_url && mod->base_url[0] != '\0')
         {
@@ -210,6 +214,8 @@ static void hls_finish_segment(module_data_t *mod)
         duration = ceil(duration);
     seg->duration = duration;
     snprintf(seg->name, sizeof(seg->name), "%s", mod->segment_name);
+    seg->discontinuity = mod->discontinuity_pending;
+    mod->discontinuity_pending = false;
 
     int duration_ceil = (int)ceil(seg->duration);
     if(duration_ceil < 1)
@@ -257,6 +263,35 @@ static void hls_open_segment(module_data_t *mod)
     mod->segment_elapsed_us = 0;
     mod->segment_packets = 0;
     mod->wall_last = asc_utime();
+}
+
+static void hls_mark_discontinuity(module_data_t *mod)
+{
+    if(!mod)
+        return;
+
+    if(mod->segment_fp && mod->segment_packets > 0)
+    {
+        hls_finish_segment(mod);
+    }
+    else if(mod->segment_fp)
+    {
+        fclose(mod->segment_fp);
+        mod->segment_fp = NULL;
+    }
+
+    mod->segment_packets = 0;
+    mod->segment_elapsed_us = 0;
+    mod->has_pcr = false;
+    mod->pcr_last = 0;
+    mod->wall_last = 0;
+    mod->discontinuity_pending = true;
+}
+
+static int method_discontinuity(module_data_t *mod)
+{
+    hls_mark_discontinuity(mod);
+    return 0;
 }
 
 static void hls_reset_pid_types(module_data_t *mod)
@@ -520,6 +555,7 @@ static void module_destroy(module_data_t *mod)
 MODULE_STREAM_METHODS()
 MODULE_LUA_METHODS()
 {
+    { "discontinuity", method_discontinuity },
     MODULE_STREAM_METHODS_REF(),
 };
 

@@ -94,7 +94,7 @@ Gates/Tests:
 
 ### 1-2 Months (Productization)
 - [DONE] Sessions/Logs UX polish (filters, pause/refresh, perf optimizations).
-- [TODO] HLS failover resilience (no broken segments during input switch).
+- [DONE] HLS failover resilience (no broken segments during input switch).
 - [DONE] Config history UX (revision list + meaningful error text).
 - [DONE] Monitoring exports (Influx/Webhook documented and wired).
 - [TODO] HTTP Play TLS support.
