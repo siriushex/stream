@@ -35,9 +35,12 @@
 #include <astra.h>
 
 #include <dirent.h>
+#include <errno.h>
+#include <string.h>
 
 #ifndef _WIN32
 #   include <sys/socket.h>
+#   include <unistd.h>
 #   include <netinet/in.h>
 #   ifndef __ANDROID__
 #       include <ifaddrs.h>
@@ -185,6 +188,75 @@ static int utils_stat(lua_State *L)
     return 1;
 }
 
+static int utils_can_bind(lua_State *L)
+{
+#ifndef _WIN32
+    const char *host = luaL_optstring(L, 1, "0.0.0.0");
+    const int port = luaL_checkinteger(L, 2);
+    if(port < 0 || port > 65535)
+    {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, "invalid port");
+        return 2;
+    }
+
+    if(!host || host[0] == '\0')
+        host = NULL;
+
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo *res = NULL;
+    const int rc = getaddrinfo(host, port_str, &hints, &res);
+    if(rc != 0 || !res)
+    {
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, rc != 0 ? gai_strerror(rc) : "getaddrinfo failed");
+        return 2;
+    }
+
+    int last_errno = 0;
+    for(struct addrinfo *p = res; p; p = p->ai_next)
+    {
+        const int fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if(fd < 0)
+        {
+            last_errno = errno;
+            continue;
+        }
+
+        int yes = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+
+        if(bind(fd, p->ai_addr, p->ai_addrlen) == 0)
+        {
+            close(fd);
+            freeaddrinfo(res);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        last_errno = errno;
+        close(fd);
+    }
+
+    freeaddrinfo(res);
+
+    lua_pushboolean(L, 0);
+    lua_pushstring(L, last_errno ? strerror(last_errno) : "bind failed");
+    return 2;
+#else
+    lua_pushboolean(L, 1);
+    return 1;
+#endif
+}
+
 /* readdir */
 
 static const char __utils_readdir[] = "__utils_readdir";
@@ -244,6 +316,7 @@ LUA_API int luaopen_utils(lua_State *L)
         { "ifaddrs", utils_ifaddrs },
 #endif
         { "stat", utils_stat },
+        { "can_bind", utils_can_bind },
         { NULL, NULL }
     };
 

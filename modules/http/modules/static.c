@@ -32,6 +32,7 @@
 #endif
 
 #include "../http.h"
+#include <time.h>
 
 struct module_data_t
 {
@@ -41,6 +42,12 @@ struct module_data_t
     size_t block_size;
 
     const char *default_mime;
+    const char *ts_extension;
+    int expires;
+
+    int idx_headers;
+    int idx_m3u_headers;
+    int idx_ts_headers;
 };
 
 struct http_response_t
@@ -164,6 +171,80 @@ static const char * lua_get_mime(http_client_t *client, const char *path)
     return mime;
 }
 
+static const char *get_extension(const char *path)
+{
+    size_t dot = 0;
+    for(size_t i = 0; true; ++i)
+    {
+        const char c = path[i];
+        if(!c)
+            break;
+        else if(c == '/')
+            dot = 0;
+        else if(c == '.')
+            dot = i;
+    }
+
+    if(dot == 0)
+        return NULL;
+    return &path[dot + 1];
+}
+
+static void apply_header_list(http_client_t *client, int idx_ref)
+{
+    if(idx_ref == LUA_NOREF)
+        return;
+
+    lua_rawgeti(lua, LUA_REGISTRYINDEX, idx_ref);
+    if(!lua_istable(lua, -1))
+    {
+        lua_pop(lua, 1);
+        return;
+    }
+
+    const int n = luaL_len(lua, -1);
+    for(int i = 1; i <= n; ++i)
+    {
+        lua_rawgeti(lua, -1, i);
+        if(lua_isstring(lua, -1))
+            http_response_header(client, "%s", lua_tostring(lua, -1));
+        lua_pop(lua, 1);
+    }
+
+    lua_pop(lua, 1);
+}
+
+static void add_expires_header(http_client_t *client, int expires)
+{
+    if(expires <= 0)
+        return;
+
+    time_t exp = time(NULL) + expires;
+    struct tm tm_exp;
+    gmtime_r(&exp, &tm_exp);
+
+    char buf[64];
+    if(strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S GMT", &tm_exp) > 0)
+        http_response_header(client, "Expires: %s", buf);
+}
+
+static void apply_static_headers(module_data_t *mod, http_client_t *client, const char *path)
+{
+    apply_header_list(client, mod->idx_headers);
+
+    const char *ext = get_extension(path);
+    if(ext)
+    {
+        if(strcmp(ext, "m3u8") == 0 || strcmp(ext, "m3u") == 0)
+            apply_header_list(client, mod->idx_m3u_headers);
+
+        if(mod->ts_extension && strcmp(ext, mod->ts_extension) == 0)
+            apply_header_list(client, mod->idx_ts_headers);
+    }
+
+    add_expires_header(client, mod->expires);
+}
+
 /* Stack: 1 - instance, 2 - server, 3 - client, 4 - request */
 static int module_call(module_data_t *mod)
 {
@@ -227,6 +308,7 @@ static int module_call(module_data_t *mod)
     http_response_code(client, 200, NULL);
     http_response_header(client, "Content-Length: %lu", client->response->file_size);
     http_response_header(client, "Content-Type: %s", lua_get_mime(client, path));
+    apply_static_headers(mod, client, path);
     http_response_send(client);
 
     return 0;
@@ -267,6 +349,38 @@ static void module_init(module_data_t *mod)
     mod->default_mime = "application/octet-stream";
     module_option_string("default_mime", &mod->default_mime, NULL);
 
+    mod->ts_extension = "ts";
+    module_option_string("ts_extension", &mod->ts_extension, NULL);
+    if(mod->ts_extension && mod->ts_extension[0] == '.')
+        mod->ts_extension = mod->ts_extension + 1;
+    if(!mod->ts_extension || mod->ts_extension[0] == '\0')
+        mod->ts_extension = "ts";
+
+    mod->expires = 0;
+    module_option_number("expires", &mod->expires);
+
+    mod->idx_headers = LUA_NOREF;
+    mod->idx_m3u_headers = LUA_NOREF;
+    mod->idx_ts_headers = LUA_NOREF;
+
+    lua_getfield(lua, MODULE_OPTIONS_IDX, "headers");
+    if(lua_istable(lua, -1))
+        mod->idx_headers = luaL_ref(lua, LUA_REGISTRYINDEX);
+    else
+        lua_pop(lua, 1);
+
+    lua_getfield(lua, MODULE_OPTIONS_IDX, "m3u_headers");
+    if(lua_istable(lua, -1))
+        mod->idx_m3u_headers = luaL_ref(lua, LUA_REGISTRYINDEX);
+    else
+        lua_pop(lua, 1);
+
+    lua_getfield(lua, MODULE_OPTIONS_IDX, "ts_headers");
+    if(lua_istable(lua, -1))
+        mod->idx_ts_headers = luaL_ref(lua, LUA_REGISTRYINDEX);
+    else
+        lua_pop(lua, 1);
+
     struct stat s;
     asc_assert(stat(mod->path, &s) != -1, "[http_static] path is not found");
     asc_assert(S_ISDIR(s.st_mode), "[http_static] path is not directory");
@@ -281,7 +395,12 @@ static void module_init(module_data_t *mod)
 
 static void module_destroy(module_data_t *mod)
 {
-    __uarg(mod);
+    if(mod->idx_headers != LUA_NOREF)
+        luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_headers);
+    if(mod->idx_m3u_headers != LUA_NOREF)
+        luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_m3u_headers);
+    if(mod->idx_ts_headers != LUA_NOREF)
+        luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_ts_headers);
 }
 
 MODULE_LUA_METHODS()

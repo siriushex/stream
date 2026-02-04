@@ -1353,6 +1353,10 @@ static void module_init(module_data_t *mod)
             value = 1;
 
         mod->sync.buffer_size = value * 1024 * 1024;
+
+        int buffer_kb = 0;
+        if(module_option_number("buffer_size", &buffer_kb) && buffer_kb > 0)
+            mod->sync.buffer_size = buffer_kb * 1024;
     }
 
     lua_getfield(lua, MODULE_OPTIONS_IDX, "upstream");

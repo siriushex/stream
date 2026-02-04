@@ -478,7 +478,8 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           else return TK_CONCAT;   /* '..' */
         }
         else if (!lisdigit(ls->current)) return '.';
-        /* else go through */
+        read_numeral(ls, seminfo);
+        return TK_NUMBER;
       }
       case '0': case '1': case '2': case '3': case '4':
       case '5': case '6': case '7': case '8': case '9': {
@@ -530,4 +531,3 @@ int luaX_lookahead (LexState *ls) {
   ls->lookahead.token = llex(ls, &ls->lookahead.seminfo);
   return ls->lookahead.token;
 }
-

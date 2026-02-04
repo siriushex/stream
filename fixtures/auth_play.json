@@ -1,0 +1,30 @@
+{
+  "settings": {
+    "http_play_allow": true,
+    "http_play_hls": true,
+    "auth_on_play_url": "http://127.0.0.1:9100/on_play",
+    "auth_on_publish_url": "http://127.0.0.1:9100/on_publish",
+    "hls_duration": 2,
+    "hls_quantity": 3,
+    "auth_timeout_ms": 3000,
+    "auth_default_duration_sec": 2,
+    "auth_deny_cache_sec": 3,
+    "auth_hash_algo": "sha1",
+    "auth_hls_rewrite_token": true,
+    "auth_admin_bypass_enabled": true,
+    "auth_allow_no_token": false,
+    "auth_overlimit_policy": "deny_new"
+  },
+  "make_stream": [
+    {
+      "id": "auth_demo",
+      "name": "Auth Demo",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:13200"
+      ],
+      "output": []
+    }
+  ]
+}

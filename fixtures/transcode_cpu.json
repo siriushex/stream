@@ -1,0 +1,40 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "transcode_cpu_test",
+      "type": "transcode",
+      "name": "Transcode CPU Test",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12100"
+      ],
+      "transcode": {
+        "engine": "cpu",
+        "ffmpeg_global_args": [
+          "-fflags",
+          "+genpts"
+        ],
+        "outputs": [
+          {
+            "name": "out",
+            "vcodec": "libx264",
+            "acodec": "aac",
+            "format_args": [
+              "-f",
+              "mpegts"
+            ],
+            "url": "udp://127.0.0.1:12110?pkt_size=1316"
+          }
+        ],
+        "watchdog": {
+          "restart_delay_sec": 2,
+          "no_progress_timeout_sec": 10,
+          "max_error_lines_per_min": 200,
+          "probe_interval_sec": 0,
+          "max_restarts_per_10min": 10
+        }
+      }
+    }
+  ]
+}

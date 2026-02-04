@@ -1,0 +1,112 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "transcode_nvenc_demo",
+      "type": "transcode",
+      "name": "Transcode NVIDIA Demo",
+      "enable": false,
+      "input": [
+        "http://127.0.0.1:8100/play/demo"
+      ],
+      "transcode": {
+        "engine": "nvidia",
+        "gpu_device": 0,
+        "ffmpeg_global_args": [
+          "-nostats",
+          "-fflags",
+          "+discardcorrupt"
+        ],
+        "decoder_args": [
+          "-hwaccel",
+          "nvdec",
+          "-c:v",
+          "h264_cuvid",
+          "-hwaccel_output_format",
+          "cuda",
+          "-hwaccel_device",
+          "0"
+        ],
+        "common_input_args": [
+          "-af",
+          "aresample=async=1",
+          "-async",
+          "1",
+          "-vsync",
+          "1"
+        ],
+        "outputs": [
+          {
+            "name": "720p",
+            "vf": "scale_npp=1280:720,fps=25",
+            "vcodec": "h264_nvenc",
+            "v_args": [
+              "-preset",
+              "slow",
+              "-rc",
+              "vbr_hq",
+              "-b:v",
+              "2500k",
+              "-maxrate",
+              "3000k",
+              "-g",
+              "75"
+            ],
+            "acodec": "aac",
+            "a_args": [
+              "-ab",
+              "128k",
+              "-ac",
+              "2",
+              "-strict",
+              "-2"
+            ],
+            "format_args": [
+              "-f",
+              "mpegts"
+            ],
+            "url": "udp://239.1.2.3:1234?pkt_size=1316"
+          },
+          {
+            "name": "540p",
+            "vf": "scale_npp=960:540,fps=25",
+            "vcodec": "h264_nvenc",
+            "v_args": [
+              "-preset",
+              "slow",
+              "-rc",
+              "vbr_hq",
+              "-b:v",
+              "1000k",
+              "-maxrate",
+              "1500k",
+              "-g",
+              "75"
+            ],
+            "acodec": "aac",
+            "a_args": [
+              "-ab",
+              "96k",
+              "-ac",
+              "2",
+              "-strict",
+              "-2"
+            ],
+            "format_args": [
+              "-f",
+              "mpegts"
+            ],
+            "url": "udp://239.1.2.4:1234?pkt_size=1316"
+          }
+        ],
+        "watchdog": {
+          "restart_delay_sec": 4,
+          "no_progress_timeout_sec": 10,
+          "max_error_lines_per_min": 20,
+          "probe_interval_sec": 0,
+          "max_restarts_per_10min": 5
+        }
+      }
+    }
+  ]
+}

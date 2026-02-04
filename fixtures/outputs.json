@@ -1,0 +1,79 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "outputs_demo",
+      "name": "Outputs Demo",
+      "type": "udp",
+      "enable": false,
+      "input": [
+        "udp://127.0.0.1:12010"
+      ],
+      "output": [
+        {
+          "name": "UDP",
+          "format": "udp",
+          "addr": "239.10.10.1",
+          "port": 1234,
+          "ttl": 1,
+          "socket_size": 1316,
+          "sync": true,
+          "cbr": false
+        },
+        {
+          "name": "RTP",
+          "format": "rtp",
+          "addr": "239.10.10.2",
+          "port": 1235,
+          "ttl": 1,
+          "socket_size": 1316,
+          "sync": true,
+          "cbr": false
+        },
+        {
+          "name": "HTTP",
+          "format": "http",
+          "host": "127.0.0.1",
+          "port": 8081,
+          "path": "/stream/outputs_demo.ts",
+          "buffer_size": 1048576,
+          "buffer_fill": 524288,
+          "keep_active": 1
+        },
+        {
+          "name": "HLS",
+          "format": "hls",
+          "path": "./data_outputs/hls/outputs_demo",
+          "playlist": "index.m3u8",
+          "prefix": "segment",
+          "target_duration": 2,
+          "window": 3,
+          "cleanup": 6,
+          "naming": "sequence",
+          "round_duration": false,
+          "ts_extension": "ts",
+          "pass_data": true
+        },
+        {
+          "name": "File",
+          "format": "file",
+          "filename": "./data_outputs/outputs_demo.ts",
+          "m2ts": true,
+          "buffer_size": 1048576,
+          "aio": true,
+          "directio": false
+        },
+        {
+          "name": "Network Push",
+          "format": "np",
+          "host": "127.0.0.1",
+          "port": 8090,
+          "path": "/push/outputs_demo",
+          "buffer_size": 262144,
+          "buffer_fill": 131072,
+          "timeout": 3
+        }
+      ]
+    }
+  ]
+}

@@ -14,7 +14,7 @@ Usage: $0 [OPTIONS]
                                   For example, to append custom module, use:
                                   --with-modules=*:path/to/custom/module
 
-    --with-libdvbcsa            - build with libdvbcsa
+    --with-libdvbcsa            - build with libdvbcsa (auto-detected if installed)
     --with-igmp-emulation       - build with igmp emulated multicast renew
 
     --cc=GCC                    - custom C compiler (cross-compile)
@@ -337,6 +337,14 @@ check_libdvbcsa_all()
 
     return 1
 }
+
+if [ $ARG_LIBDVBCSA -eq 0 ] ; then
+    if check_libdvbcsa "$CFLAGS" "$LDFLAGS -ldvbcsa" ; then
+        echo "libdvbcsa detected (auto)" >&2
+        LIBDVBCSA=1
+        LDFLAGS="$LDFLAGS -ldvbcsa"
+    fi
+fi
 
 if [ $ARG_LIBDVBCSA -eq 1 ] ; then
     check_libdvbcsa_all

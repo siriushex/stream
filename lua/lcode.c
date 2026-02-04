@@ -541,7 +541,7 @@ int luaK_exp2RK (FuncState *fs, expdesc *e) {
     case VKNUM: {
       e->u.info = luaK_numberK(fs, e->u.nval);
       e->k = VK;
-      /* go through */
+      /* fall through */
     }
     case VK: {
       if (e->u.info <= MAXINDEXRK)  /* constant fits in argC? */
@@ -878,4 +878,3 @@ void luaK_setlist (FuncState *fs, int base, int nelems, int tostore) {
     luaX_syntaxerror(fs->ls, "constructor too long");
   fs->freereg = base + 1;  /* free registers with list values */
 }
-
