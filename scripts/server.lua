@@ -599,20 +599,27 @@ function main()
     local edition = os.getenv("ASTRA_EDITION") or os.getenv("ASTRAL_EDITION")
     local tool_info = nil
     if transcode and transcode.get_tool_info then
-        tool_info = transcode.get_tool_info(false)
+        tool_info = transcode.get_tool_info(true)
     end
-    if edition and edition ~= "" then
-        local bundled = tool_info and (tool_info.ffmpeg_bundled or tool_info.ffprobe_bundled) or false
-        log.info(string.format("[edition] %s (bundled tools: %s)", tostring(edition), bundled and "yes" or "no"))
+    if not edition or edition == "" then
+        edition = "default"
     end
-    if tool_info then
-        log.info(string.format("[tools] ffmpeg=%s (%s)",
-            tostring(tool_info.ffmpeg_path_resolved or "ffmpeg"),
-            tostring(tool_info.ffmpeg_source or "path")))
-        log.info(string.format("[tools] ffprobe=%s (%s)",
-            tostring(tool_info.ffprobe_path_resolved or "ffprobe"),
-            tostring(tool_info.ffprobe_source or "path")))
-    end
+    local ffmpeg_path = tool_info and tool_info.ffmpeg_path_resolved or "ffmpeg"
+    local ffmpeg_source = tool_info and tool_info.ffmpeg_source or "path"
+    local ffmpeg_version = tool_info and tool_info.ffmpeg_version or "unknown"
+    local ffprobe_path = tool_info and tool_info.ffprobe_path_resolved or "ffprobe"
+    local ffprobe_source = tool_info and tool_info.ffprobe_source or "path"
+    local ffprobe_version = tool_info and tool_info.ffprobe_version or "unknown"
+    log.info(string.format(
+        "[startup] edition=%s tools: ffmpeg=%s (%s, %s) ffprobe=%s (%s, %s)",
+        tostring(edition),
+        tostring(ffmpeg_path),
+        tostring(ffmpeg_source),
+        tostring(ffmpeg_version),
+        tostring(ffprobe_path),
+        tostring(ffprobe_source),
+        tostring(ffprobe_version)
+    ))
 
     apply_log_settings()
     if runtime and runtime.configure_influx then
