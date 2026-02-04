@@ -1,0 +1,2931 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Astra Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+  <script defer src="/app.js?v=202503"></script>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="top-left">
+        <nav class="top-nav">
+          <button class="nav-link active" data-view="dashboard">Dashboard</button>
+          <button class="nav-link" data-view="adapters">Adapters</button>
+          <button class="nav-link" data-view="sessions">Sessions</button>
+          <button class="nav-link" data-view="splitters">HLSSplitter</button>
+          <button class="nav-link" data-view="buffers">Buffer</button>
+          <button class="nav-link" data-view="access">Access</button>
+          <button class="nav-link" data-view="settings" id="nav-settings">Settings</button>
+          <button class="nav-link" data-view="logs">Log</button>
+          <button class="nav-link" data-view="help">Help</button>
+        </nav>
+        <div class="search">
+          <input id="search-input" type="search" placeholder="Click or press 'S' to search..." />
+        </div>
+      </div>
+      <div class="top-right">
+        <button class="link-btn" id="btn-new-adapter">New Adapter</button>
+        <button class="link-btn" id="btn-new-stream">New Stream</button>
+        <button class="link-btn" id="btn-view">View</button>
+        <button class="link-btn" id="btn-logout">Logout</button>
+      </div>
+    </header>
+
+    <div class="settings-menu" id="settings-menu" aria-hidden="true">
+      <button class="settings-item active" data-section="general">General</button>
+      <button class="settings-item" data-section="users">Users</button>
+      <button class="settings-item" data-section="hls">HLS</button>
+      <button class="settings-item" data-section="http-play">HTTP Play</button>
+      <button class="settings-item" data-section="buffer">Buffer</button>
+      <button class="settings-item" data-section="http-auth">HTTP Authentication</button>
+      <button class="settings-item" data-section="softcam">Softcam</button>
+      <button class="settings-item" data-section="cas">CAS</button>
+      <button class="settings-item" data-section="servers">Servers</button>
+      <button class="settings-item" data-section="groups">Groups</button>
+      <button class="settings-item" data-section="import">Import</button>
+      <button class="settings-item" data-section="edit-config">Edit Config</button>
+      <button class="settings-item" data-section="config-history">Config History</button>
+      <button class="settings-item" data-section="license">License</button>
+      <button class="settings-item" data-section="restart">Restart</button>
+    </div>
+
+    <div class="view-menu" id="view-menu" aria-hidden="true">
+      <div class="view-menu-group">
+        <div class="view-menu-title">View</div>
+        <button class="view-option" data-view-mode="table">Table (Flussonic-like)</button>
+        <button class="view-option" data-view-mode="compact">Compact list</button>
+        <button class="view-option" data-view-mode="cards">Cards</button>
+      </div>
+      <div class="view-menu-group">
+        <div class="view-menu-title">Theme</div>
+        <button class="view-option" data-theme="auto">Auto</button>
+        <button class="view-option" data-theme="light">Light</button>
+        <button class="view-option" data-theme="dark">Dark</button>
+      </div>
+    </div>
+
+    <main class="content">
+      <section class="view active" id="view-dashboard">
+        <div class="stream-views" id="stream-views" data-view-mode="cards">
+          <div class="tile-grid stream-view stream-view-cards" id="dashboard-streams"></div>
+          <div class="stream-table stream-view stream-view-table" id="stream-table">
+            <table class="stream-table-grid">
+              <thead>
+                <tr>
+                  <th class="col-stream">Stream</th>
+                  <th class="col-input">Input</th>
+                  <th class="col-transcode">Transcode</th>
+                  <th class="col-dvr">DVR</th>
+                  <th class="col-output">Output</th>
+                </tr>
+              </thead>
+              <tbody id="stream-table-body"></tbody>
+            </table>
+          </div>
+          <div class="stream-compact stream-view stream-view-compact" id="stream-compact"></div>
+        </div>
+      </section>
+
+      <section class="view" id="view-adapters">
+        <div class="adapter-shell">
+          <div class="panel adapter-list-panel">
+            <div class="adapter-list-header">
+              <div class="panel-title">Adapters</div>
+              <button class="text-link" type="button" id="adapter-new">NEW ADAPTER</button>
+            </div>
+            <div class="adapter-list" id="adapter-list"></div>
+            <div class="adapter-list-empty muted" id="adapter-list-empty">No adapters yet.</div>
+          </div>
+
+          <div class="panel adapter-editor" id="adapter-editor">
+            <div class="adapter-editor-head">
+              <div class="panel-title" id="adapter-title">Adapter settings</div>
+              <div class="adapter-editor-actions">
+                <button class="btn ghost" type="button" id="adapter-clear">Clear</button>
+              </div>
+            </div>
+
+            <div class="tabbar adapter-tabbar">
+              <button class="tab active" data-tab="general" data-tab-scope="adapter-editor">General</button>
+              <button class="tab" data-tab="lnb" data-tab-scope="adapter-editor">LNB</button>
+              <button class="tab" data-tab="advanced" data-tab-scope="adapter-editor">Advanced</button>
+            </div>
+
+            <form id="adapter-form">
+              <div class="tab-content active" data-tab-content="general" data-tab-scope="adapter-editor">
+                <label class="field adapter-picker">
+                  <span>Adapter</span>
+                  <select id="adapter-select"></select>
+                </label>
+
+                <label class="checkline">
+                  <input type="checkbox" id="adapter-enabled" checked />
+                  <span>Enable</span>
+                </label>
+
+                <div class="form-grid">
+                  <label class="field">
+                    <span>ID</span>
+                    <input type="text" id="adapter-id" placeholder="adapter_0" />
+                  </label>
+                  <label class="field">
+                    <span>Adapter</span>
+                    <input type="number" id="adapter-index" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>Device (fe)</span>
+                    <input type="number" id="adapter-device" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>Type</span>
+                    <select id="adapter-type">
+                      <option value="S">S</option>
+                      <option value="S2">S2</option>
+                      <option value="T">T</option>
+                      <option value="T2">T2</option>
+                      <option value="C">C</option>
+                      <option value="C/AC">C/AC</option>
+                      <option value="C/B">C/B</option>
+                      <option value="C/A">C/A</option>
+                      <option value="C/C">C/C</option>
+                      <option value="ATSC">ATSC</option>
+                      <option value="ASI">ASI</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="adapter-group" data-group="sat">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>TP (freq:pol:symbolrate)</span>
+                      <input type="text" id="adapter-tp" placeholder="11044:V:43200" />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="adapter-group" data-group="terrestrial">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Frequency (MHz)</span>
+                      <input type="number" id="adapter-t-frequency" placeholder="498" />
+                    </label>
+                    <label class="field">
+                      <span>Bandwidth</span>
+                      <select id="adapter-bandwidth">
+                        <option value="AUTO">AUTO</option>
+                        <option value="6mhz">6MHz</option>
+                        <option value="7mhz">7MHz</option>
+                        <option value="8mhz">8MHz</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Guard interval</span>
+                      <select id="adapter-guardinterval">
+                        <option value="AUTO">AUTO</option>
+                        <option value="1/4">1/4</option>
+                        <option value="1/8">1/8</option>
+                        <option value="1/16">1/16</option>
+                        <option value="1/32">1/32</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Transmit mode</span>
+                      <select id="adapter-transmitmode">
+                        <option value="AUTO">AUTO</option>
+                        <option value="1K">1K</option>
+                        <option value="2K">2K</option>
+                        <option value="4K">4K</option>
+                        <option value="8K">8K</option>
+                        <option value="16K">16K</option>
+                        <option value="32K">32K</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Hierarchy</span>
+                      <select id="adapter-hierarchy">
+                        <option value="NONE">NONE</option>
+                        <option value="AUTO">AUTO</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="4">4</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="adapter-group" data-group="cable">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Frequency (MHz)</span>
+                      <input type="number" id="adapter-c-frequency" placeholder="360" />
+                    </label>
+                    <label class="field">
+                      <span>Symbolrate (KSym/s)</span>
+                      <input type="number" id="adapter-c-symbolrate" placeholder="6900" />
+                    </label>
+                  </div>
+                </div>
+
+                <div class="adapter-group" data-group="atsc">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Frequency (MHz)</span>
+                      <input type="number" id="adapter-atsc-frequency" placeholder="360" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tab-content" data-tab-content="lnb" data-tab-scope="adapter-editor">
+                <div class="adapter-group" data-group="sat">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>LNB (lof1:lof2:slof)</span>
+                      <input type="text" id="adapter-lnb" placeholder="9750:10600:11700" />
+                    </label>
+                    <label class="checkline">
+                      <input type="checkbox" id="adapter-lnb-sharing" />
+                      <span>LNB sharing</span>
+                    </label>
+                    <label class="field">
+                      <span>DiSEqC</span>
+                      <input type="number" id="adapter-diseqc" placeholder="0" />
+                    </label>
+                    <label class="checkline">
+                      <input type="checkbox" id="adapter-tone" />
+                      <span>22 KHz tone</span>
+                    </label>
+                    <label class="field">
+                      <span>Rolloff</span>
+                      <select id="adapter-rolloff">
+                        <option value="AUTO">AUTO</option>
+                        <option value="20">20</option>
+                        <option value="25">25</option>
+                        <option value="35">35</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>UniCable SCR</span>
+                      <input type="number" id="adapter-uni-scr" placeholder="0" />
+                    </label>
+                    <label class="field">
+                      <span>UniCable freq (MHz)</span>
+                      <input type="number" id="adapter-uni-frequency" placeholder="0" />
+                    </label>
+                  </div>
+                </div>
+                <div class="adapter-group adapter-empty" data-group="not-sat">
+                  <div class="panel subtle">LNB settings are available for satellite adapters only.</div>
+                </div>
+              </div>
+
+              <div class="tab-content" data-tab-content="advanced" data-tab-scope="adapter-editor">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Modulation</span>
+                    <select id="adapter-modulation">
+                      <option value="NONE">NONE</option>
+                      <option value="AUTO">AUTO</option>
+                      <option value="QPSK">QPSK</option>
+                      <option value="QAM16">QAM16</option>
+                      <option value="QAM32">QAM32</option>
+                      <option value="QAM64">QAM64</option>
+                      <option value="QAM128">QAM128</option>
+                      <option value="QAM256">QAM256</option>
+                      <option value="VSB8">VSB8</option>
+                      <option value="VSB16">VSB16</option>
+                      <option value="PSK8">PSK8</option>
+                      <option value="APSK16">APSK16</option>
+                      <option value="APSK32">APSK32</option>
+                      <option value="DQPSK">DQPSK</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>CA PMT delay (sec)</span>
+                    <input type="number" id="adapter-ca-pmt-delay" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Buffer size</span>
+                    <input type="number" id="adapter-buffer-size" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>Stream ID (PLP)</span>
+                    <input type="number" id="adapter-stream-id" placeholder="0" />
+                  </label>
+                </div>
+
+                <div class="form-grid">
+                  <label class="checkline">
+                    <input type="checkbox" id="adapter-budget" />
+                    <span>Disable hardware filter (budget)</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="adapter-raw-signal" />
+                    <span>Raw signal</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="adapter-log-signal" />
+                    <span>Log signal</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="modal-footer">
+                <button class="btn ghost danger" type="button" id="adapter-delete">Remove</button>
+                <div class="footer-actions">
+                  <button class="btn" type="submit" id="adapter-save">Apply</button>
+                  <button class="btn ghost" type="button" id="adapter-cancel">Cancel</button>
+                  <div class="form-note" id="adapter-error"></div>
+                </div>
+              </div>
+            </form>
+            <div class="adapter-editor-empty" id="adapter-editor-empty">
+              Select an adapter or create a new one.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-splitters">
+        <div class="splitter-shell">
+          <div class="panel splitter-list-panel">
+            <div class="panel-title-row">
+              <div class="panel-title">HLSSplitter</div>
+              <button class="text-link" type="button" id="splitter-new">NEW INSTANCE</button>
+            </div>
+            <div class="splitter-list" id="splitter-list"></div>
+            <div class="splitter-list-empty muted" id="splitter-list-empty">No instances yet.</div>
+          </div>
+
+          <div class="panel splitter-editor" id="splitter-editor">
+            <div class="panel-title-row">
+              <div>
+                <div class="panel-title" id="splitter-title">Splitter settings</div>
+                <div class="muted" id="splitter-state">Status: idle</div>
+                <div class="muted" id="splitter-runtime">Uptime: n/a • Restarts (10m): 0</div>
+              </div>
+              <div class="panel-actions">
+                <button class="btn ghost" type="button" id="splitter-start">Start</button>
+                <button class="btn ghost" type="button" id="splitter-stop">Stop</button>
+                <button class="btn ghost" type="button" id="splitter-restart">Restart</button>
+                <button class="btn ghost" type="button" id="splitter-apply">Apply config</button>
+                <button class="btn ghost" type="button" id="splitter-config">View config</button>
+              </div>
+            </div>
+
+            <form id="splitter-form">
+              <label class="checkline">
+                <input type="checkbox" id="splitter-enabled" checked />
+                <span>Enable</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>ID</span>
+                  <input type="text" id="splitter-id" placeholder="splitter_main" />
+                </label>
+                <label class="field">
+                  <span>Name</span>
+                  <input type="text" id="splitter-name" placeholder="HLSSplitter Main" />
+                </label>
+                <label class="field">
+                  <span>Port</span>
+                  <input type="number" id="splitter-port" placeholder="8089" />
+                </label>
+                <label class="field">
+                  <span>In interface</span>
+                  <input type="text" id="splitter-in-interface" placeholder="eth0" />
+                </label>
+                <label class="field">
+                  <span>Out interface</span>
+                  <input type="text" id="splitter-out-interface" placeholder="eth0" />
+                </label>
+                <label class="field">
+                  <span>Log type</span>
+                  <input type="text" id="splitter-logtype" placeholder="stderr" />
+                </label>
+                <label class="field">
+                  <span>Log path</span>
+                  <input type="text" id="splitter-logpath" placeholder="/var/log/hlssplitter.log" />
+                </label>
+                <label class="field">
+                  <span>Config path</span>
+                  <input type="text" id="splitter-config-path" placeholder="./data/splitters/splitter_main.xml" />
+                </label>
+              </div>
+              <div class="form-subsection">
+                <div class="panel-title">Presets</div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Profile</span>
+                    <select id="splitter-preset">
+                      <option value="">Custom</option>
+                      <option value="basic">Basic (terminal log)</option>
+                      <option value="file_log">File logging</option>
+                      <option value="syslog">Syslog logging</option>
+                    </select>
+                  </label>
+                  <div class="field">
+                    <span>Apply</span>
+                    <button class="btn ghost" type="button" id="splitter-preset-apply">Apply</button>
+                  </div>
+                </div>
+                <div class="form-hint">Applies port/log/config defaults (keeps ID/Name).</div>
+              </div>
+              <div class="splitter-hint muted">
+                Client URL template: <span id="splitter-url-template">http://&lt;server_ip&gt;:&lt;port&gt;/path</span>
+              </div>
+              <div class="apply-row">
+                <button class="btn" type="submit" id="splitter-save">Save</button>
+              </div>
+              <div class="form-note" id="splitter-error"></div>
+            </form>
+
+            <div class="panel splitter-section">
+              <div class="panel-title-row">
+                <div class="panel-title">Allow rules</div>
+                <button class="text-link" type="button" id="splitter-allow-new">NEW RULE</button>
+              </div>
+              <div class="table splitter-allow-table" id="splitter-allow-table"></div>
+              <div class="muted" id="splitter-allow-empty">No rules (defaults to allow 0.0.0.0).</div>
+            </div>
+
+            <div class="panel splitter-section">
+              <div class="panel-title-row">
+                <div class="panel-title">Links</div>
+                <button class="text-link" type="button" id="splitter-link-new">NEW LINK</button>
+              </div>
+              <div class="table splitter-link-table" id="splitter-link-table"></div>
+              <div class="muted" id="splitter-link-empty">No links yet.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-buffers">
+        <div class="buffer-shell">
+          <div class="panel buffer-list-panel">
+            <div class="panel-title-row">
+              <div class="panel-title">Buffer</div>
+              <button class="text-link" type="button" id="buffer-new">NEW RESOURCE</button>
+            </div>
+            <div class="buffer-list" id="buffer-list"></div>
+            <div class="buffer-list-empty muted" id="buffer-list-empty">No resources yet.</div>
+          </div>
+
+          <div class="panel buffer-editor" id="buffer-editor">
+            <div class="panel-title-row">
+              <div>
+                <div class="panel-title" id="buffer-title">Buffer settings</div>
+                <div class="muted" id="buffer-state">Status: idle</div>
+              </div>
+              <div class="panel-actions">
+                <button class="btn ghost" type="button" id="buffer-reload">Reload</button>
+                <button class="btn ghost" type="button" id="buffer-restart-reader">Restart reader</button>
+              </div>
+            </div>
+
+            <form id="buffer-form">
+              <label class="checkline">
+                <input type="checkbox" id="buffer-enabled" checked />
+                <span>Enable</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>ID</span>
+                  <input type="text" id="buffer-id" placeholder="buffer_main" />
+                </label>
+                <label class="field">
+                  <span>Name</span>
+                  <input type="text" id="buffer-name" placeholder="HTTP TS Buffer" />
+                </label>
+                <label class="field">
+                  <span>Path</span>
+                  <input type="text" id="buffer-path" placeholder="/play/channel" />
+                </label>
+              </div>
+              <div class="buffer-hint muted">
+                Output URL: <span id="buffer-output-url">http://&lt;server_ip&gt;:8089/play/channel</span>
+                <button class="btn ghost" type="button" id="buffer-copy-url">Copy</button>
+              </div>
+
+              <div class="buffer-subsection">
+                <div class="panel-title">Presets</div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Profile</span>
+                    <select id="buffer-preset">
+                      <option value="">Custom</option>
+                      <option value="live_backup">Live + backup</option>
+                      <option value="multi_input">Multi-input (active)</option>
+                      <option value="low_latency">Low latency</option>
+                    </select>
+                  </label>
+                  <div class="field">
+                    <span>Apply</span>
+                    <button class="btn ghost" type="button" id="buffer-preset-apply">Apply</button>
+                  </div>
+                </div>
+                <div class="form-hint">Applies tuning fields only (keeps ID/Name/Path/Enable).</div>
+              </div>
+
+              <div class="buffer-subsection">
+                <div class="panel-title">Backup</div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Type</span>
+                    <select id="buffer-backup-type">
+                      <option value="passive">passive</option>
+                      <option value="active">active</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>No data timeout (sec)</span>
+                    <input type="number" id="buffer-no-data-timeout" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Backup start delay (sec)</span>
+                    <input type="number" id="buffer-backup-start-delay" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Backup return delay (sec)</span>
+                    <input type="number" id="buffer-backup-return-delay" placeholder="10" />
+                  </label>
+                  <label class="field">
+                    <span>Probe interval (sec)</span>
+                    <input type="number" id="buffer-backup-probe-interval" placeholder="30" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="buffer-subsection">
+                <div class="panel-title">Buffering</div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Buffering (sec)</span>
+                    <input type="number" id="buffer-buffering-sec" placeholder="8" />
+                  </label>
+                  <label class="field">
+                    <span>Bandwidth (kbps)</span>
+                    <input type="number" id="buffer-bandwidth-kbps" placeholder="4000" />
+                  </label>
+                  <label class="field">
+                    <span>Client start offset (sec)</span>
+                    <input type="number" id="buffer-client-start-offset" placeholder="1" />
+                  </label>
+                  <label class="field">
+                    <span>Max client lag (ms)</span>
+                    <input type="number" id="buffer-max-client-lag" placeholder="3000" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="buffer-subsection">
+                <div class="panel-title">Smart start</div>
+                <label class="checkline">
+                  <input type="checkbox" id="buffer-smart-enabled" />
+                  <span>Enable smart start</span>
+                </label>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Target delay (ms)</span>
+                    <input type="number" id="buffer-smart-target-delay" placeholder="1000" />
+                  </label>
+                  <label class="field">
+                    <span>Lookback (ms)</span>
+                    <input type="number" id="buffer-smart-lookback" placeholder="5000" />
+                  </label>
+                  <label class="field">
+                    <span>Wait ready (ms)</span>
+                    <input type="number" id="buffer-smart-wait-ready" placeholder="1500" />
+                  </label>
+                  <label class="field">
+                    <span>Max lead (ms)</span>
+                    <input type="number" id="buffer-smart-max-lead" placeholder="2000" />
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-smart-require-patpmt" />
+                    <span>Require PAT/PMT</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-smart-require-keyframe" />
+                    <span>Require keyframe</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-smart-require-pcr" />
+                    <span>Require PCR</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-av-align-enabled" />
+                    <span>PTS align A/V</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-paramset-required" />
+                    <span>Require paramsets</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-start-debug" />
+                    <span>Enable start debug</span>
+                  </label>
+                </div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Keyframe detect</span>
+                    <select id="buffer-keyframe-detect">
+                      <option value="auto">auto</option>
+                      <option value="random_access">random_access</option>
+                      <option value="idr_parse">idr_parse</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Max A/V desync (ms)</span>
+                    <input type="number" id="buffer-av-max-desync" placeholder="500" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="buffer-subsection">
+                <div class="panel-title">TS output</div>
+                <div class="form-grid">
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-ts-resync" />
+                    <span>Resync on 0x47</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-ts-drop" />
+                    <span>Drop corrupt packets</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-ts-rewrite" />
+                    <span>Rewrite CC (advanced)</span>
+                  </label>
+                  <label class="field">
+                    <span>Pacing</span>
+                    <select id="buffer-pacing-mode">
+                      <option value="none">none</option>
+                      <option value="pcr">pcr</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
+              <div class="apply-row">
+                <button class="btn" type="submit" id="buffer-save">Save</button>
+                <button class="btn ghost danger" type="button" id="buffer-delete">Delete</button>
+              </div>
+            </form>
+
+            <div class="panel buffer-section">
+              <div class="panel-title-row">
+                <div class="panel-title">Inputs</div>
+                <button class="text-link" type="button" id="buffer-input-new">NEW INPUT</button>
+              </div>
+              <div class="table buffer-input-table" id="buffer-input-table"></div>
+              <div class="muted" id="buffer-input-empty">No inputs yet.</div>
+            </div>
+
+            <div class="panel buffer-section">
+              <div class="panel-title-row">
+                <div class="panel-title">Allow rules</div>
+                <button class="text-link" type="button" id="buffer-allow-new">NEW RULE</button>
+              </div>
+              <div class="table buffer-allow-table" id="buffer-allow-table"></div>
+              <div class="muted" id="buffer-allow-empty">No rules (defaults to allow 0.0.0.0).</div>
+            </div>
+
+            <div class="panel buffer-section">
+              <div class="panel-title">Diagnostics</div>
+              <div class="buffer-diagnostics" id="buffer-diagnostics"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-sessions">
+        <div class="table-header session-toolbar">
+          <div>Total Sessions: <span id="session-total">0</span></div>
+          <div class="session-controls">
+            <input type="text" id="session-filter" placeholder="Filter sessions..." />
+            <label class="session-limit">
+              <span>Limit</span>
+              <select id="session-limit">
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="session-group" />
+              <span>Group by stream</span>
+            </label>
+          </div>
+        </div>
+        <div class="table" id="session-table">
+          <div class="table-row header">
+            <div>Server</div>
+            <div>Stream</div>
+            <div>IP</div>
+            <div>Login</div>
+            <div>Uptime (hour:min)</div>
+            <div>User-Agent</div>
+            <div></div>
+          </div>
+          <div class="table-row">
+            <div class="muted">No sessions yet</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-access">
+        <div class="table-header access-toolbar">
+          <div>Total Access Entries: <span id="access-total">0</span></div>
+          <div class="access-controls">
+            <select id="access-event-filter">
+              <option value="all">All events</option>
+              <option value="connect">Connect</option>
+              <option value="disconnect">Disconnect</option>
+              <option value="timeout">Timeout</option>
+            </select>
+            <input type="text" id="access-text-filter" placeholder="Filter access logs..." />
+            <label class="access-limit">
+              <span>Limit</span>
+              <select id="access-limit">
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="500">500</option>
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="table access-table" id="access-table">
+          <div class="table-row header">
+            <div>Time</div>
+            <div>Stream</div>
+            <div>Protocol</div>
+            <div>IP</div>
+            <div>Event</div>
+            <div>Info</div>
+          </div>
+          <div class="table-row">
+            <div class="muted">No access logs yet</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-settings">
+        <div class="settings-shell">
+          <div class="settings-section active" data-section="general">
+            <div class="form-stack">
+              <div class="panel-title">Features</div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-splitter" />
+                <span>Show HLSSplitter tools</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="settings-show-buffer" />
+                <span>Show Buffer tools</span>
+              </label>
+              <label class="field">
+                <span>EPG export interval (sec)</span>
+                <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
+              </label>
+              <div class="panel-title">Monitoring &amp; Logs</div>
+              <label class="field">
+                <span>Event webhook URL</span>
+                <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Analyze concurrency limit</span>
+                  <input type="number" id="settings-monitor-analyze-max" placeholder="4" />
+                </label>
+                <label class="field">
+                  <span>Log max entries</span>
+                  <input type="number" id="settings-log-max-entries" placeholder="0 (unlimited)" />
+                </label>
+                <label class="field">
+                  <span>Log retention (sec)</span>
+                  <input type="number" id="settings-log-retention-sec" placeholder="0 (unlimited)" />
+                </label>
+                <label class="field">
+                  <span>Access log max entries</span>
+                  <input type="number" id="settings-access-log-max-entries" placeholder="0 (unlimited)" />
+                </label>
+                <label class="field">
+                  <span>Access log retention (sec)</span>
+                  <input type="number" id="settings-access-log-retention-sec" placeholder="0 (unlimited)" />
+                </label>
+              </div>
+              <div class="panel-title">Telegram Alerts</div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-telegram-enabled" />
+                <span>Enable Telegram alerts</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Level</span>
+                  <select id="settings-telegram-level">
+                    <option value="OFF">OFF</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                    <option value="ERROR">ERROR</option>
+                    <option value="WARNING">WARNING</option>
+                    <option value="INFO">INFO</option>
+                    <option value="DEBUG">DEBUG</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Bot Token</span>
+                  <input type="password" id="settings-telegram-token" placeholder="123456:ABCDEF" />
+                  <small class="form-hint" id="settings-telegram-token-hint"></small>
+                </label>
+                <label class="field">
+                  <span>Chat ID / Channel</span>
+                  <input type="text" id="settings-telegram-chat-id" placeholder="-1001234567890 or @channel" />
+                </label>
+                <div class="field">
+                  <span>&nbsp;</span>
+                  <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
+                </div>
+              </div>
+              <div class="panel-title">InfluxDB export</div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-influx-enabled" />
+                <span>Enable InfluxDB export</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Influx URL</span>
+                  <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
+                </label>
+                <label class="field">
+                  <span>Org</span>
+                  <input type="text" id="settings-influx-org" placeholder="my-org" />
+                </label>
+                <label class="field">
+                  <span>Bucket</span>
+                  <input type="text" id="settings-influx-bucket" placeholder="astra" />
+                </label>
+                <label class="field">
+                  <span>Token</span>
+                  <input type="password" id="settings-influx-token" placeholder="optional" />
+                </label>
+                <label class="field">
+                  <span>Instance name</span>
+                  <input type="text" id="settings-influx-instance" placeholder="astra-1" />
+                </label>
+                <label class="field">
+                  <span>Measurement</span>
+                  <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
+                </label>
+                <label class="field">
+                  <span>Interval (sec)</span>
+                  <input type="number" id="settings-influx-interval" placeholder="30" />
+                </label>
+              </div>
+              <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
+              <div class="panel-title">Security &amp; Sessions</div>
+              <label class="checkline">
+                <input type="checkbox" id="settings-http-csrf" />
+                <span>Enable CSRF protection for cookie sessions</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Session TTL (sec)</span>
+                  <input type="number" id="settings-auth-session-ttl" placeholder="3600" />
+                </label>
+                <label class="field">
+                  <span>Login rate limit (per min)</span>
+                  <input type="number" id="settings-login-rate-limit" placeholder="30" />
+                </label>
+                <label class="field">
+                  <span>Login rate limit window (sec)</span>
+                  <input type="number" id="settings-login-rate-window" placeholder="60" />
+                </label>
+              </div>
+              <div class="panel-title">Stream defaults</div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>No data timeout (sec)</span>
+                  <input type="number" id="settings-default-no-data-timeout" placeholder="3" />
+                </label>
+                <label class="field">
+                  <span>Probe interval (sec)</span>
+                  <input type="number" id="settings-default-probe-interval" placeholder="3" />
+                </label>
+                <label class="field">
+                  <span>Stable OK window (sec)</span>
+                  <input type="number" id="settings-default-stable-ok" placeholder="5" />
+                </label>
+                <label class="field">
+                  <span>Backup initial delay (sec)</span>
+                  <input type="number" id="settings-default-backup-initial" placeholder="0" />
+                </label>
+                <label class="field">
+                  <span>Backup start delay (sec)</span>
+                  <input type="number" id="settings-default-backup-start" placeholder="5" />
+                </label>
+                <label class="field">
+                  <span>Backup return delay (sec)</span>
+                  <input type="number" id="settings-default-backup-return" placeholder="10" />
+                </label>
+                <label class="field">
+                  <span>Stop if all inactive (sec)</span>
+                  <input type="number" id="settings-default-backup-stop" placeholder="20" />
+                </label>
+                <label class="field">
+                  <span>Active warm inputs max</span>
+                  <input type="number" id="settings-default-backup-warm-max" placeholder="2" />
+                </label>
+                <label class="field">
+                  <span>HTTP keep active (sec, -1=always)</span>
+                  <input type="number" id="settings-default-http-keep-active" placeholder="0" />
+                </label>
+              </div>
+              <div class="apply-row">
+                <button class="btn" type="button" id="btn-apply-general">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="users">
+            <div class="panel users-panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Users</div>
+                <button class="text-link" type="button" id="btn-user-new">NEW USER</button>
+              </div>
+              <div class="table" id="users-table">
+                <div class="table-row header">
+                  <div>Login</div>
+                  <div>Role</div>
+                  <div>Status</div>
+                  <div>Created</div>
+                  <div>Last login IP</div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="muted" id="users-empty">No users yet.</div>
+            </div>
+            <div class="panel">
+              <div class="panel-title">Password policy</div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Min length</span>
+                  <input type="number" id="password-min-length" placeholder="8" />
+                </label>
+              </div>
+              <label class="checkline">
+                <input type="checkbox" id="password-require-letter" />
+                <span>Require letter</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="password-require-number" />
+                <span>Require number</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="password-require-symbol" />
+                <span>Require symbol</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="password-require-mixed" />
+                <span>Require mixed case</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="password-disallow-username" />
+                <span>Disallow username in password</span>
+              </label>
+              <div class="apply-row">
+                <button class="btn" type="button" id="btn-apply-password-policy">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="hls">
+            <div class="form-stack">
+              <label class="field">
+                <span>Duration</span>
+                <input type="number" id="hls-duration" placeholder="Segments duration in seconds" />
+              </label>
+              <label class="field">
+                <span>Quantity</span>
+                <input type="number" id="hls-quantity" placeholder="Number of segments" />
+              </label>
+              <label class="field">
+                <span>Segments naming</span>
+                <select id="hls-naming">
+                  <option value="pcr">PCR hash</option>
+                  <option value="sequence">Sequence</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Session timeout</span>
+                <input type="number" id="hls-session-timeout" placeholder="Default: 60" />
+              </label>
+              <label class="field">
+                <span>Resource path</span>
+                <select id="hls-resource-path">
+                  <option value="absolute">Absolute</option>
+                  <option value="relative">Relative</option>
+                  <option value="full">Full</option>
+                </select>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="hls-round-duration" />
+                <span>Round duration value</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="hls-expires" />
+                <span>Use Expires header</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="hls-pass-data" />
+                <span>Pass all data PIDs</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="hls-m3u-headers" />
+                <span>Use default headers for .m3u8</span>
+              </label>
+              <label class="field">
+                <span>TS Extension</span>
+                <input type="text" id="hls-ts-extension" placeholder="ts" />
+              </label>
+              <label class="field">
+                <span>TS mime type</span>
+                <input type="text" id="hls-ts-mime" placeholder="video/MP2T" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="hls-ts-headers" />
+                <span>Use default headers for .ts</span>
+              </label>
+              <div class="apply-row">
+                <button class="btn" id="btn-apply-hls">Apply &amp; Restart</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="http-play">
+            <div class="form-stack">
+              <label class="checkline">
+                <input type="checkbox" id="http-play-allow" />
+                <span>Allow HTTP access to all streams</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="http-play-hls" />
+                <span>Allow HLS access to all streams</span>
+              </label>
+              <label class="field">
+                <span>HTTP play port</span>
+                <input type="number" id="http-play-port" placeholder="Custom port" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="http-play-no-tls" />
+                <span>Disable TLS on HTTP Play port</span>
+              </label>
+              <label class="field">
+                <span>Path to TV logos</span>
+                <input type="text" id="http-play-logos" />
+              </label>
+              <label class="field">
+                <span>Path to TV screenshots</span>
+                <input type="text" id="http-play-screens" />
+              </label>
+              <label class="field">
+                <span>Custom name for playlist</span>
+                <input type="text" id="http-play-playlist-name" placeholder="playlist.m3u8" />
+              </label>
+              <label class="field">
+                <span>Playlist arrange</span>
+                <input type="text" id="http-play-arrange" placeholder="tv" />
+              </label>
+              <label class="field">
+                <span>HTTP buffer size (KB)</span>
+                <input type="number" id="http-play-buffer" placeholder="4000" />
+              </label>
+              <label class="field">
+                <span>M3U header</span>
+                <input type="text" id="http-play-m3u-header" placeholder="url-tvg=&quot;https://...&quot;" />
+              </label>
+              <label class="field">
+                <span>XSPF playlist title</span>
+                <input type="text" id="http-play-xspf-title" placeholder="Playlist" />
+              </label>
+              <div class="apply-row">
+                <button class="btn" id="btn-apply-http-play">Apply &amp; Restart</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="buffer">
+            <div class="form-stack">
+              <label class="checkline">
+                <input type="checkbox" id="buffer-setting-enabled" />
+                <span>Enable HTTP TS buffer server</span>
+              </label>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Listen host</span>
+                  <input type="text" id="buffer-setting-host" placeholder="0.0.0.0" />
+                </label>
+                <label class="field">
+                  <span>Listen port</span>
+                  <input type="number" id="buffer-setting-port" placeholder="8089" />
+                </label>
+                <label class="field">
+                  <span>Source bind interface</span>
+                  <input type="text" id="buffer-setting-source-interface" placeholder="eth0" />
+                </label>
+                <label class="field">
+                  <span>Max clients</span>
+                  <input type="number" id="buffer-setting-max-clients" placeholder="2000" />
+                </label>
+                <label class="field">
+                  <span>Client read timeout (sec)</span>
+                  <input type="number" id="buffer-setting-client-timeout" placeholder="20" />
+                </label>
+              </div>
+              <div class="apply-row">
+                <button class="btn" id="btn-apply-buffer">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="http-auth">
+            <div class="form-stack">
+              <label class="checkline">
+                <input type="checkbox" id="http-auth-enabled" />
+                <span>Enable HTTP authentication</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="http-auth-users" />
+                <span>Allow Basic auth (users table)</span>
+              </label>
+              <label class="field">
+                <span>Allowed IPs (comma separated)</span>
+                <input type="text" id="http-auth-allow" placeholder="127.0.0.1, 10.0.0.2" />
+              </label>
+              <label class="field">
+                <span>Denied IPs (comma separated)</span>
+                <input type="text" id="http-auth-deny" placeholder="1.2.3.4" />
+              </label>
+              <label class="field">
+                <span>Tokens (comma separated)</span>
+                <input type="text" id="http-auth-tokens" placeholder="token1, token2" />
+              </label>
+              <label class="field">
+                <span>Basic auth realm</span>
+                <input type="text" id="http-auth-realm" placeholder="Astra" />
+              </label>
+              <div class="form-hint">Token auth backend (Flussonic-like)</div>
+              <label class="field">
+                <span>On-play backend URL</span>
+                <input type="text" id="auth-on-play-url" placeholder="http://127.0.0.1:9100/on_play" />
+              </label>
+              <label class="field">
+                <span>On-publish backend URL</span>
+                <input type="text" id="auth-on-publish-url" placeholder="http://127.0.0.1:9100/on_publish" />
+              </label>
+              <label class="field">
+                <span>Backend timeout (ms)</span>
+                <input type="number" id="auth-timeout-ms" placeholder="3000" />
+              </label>
+              <label class="field">
+                <span>Allow duration (sec)</span>
+                <input type="number" id="auth-default-duration" placeholder="180" />
+              </label>
+              <label class="field">
+                <span>Deny cache (sec)</span>
+                <input type="number" id="auth-deny-cache" placeholder="180" />
+              </label>
+              <label class="field">
+                <span>Session hash algorithm</span>
+                <select id="auth-hash-algo">
+                  <option value="sha1">sha1</option>
+                  <option value="md5">md5</option>
+                </select>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="auth-hls-rewrite" />
+                <span>Rewrite HLS playlists with token</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="auth-admin-bypass" />
+                <span>Allow admin UI bypass</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="auth-allow-no-token" />
+                <span>Allow requests without token</span>
+              </label>
+              <label class="field">
+                <span>Overlimit policy</span>
+                <select id="auth-overlimit-policy">
+                  <option value="deny_new">deny_new</option>
+                  <option value="kick_oldest">kick_oldest</option>
+                </select>
+              </label>
+              <div class="apply-row">
+                <button class="btn" id="btn-apply-http-auth">Apply &amp; Restart</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="softcam">
+            <div class="form-stack">
+              <label class="field">
+                <span>Softcam name</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Protocol</span>
+                <input type="text" placeholder="NewCAMd" />
+              </label>
+              <label class="field">
+                <span>Address</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Login</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input type="password" />
+              </label>
+              <div class="apply-row">
+                <button class="btn">Apply</button>
+                <button class="btn ghost">Test</button>
+                <button class="btn ghost" disabled>Clone</button>
+                <button class="btn ghost" disabled>Streams</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="cas">
+            <div class="form-stack">
+              <label class="field">
+                <span>CAS name</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Super CAS ID (hex)</span>
+                <input type="text" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" />
+                <span>Start stream ID with 1</span>
+              </label>
+              <div class="apply-row">
+                <button class="btn">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="servers">
+            <div class="form-stack">
+              <label class="checkline">
+                <input type="checkbox" />
+                <span>Enable</span>
+              </label>
+              <label class="field">
+                <span>Server name</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Address</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Login</span>
+                <input type="text" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input type="password" />
+              </label>
+              <div class="apply-row">
+                <button class="btn">Apply</button>
+                <button class="btn ghost">Test</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="groups">
+            <div class="form-stack">
+              <label class="field">
+                <span>Category</span>
+                <input type="text" placeholder="New Category" />
+              </label>
+              <label class="field">
+                <span>Name</span>
+                <input type="text" placeholder="Category Name" />
+              </label>
+              <div class="apply-row">
+                <button class="btn">Apply</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="import">
+            <div class="form-stack">
+              <label class="field">
+                <span>JSON File</span>
+                <input type="file" id="import-file" accept=".json,application/json" />
+              </label>
+              <label class="field">
+                <span>Mode</span>
+                <select id="import-mode">
+                  <option value="merge" selected>Merge (add/update)</option>
+                  <option value="replace">Replace (wipe existing)</option>
+                </select>
+              </label>
+              <div class="apply-row">
+                <button class="btn" id="btn-import-json">Import JSON</button>
+              </div>
+              <div class="panel" id="import-result">Supported formats: Astra JSON, M3U</div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="edit-config">
+            <div class="panel">
+              <pre class="code-block" id="config-preview">{}</pre>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="config-history">
+            <div class="panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Config History</div>
+                <div class="panel-actions">
+                  <button class="btn ghost" type="button" id="btn-config-refresh">Refresh</button>
+                </div>
+              </div>
+              <div class="muted config-history-meta">
+                Active revision: <span id="config-active-revision">-</span>
+                · LKG: <span id="config-lkg-revision">-</span>
+              </div>
+              <div class="table" id="config-history-table">
+                <div class="table-row header">
+                  <div>ID</div>
+                  <div>Status</div>
+                  <div>User</div>
+                  <div>Comment</div>
+                  <div>Created</div>
+                  <div>Applied</div>
+                  <div>Error</div>
+                  <div></div>
+                </div>
+                <div class="table-row">
+                  <div class="muted">No revisions yet</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="license">
+            <div class="panel">License information will appear here.</div>
+          </div>
+
+          <div class="settings-section" data-section="restart">
+            <div class="panel">
+              <div class="apply-row">
+                <button class="btn" id="btn-restart">Reload (safe)</button>
+              </div>
+              <div class="muted">
+                Uses a soft reload. Hard restart is available only with a supervisor.
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-logs">
+        <div class="log-toolbar">
+          <div class="log-filters">
+            <select id="log-level-filter">
+              <option value="all">All levels</option>
+              <option value="info">Info</option>
+              <option value="warning">Warning</option>
+              <option value="error">Error</option>
+              <option value="debug">Debug</option>
+            </select>
+            <input type="text" id="log-stream-filter" placeholder="Stream id..." />
+            <input type="text" id="log-text-filter" placeholder="Filter logs..." />
+          </div>
+          <button class="link-btn" id="log-clear">Clear</button>
+        </div>
+        <pre class="log-output" id="log-output">No logs yet.</pre>
+      </section>
+
+      <section class="view" id="view-help">
+        <div class="panel">
+          <div class="panel-title">Help</div>
+          <div class="panel-body">Press S to focus the search field.</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="overlay" id="login-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-title">Sign in</div>
+      <p class="modal-sub">Default credentials: admin / admin</p>
+      <form id="login-form">
+        <label class="field">
+          <span>Username</span>
+          <input type="text" id="login-user" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input type="password" id="login-pass" autocomplete="current-password" required />
+        </label>
+        <button class="btn full" type="submit">Sign in</button>
+        <div class="form-note" id="login-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="user-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title" id="user-title">User</div>
+        </div>
+        <button class="icon-btn" id="user-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="user-form">
+        <label class="field" id="user-field-username">
+          <span>Username</span>
+          <input type="text" id="user-username" autocomplete="username" required />
+        </label>
+        <label class="field">
+          <span>New password</span>
+          <input type="password" id="user-password" autocomplete="new-password" />
+        </label>
+        <label class="checkline" id="user-field-admin">
+          <input type="checkbox" id="user-admin" />
+          <span>Administrator</span>
+        </label>
+        <label class="checkline" id="user-field-enabled">
+          <input type="checkbox" id="user-enabled" checked />
+          <span>Enabled</span>
+        </label>
+        <label class="field" id="user-field-comment">
+          <span>Comment</span>
+          <input type="text" id="user-comment" />
+        </label>
+        <div class="apply-row user-actions">
+          <button class="btn" type="submit">Save</button>
+          <button class="btn ghost" type="button" id="user-cancel">Cancel</button>
+        </div>
+        <div class="form-note" id="user-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="editor-overlay" aria-hidden="true">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div>
+        <div class="modal-title" id="editor-title">Stream settings</div>
+        </div>
+        <button class="icon-btn" id="editor-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+
+      <div class="tabbar">
+        <button class="tab active" data-tab="general" data-tab-scope="stream-editor">General</button>
+        <button class="tab" data-tab="groups" data-tab-scope="stream-editor">Groups</button>
+        <button class="tab" data-tab="service" data-tab-scope="stream-editor">Service</button>
+        <button class="tab" data-tab="remap" data-tab-scope="stream-editor">Remap</button>
+        <button class="tab" data-tab="mpts" data-tab-scope="stream-editor">MPTS</button>
+        <button class="tab" data-tab="backup" data-tab-scope="stream-editor">Backup</button>
+        <button class="tab" data-tab="transcode" data-tab-scope="stream-editor">Transcode</button>
+        <button class="tab" data-tab="epg" data-tab-scope="stream-editor">EPG</button>
+        <button class="tab" data-tab="advanced" data-tab-scope="stream-editor">Advanced</button>
+      </div>
+
+      <form id="stream-form">
+        <div class="tab-content active" data-tab-content="general" data-tab-scope="stream-editor">
+          <label class="checkline">
+            <input type="checkbox" id="stream-enabled" checked />
+            <span>Enable</span>
+          </label>
+
+          <label class="field">
+            <span>Name</span>
+            <input type="text" id="stream-name" required />
+          </label>
+
+          <label class="field">
+            <span>ID</span>
+            <input type="text" id="stream-id" required />
+          </label>
+
+          <label class="field">
+            <span>Type</span>
+            <select id="stream-type">
+              <option value="">Stream (default)</option>
+              <option value="transcode">Transcode (ffmpeg)</option>
+            </select>
+          </label>
+
+          <label class="checkline">
+            <input type="checkbox" id="stream-mpts" />
+            <span>Create Multi Program Stream</span>
+          </label>
+
+          <label class="field">
+            <span>Description</span>
+            <textarea id="stream-desc" rows="3"></textarea>
+          </label>
+
+          <div class="list-block">
+            <div class="list-header">
+              <span>INPUT LIST</span>
+              <button class="text-link" type="button" id="btn-add-input">NEW INPUT</button>
+            </div>
+            <div class="list" id="input-list"></div>
+          </div>
+
+          <div class="list-block stream-output-block">
+            <div class="list-header">
+              <span>OUTPUT LIST</span>
+              <button class="text-link" type="button" id="btn-add-output">NEW OUTPUT</button>
+            </div>
+            <div class="list" id="output-list"></div>
+          </div>
+
+          <div class="form-hint stream-transcode-note">
+            Transcode streams use the outputs defined in the Transcode tab.
+          </div>
+        </div>
+
+        <div class="tab-content" data-tab-content="groups" data-tab-scope="stream-editor">
+          <div class="panel subtle">No group configuration yet.</div>
+        </div>
+        <div class="tab-content" data-tab-content="service" data-tab-scope="stream-editor">
+          <div class="form-grid">
+            <label class="field">
+              <span>Service type</span>
+              <input type="number" id="stream-service-type" placeholder="1 (digital TV)" min="0" max="255" />
+            </label>
+            <label class="field">
+              <span>Codepage</span>
+              <select id="stream-service-codepage">
+                <option value="">Auto (default)</option>
+                <option value="ISO-8859-1">ISO-8859-1 (Latin-1)</option>
+                <option value="ISO-8859-5">ISO-8859-5 (Cyrillic)</option>
+                <option value="UTF-8">UTF-8</option>
+              </select>
+            </label>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Provider</span>
+              <input type="text" id="stream-service-provider" placeholder="Provider name" />
+            </label>
+            <label class="field">
+              <span>Service name</span>
+              <input type="text" id="stream-service-name" placeholder="Service name" />
+            </label>
+          </div>
+          <label class="field">
+            <span>HbbTV URL</span>
+            <input type="text" id="stream-service-hbbtv" placeholder="http://example.com/app" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-service-cas" />
+            <span>Conditional Access (CAT/ECM/EMM)</span>
+          </label>
+        </div>
+        <div class="tab-content" data-tab-content="remap" data-tab-scope="stream-editor">
+          <div class="form-grid">
+            <label class="field">
+              <span>Set PNR</span>
+              <input type="number" id="stream-set-pnr" placeholder="Leave empty to keep" />
+            </label>
+            <label class="field">
+              <span>Set TSID</span>
+              <input type="number" id="stream-set-tsid" placeholder="Leave empty to keep" />
+            </label>
+            <label class="field">
+              <span>PID map</span>
+              <input type="text" id="stream-map" placeholder="pmt=100,video=101,eng=102" />
+            </label>
+            <label class="field">
+              <span>Filter PIDs</span>
+              <input type="text" id="stream-filter" placeholder="101,102,103" />
+            </label>
+            <label class="field">
+              <span>Filter exclude PIDs</span>
+              <input type="text" id="stream-filter-exclude" placeholder="201,202,203" />
+            </label>
+          </div>
+        </div>
+        <div class="tab-content" data-tab-content="mpts" data-tab-scope="stream-editor">
+          <div class="form-subsection mpts-section">
+            <div class="panel-title">General</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>Country (ISO 3166-1 alpha-3)</span>
+                <input type="text" id="mpts-country" class="mpts-field" placeholder="USA" />
+              </label>
+              <label class="field">
+                <span>UTC offset (minutes)</span>
+                <input type="number" id="mpts-utc-offset" class="mpts-field" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>Network ID</span>
+                <input type="number" id="mpts-network-id" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>Network name</span>
+                <input type="text" id="mpts-network-name" class="mpts-field" placeholder="My Network" />
+              </label>
+              <label class="field">
+                <span>Provider name</span>
+                <input type="text" id="mpts-provider-name" class="mpts-field" placeholder="Provider" />
+              </label>
+              <label class="field">
+                <span>Codepage</span>
+                <select id="mpts-codepage" class="mpts-field">
+                  <option value="">Auto (default)</option>
+                  <option value="ISO-8859-1">ISO-8859-1 (Latin-1)</option>
+                  <option value="ISO-8859-5">ISO-8859-5 (Cyrillic)</option>
+                  <option value="UTF-8">UTF-8</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>TSID</span>
+                <input type="number" id="mpts-tsid" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>ONID</span>
+                <input type="number" id="mpts-onid" class="mpts-field" placeholder="1" />
+              </label>
+            </div>
+          </div>
+          <div class="form-subsection mpts-section">
+            <div class="panel-title">NIT</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>LCN version</span>
+                <input type="number" id="mpts-lcn-version" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>Delivery system</span>
+                <select id="mpts-delivery" class="mpts-field">
+                  <option value="">Auto</option>
+                  <option value="dvb-t">DVB-T</option>
+                  <option value="dvb-c">DVB-C</option>
+                  <option value="dvb-s">DVB-S</option>
+                  <option value="atsc">ATSC</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Frequency (kHz)</span>
+                <input type="number" id="mpts-frequency" class="mpts-field" placeholder="650000" />
+              </label>
+              <label class="field">
+                <span>Symbol rate (kSymbols/s)</span>
+                <input type="number" id="mpts-symbolrate" class="mpts-field" placeholder="6875" />
+              </label>
+              <label class="field">
+                <span>FEC</span>
+                <select id="mpts-fec" class="mpts-field">
+                  <option value="">Auto</option>
+                  <option value="1/2">1/2</option>
+                  <option value="2/3">2/3</option>
+                  <option value="3/4">3/4</option>
+                  <option value="5/6">5/6</option>
+                  <option value="7/8">7/8</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Modulation</span>
+                <select id="mpts-modulation" class="mpts-field">
+                  <option value="">Auto</option>
+                  <option value="qpsk">QPSK</option>
+                  <option value="8psk">8PSK</option>
+                  <option value="16qam">16-QAM</option>
+                  <option value="64qam">64-QAM</option>
+                  <option value="256qam">256-QAM</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Network search (stream IDs)</span>
+                <input type="text" id="mpts-network-search" class="mpts-field" placeholder="mpts_a,mpts_b" />
+              </label>
+            </div>
+          </div>
+          <div class="form-subsection mpts-section">
+            <div class="panel-title">Advanced</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>SI interval (ms)</span>
+                <input type="number" id="mpts-si-interval" class="mpts-field" placeholder="500" />
+              </label>
+              <label class="field">
+                <span>PAT version</span>
+                <input type="number" id="mpts-pat-version" class="mpts-field" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>NIT version</span>
+                <input type="number" id="mpts-nit-version" class="mpts-field" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>CAT version</span>
+                <input type="number" id="mpts-cat-version" class="mpts-field" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>SDT version</span>
+                <input type="number" id="mpts-sdt-version" class="mpts-field" placeholder="0" />
+              </label>
+            </div>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-disable-autoremap" class="mpts-field" />
+              <span>Disable PID auto-remap</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-pass-nit" class="mpts-field" />
+              <span>Pass NIT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-pass-sdt" class="mpts-field" />
+              <span>Pass SDT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-pass-eit" class="mpts-field" />
+              <span>Pass EIT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-pass-tdt" class="mpts-field" />
+              <span>Pass TDT</span>
+            </label>
+          </div>
+          <div class="form-hint">MPTS settings are applied only when MPTS is enabled.</div>
+          <div class="form-hint">Use stream inputs like <code>stream://stream_id#set_pnr=1</code> to build a multiplex.</div>
+        </div>
+        <div class="tab-content" data-tab-content="backup" data-tab-scope="stream-editor">
+          <div class="form-grid">
+            <label class="field">
+              <span>Backup mode</span>
+              <select id="stream-backup-type">
+                <option value="">Default (passive)</option>
+                <option value="disabled">Disabled</option>
+                <option value="passive">Passive</option>
+                <option value="active">Active</option>
+                <option value="active_stop_if_all_inactive">Active + stop if all inactive</option>
+              </select>
+            </label>
+            <label class="field backup-field backup-warm-max">
+              <span>Active warm inputs max</span>
+              <input type="number" id="stream-backup-warm-max" placeholder="Default: 2" />
+            </label>
+            <label class="field">
+              <span>Initial delay (sec)</span>
+              <input type="number" id="stream-backup-initial-delay" placeholder="Auto" />
+            </label>
+            <label class="field">
+              <span>Start delay (sec)</span>
+              <input type="number" id="stream-backup-start-delay" placeholder="Default: 5" />
+            </label>
+            <label class="field backup-field backup-return-delay">
+              <span>Return delay (sec)</span>
+              <input type="number" id="stream-backup-return-delay" placeholder="Default: 10" />
+            </label>
+            <label class="field backup-field backup-stop-inactive">
+              <span>Stop if all inactive (sec)</span>
+              <input type="number" id="stream-backup-stop-inactive-sec" placeholder="Default: 20" />
+            </label>
+            <label class="field">
+              <span>Stable OK (sec)</span>
+              <input type="number" id="stream-stable-ok-sec" placeholder="Default: 5" />
+            </label>
+            <label class="field">
+              <span>No data timeout (sec)</span>
+              <input type="number" id="stream-no-data-timeout-sec" placeholder="Default: 3" />
+            </label>
+            <label class="field">
+              <span>Probe interval (sec)</span>
+              <input type="number" id="stream-probe-interval-sec" placeholder="Default: 3" />
+            </label>
+          </div>
+          <div class="form-hint">
+            If backup mode is empty and input list has &gt;1 item, active mode is used by default.
+          </div>
+        </div>
+        <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
+          <div class="form-subsection">
+            <div class="form-grid">
+              <label class="field">
+                <span>Preset</span>
+                <select id="stream-transcode-preset">
+                  <option value="">Custom</option>
+                  <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
+                  <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
+                  <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
+                  <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
+                  <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
+                  <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
+                </select>
+              </label>
+              <div class="field">
+                <span>Apply</span>
+                <button class="btn ghost" type="button" id="stream-transcode-preset-apply">Apply</button>
+              </div>
+            </div>
+            <div class="form-hint">Sets engine/decoder/watchdog defaults and adds an output preset if none exist.</div>
+          </div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Engine</span>
+              <select id="stream-transcode-engine">
+                <option value="">Default (cpu)</option>
+                <option value="cpu">CPU</option>
+                <option value="nvidia">NVIDIA</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>GPU device</span>
+              <input type="number" id="stream-transcode-gpu-device" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>FFmpeg path</span>
+              <input type="text" id="stream-transcode-ffmpeg-path" placeholder="ffmpeg" />
+            </label>
+            <label class="field">
+              <span>Log file</span>
+              <input type="text" id="stream-transcode-log-file" placeholder="/var/log/ffmpeg.log" />
+            </label>
+          </div>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-log-main" />
+            <span>Log ffmpeg to Astra log</span>
+          </label>
+
+          <label class="field">
+            <span>Global args (one per line)</span>
+            <textarea id="stream-transcode-global-args" rows="4" placeholder="-nostats&#10;-fflags"></textarea>
+          </label>
+          <label class="field">
+            <span>Decoder args (one per line)</span>
+            <textarea id="stream-transcode-decoder-args" rows="4" placeholder="-hwaccel&#10;nvdec"></textarea>
+          </label>
+          <label class="field">
+            <span>Common output args (one per line)</span>
+            <textarea id="stream-transcode-common-args" rows="4" placeholder="-f&#10;mpegts"></textarea>
+          </label>
+          <div class="list-block">
+            <div class="list-header">
+              <span>TRANSCODE OUTPUTS</span>
+              <button class="text-link" type="button" id="btn-add-transcode-output">NEW OUTPUT</button>
+            </div>
+            <div class="list" id="transcode-output-list"></div>
+          </div>
+          <div class="form-hint" id="stream-transcode-input-url"></div>
+          <div class="form-hint" id="stream-transcode-status"></div>
+
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-input-probe-udp" />
+            <span>Enable UDP input bitrate probe (longer analyze window)</span>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-input-probe-restart" />
+            <span>Restart on probe interval to refresh UDP input bitrate (disruptive)</span>
+          </label>
+          <div class="form-hint">Runs a short pre-probe before start; requires output monitor interval &gt; 0.</div>
+          <div class="form-hint">Restart/Monitor settings are configured per output (see the Monitor button).</div>
+          <div class="form-hint">
+            Outputs and args map directly to ffmpeg argv items. Use one argument per line in the arg fields.
+          </div>
+        </div>
+        <div class="tab-content" data-tab-content="epg" data-tab-scope="stream-editor">
+          <div class="form-grid">
+            <label class="field">
+              <span>XMLTV channel ID</span>
+              <input type="text" id="stream-epg-id" placeholder="channel.id" />
+            </label>
+            <label class="field">
+              <span>Format</span>
+              <select id="stream-epg-format">
+                <option value="">Default</option>
+                <option value="xmltv">XMLTV</option>
+                <option value="json">JSON</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Destination</span>
+            <input type="text" id="stream-epg-destination" placeholder="/var/lib/astra/epg.xml" />
+          </label>
+          <label class="field">
+            <span>Codepage</span>
+            <select id="stream-epg-codepage">
+              <option value="">Auto (default)</option>
+              <option value="ISO-8859-1">ISO-8859-1 (Latin-1)</option>
+              <option value="ISO-8859-5">ISO-8859-5 (Cyrillic)</option>
+              <option value="UTF-8">UTF-8</option>
+            </select>
+          </label>
+          <div class="form-hint">EPG export configuration is stored with the stream. Leave fields empty to disable.</div>
+        </div>
+        <div class="tab-content" data-tab-content="advanced" data-tab-scope="stream-editor">
+          <div class="form-grid">
+            <label class="field">
+              <span>Input timeout (sec)</span>
+              <input type="number" id="stream-timeout" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>HTTP keep active (sec)</span>
+              <input type="number" id="stream-http-keep-active" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Token auth override</span>
+              <select id="stream-auth-enabled">
+                <option value="">Inherit (use settings)</option>
+                <option value="true">Enable</option>
+                <option value="false">Disable</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>On-play backend override</span>
+              <input type="text" id="stream-on-play" placeholder="http://127.0.0.1:9100/on_play" />
+            </label>
+            <label class="field">
+              <span>On-publish backend override</span>
+              <input type="text" id="stream-on-publish" placeholder="http://127.0.0.1:9100/on_publish" />
+            </label>
+            <label class="field">
+              <span>Session keys</span>
+              <input type="text" id="stream-session-keys" placeholder="ip,name,proto,token" />
+            </label>
+          </div>
+          <div class="form-hint">0 = stop immediately, -1 = always active, &gt;0 = keep input alive after last HTTP client.</div>
+          <div class="form-subsection">
+            <div class="form-hint">MPEG-TS tables and reload behavior.</div>
+            <label class="checkline">
+              <input type="checkbox" id="stream-no-sdt" />
+              <span>Disable SDT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="stream-no-eit" />
+              <span>Disable EIT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="stream-pass-sdt" />
+              <span>Pass upstream SDT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="stream-pass-eit" />
+              <span>Pass upstream EIT</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="stream-no-reload" />
+              <span>Disable input reload</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn ghost danger" type="button" id="btn-delete">Remove</button>
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="btn-apply">Apply</button>
+            <button class="btn ghost" type="button" id="btn-clone">Clone</button>
+            <button class="btn ghost" type="button" id="btn-analyze">Analyze</button>
+            <button class="btn ghost" type="button" id="editor-cancel">Cancel</button>
+            <div class="form-note" id="editor-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="output-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Output settings</div>
+        <button class="icon-btn" id="output-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="output-form">
+        <div class="form-subsection">
+          <div class="form-grid">
+            <label class="field">
+              <span>Preset</span>
+              <select id="output-preset">
+                <option value="">Custom</option>
+                <option value="http_ts">HTTP MPEG-TS (local)</option>
+                <option value="hls_basic">HLS (local)</option>
+                <option value="udp_multicast">UDP Multicast</option>
+                <option value="rtp_multicast">RTP Multicast</option>
+                <option value="srt_bridge">SRT (bridge)</option>
+                <option value="np_push">NetworkPush</option>
+                <option value="file_ts">MPEG-TS File</option>
+              </select>
+            </label>
+            <div class="field">
+              <span>Apply</span>
+              <button class="btn ghost" type="button" id="output-preset-apply">Apply</button>
+            </div>
+          </div>
+          <div class="form-hint">Applies fields for the selected preset (does not change inputs).</div>
+        </div>
+        <label class="field">
+          <span>Type</span>
+          <select id="output-type">
+            <option value="srt">SRT</option>
+            <option value="http">HTTP/HLS</option>
+            <option value="udp">UDP</option>
+            <option value="rtp">RTP</option>
+            <option value="resi" disabled>RESI Modulator</option>
+            <option value="np">NetworkPush</option>
+            <option value="file">MPEG-TS Files</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>BISS key (optional)</span>
+          <input type="text" id="output-biss" placeholder="1122330044556600" />
+        </label>
+        <div class="form-hint">16 hex chars. Control sum is calculated automatically.</div>
+
+        <div class="output-group" data-group="http">
+          <label class="field">
+            <span>Mode</span>
+            <select id="output-http-mode">
+              <option value="http">HTTP MPEG-TS</option>
+              <option value="hls">HLS</option>
+            </select>
+          </label>
+          <div class="output-subgroup" data-mode="http">
+            <label class="field">
+              <span>Host</span>
+              <input type="text" id="output-http-host" placeholder="0.0.0.0" />
+            </label>
+            <label class="field">
+              <span>Port</span>
+              <input type="number" id="output-http-port" placeholder="8000" />
+            </label>
+            <label class="field">
+              <span>Path</span>
+              <input type="text" id="output-http-path" placeholder="/stream" />
+            </label>
+            <label class="field">
+              <span>Buffer size (KB)</span>
+              <input type="number" id="output-http-buffer" placeholder="1024" />
+            </label>
+            <label class="field">
+              <span>Buffer fill (KB)</span>
+              <input type="number" id="output-http-buffer-fill" placeholder="256" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-http-keep" />
+              <span>Keep active</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-http-sctp" />
+              <span>Use SCTP</span>
+            </label>
+          </div>
+          <div class="output-subgroup" data-mode="hls">
+            <label class="field">
+              <span>Output directory</span>
+              <input type="text" id="output-hls-path" />
+            </label>
+            <label class="field">
+              <span>Base URL</span>
+              <input type="text" id="output-hls-base" />
+            </label>
+            <label class="field">
+              <span>Playlist</span>
+              <input type="text" id="output-hls-playlist" placeholder="index.m3u8" />
+            </label>
+            <label class="field">
+              <span>Prefix</span>
+              <input type="text" id="output-hls-prefix" placeholder="segment" />
+            </label>
+            <label class="field">
+              <span>Target duration (sec)</span>
+              <input type="number" id="output-hls-target" placeholder="6" />
+            </label>
+            <label class="field">
+              <span>Window</span>
+              <input type="number" id="output-hls-window" placeholder="5" />
+            </label>
+            <label class="field">
+              <span>Cleanup</span>
+              <input type="number" id="output-hls-cleanup" placeholder="10" />
+            </label>
+            <label class="field">
+              <span>Segments naming</span>
+              <select id="output-hls-naming">
+                <option value="sequence">Sequence</option>
+                <option value="pcr">PCR hash</option>
+              </select>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-hls-round" />
+              <span>Round duration</span>
+            </label>
+            <label class="field">
+              <span>TS extension</span>
+              <input type="text" id="output-hls-ts-extension" placeholder="ts" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-hls-wall" />
+              <span>Use wall clock</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-hls-pass-data" />
+              <span>Pass all data PIDs</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="output-group" data-group="udp">
+          <label class="field">
+            <span>Address</span>
+            <input type="text" id="output-udp-addr" placeholder="239.0.0.1" />
+          </label>
+          <label class="field">
+            <span>Port</span>
+            <input type="number" id="output-udp-port" placeholder="1234" />
+          </label>
+          <label class="field">
+            <span>TTL</span>
+            <input type="number" id="output-udp-ttl" placeholder="1" />
+          </label>
+          <label class="field">
+            <span>Interface</span>
+            <input type="text" id="output-udp-local" placeholder="0.0.0.0" />
+          </label>
+          <label class="field">
+            <span>Socket size (bytes)</span>
+            <input type="number" id="output-udp-socket" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>Sync buffer (MB)</span>
+            <input type="number" id="output-udp-sync" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>CBR (Kbit/s)</span>
+            <input type="number" id="output-udp-cbr" placeholder="0" />
+          </label>
+          <div class="output-audio-fix" id="output-udp-audio-fix">
+            <label class="checkline">
+              <input type="checkbox" id="output-udp-audio-fix-enabled" />
+              <span>Audio fix (normalize to AAC)</span>
+            </label>
+            <label class="field">
+              <span>Probe interval (sec)</span>
+              <input type="number" id="output-udp-audio-fix-interval" placeholder="30" />
+            </label>
+            <label class="field">
+              <span>Probe duration (sec)</span>
+              <input type="number" id="output-udp-audio-fix-duration" placeholder="2" />
+            </label>
+            <label class="field">
+              <span>Mismatch hold (sec)</span>
+              <input type="number" id="output-udp-audio-fix-hold" placeholder="10" />
+            </label>
+            <label class="field">
+              <span>Restart cooldown (sec)</span>
+              <input type="number" id="output-udp-audio-fix-cooldown" placeholder="1200" />
+            </label>
+            <div class="form-hint">
+              Checks the UDP output audio type; if not AAC (0x0F), Astra starts an AAC normalize pass.
+            </div>
+          </div>
+        </div>
+
+        <div class="output-group" data-group="srt">
+          <label class="field">
+            <span>SRT URL</span>
+            <input type="text" id="output-srt-url" placeholder="srt://host:port?mode=caller" />
+          </label>
+          <label class="field">
+            <span>Bridge port (UDP)</span>
+            <input type="number" id="output-srt-bridge-port" placeholder="14000" />
+          </label>
+          <div class="form-hint">
+            Requires ffmpeg; Astra sends MPEG-TS to a local UDP port which ffmpeg forwards to SRT.
+          </div>
+          <div class="form-subsection">
+            <div class="panel-title">Bridge advanced</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>Bridge address</span>
+                <input type="text" id="output-srt-bridge-addr" placeholder="127.0.0.1" />
+              </label>
+              <label class="field">
+                <span>Bridge local interface</span>
+                <input type="text" id="output-srt-bridge-localaddr" placeholder="0.0.0.0" />
+              </label>
+              <label class="field">
+                <span>Packet size</span>
+                <input type="number" id="output-srt-bridge-pkt-size" placeholder="1316" />
+              </label>
+              <label class="field">
+                <span>Socket size (bytes)</span>
+                <input type="number" id="output-srt-bridge-socket" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>Bridge TTL</span>
+                <input type="number" id="output-srt-bridge-ttl" placeholder="1" />
+              </label>
+            </div>
+            <label class="field">
+              <span>Bridge bin</span>
+              <input type="text" id="output-srt-bridge-bin" placeholder="ffmpeg" />
+            </label>
+            <label class="field">
+              <span>Bridge log level</span>
+              <input type="text" id="output-srt-bridge-log" placeholder="warning" />
+            </label>
+            <label class="field">
+              <span>Bridge input args (one per line)</span>
+              <textarea id="output-srt-bridge-input-args" rows="3" placeholder="-re"></textarea>
+            </label>
+            <label class="field">
+              <span>Bridge output args (one per line)</span>
+              <textarea id="output-srt-bridge-output-args" rows="3" placeholder="-flush_packets&#10;1"></textarea>
+            </label>
+            <div class="form-hint">One argument per line. Split flags and values into separate lines.</div>
+          </div>
+        </div>
+
+        <div class="output-group" data-group="np">
+          <label class="field">
+            <span>Host</span>
+            <input type="text" id="output-np-host" placeholder="example.com" />
+          </label>
+          <label class="field">
+            <span>Port</span>
+            <input type="number" id="output-np-port" placeholder="80" />
+          </label>
+          <label class="field">
+            <span>Path</span>
+            <input type="text" id="output-np-path" placeholder="/push" />
+          </label>
+          <label class="field">
+            <span>Timeout (sec)</span>
+            <input type="number" id="output-np-timeout" placeholder="5" />
+          </label>
+          <label class="field">
+            <span>Buffer size (KB)</span>
+            <input type="number" id="output-np-buffer" placeholder="1024" />
+          </label>
+          <label class="field">
+            <span>Buffer fill (KB)</span>
+            <input type="number" id="output-np-buffer-fill" placeholder="256" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="output-np-sctp" />
+            <span>Use SCTP</span>
+          </label>
+        </div>
+
+        <div class="output-group" data-group="file">
+          <label class="field">
+            <span>Filename</span>
+            <input type="text" id="output-file-name" placeholder="/tmp/stream.ts" />
+          </label>
+          <label class="field">
+            <span>Buffer size (KB)</span>
+            <input type="number" id="output-file-buffer" placeholder="32" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="output-file-m2ts" />
+            <span>Use M2TS</span>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="output-file-aio" />
+            <span>Use async write (AIO)</span>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="output-file-directio" />
+            <span>Use Direct I/O</span>
+          </label>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="output-save">OK</button>
+          <button class="btn ghost" type="button" id="output-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="transcode-output-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Transcode output</div>
+        <button class="icon-btn" id="transcode-output-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="transcode-output-form">
+        <label class="field">
+          <span>Preset</span>
+          <select id="transcode-output-preset">
+            <option value="">Custom</option>
+            <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
+            <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
+            <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
+            <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
+            <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
+            <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Name</span>
+          <input type="text" id="transcode-output-name" placeholder="720p" />
+        </label>
+        <label class="field">
+          <span>URL</span>
+          <input type="text" id="transcode-output-url" placeholder="udp://239.1.1.1:1234?pkt_size=1316" />
+        </label>
+        <label class="field">
+          <span>Video filter (vf)</span>
+          <input type="text" id="transcode-output-vf" placeholder="scale=1280:720,fps=25" />
+        </label>
+        <label class="field">
+          <span>Video codec</span>
+          <input type="text" id="transcode-output-vcodec" placeholder="libx264" />
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="transcode-output-repeat-headers" />
+          <span>Repeat SPS/PPS headers (libx264)</span>
+        </label>
+        <label class="field">
+          <span>Video args (one per line)</span>
+          <textarea id="transcode-output-v-args" rows="4" placeholder="-preset&#10;slow"></textarea>
+        </label>
+        <label class="field">
+          <span>Audio codec</span>
+          <input type="text" id="transcode-output-acodec" placeholder="aac" />
+        </label>
+        <label class="field">
+          <span>Audio args (one per line)</span>
+          <textarea id="transcode-output-a-args" rows="4" placeholder="-ab&#10;128k"></textarea>
+        </label>
+        <label class="field">
+          <span>Format args (one per line)</span>
+          <textarea id="transcode-output-format-args" rows="3" placeholder="-f&#10;mpegts"></textarea>
+        </label>
+        <label class="field">
+          <span>Metadata args (one per line)</span>
+          <textarea id="transcode-output-metadata" rows="3" placeholder="-metadata&#10;service_name=Channel"></textarea>
+        </label>
+
+        <div class="form-note" id="transcode-output-error"></div>
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="transcode-output-save">OK</button>
+          <button class="btn ghost" type="button" id="transcode-output-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="transcode-monitor-overlay" aria-hidden="true">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div class="modal-title" id="transcode-monitor-title">Transcode monitor</div>
+        <button class="icon-btn" id="transcode-monitor-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="transcode-monitor-form">
+        <div class="form-note" id="transcode-monitor-target"></div>
+
+        <div class="panel subtle">
+          <div class="panel-title">Restart</div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Restart delay (sec)</span>
+              <input type="number" id="transcode-monitor-restart-delay" placeholder="4" />
+            </label>
+            <label class="field">
+              <span>No progress timeout (sec)</span>
+              <input type="number" id="transcode-monitor-no-progress" placeholder="8" />
+            </label>
+            <label class="field">
+              <span>Max error lines/min</span>
+              <input type="number" id="transcode-monitor-max-errors" placeholder="20" />
+            </label>
+            <label class="field">
+              <span>Desync threshold (ms)</span>
+              <input type="number" id="transcode-monitor-desync-ms" placeholder="500" />
+            </label>
+            <label class="field">
+              <span>Desync fail count</span>
+              <input type="number" id="transcode-monitor-desync-count" placeholder="2" />
+            </label>
+            <label class="field">
+              <span>Max restarts / 10 min</span>
+              <input type="number" id="transcode-monitor-max-restarts" placeholder="10" />
+            </label>
+          </div>
+        </div>
+
+        <div class="panel subtle">
+          <div class="panel-title">Monitor</div>
+          <div class="form-grid">
+            <label class="field">
+              <span>Monitor engine</span>
+              <select id="transcode-monitor-engine">
+                <option value="auto">Auto (UDP → Astra Analyze)</option>
+                <option value="ffprobe">FFprobe</option>
+                <option value="astra_analyze">Astra Analyze</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Probe interval (sec)</span>
+              <input type="number" id="transcode-monitor-probe-interval" placeholder="3600" />
+            </label>
+            <label class="field">
+              <span>Probe duration (sec)</span>
+              <input type="number" id="transcode-monitor-probe-duration" placeholder="2" />
+            </label>
+            <label class="field">
+              <span>Probe timeout (sec)</span>
+              <input type="number" id="transcode-monitor-probe-timeout" placeholder="8" />
+            </label>
+            <label class="field">
+              <span>Probe fail count</span>
+              <input type="number" id="transcode-monitor-probe-fail" placeholder="2" />
+            </label>
+          </div>
+          <div class="form-hint" id="transcode-monitor-probe-target"></div>
+        </div>
+
+        <div class="panel subtle">
+          <div class="panel-title">Low bitrate watchdog</div>
+          <label class="checkline">
+            <input type="checkbox" id="transcode-monitor-low-enabled" />
+            <span>Restart on low bitrate</span>
+          </label>
+          <div class="form-grid">
+            <label class="field">
+              <span>Min bitrate (kbps)</span>
+              <input type="number" id="transcode-monitor-low-min" placeholder="400" />
+            </label>
+            <label class="field">
+              <span>Hold time (sec)</span>
+              <input type="number" id="transcode-monitor-low-hold" placeholder="60" />
+            </label>
+            <label class="field">
+              <span>Restart cooldown (sec)</span>
+              <input type="number" id="transcode-monitor-cooldown" placeholder="1200" />
+            </label>
+          </div>
+          <div class="form-hint">Low bitrate uses the selected monitor engine for this output.</div>
+        </div>
+
+        <div class="form-note" id="transcode-monitor-error"></div>
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="transcode-monitor-save">OK</button>
+          <button class="btn ghost" type="button" id="transcode-monitor-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="input-overlay" aria-hidden="true">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div class="modal-title">Input settings</div>
+        <button class="icon-btn" id="input-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="input-form">
+        <div class="form-subsection">
+          <div class="form-grid">
+            <label class="field">
+              <span>Preset</span>
+              <select id="input-preset">
+                <option value="">Custom</option>
+                <option value="udp_multicast">UDP Multicast</option>
+                <option value="rtp_multicast">RTP Multicast</option>
+                <option value="http_ts">HTTP MPEG-TS</option>
+                <option value="hls_m3u8">HLS (m3u8)</option>
+                <option value="srt_caller">SRT Caller</option>
+                <option value="rtsp_tcp">RTSP (TCP)</option>
+                <option value="file_loop">MPEG-TS File (loop)</option>
+              </select>
+            </label>
+            <div class="field">
+              <span>Apply</span>
+              <button class="btn ghost" type="button" id="input-preset-apply">Apply</button>
+            </div>
+          </div>
+          <div class="form-hint">Applies common input fields and options.</div>
+        </div>
+        <label class="field">
+          <span>Type</span>
+          <select id="input-type">
+            <option value="dvb">DVB</option>
+            <option value="udp">UDP</option>
+            <option value="rtp">RTP</option>
+            <option value="srt">SRT</option>
+            <option value="rtsp">RTSP</option>
+            <option value="http">HTTP</option>
+            <option value="hls">HLS</option>
+            <option value="stream">Stream</option>
+            <option value="file">MPEG-TS File</option>
+          </select>
+        </label>
+
+        <div class="input-group" data-group="dvb">
+          <label class="field">
+            <span>DVB adapter id</span>
+            <input type="text" id="input-dvb-id" placeholder="adapter_0" />
+          </label>
+        </div>
+
+        <div class="input-group" data-group="udp">
+          <label class="field">
+            <span>Interface</span>
+            <input type="text" id="input-udp-iface" placeholder="eth0" />
+          </label>
+          <label class="field">
+            <span>Address</span>
+            <input type="text" id="input-udp-addr" placeholder="239.0.0.1" />
+          </label>
+          <label class="field">
+            <span>Port</span>
+            <input type="number" id="input-udp-port" placeholder="1234" />
+          </label>
+          <label class="field">
+            <span>Socket size (bytes)</span>
+            <input type="number" id="input-udp-socket" placeholder="0" />
+          </label>
+        </div>
+
+        <div class="input-group" data-group="http">
+          <label class="field">
+            <span>Login</span>
+            <input type="text" id="input-http-login" placeholder="user" />
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input type="password" id="input-http-pass" placeholder="••••" />
+          </label>
+          <label class="field">
+            <span>Host</span>
+            <input type="text" id="input-http-host" placeholder="example.com" />
+          </label>
+          <label class="field">
+            <span>Port</span>
+            <input type="number" id="input-http-port" placeholder="80" />
+          </label>
+          <label class="field">
+            <span>Path</span>
+            <input type="text" id="input-http-path" placeholder="/stream" />
+          </label>
+          <label class="field">
+            <span>User-Agent</span>
+            <input type="text" id="input-http-ua" placeholder="Astra" />
+          </label>
+          <label class="field">
+            <span>Timeout (sec)</span>
+            <input type="number" id="input-http-timeout" placeholder="10" />
+          </label>
+          <label class="field">
+            <span>Buffer size (KB)</span>
+            <input type="number" id="input-http-buffer" placeholder="1024" />
+          </label>
+        </div>
+
+        <div class="input-group" data-group="bridge">
+          <label class="field">
+            <span>URL</span>
+            <input type="text" id="input-bridge-url" placeholder="srt://host:port?mode=caller" />
+          </label>
+          <label class="field">
+            <span>Bridge port (UDP)</span>
+            <input type="number" id="input-bridge-port" placeholder="14000" />
+          </label>
+          <div class="form-hint">
+            Requires ffmpeg; Astra reads via ffmpeg and injects into a local UDP port.
+          </div>
+        </div>
+
+        <div class="input-group" data-group="file">
+          <label class="field">
+            <span>Filename</span>
+            <input type="text" id="input-file-name" placeholder="/mnt/raid0/file.ts" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="input-file-loop" />
+            <span>Loop</span>
+          </label>
+        </div>
+
+        <div class="input-group" data-group="stream">
+          <label class="field">
+            <span>Stream ID</span>
+            <input type="text" id="input-stream-id" placeholder="stream_1" />
+          </label>
+          <div class="form-hint">Uses another stream as input: <code>stream://&lt;id&gt;</code></div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="form-grid">
+          <label class="field">
+            <span>PNR</span>
+            <input type="number" id="input-pnr" placeholder="Service ID" />
+          </label>
+          <label class="field">
+            <span>Set PNR</span>
+            <input type="number" id="input-set-pnr" placeholder="New PNR" />
+          </label>
+          <label class="field">
+            <span>Set TSID</span>
+            <input type="number" id="input-set-tsid" placeholder="Transport Stream ID" />
+          </label>
+          <label class="field">
+            <span>BISS key</span>
+            <input type="text" id="input-biss" placeholder="1122330044556600" />
+          </label>
+          <label class="field">
+            <span>SoftCAM id</span>
+            <input type="text" id="input-cam-id" placeholder="reader_0" />
+          </label>
+          <label class="field">
+            <span>ECM PID</span>
+            <input type="number" id="input-ecm-pid" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>Shift (Mbit)</span>
+            <input type="number" id="input-shift" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>PID map</span>
+            <input type="text" id="input-map" placeholder="pmt=100,video=101" />
+          </label>
+          <label class="field">
+            <span>Filter</span>
+            <input type="text" id="input-filter" placeholder="pid,pid" />
+          </label>
+          <label class="field">
+            <span>Filter~</span>
+            <input type="text" id="input-filter-not" placeholder="pid,pid" />
+          </label>
+          <label class="field">
+            <span>CC limit</span>
+            <input type="number" id="input-cc-limit" placeholder="0" />
+          </label>
+          <label class="field">
+            <span>Bitrate limit (Kbit/s)</span>
+            <input type="number" id="input-bitrate-limit" placeholder="0" />
+          </label>
+        </div>
+
+        <label class="checkline">
+          <input type="checkbox" id="input-cam" />
+          <span>Use DVB-CI (cam)</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="input-cas" />
+          <span>Pass CA tables (cas)</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="input-pass-sdt" />
+          <span>Pass SDT</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="input-pass-eit" />
+          <span>Pass EIT</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="input-no-reload" />
+          <span>No reload</span>
+        </label>
+        <label class="checkline">
+          <input type="checkbox" id="input-no-analyze" />
+          <span>Disable analyze</span>
+        </label>
+
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="input-save">OK</button>
+          <button class="btn ghost" type="button" id="input-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="splitter-link-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">HLSSplitter link</div>
+        <button class="icon-btn" id="splitter-link-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="splitter-link-form">
+        <label class="checkline">
+          <input type="checkbox" id="splitter-link-enabled" checked />
+          <span>Enable</span>
+        </label>
+        <label class="field">
+          <span>Input URL (HTTP)</span>
+          <input type="text" id="splitter-link-url" placeholder="http://127.0.0.1:8080/path" />
+        </label>
+        <div class="form-grid">
+          <label class="field">
+            <span>Bandwidth</span>
+            <input type="number" id="splitter-link-bandwidth" placeholder="1800000" />
+          </label>
+          <label class="field">
+            <span>Buffering</span>
+            <input type="number" id="splitter-link-buffering" placeholder="10" />
+          </label>
+        </div>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="splitter-link-save">Save</button>
+            <button class="btn ghost" type="button" id="splitter-link-cancel">Cancel</button>
+            <div class="form-note" id="splitter-link-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="splitter-allow-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">HLSSplitter allow rule</div>
+        <button class="icon-btn" id="splitter-allow-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="splitter-allow-form">
+        <label class="field">
+          <span>Rule type</span>
+          <select id="splitter-allow-kind">
+            <option value="allow">allow</option>
+            <option value="allowRange">allowRange</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Value</span>
+          <input type="text" id="splitter-allow-value" placeholder="0.0.0.0" />
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="splitter-allow-save">Save</button>
+            <button class="btn ghost" type="button" id="splitter-allow-cancel">Cancel</button>
+            <div class="form-note" id="splitter-allow-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="splitter-config-overlay" aria-hidden="true">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div class="modal-title">HLSSplitter config</div>
+        <button class="icon-btn" id="splitter-config-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <div class="splitter-config-body">
+        <pre class="splitter-config-preview" id="splitter-config-preview"></pre>
+        <div class="form-note" id="splitter-config-error"></div>
+      </div>
+      <div class="modal-footer">
+        <div class="footer-actions">
+          <button class="btn ghost" type="button" id="splitter-config-copy">Copy</button>
+          <button class="btn" type="button" id="splitter-config-dismiss">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="buffer-input-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Buffer input</div>
+        <button class="icon-btn" id="buffer-input-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="buffer-input-form">
+        <label class="checkline">
+          <input type="checkbox" id="buffer-input-enabled" checked />
+          <span>Enable</span>
+        </label>
+        <label class="field">
+          <span>Input URL (HTTP)</span>
+          <input type="text" id="buffer-input-url" placeholder="http://127.0.0.1:8080/path" />
+        </label>
+        <label class="field">
+          <span>Priority</span>
+          <input type="number" id="buffer-input-priority" placeholder="0" />
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="buffer-input-save">Save</button>
+            <button class="btn ghost" type="button" id="buffer-input-cancel">Cancel</button>
+            <div class="form-note" id="buffer-input-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="buffer-allow-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Buffer allow rule</div>
+        <button class="icon-btn" id="buffer-allow-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="buffer-allow-form">
+        <label class="field">
+          <span>Rule type</span>
+          <select id="buffer-allow-kind">
+            <option value="allow">allow</option>
+            <option value="allowRange">allowRange</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Value</span>
+          <input type="text" id="buffer-allow-value" placeholder="0.0.0.0" />
+        </label>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="buffer-allow-save">Save</button>
+            <button class="btn ghost" type="button" id="buffer-allow-cancel">Cancel</button>
+            <div class="form-note" id="buffer-allow-error"></div>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="analyze-overlay" aria-hidden="true">
+    <div class="modal analyze">
+      <div class="analyze-header">
+        <div class="analyze-rate" id="analyze-rate">0 Kbit/s</div>
+        <div class="analyze-stat ok" id="analyze-cc">CC:0</div>
+        <div class="analyze-stat ok" id="analyze-pes">PES:0</div>
+      </div>
+      <div class="divider"></div>
+      <div class="analyze-body" id="analyze-body"></div>
+      <div class="modal-footer">
+        <button class="btn ghost" type="button" id="analyze-restart">Restart</button>
+        <button class="btn ghost" type="button" id="analyze-close">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="overlay" id="player-overlay" aria-hidden="true">
+    <div class="modal wide">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">HLS preview</div>
+          <p class="modal-sub" id="player-sub">Stream preview</p>
+        </div>
+        <button class="icon-btn" id="player-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <div class="player">
+        <video id="player-video" controls playsinline></video>
+        <div class="player-meta">
+          <div class="pill" id="player-url">-</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+</body>
+</html>
