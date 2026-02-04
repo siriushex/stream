@@ -150,6 +150,7 @@ const state = {
   player: null,
   statusTimer: null,
   adapterTimer: null,
+  dvbTimer: null,
   sessionTimer: null,
   accessLogTimer: null,
   logTimer: null,
@@ -169,6 +170,7 @@ const state = {
   accessTextFilter: '',
   accessLimit: 200,
   accessPaused: false,
+  streamSyncTimer: null,
   groups: [],
   groupEditing: null,
   groupIdAuto: false,
@@ -605,6 +607,7 @@ const elements = {
   outputList: $('#output-list'),
   btnAddInput: $('#btn-add-input'),
   btnAddOutput: $('#btn-add-output'),
+  btnApplyStream: $('#btn-apply'),
   btnDelete: $('#btn-delete'),
   btnClone: $('#btn-clone'),
   btnAnalyze: $('#btn-analyze'),
@@ -758,6 +761,7 @@ const elements = {
   adapterSelect: $('#adapter-select'),
   adapterDetected: $('#adapter-detected'),
   adapterDetectedHint: $('#adapter-detected-hint'),
+  adapterBusyWarning: $('#adapter-busy-warning'),
   adapterCancel: $('#adapter-cancel'),
   adapterDelete: $('#adapter-delete'),
   adapterError: $('#adapter-error'),
@@ -894,6 +898,19 @@ function setStatus(message, mode) {
   }
 }
 
+function setStreamEditorBusy(isBusy, label) {
+  if (elements.btnApplyStream) {
+    elements.btnApplyStream.disabled = isBusy;
+    elements.btnApplyStream.textContent = isBusy ? (label || 'Applying...') : 'Apply';
+  }
+  if (elements.btnDelete) elements.btnDelete.disabled = isBusy;
+  if (elements.btnClone) elements.btnClone.disabled = isBusy;
+  if (elements.btnAnalyze) elements.btnAnalyze.disabled = isBusy;
+  if (isBusy && elements.editorError) {
+    elements.editorError.textContent = label || 'Applying...';
+  }
+}
+
 function setOverlay(overlay, show) {
   overlay.classList.toggle('active', show);
   overlay.setAttribute('aria-hidden', show ? 'false' : 'true');
@@ -908,6 +925,9 @@ function setView(name) {
   });
   if (name !== 'settings') {
     closeSettingsMenu();
+  }
+  if (name === 'adapters') {
+    loadDvbAdapters().catch(() => {});
   }
 }
 
@@ -2368,6 +2388,26 @@ function applyStreamRemoval(streamId) {
     return;
   }
   renderStreams();
+}
+
+function scheduleStreamSync(delayMs = 1500) {
+  if (state.streamSyncTimer) {
+    clearTimeout(state.streamSyncTimer);
+  }
+  state.streamSyncTimer = setTimeout(() => {
+    state.streamSyncTimer = null;
+    syncStreamsSilently();
+  }, delayMs);
+}
+
+async function syncStreamsSilently() {
+  try {
+    const data = await apiJson('/api/v1/streams');
+    state.streams = Array.isArray(data) ? data : [];
+    const filtered = state.streams.filter(isStreamVisible);
+    rebuildStreamIndex(filtered);
+  } catch (err) {
+  }
 }
 
 function isTranscodeStream(stream) {
@@ -4899,6 +4939,7 @@ function renderDvbDetectedSelect() {
       elements.adapterDetectedHint.textContent = 'DVB adapter list is unavailable.';
       elements.adapterDetectedHint.className = 'form-hint adapter-detected-hint missing';
     }
+    updateAdapterBusyWarningFromFields();
     return;
   }
 
@@ -4920,6 +4961,7 @@ function renderDvbDetectedSelect() {
       elements.adapterDetectedHint.textContent = 'Select a detected adapter to fill Adapter/Device/Type fields.';
       elements.adapterDetectedHint.className = 'form-hint';
     }
+    updateAdapterBusyWarningFromFields();
     return;
   }
   const config = state.adapterEditing.adapter.config || {};
@@ -4930,6 +4972,26 @@ function renderDvbDetectedSelect() {
     const status = formatDvbStatus(item);
     elements.adapterDetectedHint.textContent = status.hint;
     elements.adapterDetectedHint.className = `form-hint adapter-detected-hint ${status.className}`;
+  }
+  updateAdapterBusyWarningFromFields();
+}
+
+function updateAdapterBusyWarningFromFields() {
+  if (!elements.adapterIndex || !elements.adapterDevice) return;
+  const adapterValue = elements.adapterIndex.value;
+  const deviceValue = elements.adapterDevice.value || 0;
+  const item = findDvbAdapter(adapterValue, deviceValue);
+  const isBusy = item && item.busy === true;
+  const fields = [elements.adapterIndex, elements.adapterDevice, elements.adapterType]
+    .map((input) => input && input.closest('.field'))
+    .filter(Boolean);
+  fields.forEach((field) => field.classList.toggle('warn', isBusy));
+  if (elements.adapterBusyWarning) {
+    if (isBusy) {
+      elements.adapterBusyWarning.textContent = 'Selected adapter is busy. Choose a free adapter or release it.';
+    } else {
+      elements.adapterBusyWarning.textContent = '';
+    }
   }
 }
 
@@ -5169,6 +5231,7 @@ function openAdapterEditor(adapter, isNew) {
 
   setAdapterGroup(elements.adapterType.value);
   renderDvbDetectedSelect();
+  updateAdapterBusyWarningFromFields();
   state.adapterEditing = { adapter, isNew };
   if (elements.adapterDelete) {
     elements.adapterDelete.style.visibility = isNew ? 'hidden' : 'visible';
@@ -5324,6 +5387,22 @@ function stopAdapterPolling() {
   if (state.adapterTimer) {
     clearInterval(state.adapterTimer);
     state.adapterTimer = null;
+  }
+}
+
+function startDvbPolling() {
+  if (state.dvbTimer) {
+    clearInterval(state.dvbTimer);
+  }
+  state.dvbTimer = setInterval(() => {
+    loadDvbAdapters().catch(() => {});
+  }, 3600 * 1000);
+}
+
+function stopDvbPolling() {
+  if (state.dvbTimer) {
+    clearInterval(state.dvbTimer);
+    state.dvbTimer = null;
   }
 }
 
@@ -9911,6 +9990,7 @@ async function loadStreams() {
 async function saveStream(event) {
   event.preventDefault();
   elements.editorError.textContent = '';
+  setStreamEditorBusy(true, 'Applying...');
 
   try {
     const payload = readStreamForm();
@@ -9961,6 +10041,7 @@ async function saveStream(event) {
     };
     upsertStreamInState(updated);
     applyStreamUpdate(updated);
+    scheduleStreamSync();
   } catch (err) {
     let message = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
     const networkMessage = formatNetworkError(err);
@@ -9968,6 +10049,8 @@ async function saveStream(event) {
       message = networkMessage;
     }
     elements.editorError.textContent = message || 'Failed to save stream';
+  } finally {
+    setStreamEditorBusy(false);
   }
 }
 
@@ -9988,6 +10071,7 @@ async function toggleStream(stream) {
   };
   upsertStreamInState(updated);
   applyStreamUpdate(updated);
+  scheduleStreamSync();
 }
 
 async function deleteStream(stream) {
@@ -9997,6 +10081,7 @@ async function deleteStream(stream) {
   setStatus('Stream deleted');
   removeStreamFromState(stream.id);
   applyStreamRemoval(stream.id);
+  scheduleStreamSync();
 }
 
 function startPreview(stream) {
@@ -10291,6 +10376,7 @@ async function logout() {
   localStorage.removeItem('astra_token');
   stopStatusPolling();
   stopAdapterPolling();
+  stopDvbPolling();
   stopSplitterPolling();
   stopBufferPolling();
   stopSessionPolling();
@@ -10314,6 +10400,7 @@ async function refreshAll() {
     setOverlay(elements.loginOverlay, false);
     startStatusPolling();
     startAdapterPolling();
+    startDvbPolling();
     startSplitterPolling();
     startBufferPolling();
     startSessionPolling();
@@ -11133,9 +11220,17 @@ function bindEvents() {
     });
   }
 
-  elements.btnDelete.addEventListener('click', () => {
+  elements.btnDelete.addEventListener('click', async () => {
     if (!state.editing || state.editing.isNew) return;
-    deleteStream(state.editing.stream).then(closeEditor).catch((err) => setStatus(err.message));
+    setStreamEditorBusy(true, 'Deleting...');
+    try {
+      await deleteStream(state.editing.stream);
+      closeEditor();
+    } catch (err) {
+      setStatus(err.message);
+    } finally {
+      setStreamEditorBusy(false);
+    }
   });
 
   elements.btnClone.addEventListener('click', () => {
@@ -11370,6 +11465,13 @@ function bindEvents() {
         elements.adapterError.textContent = formatNetworkError(err) || err.message;
       });
     });
+  }
+
+  if (elements.adapterIndex) {
+    elements.adapterIndex.addEventListener('input', updateAdapterBusyWarningFromFields);
+  }
+  if (elements.adapterDevice) {
+    elements.adapterDevice.addEventListener('input', updateAdapterBusyWarningFromFields);
   }
 
   if (elements.adapterCancel) {
