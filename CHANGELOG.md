@@ -13,7 +13,7 @@
 ### 2026-02-04
 - Changes:
   - Fixed embedded launcher to treat JSON configs as server configs and skip the script arg in option parsing.
-  - Bumped UI build stamp to 20260204l.
+  - Bumped UI build stamp to 20260204m.
 - Tests:
   - Not run (deploy-only).
 ### 2026-02-04

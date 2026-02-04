@@ -164,6 +164,7 @@ static int fn_inscript_callback(lua_State *L)
     }
 
     int argv_idx = 1;
+    bool rewritten = false;
 
     lua_rawgeti(lua, -1, 1);
     const char *script = luaL_checkstring(lua, -1);
@@ -204,6 +205,7 @@ static int fn_inscript_callback(lua_State *L)
         argc = new_idx - 1;
         script = server_script;
         argv_idx = 2;
+        rewritten = true;
     }
     else
     {
@@ -254,7 +256,8 @@ static int fn_inscript_callback(lua_State *L)
     else if(!access(script, R_OK))
     {
         load = luaL_dofile(lua, script);
-        argv_idx += 1;
+        if(!rewritten)
+            argv_idx += 1;
     }
     if(load != 0)
         luaL_error(lua, "[main] %s", lua_tostring(lua, -1));
