@@ -26,6 +26,11 @@
   - Not run (UI change).
 ### 2026-02-04
 - Changes:
+  - Marked Config history UX as done in `PLAN.md`.
+- Tests:
+  - Not run (docs change).
+### 2026-02-04
+- Changes:
   - Added access log visible count and limit clamp.
 - Tests:
   - Not run (UI change).
