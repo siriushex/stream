@@ -2384,17 +2384,370 @@ local function normalize_server_host(entry)
         end
     end
     local scheme = parsed and parsed.format or "http"
-    if scheme ~= "http" then
-        return nil, "https not supported"
+    if scheme ~= "http" and scheme ~= "https" then
+        return nil, "unsupported scheme"
     end
-    local port = tonumber(entry.port) or port_hint or (parsed and parsed.port) or 8000
+    local port = tonumber(entry.port) or port_hint or (parsed and parsed.port) or (scheme == "https" and 443 or 8000)
     local hostname = parsed and parsed.host or host_only
+    local base_path = parsed and parsed.path or ""
+    if base_path == "/" then
+        base_path = ""
+    end
     return {
         host = hostname,
         port = port,
-        login = entry.login or "",
-        password = entry.password or "",
+        login = entry.login or entry.user or "",
+        password = entry.password or entry.pass or "",
+        scheme = scheme,
+        base_path = base_path,
     }
+end
+
+local function slugify_server_id(value)
+    local text = tostring(value or ""):lower()
+    text = text:gsub("[^%w_-]+", "_")
+    text = text:gsub("_+", "_")
+    text = text:gsub("^_+", ""):gsub("_+$", "")
+    return text
+end
+
+local function get_server_id(entry)
+    if type(entry) ~= "table" then
+        return nil
+    end
+    local id = tostring(entry.id or "")
+    if id ~= "" then
+        return id
+    end
+    local seed = entry.name or entry.host or entry.address or ""
+    local slug = slugify_server_id(seed)
+    if slug == "" then
+        return nil
+    end
+    return slug
+end
+
+local function build_server_path(cfg, path)
+    local base = cfg.base_path or ""
+    if base == "" then
+        return path
+    end
+    return base .. path
+end
+
+local function decode_json_safe(text)
+    if not text or text == "" then
+        return nil
+    end
+    local ok, data = pcall(json.decode, text)
+    if not ok then
+        return nil
+    end
+    return data
+end
+
+local function parse_cookie_from_headers(headers)
+    if not headers then
+        return nil
+    end
+    local raw = headers["set-cookie"] or headers["Set-Cookie"]
+    if not raw then
+        return nil
+    end
+    local token = tostring(raw):match("astra_session=([^;]+)")
+    if token and token ~= "" then
+        return "astra_session=" .. token
+    end
+    return nil
+end
+
+local function ensure_curl_available()
+    if not process or type(process.spawn) ~= "function" then
+        return false
+    end
+    local ok, proc = pcall(process.spawn, { "curl", "--version" }, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        return false
+    end
+    if proc and proc.close then
+        proc:close()
+    end
+    return true
+end
+
+local function run_curl(args, callback)
+    if not ensure_curl_available() then
+        callback(nil, nil, "curl unavailable")
+        return
+    end
+    local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        callback(nil, nil, "curl spawn failed")
+        return
+    end
+    local start_ts = os.time()
+    local poller = nil
+    poller = timer({
+        interval = 0.2,
+        callback = function()
+            local status = proc:poll()
+            if not status then
+                if os.time() - start_ts > 15 then
+                    proc:terminate()
+                    proc:kill()
+                    proc:close()
+                    if poller then poller:close() end
+                    callback(nil, nil, "curl timeout")
+                end
+                return
+            end
+            if poller then poller:close() end
+            local stdout = proc:read_stdout()
+            local stderr = proc:read_stderr()
+            proc:close()
+            callback(status, stdout, stderr)
+        end,
+    })
+end
+
+local function parse_curl_body_code(output)
+    if not output then
+        return nil, nil
+    end
+    local code = output:match("ASTRA_HTTP_CODE:(%d+)%s*$")
+    local body = output:gsub("\nASTRA_HTTP_CODE:%d+%s*$", "")
+    if code then
+        return tonumber(code), body
+    end
+    return nil, output
+end
+
+local function split_headers_body(text)
+    if not text then
+        return "", ""
+    end
+    local marker = "\r\n\r\n"
+    local idx = text:find(marker, 1, true)
+    if not idx then
+        return text, ""
+    end
+    local head = text:sub(1, idx - 1)
+    local body = text:sub(idx + #marker)
+    return head, body
+end
+
+local function parse_status_from_headers(text)
+    if not text then
+        return nil
+    end
+    local code = text:match("HTTP/%d%.%d%s+(%d%d%d)")
+    if code then
+        return tonumber(code)
+    end
+    return nil
+end
+
+local function parse_cookie_from_header_text(text)
+    if not text then
+        return nil
+    end
+    local cookie = text:match("[Ss]et%-[Cc]ookie:%s*([^\r\n]+)")
+    if not cookie then
+        return nil
+    end
+    local token = cookie:match("astra_session=([^;]+)")
+    if token and token ~= "" then
+        return "astra_session=" .. token
+    end
+    return nil
+end
+
+local function remote_http_login(cfg, callback)
+    if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
+        callback(true, nil)
+        return
+    end
+    local payload = json.encode({ username = cfg.login, password = cfg.password })
+    local headers = {
+        "Content-Type: application/json",
+        "Content-Length: " .. tostring(#payload),
+        "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
+        "Connection: close",
+    }
+    http_request({
+        host = cfg.host,
+        port = cfg.port,
+        path = build_server_path(cfg, "/api/v1/auth/login"),
+        method = "POST",
+        headers = headers,
+        content = payload,
+        callback = function(self, response)
+            if not response then
+                return callback(false, nil, "login failed (no response)")
+            end
+            if not response.code or response.code >= 400 then
+                return callback(false, nil, "login failed (" .. tostring(response.code or "unknown") .. ")")
+            end
+            local cookie = parse_cookie_from_headers(response.headers)
+            if not cookie then
+                return callback(false, nil, "login failed (no session cookie)")
+            end
+            callback(true, cookie)
+        end,
+    })
+end
+
+local function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
+    local headers = {
+        "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
+        "Connection: close",
+    }
+    if cookie and cookie ~= "" then
+        table.insert(headers, "Cookie: " .. cookie)
+    end
+    local payload = body or nil
+    if payload then
+        table.insert(headers, "Content-Type: application/json")
+        table.insert(headers, "Content-Length: " .. tostring(#payload))
+    end
+    http_request({
+        host = cfg.host,
+        port = cfg.port,
+        path = build_server_path(cfg, path),
+        method = method or "GET",
+        headers = headers,
+        content = payload,
+        callback = function(self, response)
+            if not response then
+                return callback(false, nil, "no response")
+            end
+            local code = response.code or 0
+            if code >= 400 then
+                return callback(false, nil, "http " .. tostring(code))
+            end
+            local data = decode_json_safe(response.content or "")
+            if not data then
+                return callback(false, nil, "invalid json", code)
+            end
+            callback(true, data, nil, code)
+        end,
+    })
+end
+
+local function remote_https_login(cfg, callback)
+    if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
+        callback(true, nil)
+        return
+    end
+    local payload = json.encode({ username = cfg.login, password = cfg.password })
+    local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, "/api/v1/auth/login"))
+    local args = {
+        "curl",
+        "-sS",
+        "-D",
+        "-",
+        "-o",
+        "-",
+        "-H",
+        "Content-Type: application/json",
+        "-X",
+        "POST",
+        url,
+        "-d",
+        payload,
+    }
+    run_curl(args, function(status, stdout, stderr)
+        if not status then
+            return callback(false, nil, stderr or "login failed")
+        end
+        local head, _ = split_headers_body(stdout or "")
+        local code = parse_status_from_headers(head)
+        if not code or code >= 400 then
+            return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
+        end
+        local cookie = parse_cookie_from_header_text(head)
+        if not cookie then
+            return callback(false, nil, "login failed (no session cookie)")
+        end
+        callback(true, cookie)
+    end)
+end
+
+local function remote_https_fetch_json(cfg, path, cookie, method, body, callback)
+    local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, path))
+    local args = { "curl", "-sS", "-w", "\nASTRA_HTTP_CODE:%{http_code}\n" }
+    if cookie and cookie ~= "" then
+        table.insert(args, "-H")
+        table.insert(args, "Cookie: " .. cookie)
+    end
+    if body then
+        table.insert(args, "-H")
+        table.insert(args, "Content-Type: application/json")
+        table.insert(args, "-X")
+        table.insert(args, method or "POST")
+        table.insert(args, "-d")
+        table.insert(args, body)
+    else
+        if method and method ~= "GET" then
+            table.insert(args, "-X")
+            table.insert(args, method)
+        end
+    end
+    table.insert(args, url)
+    run_curl(args, function(status, stdout, stderr)
+        if not status then
+            return callback(false, nil, stderr or "curl failed")
+        end
+        local code, bodyText = parse_curl_body_code(stdout or "")
+        if not code then
+            return callback(false, nil, "no http code")
+        end
+        if code >= 400 then
+            return callback(false, nil, "http " .. tostring(code), code)
+        end
+        local data = decode_json_safe(bodyText or "")
+        if not data then
+            return callback(false, nil, "invalid json", code)
+        end
+        callback(true, data, nil, code)
+    end)
+end
+
+local function remote_login(cfg, callback)
+    if cfg.scheme == "https" then
+        return remote_https_login(cfg, callback)
+    end
+    return remote_http_login(cfg, callback)
+end
+
+local function remote_fetch_json(cfg, path, cookie, method, body, callback)
+    if cfg.scheme == "https" then
+        return remote_https_fetch_json(cfg, path, cookie, method, body, callback)
+    end
+    return remote_http_fetch_json(cfg, path, cookie, method, body, callback)
+end
+
+local function remote_health_check(cfg, callback)
+    local function do_health(cookie, path)
+        remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok, data, err, code)
+            if ok then
+                return callback(true, "health ok")
+            end
+            if err == "invalid json" and code and code >= 200 and code < 300 then
+                return callback(true, "health ok")
+            end
+            if code == 404 and path == "/api/v1/health/process" then
+                return do_health(cookie, "/api/v1/health")
+            end
+            return callback(false, err or "health check failed")
+        end)
+    end
+    remote_login(cfg, function(ok, cookie, err)
+        if not ok then
+            return callback(false, err or "login failed")
+        end
+        do_health(cookie, "/api/v1/health/process")
+    end)
 end
 
 local function server_test(server, client, request)
@@ -2423,6 +2776,14 @@ local function server_test(server, client, request)
         error_response(server, client, code or 400, message or "failed")
     end
 
+    local base_path = cfg.base_path or ""
+    local function build_path(path)
+        if base_path == "" then
+            return path
+        end
+        return base_path .. path
+    end
+
     local function do_health(cookie)
         local headers = {
             "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
@@ -2434,7 +2795,7 @@ local function server_test(server, client, request)
         http_request({
             host = cfg.host,
             port = cfg.port,
-            path = "/api/v1/health/process",
+            path = build_path("/api/v1/health/process"),
             method = "GET",
             headers = headers,
             callback = function(self, response)
@@ -2444,9 +2805,175 @@ local function server_test(server, client, request)
                 if response.code and response.code >= 200 and response.code < 300 then
                     return respond_ok("health ok")
                 end
+                if response.code == 404 then
+                    http_request({
+                        host = cfg.host,
+                        port = cfg.port,
+                        path = build_path("/api/v1/health"),
+                        method = "GET",
+                        headers = headers,
+                        callback = function(self2, response2)
+                            if not response2 then
+                                return respond_err(502, "no response from server")
+                            end
+                            if response2.code and response2.code >= 200 and response2.code < 300 then
+                                return respond_ok("health ok")
+                            end
+                            return respond_err(400, "health check failed (" .. tostring(response2.code or "unknown") .. ")")
+                        end,
+                    })
+                    return
+                end
                 return respond_err(400, "health check failed (" .. tostring(response.code or "unknown") .. ")")
             end,
         })
+    end
+
+    local function ensure_curl_available()
+        if not process or type(process.spawn) ~= "function" then
+            return false
+        end
+        local ok, proc = pcall(process.spawn, { "curl", "--version" }, { stdout = "pipe", stderr = "pipe" })
+        if not ok or not proc then
+            return false
+        end
+        if proc and proc.close then
+            proc:close()
+        end
+        return true
+    end
+
+    local function run_curl(args, callback)
+        if not ensure_curl_available() then
+            callback(nil, nil, "curl unavailable")
+            return
+        end
+        local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
+        if not ok or not proc then
+            callback(nil, nil, "curl spawn failed")
+            return
+        end
+        local start_ts = os.time()
+        local poller = nil
+        poller = timer({
+            interval = 0.2,
+            callback = function()
+                local status = proc:poll()
+                if not status then
+                    if os.time() - start_ts > 10 then
+                        proc:terminate()
+                        proc:kill()
+                        proc:close()
+                        if poller then poller:close() end
+                        callback(nil, nil, "curl timeout")
+                    end
+                    return
+                end
+                if poller then poller:close() end
+                local stdout = proc:read_stdout()
+                local stderr = proc:read_stderr()
+                proc:close()
+                callback(status, stdout, stderr)
+            end,
+        })
+    end
+
+    local function parse_http_code(text)
+        if not text then
+            return nil
+        end
+        local code = text:match("(%d%d%d)%s*$")
+        if code then
+            return tonumber(code)
+        end
+        return nil
+    end
+
+    local function parse_cookie(text)
+        if not text then
+            return ""
+        end
+        local line = text:match("[Ss]et%-[Cc]ookie:%s*([^\r\n]+)")
+        if not line then
+            return ""
+        end
+        local token = line:match("astra_session=([^;]+)")
+        return token or ""
+    end
+
+    local function do_health_https(cookie)
+        local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_path("/api/v1/health/process"))
+        local args = { "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}" }
+        if cookie and cookie ~= "" then
+            table.insert(args, "-H")
+            table.insert(args, "Cookie: " .. cookie)
+        end
+        table.insert(args, url)
+        run_curl(args, function(status, stdout, stderr)
+            if not status then
+                return respond_err(502, stderr or "curl failed")
+            end
+            local code = parse_http_code(stdout)
+            if code and code >= 200 and code < 300 then
+                return respond_ok("health ok")
+            end
+            if code == 404 then
+                local url2 = string.format("https://%s:%d%s", cfg.host, cfg.port, build_path("/api/v1/health"))
+                run_curl({ "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}", url2 }, function(status2, stdout2, stderr2)
+                    if not status2 then
+                        return respond_err(502, stderr2 or "curl failed")
+                    end
+                    local code2 = parse_http_code(stdout2)
+                    if code2 and code2 >= 200 and code2 < 300 then
+                        return respond_ok("health ok")
+                    end
+                    return respond_err(400, "health check failed (" .. tostring(code2 or "unknown") .. ")")
+                end)
+                return
+            end
+            return respond_err(400, "health check failed (" .. tostring(code or "unknown") .. ")")
+        end)
+    end
+
+    if cfg.scheme == "https" then
+        if cfg.login ~= "" and cfg.password ~= "" then
+            local payload = json.encode({ username = cfg.login, password = cfg.password })
+            local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_path("/api/v1/auth/login"))
+            local args = {
+                "curl",
+                "-sS",
+                "-D",
+                "-",
+                "-o",
+                "/dev/null",
+                "-H",
+                "Content-Type: application/json",
+                "-X",
+                "POST",
+                "-w",
+                "\n%{http_code}\n",
+                url,
+                "-d",
+                payload,
+            }
+            run_curl(args, function(status, stdout, stderr)
+                if not status then
+                    return respond_err(502, stderr or "login failed")
+                end
+                local code = parse_http_code(stdout)
+                if not code or code >= 400 then
+                    return respond_err(400, "login failed (" .. tostring(code or "unknown") .. ")")
+                end
+                local token = parse_cookie(stdout)
+                if token == "" then
+                    return respond_err(400, "login failed (no session cookie)")
+                end
+                do_health_https("astra_session=" .. token)
+            end)
+            return
+        end
+        do_health_https(nil)
+        return
     end
 
     if cfg.login ~= "" and cfg.password ~= "" then
@@ -2460,7 +2987,7 @@ local function server_test(server, client, request)
         http_request({
             host = cfg.host,
             port = cfg.port,
-            path = "/api/v1/auth/login",
+            path = build_path("/api/v1/auth/login"),
             method = "POST",
             headers = headers,
             content = payload,
@@ -2486,6 +3013,200 @@ local function server_test(server, client, request)
     end
 
     do_health(nil)
+end
+
+local function list_server_entries(filter_id)
+    local list = (config and config.get_setting) and config.get_setting("servers") or nil
+    if type(list) ~= "table" then
+        return {}
+    end
+    if not filter_id then
+        return list
+    end
+    local out = {}
+    for _, entry in ipairs(list) do
+        local entry_id = get_server_id(entry)
+        if entry_id and tostring(entry_id) == tostring(filter_id) then
+            table.insert(out, entry)
+            break
+        end
+    end
+    return out
+end
+
+local function server_status_list(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local filter_id = request and request.query and request.query.id or nil
+    local list = list_server_entries(filter_id)
+    if #list == 0 then
+        return json_response(server, client, 200, { items = {} })
+    end
+    local results = {}
+    local pending = #list
+    local responded = false
+    local function finish()
+        if responded then return end
+        responded = true
+        json_response(server, client, 200, { items = results })
+    end
+    local function done(entry, ok, message)
+        local id = get_server_id(entry)
+        if id then
+            table.insert(results, {
+                id = id,
+                ok = ok and true or false,
+                message = message or "",
+                ts = os.time(),
+            })
+        end
+        pending = pending - 1
+        if pending <= 0 then
+            finish()
+        end
+    end
+    for _, entry in ipairs(list) do
+        if entry.enable == false or entry.enabled == false then
+            done(entry, false, "disabled")
+        else
+            local cfg, cfg_err = normalize_server_host(entry)
+            if not cfg then
+                done(entry, false, cfg_err or "invalid server")
+            else
+                remote_health_check(cfg, function(ok, msg)
+                    done(entry, ok, msg or (ok and "ok" or "error"))
+                end)
+            end
+        end
+    end
+end
+
+local function pull_server_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local cfg, cfg_err = normalize_server_host(entry)
+    if not cfg then
+        return error_response(server, client, 400, cfg_err or "invalid server")
+    end
+    local mode = tostring(body.mode or "merge")
+    if mode ~= "merge" then
+        return error_response(server, client, 400, "unsupported mode")
+    end
+    if not config or not config.import_astra then
+        return error_response(server, client, 500, "config import unavailable")
+    end
+
+    remote_login(cfg, function(ok, cookie, login_err)
+        if not ok then
+            return error_response(server, client, 400, login_err or "login failed")
+        end
+        remote_fetch_json(cfg, "/api/v1/streams", cookie, "GET", nil, function(ok2, data, fetch_err)
+            if not ok2 then
+                return error_response(server, client, 400, fetch_err or "fetch failed")
+            end
+            local payload = { make_stream = {} }
+            if type(data) == "table" and data.make_stream then
+                payload.make_stream = data.make_stream
+            elseif type(data) == "table" then
+                for _, row in ipairs(data) do
+                    if type(row) == "table" and type(row.config) == "table" then
+                        local cfgRow = row.config
+                        cfgRow.enable = row.enabled
+                        table.insert(payload.make_stream, cfgRow)
+                    end
+                end
+            end
+            if #payload.make_stream == 0 then
+                return error_response(server, client, 400, "no streams received")
+            end
+            apply_config_change(server, client, request, {
+                comment = "pull streams",
+                apply = function()
+                    return config.import_astra(payload, { mode = "merge", transaction = true })
+                end,
+                success_builder = function(summary, revision_id)
+                    return { status = "ok", revision_id = revision_id, summary = summary }
+                end,
+            })
+        end)
+    end)
+end
+
+local function import_server_config(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local cfg, cfg_err = normalize_server_host(entry)
+    if not cfg then
+        return error_response(server, client, 400, cfg_err or "invalid server")
+    end
+    local mode = tostring(body.mode or "merge")
+    if mode ~= "merge" and mode ~= "replace" then
+        return error_response(server, client, 400, "invalid mode")
+    end
+    if not config or not config.import_astra then
+        return error_response(server, client, 500, "config import unavailable")
+    end
+    local include_users = body.include_users == true
+    local include_settings = body.include_settings == true
+    local include_streams = body.include_streams ~= false
+    local include_adapters = body.include_adapters ~= false
+    local include_softcam = body.include_softcam ~= false
+    local include_splitters = body.include_splitters ~= false
+
+    local query = string.format(
+        "/api/v1/export?include_users=%s&include_settings=%s&include_streams=%s&include_adapters=%s&include_softcam=%s&include_splitters=%s",
+        include_users and "1" or "0",
+        include_settings and "1" or "0",
+        include_streams and "1" or "0",
+        include_adapters and "1" or "0",
+        include_softcam and "1" or "0",
+        include_splitters and "1" or "0"
+    )
+
+    remote_login(cfg, function(ok, cookie, login_err)
+        if not ok then
+            return error_response(server, client, 400, login_err or "login failed")
+        end
+        remote_fetch_json(cfg, query, cookie, "GET", nil, function(ok2, data, fetch_err)
+            if not ok2 then
+                return error_response(server, client, 400, fetch_err or "fetch failed")
+            end
+            if type(data) ~= "table" or next(data) == nil then
+                return error_response(server, client, 400, "empty config")
+            end
+            apply_config_change(server, client, request, {
+                comment = "import remote config",
+                apply = function()
+                    return config.import_astra(data, { mode = mode, transaction = true })
+                end,
+                success_builder = function(summary, revision_id)
+                    return { status = "ok", revision_id = revision_id, summary = summary }
+                end,
+            })
+        end)
+    end)
 end
 
 local function login(server, client, request)
@@ -3327,6 +4048,15 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/backup" and method == "POST" then
         return telegram_backup(server, client)
+    end
+    if path == "/api/v1/servers/status" and method == "GET" then
+        return server_status_list(server, client, request)
+    end
+    if path == "/api/v1/servers/pull-streams" and method == "POST" then
+        return pull_server_streams(server, client, request)
+    end
+    if path == "/api/v1/servers/import" and method == "POST" then
+        return import_server_config(server, client, request)
     end
     if path == "/api/v1/servers/test" and method == "POST" then
         return server_test(server, client, request)

@@ -40,6 +40,12 @@
 
 #include "http.h"
 
+#ifdef HAVE_OPENSSL
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include <openssl/x509v3.h>
+#endif
+
 #define MSG(_msg)                                       \
     "[http_request %s:%d%s] " _msg, mod->config.host    \
                                   , mod->config.port    \
@@ -66,6 +72,13 @@ struct module_data_t
     asc_timer_t *timeout;
 
     bool is_socket_busy;
+    bool is_tls;
+    bool tls_verify;
+
+#ifdef HAVE_OPENSSL
+    SSL_CTX *tls_ctx;
+    SSL *tls;
+#endif
 
     // request
     struct
@@ -171,6 +184,169 @@ static void call_error(module_data_t *mod, const char *msg)
     callback(mod);
 }
 
+static void on_read(void *arg);
+static void on_tls_handshake(void *arg);
+static void on_tls_connected(void *arg);
+
+#ifdef HAVE_OPENSSL
+static void tls_log_error(module_data_t *mod, const char *msg)
+{
+    unsigned long err = ERR_get_error();
+    if(err)
+    {
+        char buf[256];
+        ERR_error_string_n(err, buf, sizeof(buf));
+        asc_log_error(MSG("%s: %s"), msg, buf);
+    }
+    else
+    {
+        asc_log_error(MSG("%s"), msg);
+    }
+}
+
+static bool tls_setup_ctx(module_data_t *mod)
+{
+    if(mod->tls_ctx)
+        return true;
+
+    SSL_library_init();
+    SSL_load_error_strings();
+    OpenSSL_add_all_algorithms();
+
+    mod->tls_ctx = SSL_CTX_new(TLS_client_method());
+    if(!mod->tls_ctx)
+    {
+        tls_log_error(mod, "ssl ctx init failed");
+        return false;
+    }
+
+    if(mod->tls_verify)
+    {
+        SSL_CTX_set_verify(mod->tls_ctx, SSL_VERIFY_PEER, NULL);
+        SSL_CTX_set_default_verify_paths(mod->tls_ctx);
+    }
+    else
+    {
+        SSL_CTX_set_verify(mod->tls_ctx, SSL_VERIFY_NONE, NULL);
+    }
+
+    return true;
+}
+
+static bool tls_setup(module_data_t *mod)
+{
+    if(!tls_setup_ctx(mod))
+        return false;
+
+    if(mod->tls)
+    {
+        SSL_shutdown(mod->tls);
+        SSL_free(mod->tls);
+        mod->tls = NULL;
+    }
+
+    mod->tls = SSL_new(mod->tls_ctx);
+    if(!mod->tls)
+    {
+        tls_log_error(mod, "ssl init failed");
+        return false;
+    }
+
+    SSL_set_fd(mod->tls, asc_socket_fd(mod->sock));
+    SSL_set_connect_state(mod->tls);
+
+    if(mod->config.host)
+        SSL_set_tlsext_host_name(mod->tls, mod->config.host);
+
+    if(mod->tls_verify && mod->config.host)
+    {
+        X509_VERIFY_PARAM *param = SSL_get0_param(mod->tls);
+        X509_VERIFY_PARAM_set1_host(param, mod->config.host, 0);
+    }
+
+    return true;
+}
+
+static bool tls_handshake_step(module_data_t *mod)
+{
+    int ret = SSL_connect(mod->tls);
+    if(ret == 1)
+        return true;
+
+    int err = SSL_get_error(mod->tls, ret);
+    if(err == SSL_ERROR_WANT_READ)
+    {
+        asc_socket_set_on_read(mod->sock, on_tls_handshake);
+        asc_socket_set_on_ready(mod->sock, NULL);
+        return false;
+    }
+    if(err == SSL_ERROR_WANT_WRITE)
+    {
+        asc_socket_set_on_ready(mod->sock, on_tls_handshake);
+        return false;
+    }
+
+    tls_log_error(mod, "ssl handshake failed");
+    return false;
+}
+#endif
+
+static ssize_t socket_send_data(module_data_t *mod, const void *buffer, size_t size, event_callback_t retry_cb)
+{
+#ifdef HAVE_OPENSSL
+    if(mod->is_tls)
+    {
+        int ret = SSL_write(mod->tls, buffer, (int)size);
+        if(ret > 0)
+            return ret;
+
+        int err = SSL_get_error(mod->tls, ret);
+        if(err == SSL_ERROR_WANT_READ)
+        {
+            asc_socket_set_on_read(mod->sock, retry_cb);
+            asc_socket_set_on_ready(mod->sock, NULL);
+            return 0;
+        }
+        if(err == SSL_ERROR_WANT_WRITE)
+        {
+            asc_socket_set_on_ready(mod->sock, retry_cb);
+            return 0;
+        }
+
+        tls_log_error(mod, "ssl write failed");
+        return -1;
+    }
+#endif
+    return asc_socket_send(mod->sock, buffer, size);
+}
+
+static ssize_t socket_recv_data(module_data_t *mod, void *buffer, size_t size)
+{
+#ifdef HAVE_OPENSSL
+    if(mod->is_tls)
+    {
+        int ret = SSL_read(mod->tls, buffer, (int)size);
+        if(ret > 0)
+            return ret;
+
+        int err = SSL_get_error(mod->tls, ret);
+        if(err == SSL_ERROR_WANT_READ)
+            return -2;
+        if(err == SSL_ERROR_WANT_WRITE)
+        {
+            asc_socket_set_on_ready(mod->sock, on_read);
+            return -2;
+        }
+        if(err == SSL_ERROR_ZERO_RETURN)
+            return 0;
+
+        tls_log_error(mod, "ssl read failed");
+        return -1;
+    }
+#endif
+    return asc_socket_recv(mod->sock, buffer, size);
+}
+
 void timeout_callback(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
@@ -213,6 +389,15 @@ static void on_close(void *arg)
         mod->receiver.arg = NULL;
         mod->receiver.callback.ptr = NULL;
     }
+
+#ifdef HAVE_OPENSSL
+    if(mod->tls)
+    {
+        SSL_shutdown(mod->tls);
+        SSL_free(mod->tls);
+        mod->tls = NULL;
+    }
+#endif
 
     asc_socket_close(mod->sock);
     mod->sock = NULL;
@@ -666,19 +851,20 @@ static void on_read(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
 
-    if(mod->timeout)
-    {
-        asc_timer_destroy(mod->timeout);
-        mod->timeout = NULL;
-    }
-
-    ssize_t size = asc_socket_recv(  mod->sock
-                                   , &mod->buffer[mod->buffer_skip]
-                                   , HTTP_BUFFER_SIZE - mod->buffer_skip);
+    ssize_t size = socket_recv_data(  mod
+                                    , &mod->buffer[mod->buffer_skip]
+                                    , HTTP_BUFFER_SIZE - mod->buffer_skip);
+    if(size == -2)
+        return;
     if(size <= 0)
     {
         on_close(mod);
         return;
+    }
+    if(mod->timeout)
+    {
+        asc_timer_destroy(mod->timeout);
+        mod->timeout = NULL;
     }
 
     if(mod->receiver.callback.ptr)
@@ -1035,9 +1221,12 @@ static void on_ready_send_content(void *arg)
     const size_t rem = mod->request.size - mod->request.skip;
     const size_t cap = (rem > HTTP_BUFFER_SIZE) ? HTTP_BUFFER_SIZE : rem;
 
-    const ssize_t send_size = asc_socket_send(  mod->sock
+    const ssize_t send_size = socket_send_data(  mod
                                               , &mod->request.buffer[mod->request.skip]
-                                              , cap);
+                                              , cap
+                                              , on_ready_send_content);
+    if(send_size == 0)
+        return;
     if(send_size == -1)
     {
         asc_log_error(MSG("failed to send content [%s]"), asc_socket_error());
@@ -1056,6 +1245,7 @@ static void on_ready_send_content(void *arg)
         mod->request.status = 3;
 
         asc_socket_set_on_ready(mod->sock, NULL);
+        asc_socket_set_on_read(mod->sock, on_read);
     }
 }
 
@@ -1068,9 +1258,12 @@ static void on_ready_send_request(void *arg)
     const size_t rem = mod->request.size - mod->request.skip;
     const size_t cap = (rem > HTTP_BUFFER_SIZE) ? HTTP_BUFFER_SIZE : rem;
 
-    const ssize_t send_size = asc_socket_send(  mod->sock
+    const ssize_t send_size = socket_send_data(  mod
                                               , &mod->request.buffer[mod->request.skip]
-                                              , cap);
+                                              , cap
+                                              , on_ready_send_request);
+    if(send_size == 0)
+        return;
     if(send_size == -1)
     {
         asc_log_error(MSG("failed to send response [%s]"), asc_socket_error());
@@ -1101,6 +1294,7 @@ static void on_ready_send_request(void *arg)
             mod->request.status = 3;
 
             asc_socket_set_on_ready(mod->sock, NULL);
+            asc_socket_set_on_read(mod->sock, on_read);
         }
     }
 }
@@ -1164,10 +1358,8 @@ static void lua_make_request(module_data_t *mod)
         lua_pop(lua, 1);
 }
 
-static void on_connect(void *arg)
+static void on_connected(module_data_t *mod)
 {
-    module_data_t *mod = (module_data_t *)arg;
-
     mod->request.status = 1;
 
     asc_timer_destroy(mod->timeout);
@@ -1180,6 +1372,47 @@ static void on_connect(void *arg)
 
     asc_socket_set_on_read(mod->sock, on_read);
     asc_socket_set_on_ready(mod->sock, on_ready_send_request);
+}
+
+static void on_tls_connected(void *arg)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    on_connected(mod);
+}
+
+static void on_connect(void *arg)
+{
+    module_data_t *mod = (module_data_t *)arg;
+
+    if(mod->is_tls)
+    {
+#ifdef HAVE_OPENSSL
+        if(!tls_setup(mod))
+        {
+            on_close(mod);
+            return;
+        }
+        if(tls_handshake_step(mod))
+            on_tls_connected(mod);
+#else
+        asc_log_error(MSG("ssl is not supported (compiled without OpenSSL)"));
+        on_close(mod);
+#endif
+        return;
+    }
+
+    on_connected(mod);
+}
+
+static void on_tls_handshake(void *arg)
+{
+#ifdef HAVE_OPENSSL
+    module_data_t *mod = (module_data_t *)arg;
+    if(tls_handshake_step(mod))
+        on_tls_connected(mod);
+#else
+    __uarg(arg);
+#endif
 }
 
 static void on_upstream_ready(void *arg)
@@ -1195,9 +1428,12 @@ static void on_upstream_ready(void *arg)
         if(block_size > mod->sync.buffer_count)
             block_size = mod->sync.buffer_count;
 
-        const ssize_t send_size = asc_socket_send(  mod->sock
+        const ssize_t send_size = socket_send_data(  mod
                                                   , &mod->sync.buffer[mod->sync.buffer_read]
-                                                  , block_size);
+                                                  , block_size
+                                                  , on_upstream_ready);
+        if(send_size == 0)
+            return;
 
         if(send_size > 0)
         {
@@ -1377,6 +1613,21 @@ static void module_init(module_data_t *mod)
     }
     lua_pop(lua, 1);
 
+    mod->is_tls = false;
+    mod->tls_verify = true;
+    module_option_boolean("ssl", &mod->is_tls);
+    module_option_boolean("https", &mod->is_tls);
+    module_option_boolean("tls", &mod->is_tls);
+    module_option_boolean("tls_verify", &mod->tls_verify);
+    module_option_boolean("ssl_verify", &mod->tls_verify);
+#ifndef HAVE_OPENSSL
+    if(mod->is_tls)
+    {
+        asc_log_error(MSG("ssl is not supported (compiled without OpenSSL)"));
+        mod->is_tls = false;
+    }
+#endif
+
     mod->timeout_ms = 10;
     module_option_number("timeout", &mod->timeout_ms);
     mod->timeout_ms *= 1000;
@@ -1398,6 +1649,14 @@ static void module_destroy(module_data_t *mod)
     mod->request.status = -1;
 
     on_close(mod);
+
+#ifdef HAVE_OPENSSL
+    if(mod->tls_ctx)
+    {
+        SSL_CTX_free(mod->tls_ctx);
+        mod->tls_ctx = NULL;
+    }
+#endif
 }
 
 MODULE_STREAM_METHODS()

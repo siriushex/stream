@@ -542,6 +542,25 @@ local function build_failover_inputs(cfg, label)
     local inputs = ensure_list(cfg.input)
     local items = {}
     local invalid = false
+    local function truthy(value)
+        return value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on"
+    end
+    local function https_bridge_enabled(entry)
+        if entry and (truthy(entry.https_bridge) or truthy(entry.bridge) or truthy(entry.ffmpeg)) then
+            return true
+        end
+        if not config or not config.get_setting then
+            return false
+        end
+        local v = config.get_setting("https_bridge_enabled")
+        if v == nil then
+            return false
+        end
+        return truthy(v)
+    end
+    local function https_native_supported()
+        return astra and astra.features and astra.features.ssl
+    end
     for idx, entry in ipairs(inputs) do
         local url = get_input_url(entry)
         if not url or url == "" then
@@ -549,6 +568,9 @@ local function build_failover_inputs(cfg, label)
         end
         local parsed = url and parse_url(url) or nil
         if not parsed or not parsed.format or not init_input_module or not init_input_module[parsed.format] then
+            invalid = true
+        end
+        if parsed and parsed.format == "https" and not (https_native_supported() or https_bridge_enabled(parsed)) then
             invalid = true
         end
         if parsed then
@@ -1136,6 +1158,10 @@ local function send_event(payload, stream_id)
         return
     end
 
+    if parsed.format == "https" and not (astra and astra.features and astra.features.ssl) then
+        return
+    end
+
     local port = parsed.port or (parsed.format == "https" and 443 or 80)
     local path = parsed.path or "/"
     local host_header = parsed.host or ""
@@ -1149,6 +1175,7 @@ local function send_event(payload, stream_id)
         port = port,
         path = path,
         method = "POST",
+        ssl = (parsed.format == "https"),
         headers = {
             "Content-Type: application/json",
             "Content-Length: " .. tostring(#body),

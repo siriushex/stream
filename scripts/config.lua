@@ -198,6 +198,48 @@ local function parse_lnb(value)
     return { a, b, c }
 end
 
+local function normalize_lnb_config(cfg)
+    if type(cfg) ~= "table" then
+        return false
+    end
+    local changed = false
+    if cfg.lnb ~= nil and type(cfg.lnb) == "table" then
+        local a, b, c = cfg.lnb[1], cfg.lnb[2], cfg.lnb[3]
+        if tonumber(a) and tonumber(b) and tonumber(c) then
+            cfg.lnb = string.format("%s:%s:%s", tostring(a), tostring(b), tostring(c))
+            changed = true
+        else
+            cfg.lnb = nil
+            cfg.lof1, cfg.lof2, cfg.slof = nil, nil, nil
+            changed = true
+        end
+    end
+    if cfg.lnb ~= nil then
+        local parts = parse_lnb(cfg.lnb)
+        if not parts then
+            cfg.lnb = nil
+            cfg.lof1, cfg.lof2, cfg.slof = nil, nil, nil
+            return true
+        end
+        if cfg.lof1 ~= parts[1] or cfg.lof2 ~= parts[2] or cfg.slof ~= parts[3] then
+            cfg.lof1, cfg.lof2, cfg.slof = parts[1], parts[2], parts[3]
+            changed = true
+        end
+        return changed
+    end
+    if cfg.lof1 ~= nil or cfg.lof2 ~= nil or cfg.slof ~= nil then
+        local a, b, c = cfg.lof1, cfg.lof2, cfg.slof
+        if tonumber(a) and tonumber(b) and tonumber(c) then
+            cfg.lnb = string.format("%s:%s:%s", tostring(a), tostring(b), tostring(c))
+            changed = true
+        else
+            cfg.lof1, cfg.lof2, cfg.slof = nil, nil, nil
+            changed = true
+        end
+    end
+    return changed
+end
+
 local function sanitize_adapter_config(id, cfg)
     if type(cfg) ~= "table" then
         return cfg, false
@@ -205,16 +247,9 @@ local function sanitize_adapter_config(id, cfg)
     local changed = false
     local adapter_type = tostring(cfg.type or "")
     local is_sat = adapter_type:match("^[sS]") or adapter_type:lower():find("dvb%-s", 1, true)
-    if cfg.lnb ~= nil then
-        local parts = parse_lnb(cfg.lnb)
-        if not parts then
-            log.warning("[config] adapter " .. tostring(id) .. " invalid lnb format, clearing")
-            cfg.lnb = nil
-            cfg.lof1 = nil
-            cfg.lof2 = nil
-            cfg.slof = nil
-            changed = true
-        end
+    if normalize_lnb_config(cfg) then
+        log.warning("[config] adapter " .. tostring(id) .. " normalized lnb")
+        changed = true
     end
     if is_sat and cfg.modulation ~= nil then
         local modulation = tostring(cfg.modulation)
@@ -961,7 +996,15 @@ function config.get_adapter(id)
 end
 
 function config.upsert_adapter(id, enabled, cfg)
-    local payload = json_encode(cfg)
+    local cleaned = cfg
+    if type(cfg) == "table" then
+        local updated
+        cleaned, updated = sanitize_adapter_config(id, cfg)
+        if updated then
+            cfg = cleaned
+        end
+    end
+    local payload = json_encode(cleaned)
     if config.supports_upsert then
         db_exec(config.db,
             "INSERT INTO adapters(id, enabled, config_json) VALUES(" ..

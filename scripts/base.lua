@@ -757,8 +757,34 @@ end
 
 http_user_agent = "Astra"
 http_input_instance_list = {}
+https_direct_instance_list = {}
+
+local function https_native_supported()
+    return astra and astra.features and astra.features.ssl
+end
 https_input_instance_list = {}
 https_bridge_port_map = {}
+
+local function setting_bool(key, fallback)
+    if not config or not config.get_setting then
+        return fallback
+    end
+    local value = config.get_setting(key)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" or value == "no" or value == "off" then
+        return false
+    end
+    return fallback
+end
+
+local function truthy(value)
+    return value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on"
+end
 
 local function https_instance_key(conf)
     if conf.source_url and conf.source_url ~= "" then
@@ -919,6 +945,133 @@ init_input_module.http = function(conf)
     return instance.transmit
 end
 
+local function init_input_module_https_direct(conf)
+    local instance_id = "https://" .. conf.host .. ":" .. conf.port .. conf.path
+    local instance = https_direct_instance_list[instance_id]
+
+    if not instance then
+        instance = { clients = 0 }
+        https_direct_instance_list[instance_id] = instance
+
+        instance.on_error = function(message)
+            log.error("[" .. conf.name .. "] " .. message)
+            if conf.on_error then conf.on_error(message) end
+        end
+
+        if conf.ua and not conf.user_agent then
+            conf.user_agent = conf.ua
+        end
+
+        local http_conf = {
+            host = conf.host,
+            port = conf.port,
+            path = conf.path,
+            stream = true,
+            sync = conf.sync,
+            buffer_size = conf.buffer_size,
+            timeout = conf.timeout,
+            sctp = conf.sctp,
+            ssl = true,
+            tls_verify = conf.tls_verify,
+            headers = {
+                "User-Agent: " .. (conf.user_agent or http_user_agent),
+                "Host: " .. conf.host .. ":" .. conf.port,
+                "Connection: close",
+            },
+            instance_id = instance_id,
+        }
+
+        if conf.login and conf.password then
+            local auth = base64.encode(conf.login .. ":" .. conf.password)
+            table.insert(http_conf.headers, "Authorization: Basic " .. auth)
+        end
+
+        local timer_conf = {
+            interval = 5,
+            callback = function(self)
+                instance.timeout:close()
+                instance.timeout = nil
+
+                if instance.request then instance.request:close() end
+                local ok, req = pcall(http_request, http_conf)
+                if ok and req then
+                    instance.request = req
+                else
+                    instance.request = nil
+                    instance.on_error("HTTPS Error: init failed")
+                    instance.timeout = timer(timer_conf)
+                end
+            end
+        }
+
+        http_conf.callback = function(self, response)
+            if not response then
+                instance.request:close()
+                instance.request = nil
+                instance.timeout = timer(timer_conf)
+
+            elseif response.code == 200 then
+                if instance.timeout then
+                    instance.timeout:close()
+                    instance.timeout = nil
+                end
+
+                instance.transmit:set_upstream(self:stream())
+
+            elseif response.code == 301 or response.code == 302 then
+                if instance.timeout then
+                    instance.timeout:close()
+                    instance.timeout = nil
+                end
+
+                instance.request:close()
+                instance.request = nil
+
+                local o = parse_url(response.headers["location"])
+                if o then
+                    http_conf.host = o.host
+                    http_conf.port = o.port
+                    http_conf.path = o.path
+                    http_conf.ssl = (o.format == "https")
+                    http_conf.headers[2] = "Host: " .. o.host .. ":" .. o.port
+
+                    log.info("[" .. conf.name .. "] Redirect to " .. tostring(o.format) ..
+                        "://" .. o.host .. ":" .. o.port .. o.path)
+                    local ok, req = pcall(http_request, http_conf)
+                    if ok and req then
+                        instance.request = req
+                    else
+                        instance.on_error("HTTPS Error: Redirect failed")
+                        instance.timeout = timer(timer_conf)
+                    end
+                else
+                    instance.on_error("HTTPS Error: Redirect failed")
+                    instance.timeout = timer(timer_conf)
+                end
+
+            else
+                instance.request:close()
+                instance.request = nil
+                instance.on_error("HTTP Error: " .. response.code .. ":" .. response.message)
+                instance.timeout = timer(timer_conf)
+            end
+        end
+
+        instance.transmit = transmit({ instance_id = instance_id })
+        local ok, req = pcall(http_request, http_conf)
+        if ok and req then
+            instance.request = req
+        else
+            https_direct_instance_list[instance_id] = nil
+            return nil, "https request init failed"
+        end
+    end
+
+    instance.clients = instance.clients + 1
+    conf.__https_direct_instance_id = instance_id
+    return instance.transmit
+end
+
 local function start_https_bridge(conf)
     if not process or type(process.spawn) ~= "function" then
         log.error("[" .. conf.name .. "] process module not available")
@@ -984,7 +1137,7 @@ local function start_https_bridge(conf)
     return true
 end
 
-init_input_module.https = function(conf)
+local function init_input_module_https_bridge(conf)
     local instance_id = https_instance_key(conf)
     local instance = https_input_instance_list[instance_id]
     if not instance then
@@ -1002,7 +1155,54 @@ init_input_module.https = function(conf)
     return init_input_module.udp(conf.__bridge_udp_conf)
 end
 
+init_input_module.https = function(conf)
+    local bridge_enabled = truthy(conf.https_bridge) or truthy(conf.bridge) or truthy(conf.ffmpeg)
+    if not bridge_enabled then
+        bridge_enabled = setting_bool("https_bridge_enabled", false)
+    end
+
+    if https_native_supported() then
+        local transmit, err = init_input_module_https_direct(conf)
+        if transmit then
+            return transmit
+        end
+        if not bridge_enabled then
+            log.error("[" .. conf.name .. "] https input failed: " .. tostring(err or "native https unavailable"))
+            return nil
+        end
+        log.warning("[" .. conf.name .. "] https native failed, falling back to ffmpeg bridge")
+    end
+
+    if not bridge_enabled then
+        log.error("[" .. conf.name .. "] https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)")
+        return nil
+    end
+
+    return init_input_module_https_bridge(conf)
+end
+
 kill_input_module.https = function(module, conf)
+    if conf.__https_direct_instance_id then
+        local instance = https_direct_instance_list[conf.__https_direct_instance_id]
+        if not instance then
+            return
+        end
+        instance.clients = instance.clients - 1
+        if instance.clients <= 0 then
+            if instance.timeout then
+                instance.timeout:close()
+                instance.timeout = nil
+            end
+            if instance.request then
+                instance.request:close()
+                instance.request = nil
+            end
+            instance.transmit = nil
+            https_direct_instance_list[conf.__https_direct_instance_id] = nil
+        end
+        return
+    end
+
     local instance_id = https_instance_key(conf)
     local instance = https_input_instance_list[instance_id]
     if not instance then
@@ -1059,7 +1259,8 @@ end
 local function hls_build_base(conf)
     local host = conf.host
     if conf.port then host = host .. ":" .. conf.port end
-    return "http://" .. host
+    local scheme = (conf.format == "https") and "https://" or "http://"
+    return scheme .. host
 end
 
 local function hls_resolve_url(base_url, base_dir, ref)
@@ -1067,7 +1268,8 @@ local function hls_resolve_url(base_url, base_dir, ref)
         return ref
     end
     if ref:sub(1, 2) == "//" then
-        return "http:" .. ref
+        local scheme = base_url:match("^(https?):") or "http"
+        return scheme .. ":" .. ref
     end
     if ref:sub(1, 1) == "/" then
         return base_url .. ref
@@ -1160,8 +1362,12 @@ local function hls_start_next_segment(instance)
     instance.active_seq = item.seq
 
     local seg_conf = parse_url(item.uri)
-    if not seg_conf or seg_conf.format ~= "http" then
+    if not seg_conf or (seg_conf.format ~= "http" and seg_conf.format ~= "https") then
         log.error("[hls] unsupported segment url: " .. item.uri)
+        return
+    end
+    if seg_conf.format == "https" and not https_native_supported() then
+        log.error("[hls] https is not supported (OpenSSL not available)")
         return
     end
 
@@ -1181,6 +1387,7 @@ local function hls_start_next_segment(instance)
         port = seg_conf.port,
         path = seg_conf.path,
         stream = true,
+        ssl = (seg_conf.format == "https"),
         headers = headers,
         callback = function(self, response)
             if not response then
@@ -1240,8 +1447,12 @@ local function hls_handle_playlist(instance, content)
 
         local variant = variants[1]
         local vconf = parse_url(variant.uri)
-        if not vconf or vconf.format ~= "http" then
+        if not vconf or (vconf.format ~= "http" and vconf.format ~= "https") then
             log.error("[hls] unsupported variant url")
+            return
+        end
+        if vconf.format == "https" and not https_native_supported() then
+            log.error("[hls] https is not supported (OpenSSL not available)")
             return
         end
 
@@ -1273,6 +1484,10 @@ local function hls_start(instance)
         end
 
         local conf = instance.playlist_conf
+        if conf.format == "https" and not https_native_supported() then
+            log.error("[hls] https is not supported (OpenSSL not available)")
+            return
+        end
         local headers = {
             "User-Agent: " .. (instance.config.user_agent or http_user_agent),
             "Host: " .. conf.host .. ":" .. conf.port,
@@ -1289,6 +1504,7 @@ local function hls_start(instance)
             port = conf.port,
             path = conf.path,
             headers = headers,
+            ssl = (conf.format == "https"),
             callback = function(self, response)
                 if response and response.code == 200 and response.content then
                     hls_handle_playlist(instance, response.content)
@@ -1329,6 +1545,10 @@ local function hls_stop(instance)
 end
 
 init_input_module.hls = function(conf)
+    if conf.format == "https" and not https_native_supported() then
+        log.error("[hls] https is not supported (OpenSSL not available)")
+        return nil
+    end
     local instance_id = conf.host .. ":" .. conf.port .. conf.path
     local instance = hls_input_instance_list[instance_id]
 
@@ -1348,7 +1568,7 @@ init_input_module.hls = function(conf)
                 path = conf.path,
                 login = conf.login,
                 password = conf.password,
-                format = "http",
+                format = conf.format == "https" and "https" or "http",
             },
         }
 

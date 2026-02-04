@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260204f</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260204g</div>
       </div>
     </header>
 
@@ -133,8 +133,10 @@
                 <label class="field adapter-picker">
                   <span>Detected DVB</span>
                   <div class="adapter-detected-row">
-                    <select id="adapter-detected"></select>
-                    <span class="adapter-detected-badge" id="adapter-detected-badge"></span>
+                    <div class="adapter-detected-select">
+                      <select id="adapter-detected"></select>
+                      <span class="adapter-detected-badge" id="adapter-detected-badge"></span>
+                    </div>
                     <button class="btn ghost" type="button" id="adapter-detected-refresh">Refresh DVB list</button>
                   </div>
                   <div class="form-hint" id="adapter-detected-hint">
@@ -809,8 +811,8 @@
       <section class="view" id="view-settings">
         <div class="settings-shell">
           <div class="settings-section active" data-section="general">
-            <div class="form-stack settings-general">
-              <div class="settings-group">
+            <div class="form-stack settings-general compact-grid">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Features</div>
@@ -839,7 +841,7 @@
                 </div>
               </div>
 
-              <div class="settings-group">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Monitoring &amp; Logs</div>
@@ -898,7 +900,7 @@
                 </div>
               </div>
 
-              <div class="settings-group">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Process Watchdog</div>
@@ -940,7 +942,7 @@
                 </div>
               </div>
 
-              <div class="settings-group">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Telegram Alerts</div>
@@ -1024,7 +1026,7 @@
                 </div>
               </div>
 
-              <div class="settings-group">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">InfluxDB export</div>
@@ -1070,7 +1072,7 @@
                 </div>
               </div>
 
-              <div class="settings-group">
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Transcode tools</div>
@@ -1097,6 +1099,22 @@
               </div>
 
               <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
+                    <div class="settings-group-title">HTTP inputs</div>
+                    <div class="settings-group-sub">HTTPS handling</div>
+                  </div>
+                </div>
+                <div class="settings-group-body">
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-https-bridge-enabled" />
+                    <span>Enable HTTPS inputs via FFmpeg bridge</span>
+                  </label>
+                  <div class="form-hint">Disabled by default. When off, HTTPS inputs are rejected unless overridden per-input.</div>
+                </div>
+              </div>
+
+              <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
                     <div class="settings-group-title">Security &amp; Sessions</div>
@@ -1518,6 +1536,7 @@
                 <div class="table-row header">
                   <div>ID</div>
                   <div>Name</div>
+                  <div>Type</div>
                   <div>Address</div>
                   <div>Login</div>
                   <div>Status</div>
@@ -3284,6 +3303,10 @@
         <label class="field">
           <span>Name</span>
           <input type="text" id="server-name" placeholder="Main server" />
+        </label>
+        <label class="field">
+          <span>Type</span>
+          <input type="text" id="server-type" placeholder="streamer" />
         </label>
         <label class="field">
           <span>Address</span>

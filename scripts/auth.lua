@@ -425,8 +425,11 @@ local function build_backend_request(url, params, method, body)
     if not parsed then
         return nil, "invalid backend url"
     end
-    if parsed.format ~= "http" then
+    if parsed.format ~= "http" and parsed.format ~= "https" then
         return nil, "unsupported backend scheme"
+    end
+    if parsed.format == "https" and not (astra and astra.features and astra.features.ssl) then
+        return nil, "https not supported (OpenSSL not available)"
     end
     local base_path, query = split_path_query(parsed.path or "/")
     local existing = parse_query_string(query)
@@ -452,6 +455,7 @@ local function build_backend_request(url, params, method, body)
         port = parsed.port,
         path = path,
         method = method,
+        ssl = (parsed.format == "https"),
         headers = headers,
         content = body,
         timeout = setting_number("auth_timeout_ms", 3000),

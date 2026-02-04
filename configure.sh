@@ -352,6 +352,52 @@ fi
 
 #
 
+# OpenSSL (optional, for native HTTPS)
+OPENSSL=0
+
+openssl_test_c()
+{
+    cat <<EOF
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+int main(void) {
+    SSL_library_init();
+    SSL_load_error_strings();
+    const SSL_METHOD *m = TLS_client_method();
+    SSL_CTX *ctx = SSL_CTX_new(m);
+    if(!ctx) return 1;
+    SSL_CTX_free(ctx);
+    return 0;
+}
+EOF
+}
+
+check_openssl()
+{
+    openssl_test_c | $APP_C -Werror $1 -c -o .link-test.o -x c - >/dev/null 2>&1
+    if [ $? -eq 0 ] ; then
+        $APP_C .link-test.o -o .link-test $2 >/dev/null 2>&1
+        if [ $? -eq 0 ] ; then
+            rm -f .link-test.o .link-test
+            return 0
+        else
+            rm -f .link-test.o
+            return 1
+        fi
+    else
+        return 1
+    fi
+}
+
+if check_openssl "$CFLAGS" "$LDFLAGS -lssl -lcrypto" ; then
+    echo "OpenSSL detected (auto)" >&2
+    OPENSSL=1
+    CFLAGS="$CFLAGS -DHAVE_OPENSSL=1"
+    LDFLAGS="$LDFLAGS -lssl -lcrypto"
+fi
+
+#
+
 clock_gettime_test_c()
 {
     cat <<EOF

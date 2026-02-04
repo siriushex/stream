@@ -745,6 +745,14 @@ local function send_failover_event(channel_data, from_index, to_index, reason)
         return
     end
 
+    if parsed.format == "https" and not (astra and astra.features and astra.features.ssl) then
+        if channel_data.failover and not channel_data.failover.event_warned then
+            log.warning("[stream " .. get_stream_label(channel_data) .. "] https not supported for event_request")
+            channel_data.failover.event_warned = true
+        end
+        return
+    end
+
     local port = parsed.port or (parsed.format == "https" and 443 or 80)
     local path = parsed.path or "/"
     local host_header = parsed.host or ""
@@ -767,6 +775,7 @@ local function send_failover_event(channel_data, from_index, to_index, reason)
         port = port,
         path = path,
         method = "POST",
+        ssl = (parsed.format == "https"),
         headers = {
             "Content-Type: application/json",
             "Content-Length: " .. tostring(#body),
@@ -1716,6 +1725,20 @@ local function normalize_stream_list(value)
     return nil
 end
 
+local function https_bridge_enabled(entry)
+    local function truthy(v)
+        return v == true or v == 1 or v == "1" or v == "true" or v == "yes" or v == "on"
+    end
+    if entry and (truthy(entry.https_bridge) or truthy(entry.bridge) or truthy(entry.ffmpeg)) then
+        return true
+    end
+    return setting_bool("https_bridge_enabled", false)
+end
+
+local function https_native_supported()
+    return astra and astra.features and astra.features.ssl
+end
+
 local function resolve_io_config(entry, is_input)
     if type(entry) == "string" then
         return parse_url(entry)
@@ -1783,6 +1806,9 @@ function validate_stream_config(cfg, opts)
         local resolved = resolve_io_config(entry, true)
         if not resolved or not resolved.format or not init_input_module[resolved.format] then
             return nil, "invalid input #" .. idx .. " format"
+        end
+        if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
+            return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
         end
     end
 

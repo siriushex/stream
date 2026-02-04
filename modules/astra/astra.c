@@ -81,6 +81,15 @@ LUA_API int luaopen_astra(lua_State *L)
     lua_pushstring(lua, ASTRA_VERSION_STR);
     lua_setfield(lua, -2, "version");
 
+    lua_newtable(lua);
+#ifdef HAVE_OPENSSL
+    lua_pushboolean(lua, 1);
+#else
+    lua_pushboolean(lua, 0);
+#endif
+    lua_setfield(lua, -2, "ssl");
+    lua_setfield(lua, -2, "features");
+
     lua_setglobal(L, "astra");
 
     return 1;

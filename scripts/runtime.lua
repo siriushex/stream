@@ -253,6 +253,7 @@ local function influx_send_snapshot()
         host = cfg.host,
         port = cfg.port,
         path = cfg.path,
+        ssl = cfg.ssl,
         callback = function(self, response)
             influx.request = nil
             if not response then
@@ -305,8 +306,8 @@ function runtime.configure_influx()
         influx.config = { enabled = false }
         return
     end
-    if parsed.format == "https" then
-        log.error("[influx] https not supported")
+    if parsed.format == "https" and not (astra and astra.features and astra.features.ssl) then
+        log.error("[influx] https is not supported (OpenSSL not available)")
         influx.config = { enabled = false }
         return
     end
@@ -331,7 +332,8 @@ function runtime.configure_influx()
     influx.config = {
         enabled = true,
         host = parsed.host,
-        port = parsed.port or 80,
+        port = parsed.port or (parsed.format == "https" and 443 or 80),
+        ssl = (parsed.format == "https"),
         path = write_path,
         token = setting_string("influx_token", ""),
         instance = instance,

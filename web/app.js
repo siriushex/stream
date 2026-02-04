@@ -181,6 +181,8 @@ const state = {
   servers: [],
   serverEditing: null,
   serverIdAuto: false,
+  serverStatus: {},
+  serverStatusTimer: null,
   softcams: [],
   softcamEditing: null,
   softcamIdAuto: false,
@@ -202,6 +204,7 @@ const POLL_ACCESS_MS = 8000;
 const POLL_LOG_MS = 8000;
 const POLL_SPLITTER_MS = 10000;
 const POLL_BUFFER_MS = 10000;
+const POLL_SERVER_STATUS_MS = 60000;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -428,6 +431,7 @@ const elements = {
   serverEnabled: $('#server-enabled'),
   serverId: $('#server-id'),
   serverName: $('#server-name'),
+  serverType: $('#server-type'),
   serverHost: $('#server-host'),
   serverPort: $('#server-port'),
   serverLogin: $('#server-login'),
@@ -477,6 +481,7 @@ const elements = {
   settingsInfluxInterval: $('#settings-influx-interval'),
   settingsFfmpegPath: $('#settings-ffmpeg-path'),
   settingsFfprobePath: $('#settings-ffprobe-path'),
+  settingsHttpsBridgeEnabled: $('#settings-https-bridge-enabled'),
   settingsHttpCsrf: $('#settings-http-csrf'),
   settingsAuthSessionTtl: $('#settings-auth-session-ttl'),
   settingsLoginRateLimit: $('#settings-login-rate-limit'),
@@ -974,6 +979,7 @@ function setView(name) {
   });
   if (name !== 'settings') {
     closeSettingsMenu();
+    stopServerStatusPolling();
   }
   if (name === 'adapters') {
     loadDvbAdapters().catch(() => {});
@@ -1021,6 +1027,11 @@ function setSettingsSection(section) {
   }
   if (section === 'license') {
     loadLicense();
+  }
+  if (section === 'servers') {
+    startServerStatusPolling();
+  } else {
+    stopServerStatusPolling();
   }
 }
 
@@ -1145,7 +1156,7 @@ function normalizeServers(value) {
       const host = entry.trim();
       if (!host) return;
       const id = slugifyServerId(host);
-      out.push({ id, name: host, host, enabled: true });
+      out.push({ id, name: host, host, enabled: true, type: 'streamer' });
       return;
     }
     const idRaw = String(entry.id || '').trim();
@@ -1155,15 +1166,22 @@ function normalizeServers(value) {
     const id = idRaw || slugifyServerId(nameRaw || hostRaw);
     const name = nameRaw || id;
     const port = entry.port !== undefined ? Number(entry.port) : undefined;
-    const enabled = entry.enabled !== false;
+    const enabled = entry.enabled !== undefined ? entry.enabled !== false : entry.enable !== false;
+    const login = entry.login || entry.user || '';
+    const password = entry.password || entry.pass || '';
+    const type = entry.type || '';
     out.push({
       id,
       name,
       host: hostRaw,
       port: Number.isFinite(port) ? port : undefined,
-      login: entry.login || '',
-      password: entry.password || '',
+      login,
+      password,
       enabled,
+      type,
+      enable: entry.enable,
+      user: entry.user,
+      pass: entry.pass,
     });
   });
   return out;
@@ -1526,6 +1544,7 @@ function renderServers() {
     <div class="table-row header">
       <div>ID</div>
       <div>Name</div>
+      <div>Type</div>
       <div>Address</div>
       <div>Login</div>
       <div>Status</div>
@@ -1553,10 +1572,20 @@ function renderServers() {
     row.className = 'table-row';
     const idCell = createEl('div', '', server.id || '');
     const nameCell = createEl('div', '', server.name || '');
+    const typeCell = createEl('div', '', server.type || '-');
     const address = server.host ? `${server.host}${server.port ? `:${server.port}` : ''}` : '';
     const hostCell = createEl('div', '', address || '-');
     const loginCell = createEl('div', '', server.login || '-');
-    const statusCell = createEl('div', '', server.enabled ? 'Enabled' : 'Disabled');
+    const statusCell = document.createElement('div');
+    const statusInfo = getServerStatusInfo(server);
+    const statusBadge = document.createElement('div');
+    statusBadge.className = `stream-status-badge ${statusInfo.className}`;
+    statusBadge.title = statusInfo.title || '';
+    const statusDot = createEl('span', 'stream-status-dot');
+    const statusText = createEl('span', '', statusInfo.label);
+    statusBadge.appendChild(statusDot);
+    statusBadge.appendChild(statusText);
+    statusCell.appendChild(statusBadge);
     const actionCell = document.createElement('div');
 
     const editBtn = createEl('button', 'btn ghost', 'Edit');
@@ -1574,6 +1603,16 @@ function renderServers() {
     testBtn.dataset.action = 'server-test';
     testBtn.dataset.id = server.id || '';
 
+    const pullBtn = createEl('button', 'btn ghost', 'Pull streams');
+    pullBtn.type = 'button';
+    pullBtn.dataset.action = 'server-pull';
+    pullBtn.dataset.id = server.id || '';
+
+    const importBtn = createEl('button', 'btn ghost', 'Import config');
+    importBtn.type = 'button';
+    importBtn.dataset.action = 'server-import';
+    importBtn.dataset.id = server.id || '';
+
     const deleteBtn = createEl('button', 'btn ghost', 'Delete');
     deleteBtn.type = 'button';
     deleteBtn.dataset.action = 'server-delete';
@@ -1582,10 +1621,13 @@ function renderServers() {
     actionCell.appendChild(editBtn);
     actionCell.appendChild(openBtn);
     actionCell.appendChild(testBtn);
+    actionCell.appendChild(pullBtn);
+    actionCell.appendChild(importBtn);
     actionCell.appendChild(deleteBtn);
 
     row.appendChild(idCell);
     row.appendChild(nameCell);
+    row.appendChild(typeCell);
     row.appendChild(hostCell);
     row.appendChild(loginCell);
     row.appendChild(statusCell);
@@ -1603,12 +1645,15 @@ function openServerModal(server) {
   if (elements.serverEnabled) elements.serverEnabled.checked = server ? server.enabled !== false : true;
   if (elements.serverId) elements.serverId.value = server ? server.id || '' : '';
   if (elements.serverName) elements.serverName.value = server ? server.name || '' : '';
+  if (elements.serverType) elements.serverType.value = server ? server.type || '' : '';
   if (elements.serverHost) elements.serverHost.value = server ? server.host || '' : '';
   if (elements.serverPort) elements.serverPort.value = server && server.port ? String(server.port) : '';
-  if (elements.serverLogin) elements.serverLogin.value = server ? server.login || '' : '';
+  if (elements.serverLogin) elements.serverLogin.value = server ? (server.login || server.user || '') : '';
   if (elements.serverPassword) elements.serverPassword.value = '';
   if (elements.serverPasswordHint) {
-    elements.serverPasswordHint.textContent = server && server.password ? 'Password set (stored)' : 'Password not set';
+    elements.serverPasswordHint.textContent = server && (server.password || server.pass)
+      ? 'Password set (stored)'
+      : 'Password not set';
   }
   if (elements.serverError) elements.serverError.textContent = '';
   setOverlay(elements.serverOverlay, true);
@@ -1618,6 +1663,79 @@ function closeServerModal() {
   state.serverEditing = null;
   state.serverIdAuto = false;
   setOverlay(elements.serverOverlay, false);
+}
+
+function getServerStatusInfo(server) {
+  if (!server || server.enabled === false) {
+    return { label: 'Disabled', className: 'disabled', title: '' };
+  }
+  const status = state.serverStatus && server.id ? state.serverStatus[server.id] : null;
+  if (!status) {
+    return { label: 'Pending', className: 'pending', title: '' };
+  }
+  if (status.ok) {
+    return { label: 'OK', className: 'ok', title: status.message || '' };
+  }
+  return { label: 'Down', className: 'warn', title: status.message || '' };
+}
+
+async function loadServerStatus() {
+  try {
+    const data = await apiJson('/api/v1/servers/status');
+    const items = Array.isArray(data) ? data : (data.items || []);
+    const next = {};
+    items.forEach((item) => {
+      if (item && item.id) {
+        next[item.id] = item;
+      }
+    });
+    state.serverStatus = next;
+    renderServers();
+  } catch (err) {
+  }
+}
+
+function startServerStatusPolling() {
+  if (state.serverStatusTimer) {
+    clearInterval(state.serverStatusTimer);
+  }
+  state.serverStatusTimer = setInterval(() => loadServerStatus(), POLL_SERVER_STATUS_MS);
+  loadServerStatus();
+}
+
+function stopServerStatusPolling() {
+  if (state.serverStatusTimer) {
+    clearInterval(state.serverStatusTimer);
+    state.serverStatusTimer = null;
+  }
+}
+
+async function pullServerStreams(id) {
+  if (!id) return;
+  const confirmed = window.confirm('Pull streams from this server? Streams will be merged by ID.');
+  if (!confirmed) return;
+  setStatus('Pulling streams...', 'sticky');
+  await apiJson('/api/v1/servers/pull-streams', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+  setStatus('Streams pulled');
+  await refreshAll();
+  setView('streams');
+}
+
+async function importServerConfig(id) {
+  if (!id) return;
+  const confirmed = window.confirm('Import configuration from this server? This will merge streams/adapters/softcam (users/settings are skipped).');
+  if (!confirmed) return;
+  setStatus('Importing config...', 'sticky');
+  await apiJson('/api/v1/servers/import', {
+    method: 'POST',
+    body: JSON.stringify({ id, mode: 'merge' }),
+  });
+  setStatus('Config imported');
+  await refreshAll();
+  setView('streams');
 }
 
 function syncServerIdFromName() {
@@ -1648,6 +1766,7 @@ function handleServerNameInput() {
 async function saveServer() {
   const id = elements.serverId ? elements.serverId.value.trim() : '';
   const name = elements.serverName ? elements.serverName.value.trim() : '';
+  const type = elements.serverType ? elements.serverType.value.trim() : '';
   const host = elements.serverHost ? elements.serverHost.value.trim() : '';
   const port = toNumber(elements.serverPort && elements.serverPort.value);
   const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
@@ -1667,32 +1786,66 @@ async function saveServer() {
     if (currentIdx !== -1) {
       const existing = servers[currentIdx];
       servers[currentIdx] = {
+        ...existing,
         id,
         name,
         host,
         port,
         login,
-        password: password || existing.password || '',
+        user: login || existing.user || '',
+        password: password || existing.password || existing.pass || '',
+        pass: password || existing.pass || existing.password || '',
         enabled,
+        enable: enabled,
+        type: type || existing.type || '',
       };
     } else {
-      servers.push({ id, name, host, port, login, password, enabled });
+      servers.push({
+        id,
+        name,
+        host,
+        port,
+        login,
+        user: login,
+        password,
+        pass: password,
+        enabled,
+        enable: enabled,
+        type: type || 'streamer',
+      });
     }
   } else if (!state.serverEditing) {
     if (existingIdx !== -1) {
       throw new Error(`Server id "${id}" already exists`);
     }
-    servers.push({ id, name, host, port, login, password, enabled });
-  } else {
-    const existing = servers[existingIdx];
-    servers[existingIdx] = {
+    servers.push({
       id,
       name,
       host,
       port,
       login,
-      password: password || (existing && existing.password) || '',
+      user: login,
+      password,
+      pass: password,
       enabled,
+      enable: enabled,
+      type: type || 'streamer',
+    });
+  } else {
+    const existing = servers[existingIdx];
+    servers[existingIdx] = {
+      ...existing,
+      id,
+      name,
+      host,
+      port,
+      login,
+      user: login || existing.user || '',
+      password: password || (existing && (existing.password || existing.pass)) || '',
+      pass: password || (existing && (existing.pass || existing.password)) || '',
+      enabled,
+      enable: enabled,
+      type: type || existing.type || '',
     };
   }
 
@@ -5626,10 +5779,11 @@ async function createStreamsFromScan(adapterId) {
   } else {
     message = `Created ${results.length} stream(s)${skippedLabel}`;
   }
-  setStatus(message);
   if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
   closeAdapterScanModal();
-  setView('streams');
+  setView('dashboard');
+  setStatus(message, 'sticky');
+  setTimeout(() => setStatus(''), 6000);
 }
 
 const FE_HAS_SIGNAL = 1;
@@ -6043,6 +6197,7 @@ function startDvbPolling() {
     clearInterval(state.dvbTimer);
   }
   state.dvbTimer = setInterval(() => {
+    if (state.currentView !== 'adapters' || document.hidden) return;
     loadDvbAdapters().catch(() => {});
   }, 3600 * 1000);
 }
@@ -9653,6 +9808,7 @@ function pauseAllPolling() {
   stopSessionPolling();
   stopLogPolling();
   stopAccessLogPolling();
+  stopServerStatusPolling();
 }
 
 function resumeAllPolling() {
@@ -10085,6 +10241,9 @@ function applySettingsToUI() {
   if (elements.settingsFfprobePath) {
     elements.settingsFfprobePath.value = getSettingString('ffprobe_path', '');
   }
+  if (elements.settingsHttpsBridgeEnabled) {
+    elements.settingsHttpsBridgeEnabled.checked = getSettingBool('https_bridge_enabled', false);
+  }
   if (elements.settingsHttpCsrf) {
     elements.settingsHttpCsrf.checked = getSettingBool('http_csrf_enabled', true);
   }
@@ -10513,6 +10672,9 @@ function collectGeneralSettings() {
   if (influxInterval !== undefined) payload.influx_interval_sec = influxInterval;
   if (elements.settingsFfmpegPath) payload.ffmpeg_path = elements.settingsFfmpegPath.value.trim();
   if (elements.settingsFfprobePath) payload.ffprobe_path = elements.settingsFfprobePath.value.trim();
+  if (elements.settingsHttpsBridgeEnabled) {
+    payload.https_bridge_enabled = elements.settingsHttpsBridgeEnabled.checked;
+  }
   if (influxEnabled) {
     const influxUrl = elements.settingsInfluxUrl ? elements.settingsInfluxUrl.value.trim() : '';
     if (!influxUrl || !/^https?:\/\//i.test(influxUrl)) {
@@ -11775,6 +11937,12 @@ function bindEvents() {
       }
       if (action === 'server-test') {
         testServer(id).catch((err) => setStatus(err.message || 'Server test failed'));
+      }
+      if (action === 'server-pull') {
+        pullServerStreams(id).catch((err) => setStatus(err.message || 'Pull streams failed'));
+      }
+      if (action === 'server-import') {
+        importServerConfig(id).catch((err) => setStatus(err.message || 'Import failed'));
       }
       if (action === 'server-delete') {
         const confirmed = window.confirm(`Delete server ${id}?`);
