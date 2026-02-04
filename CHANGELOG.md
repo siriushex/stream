@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added CI job to build ASTRAL bundle and run bundle smoke.
+  - Consolidated startup log to include edition + ffmpeg/ffprobe versions.
+- Tests:
+  - Not run (CI change).
+### 2026-02-04
+- Changes:
   - Adjusted bundle build script to avoid bash readarray dependency.
 - Tests:
   - Not run (script change).
