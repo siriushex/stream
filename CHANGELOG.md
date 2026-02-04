@@ -14,6 +14,7 @@
 - Changes:
   - Added Softcam settings UI (list + modal) backed by settings.
   - Added CAS/License section notes that they are not wired yet.
+  - Updated `SKILL.md` to reflect the new UI state.
 - Tests:
   - Not run (UI change).
 ### 2026-02-04

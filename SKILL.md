@@ -26,6 +26,8 @@
 - Telegram alerts (UI + notifier + test endpoint + masking).
 - Groups settings + stream group field (playlist group-title).
 - Servers settings + test endpoint.
+- Softcam settings UI (list + modal) backed by settings.
+- CAS/License sections marked as not implemented (clarity only).
 
 ## Invariants (не нарушать)
 - API `/api/v1/*` не ломаем. Новые эндпоинты — только add‑only.
