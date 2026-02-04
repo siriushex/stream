@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Added config history error details modal and copy action.
+- Tests:
+  - Not run (UI change).
+### 2026-02-04
+- Changes:
   - Added log pause/resume control in UI.
 - Tests:
   - Not run (UI change).

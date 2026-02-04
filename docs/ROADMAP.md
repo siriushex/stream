@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | Sessions/Logs UX polish (PARTIAL) | Faster ops visibility | Added log pause/resume; more UX polish pending | Medium | web/ |
 | HLS failover resilience | No broken segments during input switch | HLS smoke shows continuous playback | High | modules/hls, scripts/stream.lua |
-| Config history UX | Safer reloads | Revision list with meaningful error text | Medium | scripts/api.lua, web/ |
+| Config history UX (PARTIAL) | Safer reloads | Added error detail modal + copy; more sorting/paging TBD | Medium | scripts/api.lua, web/ |
 | Monitoring exports | Operator integration | Prometheus/Influx or webhook parity documented | Medium | scripts/runtime.lua |
 
 ## 3-6 Months (Differentiators)
