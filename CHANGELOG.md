@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Hid CAS/License placeholder sections in UI.
+  - Added best-effort runtime mapping for MPTS config fields.
+  - Added MPTS smoke fixture/script and testing doc note.
+- Tests:
+  - Not run (UI + runtime change).
+### 2026-02-04
+- Changes:
   - Added CI job to build ASTRAL bundle and run bundle smoke.
   - Consolidated startup log to include edition + ffmpeg/ffprobe versions.
 - Tests:

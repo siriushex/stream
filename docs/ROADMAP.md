@@ -4,7 +4,8 @@
 | Task | Goal | Acceptance Criteria | Risk | Code Areas |
 | --- | --- | --- | --- | --- |
 | Docs + CI baseline | Single source of truth and automated checks | `docs/*` present, CI green on push | Low | docs/, .github/workflows |
-| Settings UI parity audit | Remove placeholder UI or wire it to settings/runtime | Softcam/CAS/License reflect real behavior or hidden | Medium | web/, scripts/api.lua |
+| Settings UI parity audit (DONE) | Remove placeholder UI or wire it to settings/runtime | Softcam wired; CAS/License hidden | Low | web/, scripts/api.lua |
+| MPTS runtime apply (DONE) | Apply MPTS config to runtime where supported | MPTS config mapped to channel options with warnings for unsupported fields | Medium | scripts/stream.lua |
 | Backup default deviation documented | Avoid surprise behavior | `docs/PARITY.md` lists deviation | Low | docs/ |
 | Smoke coverage refresh | Ensure basic runtime checks remain reliable | `contrib/ci/smoke.sh` updated if needed | Low | contrib/ci |
 

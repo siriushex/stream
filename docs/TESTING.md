@@ -35,6 +35,11 @@ Environment:
 - `BUNDLE_TAR=/path/to/astral-transcode-<version>-linux-<arch>-<profile>.tar.gz`
 - `PORT=9065` (optional)
 
+## MPTS Smoke (runtime apply)
+```sh
+contrib/ci/smoke_mpts.sh
+```
+
 ## Server Verification (required for release)
 All final verification must run on the target server in `/home/hex`.
 See `AGENT.md` for the full checklist and constraints (no DVB tests).

@@ -50,7 +50,7 @@ Legend: DONE, PARTIAL, TODO
 | Allow stream without outputs | DONE | DONE | DONE | DONE | manual | Doc parity confirmed |
 | Backup mode default = passive | DONE | DONE | DONE | DONE | manual | Deviates from Cesbo docs (default active) |
 | Service/Remap/EPG tabs (basic) | DONE | DONE | DONE | DONE | manual | |
-| MPTS config (UI only) | PARTIAL | DONE | DONE | TODO | N/A | Runtime apply pending |
+| MPTS config runtime apply (best-effort) | DONE | DONE | DONE | DONE | manual | Maps codepage/provider/tsid/pass_sdt/eit; other fields ignored |
 | Advanced input options parity | DONE | DONE | DONE | DONE | manual | |
 | Output modal parity (HLS/SRT/SCTP/NP/BISS) | DONE | DONE | DONE | DONE | manual | |
 | Stream groups tab | DONE | DONE | DONE | DONE | manual | |
@@ -66,8 +66,8 @@ Legend: DONE, PARTIAL, TODO
 | Feature | Status | UI | API | Runtime | Tests | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | Softcam settings (list + apply) | DONE | DONE | DONE | DONE | manual | |
-| CAS settings | TODO | TODO | TODO | TODO | N/A | Placeholder UI only |
-| License view | TODO | TODO | TODO | TODO | N/A | Placeholder UI only |
+| CAS settings | TODO (hidden) | HIDDEN | TODO | TODO | N/A | Hidden until backend exists |
+| License view | TODO (hidden) | HIDDEN | TODO | TODO | N/A | Hidden until backend exists |
 
 ## Monitoring / Integrations
 | Feature | Status | UI | API | Runtime | Tests | Notes |
