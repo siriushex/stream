@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added LNB format validation in adapter editor.
+  - Updated UI build stamp to 20260205g.
+- Tests:
+  - Not run (UI-only).
+### 2026-02-05
+- Changes:
   - HTTP auth allow/deny lists now support CIDR ranges.
   - Updated Help text for CIDR support and bumped UI build to 20260205f.
 - Tests:
