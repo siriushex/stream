@@ -1750,32 +1750,34 @@
             <span>Enable</span>
           </label>
 
-          <label class="field">
-            <span>Name</span>
-            <input type="text" id="stream-name" required />
-          </label>
+          <div class="form-grid stream-general-grid">
+            <label class="field span-6">
+              <span>Name</span>
+              <input type="text" id="stream-name" required />
+            </label>
 
-          <label class="field">
-            <span>ID</span>
-            <input type="text" id="stream-id" required />
-          </label>
+            <label class="field span-3">
+              <span>ID</span>
+              <input type="text" id="stream-id" required />
+            </label>
 
-          <label class="field">
-            <span>Type</span>
-            <select id="stream-type">
-              <option value="">Stream (default)</option>
-              <option value="transcode">Transcode (ffmpeg)</option>
-            </select>
-          </label>
+            <label class="field span-3">
+              <span>Type</span>
+              <select id="stream-type">
+                <option value="">Stream (default)</option>
+                <option value="transcode">Transcode (ffmpeg)</option>
+              </select>
+            </label>
+
+            <label class="field span-12 stream-desc-field">
+              <span>Description</span>
+              <textarea id="stream-desc" rows="2"></textarea>
+            </label>
+          </div>
 
           <label class="checkline">
             <input type="checkbox" id="stream-mpts" />
             <span>Create Multi Program Stream</span>
-          </label>
-
-          <label class="field">
-            <span>Description</span>
-            <textarea id="stream-desc" rows="3"></textarea>
           </label>
 
           <div class="list-block">

@@ -2113,6 +2113,39 @@ select {
   gap: 12px;
 }
 
+.stream-general-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stream-general-grid .span-12 {
+  grid-column: span 12;
+}
+
+.stream-general-grid .span-6 {
+  grid-column: span 6;
+}
+
+.stream-general-grid .span-3 {
+  grid-column: span 3;
+}
+
+.stream-desc-field textarea {
+  min-height: 64px;
+}
+
+@media (max-width: 900px) {
+  .stream-general-grid {
+    grid-template-columns: 1fr;
+  }
+  .stream-general-grid .span-12,
+  .stream-general-grid .span-6,
+  .stream-general-grid .span-3 {
+    grid-column: auto;
+  }
+}
+
 .modal-footer {
   margin-top: 16px;
   display: flex;
