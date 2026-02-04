@@ -1629,8 +1629,15 @@ local function get_adapter_status(server, client, id)
     json_response(server, client, 200, status)
 end
 
+local stream_status_cache = { ts = 0, payload = nil }
+
 local function list_stream_status(server, client)
+    local now = os.time()
+    if stream_status_cache.payload and (now - (stream_status_cache.ts or 0)) <= 1 then
+        return json_response(server, client, 200, stream_status_cache.payload)
+    end
     local status = runtime.list_status and runtime.list_status() or {}
+    stream_status_cache = { ts = now, payload = status }
     json_response(server, client, 200, status)
 end
 

@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-04
 - Changes:
+  - Reduced UI polling frequency and pause polling when tab is hidden.
+  - Added 1s cache for /api/v1/stream-status to reduce load.
+- Tests:
+  - Not run (UI/API changes).
+### 2026-02-04
+- Changes:
   - Sessions list now drops stale HTTP clients to keep only active sessions.
 - Tests:
   - Not run (runtime change).
