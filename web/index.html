@@ -901,6 +901,48 @@
               <div class="settings-group">
                 <div class="settings-group-header">
                   <div>
+                    <div class="settings-group-title">Process Watchdog</div>
+                    <div class="settings-group-sub">Auto-restart on high CPU/RAM</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-watchdog-enabled" data-toggle-target="settings-watchdog-fields" />
+                    <span>Enable</span>
+                  </label>
+                </div>
+                <div class="settings-group-body" id="settings-watchdog-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>CPU limit (%)</span>
+                      <input type="number" id="settings-watchdog-cpu" placeholder="95" />
+                    </label>
+                    <label class="field">
+                      <span>RSS limit (MB)</span>
+                      <input type="number" id="settings-watchdog-rss-mb" placeholder="0 (use %)" />
+                    </label>
+                    <label class="field">
+                      <span>RSS limit (%)</span>
+                      <input type="number" id="settings-watchdog-rss-pct" placeholder="80" />
+                    </label>
+                    <label class="field">
+                      <span>Interval (sec)</span>
+                      <input type="number" id="settings-watchdog-interval" placeholder="10" />
+                    </label>
+                    <label class="field">
+                      <span>Max strikes</span>
+                      <input type="number" id="settings-watchdog-strikes" placeholder="6" />
+                    </label>
+                    <label class="field">
+                      <span>Min uptime (sec)</span>
+                      <input type="number" id="settings-watchdog-uptime" placeholder="180" />
+                    </label>
+                  </div>
+                  <small class="form-hint">When limits are exceeded for several checks, the process exits (use systemd Restart=always).</small>
+                </div>
+              </div>
+
+              <div class="settings-group">
+                <div class="settings-group-header">
+                  <div>
                     <div class="settings-group-title">Telegram Alerts</div>
                     <div class="settings-group-sub">Short notifications in Telegram</div>
                   </div>

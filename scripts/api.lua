@@ -2263,6 +2263,14 @@ local function set_settings(server, client, request)
             then
                 telegram.configure()
             end
+            if watchdog and watchdog.configure
+                and (body.resource_watchdog_enabled ~= nil or body.resource_watchdog_interval_sec ~= nil
+                    or body.resource_watchdog_cpu_pct ~= nil or body.resource_watchdog_rss_mb ~= nil
+                    or body.resource_watchdog_rss_pct ~= nil or body.resource_watchdog_max_strikes ~= nil
+                    or body.resource_watchdog_min_uptime_sec ~= nil or body.resource_watchdog_action ~= nil)
+            then
+                watchdog.configure()
+            end
         end,
         after = function()
             if epg and epg.configure_timer then

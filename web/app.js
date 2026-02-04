@@ -452,6 +452,13 @@ const elements = {
   settingsTelegramBackupWeekdayField: $('#settings-telegram-backup-weekday-field'),
   settingsTelegramBackupMonthdayField: $('#settings-telegram-backup-monthday-field'),
   settingsTelegramBackupNow: $('#settings-telegram-backup-now'),
+  settingsWatchdogEnabled: $('#settings-watchdog-enabled'),
+  settingsWatchdogCpu: $('#settings-watchdog-cpu'),
+  settingsWatchdogRssMb: $('#settings-watchdog-rss-mb'),
+  settingsWatchdogRssPct: $('#settings-watchdog-rss-pct'),
+  settingsWatchdogInterval: $('#settings-watchdog-interval'),
+  settingsWatchdogStrikes: $('#settings-watchdog-strikes'),
+  settingsWatchdogUptime: $('#settings-watchdog-uptime'),
   settingsInfluxEnabled: $('#settings-influx-enabled'),
   settingsInfluxUrl: $('#settings-influx-url'),
   settingsInfluxOrg: $('#settings-influx-org'),
@@ -9948,6 +9955,27 @@ function applySettingsToUI() {
   if (elements.settingsTelegramBackupSecrets) {
     elements.settingsTelegramBackupSecrets.checked = getSettingBool('telegram_backup_include_secrets', false);
   }
+  if (elements.settingsWatchdogEnabled) {
+    elements.settingsWatchdogEnabled.checked = getSettingBool('resource_watchdog_enabled', true);
+  }
+  if (elements.settingsWatchdogCpu) {
+    elements.settingsWatchdogCpu.value = getSettingNumber('resource_watchdog_cpu_pct', 95);
+  }
+  if (elements.settingsWatchdogRssMb) {
+    elements.settingsWatchdogRssMb.value = getSettingNumber('resource_watchdog_rss_mb', 0);
+  }
+  if (elements.settingsWatchdogRssPct) {
+    elements.settingsWatchdogRssPct.value = getSettingNumber('resource_watchdog_rss_pct', 80);
+  }
+  if (elements.settingsWatchdogInterval) {
+    elements.settingsWatchdogInterval.value = getSettingNumber('resource_watchdog_interval_sec', 10);
+  }
+  if (elements.settingsWatchdogStrikes) {
+    elements.settingsWatchdogStrikes.value = getSettingNumber('resource_watchdog_max_strikes', 6);
+  }
+  if (elements.settingsWatchdogUptime) {
+    elements.settingsWatchdogUptime.value = getSettingNumber('resource_watchdog_min_uptime_sec', 180);
+  }
   if (elements.settingsInfluxEnabled) {
     elements.settingsInfluxEnabled.checked = getSettingBool('influx_enabled', false);
   }
@@ -10346,6 +10374,31 @@ function collectGeneralSettings() {
   if (defaultHttpKeepActive !== undefined && defaultHttpKeepActive < -1) {
     throw new Error('HTTP keep active must be -1 or >= 0');
   }
+  const watchdogEnabled = elements.settingsWatchdogEnabled && elements.settingsWatchdogEnabled.checked;
+  const watchdogCpu = toNumber(elements.settingsWatchdogCpu && elements.settingsWatchdogCpu.value);
+  if (watchdogCpu !== undefined && (watchdogCpu < 0 || watchdogCpu > 100)) {
+    throw new Error('Watchdog CPU limit must be 0-100');
+  }
+  const watchdogRssMb = toNumber(elements.settingsWatchdogRssMb && elements.settingsWatchdogRssMb.value);
+  if (watchdogRssMb !== undefined && watchdogRssMb < 0) {
+    throw new Error('Watchdog RSS MB must be >= 0');
+  }
+  const watchdogRssPct = toNumber(elements.settingsWatchdogRssPct && elements.settingsWatchdogRssPct.value);
+  if (watchdogRssPct !== undefined && (watchdogRssPct < 0 || watchdogRssPct > 100)) {
+    throw new Error('Watchdog RSS % must be 0-100');
+  }
+  const watchdogInterval = toNumber(elements.settingsWatchdogInterval && elements.settingsWatchdogInterval.value);
+  if (watchdogInterval !== undefined && watchdogInterval < 5) {
+    throw new Error('Watchdog interval must be >= 5');
+  }
+  const watchdogStrikes = toNumber(elements.settingsWatchdogStrikes && elements.settingsWatchdogStrikes.value);
+  if (watchdogStrikes !== undefined && watchdogStrikes < 1) {
+    throw new Error('Watchdog max strikes must be >= 1');
+  }
+  const watchdogUptime = toNumber(elements.settingsWatchdogUptime && elements.settingsWatchdogUptime.value);
+  if (watchdogUptime !== undefined && watchdogUptime < 0) {
+    throw new Error('Watchdog min uptime must be >= 0');
+  }
   const payload = {
     ui_splitter_enabled: elements.settingsShowSplitter ? elements.settingsShowSplitter.checked : false,
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
@@ -10406,6 +10459,13 @@ function collectGeneralSettings() {
   if (defaultBackupStop !== undefined) payload.backup_stop_if_all_inactive_sec = defaultBackupStop;
   if (defaultBackupWarmMax !== undefined) payload.backup_active_warm_max = defaultBackupWarmMax;
   if (defaultHttpKeepActive !== undefined) payload.http_keep_active = defaultHttpKeepActive;
+  if (elements.settingsWatchdogEnabled) payload.resource_watchdog_enabled = watchdogEnabled;
+  if (watchdogCpu !== undefined) payload.resource_watchdog_cpu_pct = watchdogCpu;
+  if (watchdogRssMb !== undefined) payload.resource_watchdog_rss_mb = watchdogRssMb;
+  if (watchdogRssPct !== undefined) payload.resource_watchdog_rss_pct = watchdogRssPct;
+  if (watchdogInterval !== undefined) payload.resource_watchdog_interval_sec = watchdogInterval;
+  if (watchdogStrikes !== undefined) payload.resource_watchdog_max_strikes = watchdogStrikes;
+  if (watchdogUptime !== undefined) payload.resource_watchdog_min_uptime_sec = watchdogUptime;
   return payload;
 }
 

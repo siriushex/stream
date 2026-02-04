@@ -10,6 +10,7 @@ dofile("scripts/buffer.lua")
 dofile("scripts/epg.lua")
 dofile("scripts/runtime.lua")
 dofile("scripts/telegram.lua")
+dofile("scripts/watchdog.lua")
 dofile("scripts/api.lua")
 
 local opt = {
@@ -627,6 +628,9 @@ function main()
     end
     if telegram and telegram.configure then
         telegram.configure()
+    end
+    if watchdog and watchdog.configure then
+        watchdog.configure()
     end
 
     if not opt.port_set then
