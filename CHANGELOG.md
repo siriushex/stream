@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI: added hint that only DVB-C delivery is supported for MPTS.
+- Tests:
+  - Not run (UI hint).
+### 2026-02-05
+- Changes:
   - UI: warn when MPTS delivery type is not DVB-C (unsupported).
 - Tests:
   - Not run (UI warning).
