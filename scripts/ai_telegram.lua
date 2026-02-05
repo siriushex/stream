@@ -297,7 +297,7 @@ local function parse_command(text)
     local sub = parts[1] or "help"
     local opts = {}
     for i = 2, #parts do
-        local key, value = parts[i]:match("^(%w+)%=(.+)$")
+        local key, value = parts[i]:match("^([%w_%-]+)%=(.+)$")
         if key then
             opts[key] = value
         else
