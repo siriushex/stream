@@ -115,6 +115,7 @@ static const char __symbolrate_ksps[] = "symbolrate_ksps";
 static const char __modulation[] = "modulation";
 static const char __fec_inner[] = "fec_inner";
 static const char __network_name[] = "network_name";
+static const char __lcn_list[] = "lcn";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -385,6 +386,7 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
     const size_t section_end = 3 + section_length;
     if(section_end >= 12 && section_end <= psi->buffer_size)
     {
+        bool lcn_initialized = false;
         size_t pos = 8;
         if(pos + 2 <= section_end)
         {
@@ -462,6 +464,31 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
                         lua_setfield(lua, -2, __fec_inner);
                         pos = desc_end;
                         break;
+                    }
+                    if(tag == 0x83 && len >= 4)
+                    {
+                        // NorDig logical_channel_descriptor: service_id + visible + lcn
+                        if(!lcn_initialized)
+                        {
+                            lua_newtable(lua);
+                            lua_setfield(lua, -2, __lcn_list);
+                            lcn_initialized = true;
+                        }
+                        lua_getfield(lua, -1, __lcn_list);
+                        if(lua_type(lua, -1) == LUA_TTABLE)
+                        {
+                            size_t lpos = 0;
+                            while(lpos + 4 <= len)
+                            {
+                                const uint16_t service_id = (uint16_t)((buf[pos + lpos] << 8) | buf[pos + lpos + 1]);
+                                const uint16_t lcn = (uint16_t)(((buf[pos + lpos + 2] & 0x03) << 8) | buf[pos + lpos + 3]);
+                                lua_pushnumber(lua, service_id);
+                                lua_pushnumber(lua, lcn);
+                                lua_settable(lua, -3);
+                                lpos += 4;
+                            }
+                        }
+                        lua_pop(lua, 1);
                     }
                     pos += len;
                 }

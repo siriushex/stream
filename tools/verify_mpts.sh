@@ -15,6 +15,7 @@ EXPECT_SYMBOLRATE_KSPS="${EXPECT_SYMBOLRATE_KSPS:-}"
 EXPECT_MODULATION="${EXPECT_MODULATION:-}"
 EXPECT_FEC="${EXPECT_FEC:-}"
 EXPECT_NETWORK_NAME="${EXPECT_NETWORK_NAME:-}"
+EXPECT_LCN="${EXPECT_LCN:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -134,6 +135,13 @@ fi
 if [[ -n "$EXPECT_FEC" ]]; then
   if ! grep -q "fec: ${EXPECT_FEC}" "$LOG_FILE"; then
     echo "NIT fec mismatch (expected ${EXPECT_FEC})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_LCN" ]]; then
+  if ! grep -q "NIT: lcn: ${EXPECT_LCN}" "$LOG_FILE"; then
+    echo "NIT lcn mismatch (expected ${EXPECT_LCN})"
     exit 1
   fi
 fi
