@@ -4,6 +4,7 @@ const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
+const SETTINGS_DENSITY_KEY = 'astral.settings.density';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 
 function getStoredBool(key, fallback) {
@@ -188,6 +189,8 @@ const state = {
   configEditorDirty: false,
   configEditorLoaded: false,
   generalMode: getStoredBool(SETTINGS_ADVANCED_KEY, false) ? 'advanced' : 'basic',
+  // Компактный режим для карточек Settings -> General (визуально плотнее, на конфиг не влияет).
+  generalCompact: getStoredBool(SETTINGS_DENSITY_KEY, false),
   generalDirty: false,
   generalSnapshot: '',
   generalCardOpen: {},
@@ -2363,10 +2366,15 @@ function renderSettingsHeader() {
   advancedBtn.dataset.mode = 'advanced';
   modeToggle.append(basicBtn, advancedBtn);
 
+  const densityWrap = createEl('div', 'settings-switch-inline');
+  const densityLabel = createEl('span', 'settings-switch-label', 'Компактно');
+  const densityControl = renderSwitchControl('settings-general-density');
+  densityWrap.append(densityLabel, densityControl.wrapper);
+
   const dirty = createEl('div', 'settings-dirty-indicator hidden', 'Есть несохранённые изменения');
   dirty.id = 'settings-general-dirty';
 
-  controls.append(modeToggle, dirty);
+  controls.append(modeToggle, densityWrap, dirty);
   header.append(searchWrap, controls);
   return header;
 }
@@ -2587,6 +2595,7 @@ function bindGeneralElements() {
   const map = {
     settingsGeneralSearch: 'settings-general-search',
     settingsGeneralMode: 'settings-general-mode',
+    settingsGeneralDensity: 'settings-general-density',
     settingsGeneralDirty: 'settings-general-dirty',
     settingsGeneralNav: 'settings-general-nav',
     settingsGeneralNavSelect: 'settings-general-nav-select',
@@ -2723,6 +2732,7 @@ function renderGeneralSettings() {
     elements.settingsGeneralSearch.value = state.generalSearchQuery;
   }
   setGeneralMode(state.generalMode, { persist: false });
+  setGeneralDensity(state.generalCompact, { persist: false });
   updateGeneralCardSummaries();
   updateGeneralCardStates();
   applySearchFilter(state.generalSearchQuery);
@@ -2744,6 +2754,19 @@ function setGeneralMode(mode, options = {}) {
     });
   }
   applySearchFilter(state.generalSearchQuery);
+}
+
+function setGeneralDensity(compact, options = {}) {
+  state.generalCompact = !!compact;
+  if (options.persist !== false) {
+    localStorage.setItem(SETTINGS_DENSITY_KEY, state.generalCompact ? '1' : '0');
+  }
+  if (elements.settingsGeneralDensity) {
+    elements.settingsGeneralDensity.checked = state.generalCompact;
+  }
+  if (elements.settingsGeneralRoot) {
+    elements.settingsGeneralRoot.classList.toggle('is-compact', state.generalCompact);
+  }
 }
 
 function setActiveGeneralNav(sectionId) {
@@ -2999,6 +3022,7 @@ function handleGeneralInputChange(event) {
   const target = event.target;
   if (!target || !target.id) return;
   if (target.id === 'settings-general-search') return;
+  if (target.id === 'settings-general-density') return;
 
   if (target.id === 'settings-ai-allow-apply' && target.checked) {
     if (state.aiApplyConfirmPending) return;
@@ -16962,6 +16986,11 @@ function bindEvents() {
       const button = event.target.closest('button[data-mode]');
       if (!button) return;
       setGeneralMode(button.dataset.mode);
+    });
+  }
+  if (elements.settingsGeneralDensity) {
+    elements.settingsGeneralDensity.addEventListener('change', () => {
+      setGeneralDensity(elements.settingsGeneralDensity.checked);
     });
   }
   if (elements.settingsGeneralNav) {

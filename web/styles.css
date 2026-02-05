@@ -1127,6 +1127,33 @@ select {
   gap: 10px;
 }
 
+/* Компактный режим: плотнее карточки и сетка полей (Settings -> General). */
+.settings-general.is-compact .settings-general-content {
+  gap: 12px;
+}
+
+.settings-general.is-compact .settings-section-block {
+  gap: 10px;
+}
+
+.settings-general.is-compact .settings-card {
+  padding: 12px;
+  gap: 8px;
+}
+
+.settings-general.is-compact .settings-card-body {
+  gap: 10px;
+}
+
+.settings-general.is-compact .settings-card-grid {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.settings-general.is-compact .settings-switch-line {
+  padding: 4px 0;
+}
+
 .settings-card.is-disabled {
   opacity: 0.7;
 }
