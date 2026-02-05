@@ -204,9 +204,13 @@ const state = {
   playerStreamId: null,
   playerMode: null,
   playerUrl: '',
+  playerShareUrl: '',
   playerToken: null,
   playerStartTimer: null,
   playerStarting: false,
+  analyzeJobId: null,
+  analyzePoll: null,
+  analyzeStreamId: null,
   statusTimer: null,
   adapterTimer: null,
   dvbTimer: null,
@@ -14713,6 +14717,290 @@ function buildInputStatusRow(input, index, activeIndex) {
   return row;
 }
 
+function formatHexByte(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 'n/a';
+  return `0x${num.toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
+function formatCasList(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  return items.map((entry) => {
+    if (!entry) return '';
+    const caid = Number.isFinite(entry.caid) ? `0x${Number(entry.caid).toString(16).toUpperCase().padStart(4, '0')}` : 'n/a';
+    const pid = Number.isFinite(entry.pid) ? String(entry.pid) : 'n/a';
+    return `caid=${caid} pid=${pid}`;
+  }).filter(Boolean).join('; ');
+}
+
+function updateAnalyzeHeaderFromTotals(totals, onAir) {
+  if (!totals) return;
+  const cc = Number(totals.cc_errors) || 0;
+  const pes = Number(totals.pes_errors) || 0;
+  if (elements.analyzeRate) {
+    elements.analyzeRate.textContent = formatMaybeBitrate(totals.bitrate);
+    elements.analyzeRate.classList.toggle('warn', !onAir);
+  }
+  if (elements.analyzeCc) {
+    elements.analyzeCc.textContent = `CC:${cc}`;
+    elements.analyzeCc.classList.toggle('ok', cc === 0);
+    elements.analyzeCc.classList.toggle('warn', cc > 0);
+  }
+  if (elements.analyzePes) {
+    elements.analyzePes.textContent = `PES:${pes}`;
+    elements.analyzePes.classList.toggle('ok', pes === 0);
+    elements.analyzePes.classList.toggle('warn', pes > 0);
+  }
+}
+
+function renderAnalyzeSections(sections) {
+  elements.analyzeBody.innerHTML = '';
+  sections.forEach((section) => {
+    const block = document.createElement('div');
+    block.className = 'analyze-section';
+    const title = document.createElement('strong');
+    title.textContent = section.title;
+    block.appendChild(title);
+    section.items.forEach((item) => {
+      if (item && item.nodeType) {
+        block.appendChild(item);
+        return;
+      }
+      const line = document.createElement('div');
+      line.textContent = `- ${item}`;
+      block.appendChild(line);
+    });
+    elements.analyzeBody.appendChild(block);
+  });
+}
+
+function buildAnalyzeBaseSections(stream, stats) {
+  const sections = [];
+  const name = (stream.config && stream.config.name) || stream.id;
+  sections.push({
+    title: 'Stream',
+    items: [
+      `Name: ${name}`,
+      `ID: ${stream.id}`,
+    ],
+  });
+
+  const updated = formatTimestamp(stats.updated_at);
+  const activeIndex = getActiveInputIndex(stats);
+  const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+  const inputItems = inputs.length
+    ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
+    : ['No input stats yet.'];
+  const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
+  let lastSwitch = 'n/a';
+  if (stats.last_switch) {
+    const from = stats.last_switch.from;
+    const to = stats.last_switch.to;
+    const reason = stats.last_switch.reason || 'n/a';
+    const ts = formatTimestamp(stats.last_switch.ts);
+    lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
+  }
+  sections.push(
+    {
+      title: 'Input status',
+      items: [
+        `On air: ${stats.on_air ? 'Yes' : 'No'}`,
+        `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
+        `Active input: ${activeInputLabel}`,
+        `Last update: ${updated}`,
+        `Last switch: ${lastSwitch}`,
+      ],
+    },
+    {
+      title: 'Inputs',
+      items: inputItems,
+    }
+  );
+  return sections;
+}
+
+function buildAnalyzeProgramLines(programs) {
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return ['No PSI/PMT data collected.'];
+  }
+  const lines = [];
+  programs.forEach((program) => {
+    if (!program) return;
+    const name = program.name ? ` ${program.name}` : '';
+    const provider = program.provider ? ` (${program.provider})` : '';
+    lines.push(`PNR ${program.pnr || 'n/a'}${name}${provider}`);
+    lines.push(`  PMT PID: ${program.pmt_pid || 'n/a'} | PCR PID: ${program.pcr || 'n/a'}`);
+    const cas = formatCasList(program.cas);
+    if (cas) lines.push(`  CAS: ${cas}`);
+    const streams = Array.isArray(program.streams) ? program.streams : [];
+    if (!streams.length) {
+      lines.push('  Streams: n/a');
+      return;
+    }
+    streams.forEach((stream) => {
+      if (!stream) return;
+      const typeName = stream.type_name || 'unknown';
+      const typeId = formatHexByte(stream.type_id);
+      const lang = stream.lang ? ` lang=${stream.lang}` : '';
+      const streamCas = formatCasList(stream.cas);
+      const casText = streamCas ? ` cas=${streamCas}` : '';
+      lines.push(`  PID ${stream.pid || 'n/a'} • ${typeName} (${typeId})${lang}${casText}`);
+    });
+  });
+  return lines;
+}
+
+function buildAnalyzePidLines(pids, programs) {
+  if (!Array.isArray(pids) || pids.length === 0) {
+    return ['No PID bitrate stats collected.'];
+  }
+  const meta = {};
+  if (Array.isArray(programs)) {
+    programs.forEach((program) => {
+      const streams = Array.isArray(program && program.streams) ? program.streams : [];
+      streams.forEach((stream) => {
+        if (!stream || stream.pid == null) return;
+        meta[stream.pid] = {
+          type: stream.type_name,
+          type_id: stream.type_id,
+          lang: stream.lang,
+          pnr: program.pnr,
+          name: program.name,
+        };
+      });
+    });
+  }
+  return pids.map((item) => {
+    if (!item) return 'PID n/a';
+    const details = meta[item.pid] || {};
+    const typeName = details.type ? `${details.type} (${formatHexByte(details.type_id)})` : '';
+    const lang = details.lang ? ` lang=${details.lang}` : '';
+    const program = details.pnr ? ` PNR ${details.pnr}${details.name ? ` (${details.name})` : ''}` : '';
+    const metaText = typeName ? ` • ${typeName}${lang}${program}` : (program ? ` •${program}` : '');
+    const bitrate = formatMaybeBitrate(item.bitrate);
+    const errors = `CC ${item.cc_error || 0} / PES ${item.pes_error || 0} / SCR ${item.sc_error || 0}`;
+    return `PID ${item.pid} • ${bitrate}${metaText} • ${errors}`;
+  });
+}
+
+function buildAnalyzeJobSections(job) {
+  if (!job) {
+    return [{
+      title: 'Analyze details',
+      items: ['Analyze job not available.'],
+    }];
+  }
+  if (job.error) {
+    return [{
+      title: 'Analyze details',
+      items: [`Error: ${job.error}`],
+    }];
+  }
+  const totals = job.totals || {};
+  const summary = job.summary || {};
+  const sections = [{
+    title: 'Analyze summary',
+    items: [
+      `Status: ${job.status || 'n/a'}`,
+      `Duration: ${job.duration_sec || 'n/a'}s`,
+      `Input URL: ${job.input_url || 'n/a'}`,
+      `Bitrate: ${formatMaybeBitrate(totals.bitrate)}`,
+      `CC errors: ${summary.cc_errors || totals.cc_errors || 0}`,
+      `PES errors: ${summary.pes_errors || totals.pes_errors || 0}`,
+      `Scrambled: ${totals.scrambled ? 'Yes' : 'No'}`,
+      `Programs: ${summary.programs || 'n/a'}`,
+      `Channels: ${summary.channels || 'n/a'}`,
+    ],
+  }];
+
+  sections.push({
+    title: 'Programs',
+    items: buildAnalyzeProgramLines(job.program_list || []),
+  });
+  sections.push({
+    title: 'PID details',
+    items: buildAnalyzePidLines(job.pids || [], job.program_list || []),
+  });
+  return sections;
+}
+
+function clearAnalyzePoll() {
+  if (state.analyzePoll) {
+    clearTimeout(state.analyzePoll);
+    state.analyzePoll = null;
+  }
+  state.analyzeJobId = null;
+}
+
+function formatAnalyzeError(err) {
+  const networkMessage = formatNetworkError(err);
+  if (networkMessage) return networkMessage;
+  const raw = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+  const text = String(raw || '');
+  if (text.toLowerCase().includes('busy')) return 'Analyze is busy. Try again later.';
+  if (text.toLowerCase().includes('input url')) return 'No input URL available for analyze.';
+  if (text.toLowerCase().includes('transcode')) return 'Analyze is not available for transcode streams.';
+  return text || 'Analyze failed to start.';
+}
+
+function pollAnalyzeJob(stream, stats, jobId, attempt) {
+  const maxAttempts = 20;
+  if (state.analyzeStreamId !== stream.id) return;
+  apiJson(`/api/v1/streams/analyze/${jobId}`).then((job) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    if (job.status === 'running' && attempt < maxAttempts) {
+      const base = buildAnalyzeBaseSections(stream, stats);
+      const sections = base.concat([{
+        title: 'Analyze details',
+        items: ['Analyzing...'],
+      }]);
+      renderAnalyzeSections(sections);
+      state.analyzePoll = setTimeout(() => {
+        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
+      }, 500);
+      return;
+    }
+    updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat(buildAnalyzeJobSections(job));
+    renderAnalyzeSections(sections);
+  }).catch((err) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(sections);
+  });
+}
+
+async function startAnalyzeDetails(stream, stats) {
+  clearAnalyzePoll();
+  state.analyzeStreamId = stream.id;
+  const base = buildAnalyzeBaseSections(stream, stats);
+  const sections = base.concat([{
+    title: 'Analyze details',
+    items: ['Starting analyze...'],
+  }]);
+  renderAnalyzeSections(sections);
+
+  try {
+    const payload = await apiJson(`/api/v1/streams/${stream.id}/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ duration_sec: 4 }),
+    });
+    state.analyzeJobId = payload.id;
+    pollAnalyzeJob(stream, stats, payload.id, 0);
+  } catch (err) {
+    const failSections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(failSections);
+  }
+}
+
 function openAnalyze(stream) {
   const stats = state.stats[stream.id] || {};
   const ccErrors = Number(stats.cc_errors) || 0;
@@ -14721,6 +15009,9 @@ function openAnalyze(stream) {
   const transcode = stats.transcode;
   const transcodeState = stats.transcode_state || (transcode && transcode.state);
   const isTranscode = Boolean(transcodeState);
+
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
 
   if (isTranscode) {
     const inputRate = formatMaybeBitrate(transcode && transcode.input_bitrate_kbps);
@@ -14745,9 +15036,8 @@ function openAnalyze(stream) {
     elements.analyzeRate.classList.toggle('warn', !onAir);
   }
 
-  elements.analyzeBody.innerHTML = '';
-  const sections = [];
   if (isTranscode) {
+    const sections = [];
     const updated = formatTimestamp(transcode && transcode.updated_at);
     const lastAlert = transcode && transcode.last_alert
       ? `${transcode.last_alert.code} @ ${formatTimestamp(transcode.last_alert.ts)}`
@@ -14881,69 +15171,23 @@ function openAnalyze(stream) {
         items: stderrTail.slice(-12),
       });
     }
-  } else {
-    const updated = formatTimestamp(stats.updated_at);
-    const activeIndex = getActiveInputIndex(stats);
-    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-    const inputItems = inputs.length
-      ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
-      : ['No input stats yet.'];
-    const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
-    let lastSwitch = 'n/a';
-    if (stats.last_switch) {
-      const from = stats.last_switch.from;
-      const to = stats.last_switch.to;
-      const reason = stats.last_switch.reason || 'n/a';
-      const ts = formatTimestamp(stats.last_switch.ts);
-      lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
-    }
-    sections.push(
-      {
-        title: 'Input status',
-        items: [
-          `On air: ${onAir ? 'Yes' : 'No'}`,
-          `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
-          `Active input: ${activeInputLabel}`,
-          `Last update: ${updated}`,
-          `Last switch: ${lastSwitch}`,
-        ],
-      },
-      {
-        title: 'Inputs',
-        items: inputItems,
-      },
-      {
-        title: 'Analyze details',
-        items: ['PSI details are available in the server log for now.'],
-      }
-    );
+    renderAnalyzeSections(sections);
+    elements.analyzeRestart.hidden = false;
+    state.activeAnalyzeId = stream.id;
+    setOverlay(elements.analyzeOverlay, true);
+    return;
   }
 
-  sections.forEach((section) => {
-    const block = document.createElement('div');
-    block.className = 'analyze-section';
-    const title = document.createElement('strong');
-    title.textContent = section.title;
-    block.appendChild(title);
-    section.items.forEach((item) => {
-      if (item && item.nodeType) {
-        block.appendChild(item);
-        return;
-      }
-      const line = document.createElement('div');
-      line.textContent = `- ${item}`;
-      block.appendChild(line);
-    });
-    elements.analyzeBody.appendChild(block);
-  });
-
-  elements.analyzeRestart.hidden = !isTranscode;
-  state.activeAnalyzeId = isTranscode ? stream.id : null;
+  elements.analyzeRestart.hidden = true;
+  state.activeAnalyzeId = null;
   setOverlay(elements.analyzeOverlay, true);
+  startAnalyzeDetails(stream, stats);
 }
 
 function closeAnalyze() {
   state.activeAnalyzeId = null;
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
   setOverlay(elements.analyzeOverlay, false);
 }
 

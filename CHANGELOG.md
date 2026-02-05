@@ -12,6 +12,25 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Analyze: модалка показывает подробные PSI/PMT/PID/codec данные через on-demand analyze API.
+- Tests:
+  - Not run (UI/API change only).
+### 2026-02-05
+- Changes:
+  - AstralAI: default model set to `gpt-5.2` with automatic fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
+  - AstralAI: auto-select logs/CLI context by prompt to reduce load (logs/CLI only when needed).
+  - Observability: when `ai_metrics_on_demand=true`, metrics retention is forced to `0` (no background rollups).
+  - UI: AI chat no longer forces log inclusion; status uses default model when field is empty.
+- Tests:
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+### 2026-02-05
+- Changes:
+  - Streams/Adapters: при сохранении синхронизируется `enable` в config_json, чтобы disable не терялся в JSON и после рестарта.
+- Tests:
+  - Not run (config persistence fix).
+### 2026-02-05
+- Changes:
   - UI Player: ссылка и кнопки Open/Copy используют `/play/<stream_id>`; для `<video>` выбирается прямой HTTP Play при поддержке MPEG-TS.
 - Tests:
   - Not run (UI change only).
