@@ -403,6 +403,15 @@ static uint16_t append_descriptor(uint8_t *buf, uint16_t offset, uint8_t tag, co
     return offset;
 }
 
+static bool is_delivery_cable(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "cable")) return true;
+    if(!strcasecmp(value, "dvb-c")) return true;
+    if(!strcasecmp(value, "dvb_c")) return true;
+    return false;
+}
+
 static uint8_t parse_modulation(const char *value)
 {
     if(!value) return 0;
@@ -569,7 +578,7 @@ static void build_nit(module_data_t *mod)
     }
 
     // cable_delivery_system_descriptor
-    if(mod->delivery && !strcasecmp(mod->delivery, "cable"))
+    if(is_delivery_cable(mod->delivery))
     {
         uint8_t desc[11];
         memset(desc, 0, sizeof(desc));
