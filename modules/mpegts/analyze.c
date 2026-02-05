@@ -108,10 +108,57 @@ static const char __pnr[] = "pnr";
 static const char __tsid[] = "tsid";
 static const char __network_id[] = "network_id";
 static const char __table_id[] = "table_id";
+static const char __onid[] = "onid";
+static const char __delivery[] = "delivery";
+static const char __frequency_khz[] = "frequency_khz";
+static const char __symbolrate_ksps[] = "symbolrate_ksps";
+static const char __modulation[] = "modulation";
+static const char __fec_inner[] = "fec_inner";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
 static const char __callback[] = "callback";
+
+static uint32_t bcd_to_uint(const uint8_t *src, size_t digits)
+{
+    uint32_t value = 0;
+    for(size_t i = 0; i < digits; ++i)
+    {
+        const uint8_t byte = src[i / 2];
+        const uint8_t nibble = (i & 1) ? (byte & 0x0F) : (uint8_t)(byte >> 4);
+        if(nibble > 9)
+            break;
+        value = (value * 10) + nibble;
+    }
+    return value;
+}
+
+static const char *modulation_name(uint8_t code)
+{
+    switch(code)
+    {
+        case 0x01: return "16qam";
+        case 0x02: return "32qam";
+        case 0x03: return "64qam";
+        case 0x04: return "128qam";
+        case 0x05: return "256qam";
+        default: return "unknown";
+    }
+}
+
+static const char *fec_name(uint8_t code)
+{
+    switch(code)
+    {
+        case 0x01: return "1/2";
+        case 0x02: return "2/3";
+        case 0x03: return "3/4";
+        case 0x04: return "5/6";
+        case 0x05: return "7/8";
+        case 0x0F: return "auto";
+        default: return "unknown";
+    }
+}
 
 static void callback(module_data_t *mod)
 {
@@ -293,8 +340,9 @@ static void on_cat(void *arg, mpegts_psi_t *psi)
 static void on_nit(void *arg, mpegts_psi_t *psi)
 {
     module_data_t *mod = (module_data_t *)arg;
+    const uint8_t *buf = psi->buffer;
 
-    const uint8_t table_id = psi->buffer[0];
+    const uint8_t table_id = buf[0];
     if(table_id != 0x40 && table_id != 0x41)
         return;
 
@@ -317,7 +365,7 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
         return;
     psi->crc32 = crc32;
 
-    const uint16_t network_id = (uint16_t)((psi->buffer[3] << 8) | psi->buffer[4]);
+    const uint16_t network_id = (uint16_t)((buf[3] << 8) | buf[4]);
 
     lua_newtable(lua);
     lua_pushnumber(lua, psi->pid);
@@ -330,6 +378,76 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
     lua_setfield(lua, -2, __network_id);
     lua_pushnumber(lua, table_id);
     lua_setfield(lua, -2, __table_id);
+
+    // Разбор NIT delivery (сейчас нужен DVB-C cable_delivery_system_descriptor).
+    const size_t section_length = (size_t)(((buf[1] & 0x0F) << 8) | buf[2]);
+    const size_t section_end = 3 + section_length;
+    if(section_end >= 12 && section_end <= psi->buffer_size)
+    {
+        size_t pos = 8;
+        if(pos + 2 <= section_end)
+        {
+            const uint16_t network_desc_len = (uint16_t)(((buf[pos] & 0x0F) << 8) | buf[pos + 1]);
+            pos += 2;
+            if(pos + network_desc_len <= section_end)
+                pos += network_desc_len;
+        }
+        if(pos + 2 <= section_end)
+        {
+            const uint16_t ts_loop_len = (uint16_t)(((buf[pos] & 0x0F) << 8) | buf[pos + 1]);
+            pos += 2;
+            size_t ts_loop_end = pos + ts_loop_len;
+            if(section_end >= 4 && ts_loop_end > section_end - 4)
+                ts_loop_end = section_end - 4;
+            while(pos + 6 <= ts_loop_end)
+            {
+                const uint16_t tsid = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
+                const uint16_t onid = (uint16_t)((buf[pos + 2] << 8) | buf[pos + 3]);
+                const uint16_t desc_len = (uint16_t)(((buf[pos + 4] & 0x0F) << 8) | buf[pos + 5]);
+                pos += 6;
+                size_t desc_end = pos + desc_len;
+                if(desc_end > ts_loop_end)
+                    desc_end = ts_loop_end;
+                while(pos + 2 <= desc_end)
+                {
+                    const uint8_t tag = buf[pos];
+                    const uint8_t len = buf[pos + 1];
+                    pos += 2;
+                    if(pos + len > desc_end)
+                        break;
+                    if(tag == 0x44 && len >= 11)
+                    {
+                        const uint8_t *desc = &buf[pos];
+                        const uint32_t freq_digits = bcd_to_uint(desc, 8);
+                        const uint32_t sr_digits = bcd_to_uint(desc + 7, 7);
+                        const uint32_t frequency_khz = freq_digits / 10;
+                        const uint32_t symbolrate_ksps = sr_digits / 10;
+                        const uint8_t modulation = desc[6];
+                        const uint8_t fec = (uint8_t)(desc[10] & 0x0F);
+
+                        lua_pushstring(lua, "cable");
+                        lua_setfield(lua, -2, __delivery);
+                        lua_pushnumber(lua, tsid);
+                        lua_setfield(lua, -2, __tsid);
+                        lua_pushnumber(lua, onid);
+                        lua_setfield(lua, -2, __onid);
+                        lua_pushnumber(lua, frequency_khz);
+                        lua_setfield(lua, -2, __frequency_khz);
+                        lua_pushnumber(lua, symbolrate_ksps);
+                        lua_setfield(lua, -2, __symbolrate_ksps);
+                        lua_pushstring(lua, modulation_name(modulation));
+                        lua_setfield(lua, -2, __modulation);
+                        lua_pushstring(lua, fec_name(fec));
+                        lua_setfield(lua, -2, __fec_inner);
+                        pos = desc_end;
+                        break;
+                    }
+                    pos += len;
+                }
+                pos = desc_end;
+            }
+        }
+    }
 
     callback(mod);
 }

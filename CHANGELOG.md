@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added NIT delivery parsing in analyzer and CI assertions for DVB-C parameters.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Logged CAT presence in analyzer and added CI assertion for CAT.
 - Tests:
   - Not run (CI script update).

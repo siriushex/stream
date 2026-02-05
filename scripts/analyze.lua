@@ -106,6 +106,16 @@ dump_psi_info["nit"] = function(info)
     local network_id = info.network_id or 0
     local table_id = info.table_id or 0
     log.info(("NIT: network_id: %d table_id: 0x%02X"):format(network_id, table_id))
+    if info.delivery == "cable" then
+        local tsid = info.tsid or 0
+        local onid = info.onid or 0
+        local freq = info.frequency_khz or 0
+        local sr = info.symbolrate_ksps or 0
+        local modulation = info.modulation or "unknown"
+        local fec = info.fec_inner or "unknown"
+        log.info(("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d symbolrate_ksps: %d modulation: %s fec: %s")
+            :format(info.delivery, tsid, onid, freq, sr, modulation, fec))
+    end
     if info.crc32 then
         log.info(("NIT: crc32: 0x%X"):format(info.crc32))
     end
