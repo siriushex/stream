@@ -74,17 +74,107 @@ def build_pmt(pnr: int, pcr_pid: int, es_pid: int, stream_type: int = 0x1B, vers
     section.extend(struct.pack("!I", crc))
     return bytes(section)
 
+def build_service_descriptor(service_type: int, provider: str, name: str) -> bytes:
+    provider_bytes = provider.encode("ascii", "ignore")
+    name_bytes = name.encode("ascii", "ignore")
+    data = bytes([service_type & 0xFF, len(provider_bytes)]) + provider_bytes + bytes([len(name_bytes)]) + name_bytes
+    return bytes([0x48, len(data)]) + data
 
-def pack_section(pid: int, section: bytes, cc: int) -> bytes:
-    pkt = bytearray([0xFF] * TS_PACKET_SIZE)
-    pkt[0] = SYNC_BYTE
-    pkt[1] = 0x40 | ((pid >> 8) & 0x1F)
-    pkt[2] = pid & 0xFF
-    pkt[3] = 0x10 | (cc & 0x0F)
-    pkt[4] = 0x00  # pointer_field
-    end = 5 + len(section)
-    pkt[5:end] = section
-    return bytes(pkt)
+
+def build_sdt(tsid: int, onid: int, services, version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x42)  # SDT actual
+    section.extend(b"\x00\x00")
+    section.extend(struct.pack("!H", tsid & 0xFFFF))
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    section.extend(struct.pack("!H", onid & 0xFFFF))
+    section.append(0xFF)  # reserved
+    for svc in services:
+        pnr = svc["pnr"]
+        service_type = svc["service_type"]
+        provider = svc["provider"]
+        name = svc["name"]
+        desc = build_service_descriptor(service_type, provider, name)
+        section.extend(struct.pack("!H", pnr & 0xFFFF))
+        section.append(0xFC)  # EIT flags + reserved
+        section.append(0xF0 | ((len(desc) >> 8) & 0x0F))
+        section.append(len(desc) & 0xFF)
+        section.extend(desc)
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
+
+def build_eit(service_id: int, tsid: int, onid: int, version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x4E)  # EIT p/f actual
+    section.extend(b"\x00\x00")
+    section.extend(struct.pack("!H", service_id & 0xFFFF))
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    section.extend(struct.pack("!H", tsid & 0xFFFF))
+    section.extend(struct.pack("!H", onid & 0xFFFF))
+    section.append(0x00)  # segment_last_section_number
+    section.append(0x4E)  # last_table_id
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
+
+def build_cat(version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x01)  # CAT
+    section.extend(b"\x00\x00")
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
+
+def packetize_section(pid: int, section: bytes, cc_map: dict[int, int]) -> list[bytes]:
+    """Пакетизация PSI секции в TS пакеты по 188 байт.
+
+    ВАЖНО: старый pack_section работал только для секций <= 183 байта и ломался на больших PAT/SDT.
+    """
+    packets: list[bytes] = []
+    offset = 0
+    pusi = True
+    cc = cc_map.get(pid, 0)
+    while offset < len(section):
+        pkt = bytearray([0xFF] * TS_PACKET_SIZE)
+        pkt[0] = SYNC_BYTE
+        pkt[1] = ((0x40 if pusi else 0x00) | ((pid >> 8) & 0x1F))
+        pkt[2] = pid & 0xFF
+        pkt[3] = 0x10 | (cc & 0x0F)
+        cc = (cc + 1) & 0x0F
+
+        idx = 4
+        if pusi:
+            pkt[idx] = 0x00  # pointer_field
+            idx += 1
+
+        take = min(len(section) - offset, TS_PACKET_SIZE - idx)
+        pkt[idx:idx + take] = section[offset:offset + take]
+        offset += take
+        packets.append(bytes(pkt))
+        pusi = False
+
+    cc_map[pid] = cc
+    return packets
 
 
 def pack_payload(pid: int, cc: int, payload: bytes = b"") -> bytes:
@@ -111,24 +201,60 @@ def main() -> int:
     parser.add_argument("--pmt-pid", type=int, default=0x1000)
     parser.add_argument("--video-pid", type=int, default=0x0100)
     parser.add_argument("--pcr-pid", type=int, default=0x0100)
+    parser.add_argument("--program-count", type=int, default=1,
+                        help="Generate N programs in one TS (multi-program input). Default: 1")
     parser.add_argument("--extra-pnr", type=int, default=0)
     parser.add_argument("--extra-pmt-pid", type=int, default=0)
     parser.add_argument("--extra-video-pid", type=int, default=0)
     parser.add_argument("--extra-pcr-pid", type=int, default=0)
+    parser.add_argument("--tsid", type=int, default=1)
+    parser.add_argument("--onid", type=int, default=1)
+    parser.add_argument("--service-name", default="Service")
+    parser.add_argument("--provider-name", default="Provider")
+    parser.add_argument("--service-type", type=int, default=1)
+    parser.add_argument("--emit-sdt", action="store_true")
+    parser.add_argument("--emit-eit", action="store_true")
+    parser.add_argument("--emit-cat", action="store_true")
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--pps", type=int, default=200)
+    parser.add_argument("--payload-per-program", type=int, default=3,
+                        help="Dummy ES payload packets per program per tick. Default: 3")
     args = parser.parse_args()
 
-    programs = [(args.pnr, args.pmt_pid, args.video_pid, args.pcr_pid)]
-    if args.extra_pnr > 0 and args.extra_pmt_pid > 0:
-        # Дополнительная программа для проверки multi-PAT/strict_pnr.
-        extra_video = args.extra_video_pid if args.extra_video_pid > 0 else args.video_pid + 1
-        extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
-        programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
+    program_count = max(1, int(args.program_count))
+    programs = []
+    if program_count > 1:
+        # Мультипрограммный вход: PNR/PMT PID/Video PID делаем уникальными по индексам.
+        for i in range(program_count):
+            pnr = args.pnr + i
+            pmt_pid = args.pmt_pid + i
+            video_pid = args.video_pid + i
+            if pmt_pid >= NULL_PID or video_pid >= NULL_PID:
+                raise SystemExit("program-count too large: PID exceeds 0x1FFF")
+            programs.append((pnr, pmt_pid, video_pid, video_pid))
+    else:
+        programs = [(args.pnr, args.pmt_pid, args.video_pid, args.pcr_pid)]
+        if args.extra_pnr > 0 and args.extra_pmt_pid > 0:
+            # Дополнительная программа для проверки multi-PAT/strict_pnr.
+            extra_video = args.extra_video_pid if args.extra_video_pid > 0 else args.video_pid + 1
+            extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
+            programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
 
-    pat = build_pat(1, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
+    pat = build_pat(args.tsid, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
     pmt_map = {pmt_pid: build_pmt(pnr, pcr_pid, video_pid)
                for pnr, pmt_pid, video_pid, pcr_pid in programs}
+    services = []
+    for idx, (pnr, _, _, _) in enumerate(programs, start=1):
+        suffix = "" if len(programs) == 1 else f" {idx}"
+        services.append({
+            "pnr": pnr,
+            "service_type": args.service_type,
+            "provider": args.provider_name,
+            "name": f"{args.service_name}{suffix}",
+        })
+    sdt = build_sdt(args.tsid, args.onid, services) if args.emit_sdt else None
+    eit_map = {pnr: build_eit(pnr, args.tsid, args.onid) for pnr, _, _, _ in programs} if args.emit_eit else {}
+    cat = build_cat() if args.emit_cat else None
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target = (args.addr, args.port)
@@ -151,13 +277,25 @@ def main() -> int:
             time.sleep(max(0, next_tick - now))
         next_tick += interval
 
-        sock.sendto(pack_section(0x0000, pat, next_cc(0x0000)), target)
+        for pkt in packetize_section(0x0000, pat, cc_map):
+            sock.sendto(pkt, target)
         for pnr, pmt_pid, video_pid, _ in programs:
             pmt = pmt_map[pmt_pid]
-            sock.sendto(pack_section(pmt_pid, pmt, next_cc(pmt_pid)), target)
+            for pkt in packetize_section(pmt_pid, pmt, cc_map):
+                sock.sendto(pkt, target)
             # Few dummy payload packets for ES PID
-            for _ in range(3):
+            for _ in range(max(0, int(args.payload_per_program))):
                 sock.sendto(pack_payload(video_pid, next_cc(video_pid)), target)
+        if sdt:
+            for pkt in packetize_section(0x0011, sdt, cc_map):
+                sock.sendto(pkt, target)
+        if eit_map:
+            for pnr, eit in eit_map.items():
+                for pkt in packetize_section(0x0012, eit, cc_map):
+                    sock.sendto(pkt, target)
+        if cat:
+            for pkt in packetize_section(0x0001, cat, cc_map):
+                sock.sendto(pkt, target)
 
         # Null padding
         for _ in range(2):

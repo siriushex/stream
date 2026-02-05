@@ -6,11 +6,18 @@
 
 #include <astra.h>
 #include <time.h>
+#include <stdlib.h>
 
 #define PID_DROP 0xFFFF
 #define MPTS_MAX_PIDS 8192
 #define PCR_MAX_TICKS ((1ULL << 33) * 300ULL)
 #define MPTS_PNR_MAX 65535
+#define MPTS_MAX_LCN_TAGS 8
+// Максимальный размер одной PSI секции (table_id + section_length + payload + CRC).
+// Для DVB PSI/SI безопасно ограничивать 1024 байт (section_length <= 1021).
+#define MPTS_PSI_SECTION_MAX_SIZE 1024
+#define MPTS_DESC_MAX_LEN 255
+#define MPTS_LCN_DESC_MAX_LEN 252 // 63 * 4, чтобы не рвать записи 4-байтовых LCN элементов.
 
 typedef struct mpts_service_t mpts_service_t;
 
@@ -40,6 +47,10 @@ struct mpts_service_t
     uint16_t pcr_pid_out;
     bool pcr_missing_warned;
     bool pcr_not_in_es_warned;
+    bool spts_only_warned;
+
+    double pcr_smooth_offset;
+    bool pcr_smooth_ready;
 
     char *service_name;
     char *service_provider;
@@ -94,8 +105,20 @@ struct module_data_t
     bool pass_sdt;
     bool pass_eit;
     bool pass_tdt;
+    bool pass_cat;
     bool pcr_restamp;
+    bool pcr_smoothing;
     bool strict_pnr;
+    bool spts_only;
+
+    int eit_source_index;
+    int cat_source_index;
+    uint8_t lcn_descriptor_tag;
+    uint8_t lcn_descriptor_tags[MPTS_MAX_LCN_TAGS];
+    uint8_t lcn_descriptor_tags_count;
+
+    double pcr_smooth_alpha;
+    uint64_t pcr_smooth_max_offset_ticks;
 
     uint8_t pat_version;
     uint8_t cat_version;
@@ -110,6 +133,8 @@ struct module_data_t
     bool psi_built;
 
     bool pass_warned;
+    bool eit_source_warned;
+    bool cat_source_warned;
 
     uint8_t cc[MPTS_MAX_PIDS];
     bool pid_in_use[MPTS_MAX_PIDS];
@@ -118,10 +143,11 @@ struct module_data_t
     asc_list_t *services;
     int service_count;
 
-    mpegts_psi_t *pat_out;
+    // PAT/SDT/NIT могут занимать несколько секций при большом количестве сервисов.
+    asc_list_t *pat_out;
     mpegts_psi_t *cat_out;
-    mpegts_psi_t *sdt_out;
-    mpegts_psi_t *nit_out;
+    asc_list_t *sdt_out;
+    asc_list_t *nit_out;
     mpegts_psi_t *tdt_out;
     mpegts_psi_t *tot_out;
 
@@ -129,8 +155,16 @@ struct module_data_t
     asc_timer_t *cbr_timer;
     uint64_t cbr_start_us;
     uint64_t sent_packets;
+    uint64_t null_packets;
     uint64_t cbr_last_warn_us;
     uint64_t pcr_restamp_start_us;
+    uint64_t start_us;
+    uint64_t last_si_us;
+    uint32_t psi_interval_actual_ms;
+
+    mpegts_psi_t *eit_in;
+    mpts_service_t *eit_source;
+    mpts_service_t *cat_source;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -177,6 +211,30 @@ static void write_utc_time(uint8_t *dst)
     dst[4] = to_bcd((uint8_t)(tm ? tm->tm_sec : 0));
 }
 
+static int64_t pcr_diff(uint64_t a, uint64_t b)
+{
+    int64_t diff = (int64_t)(a - b);
+    const int64_t half = (int64_t)(PCR_MAX_TICKS / 2);
+    if(diff > half)
+        diff -= (int64_t)PCR_MAX_TICKS;
+    else if(diff < -half)
+        diff += (int64_t)PCR_MAX_TICKS;
+    return diff;
+}
+
+static mpts_service_t *find_service_by_pnr_in(module_data_t *mod, uint16_t pnr)
+{
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(svc->pnr_in == pnr)
+            return svc;
+        if(svc->has_pnr && svc->pnr_cfg == pnr)
+            return svc;
+    }
+    return NULL;
+}
+
 static void reserve_pid(module_data_t *mod, uint16_t pid)
 {
     if(pid < MPTS_MAX_PIDS)
@@ -217,6 +275,10 @@ static void mpts_send_ts(module_data_t *mod, const uint8_t *ts)
     mod->cc[pid] = (uint8_t)((cc + 1) & 0x0F);
     module_stream_send(mod, out);
     mod->sent_packets++;
+    if(pid == NULL_TS_PID)
+        mod->null_packets++;
+    if(mod->start_us == 0)
+        mod->start_us = asc_utime();
 }
 
 static void mpts_send_psi(void *arg, const uint8_t *ts)
@@ -231,6 +293,30 @@ static void mpts_send_null(module_data_t *mod, size_t count)
     };
     for(size_t i = 0; i < count; ++i)
         mpts_send_ts(mod, base_null);
+}
+
+static void clear_psi_section_list(asc_list_t *list)
+{
+    if(!list)
+        return;
+    for(asc_list_first(list); !asc_list_eol(list); asc_list_first(list))
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(list);
+        mpegts_psi_destroy(psi);
+        asc_list_remove_current(list);
+    }
+}
+
+static void demux_psi_section_list(module_data_t *mod, asc_list_t *list)
+{
+    if(!mod || !list)
+        return;
+
+    asc_list_for(list)
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(list);
+        mpegts_psi_demux(psi, mpts_send_psi, mod);
+    }
 }
 
 static void service_release_map(mpts_service_t *svc)
@@ -262,13 +348,9 @@ static bool service_map_pids(mpts_service_t *svc)
     size_t pid_count = 0;
 
     uint16_t pcr_pid = PMT_GET_PCR(svc->pmt);
-    bool pcr_from_pmt = true;
     bool pcr_auto = false;
     if(pcr_pid == 0 || pcr_pid >= NULL_TS_PID)
-    {
         pcr_pid = 0;
-        pcr_from_pmt = false;
-    }
 
     const uint8_t *ptr;
     PMT_ITEMS_FOREACH(svc->pmt, ptr)
@@ -471,6 +553,55 @@ static uint8_t parse_fec_inner(const char *value)
     return 0x0F;
 }
 
+static void parse_lcn_descriptor_tags(module_data_t *mod, const char *value)
+{
+    if(!mod || !value || value[0] == '\0')
+        return;
+
+    char *dup = strdup(value);
+    if(!dup)
+        return;
+
+    char *saveptr = NULL;
+    for(char *token = strtok_r(dup, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
+    {
+        while(*token == ' ' || *token == '\t')
+            token++;
+        if(*token == '\0')
+            continue;
+
+        char *endptr = NULL;
+        long tag = strtol(token, &endptr, 0);
+        if(endptr == token || tag <= 0 || tag > 255)
+        {
+            asc_log_warning(MSG("lcn_descriptor_tags содержит неверное значение: %s"), token);
+            continue;
+        }
+
+        bool exists = false;
+        for(uint8_t i = 0; i < mod->lcn_descriptor_tags_count; ++i)
+        {
+            if(mod->lcn_descriptor_tags[i] == (uint8_t)tag)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if(exists)
+            continue;
+
+        if(mod->lcn_descriptor_tags_count >= MPTS_MAX_LCN_TAGS)
+        {
+            asc_log_warning(MSG("lcn_descriptor_tags: превышен лимит %d, остальные теги игнорируются"),
+                            MPTS_MAX_LCN_TAGS);
+            break;
+        }
+        mod->lcn_descriptor_tags[mod->lcn_descriptor_tags_count++] = (uint8_t)tag;
+    }
+
+    free(dup);
+}
+
 static bool is_utf8_codepage(const char *value)
 {
     if(!value || value[0] == '\0') return false;
@@ -502,17 +633,46 @@ static size_t write_encoded_text(uint8_t *dst, size_t max_len, const char *text,
 
 static void build_pat(module_data_t *mod)
 {
-    PAT_INIT(mod->pat_out, mod->tsid, mod->pat_version);
+    if(!mod->pat_out)
+        return;
+
+    clear_psi_section_list(mod->pat_out);
+
+    // PAT может занимать несколько секций (максимум 1024 байта на секцию).
+    // На практике это важно, если сервисов > ~253.
+    mpegts_psi_t *sec = mpegts_psi_init(MPEGTS_PACKET_PAT, 0x0000);
+    PAT_INIT(sec, mod->tsid, mod->pat_version);
 
     asc_list_for(mod->services)
     {
         mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
         if(!svc->ready || !svc->mapping_ready || !svc->pmt_pid_out || svc->pnr_out == 0)
             continue;
-        PAT_ITEMS_APPEND(mod->pat_out, svc->pnr_out, svc->pmt_pid_out);
+
+        // 4 байта на один program entry.
+        if((size_t)sec->buffer_size + 4 > MPTS_PSI_SECTION_MAX_SIZE)
+        {
+            asc_list_insert_tail(mod->pat_out, sec);
+            sec = mpegts_psi_init(MPEGTS_PACKET_PAT, 0x0000);
+            PAT_INIT(sec, mod->tsid, mod->pat_version);
+        }
+
+        PAT_ITEMS_APPEND(sec, svc->pnr_out, svc->pmt_pid_out);
     }
 
-    PSI_SET_CRC32(mod->pat_out);
+    asc_list_insert_tail(mod->pat_out, sec);
+
+    const size_t sections = asc_list_size(mod->pat_out);
+    const uint8_t last = (sections > 0) ? (uint8_t)(sections - 1) : 0;
+    uint8_t idx = 0;
+    asc_list_for(mod->pat_out)
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(mod->pat_out);
+        psi->buffer[6] = idx;
+        psi->buffer[7] = last;
+        PSI_SET_CRC32(psi);
+        ++idx;
+    }
 }
 
 static void build_cat(module_data_t *mod)
@@ -532,11 +692,10 @@ static void build_cat(module_data_t *mod)
     PSI_SET_CRC32(mod->cat_out);
 }
 
-static void build_sdt(module_data_t *mod)
+static uint16_t init_sdt_section(module_data_t *mod, mpegts_psi_t *psi)
 {
-    uint8_t *buf = mod->sdt_out->buffer;
+    uint8_t *buf = psi->buffer;
     uint16_t pos = 0;
-    const bool use_utf8 = is_utf8_codepage(mod->codepage);
 
     buf[pos++] = 0x42; // SDT Actual
     buf[pos++] = 0x80 | 0x30; // section_syntax_indicator + reserved
@@ -544,11 +703,26 @@ static void build_sdt(module_data_t *mod)
     buf[pos++] = (uint8_t)(mod->tsid >> 8);
     buf[pos++] = (uint8_t)(mod->tsid & 0xFF);
     buf[pos++] = 0xC0 | ((mod->sdt_version << 1) & 0x3E) | 0x01;
-    buf[pos++] = 0x00; // section_number
-    buf[pos++] = 0x00; // last_section_number
+    buf[pos++] = 0x00; // section_number (set later)
+    buf[pos++] = 0x00; // last_section_number (set later)
     buf[pos++] = (uint8_t)(mod->onid >> 8);
     buf[pos++] = (uint8_t)(mod->onid & 0xFF);
     buf[pos++] = 0xFF; // reserved
+
+    return pos;
+}
+
+static void build_sdt(module_data_t *mod)
+{
+    if(!mod->sdt_out)
+        return;
+
+    clear_psi_section_list(mod->sdt_out);
+
+    mpegts_psi_t *sec = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
+    uint8_t *buf = sec->buffer;
+    uint16_t pos = init_sdt_section(mod, sec);
+    const bool use_utf8 = is_utf8_codepage(mod->codepage);
 
     asc_list_for(mod->services)
     {
@@ -607,6 +781,18 @@ static void build_sdt(module_data_t *mod)
         desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
                                                  service_name, service_raw_len, use_utf8);
 
+        const uint16_t item_len = 5 + desc_len;
+        if((size_t)pos + item_len + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
+        {
+            sec->buffer_size = pos + CRC32_SIZE;
+            PSI_SET_SIZE(sec);
+            asc_list_insert_tail(mod->sdt_out, sec);
+
+            sec = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
+            buf = sec->buffer;
+            pos = init_sdt_section(mod, sec);
+        }
+
         buf[pos++] = (uint8_t)(svc->pnr_out >> 8);
         buf[pos++] = (uint8_t)(svc->pnr_out & 0xFF);
         buf[pos++] = 0xFC; // EIT flags disabled
@@ -616,173 +802,361 @@ static void build_sdt(module_data_t *mod)
         pos += desc_len;
     }
 
-    mod->sdt_out->buffer_size = pos + CRC32_SIZE;
-    PSI_SET_SIZE(mod->sdt_out);
-    PSI_SET_CRC32(mod->sdt_out);
+    sec->buffer_size = pos + CRC32_SIZE;
+    PSI_SET_SIZE(sec);
+    asc_list_insert_tail(mod->sdt_out, sec);
+
+    const size_t sections = asc_list_size(mod->sdt_out);
+    const uint8_t last = (sections > 0) ? (uint8_t)(sections - 1) : 0;
+    uint8_t idx = 0;
+    asc_list_for(mod->sdt_out)
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(mod->sdt_out);
+        psi->buffer[6] = idx;
+        psi->buffer[7] = last;
+        PSI_SET_CRC32(psi);
+        ++idx;
+    }
 }
 
 static void build_nit(module_data_t *mod)
 {
-    uint8_t *buf = mod->nit_out->buffer;
-    uint16_t pos = 0;
+    if(!mod->nit_out)
+        return;
 
-    buf[pos++] = 0x40; // NIT Actual
-    buf[pos++] = 0x80 | 0x30;
-    buf[pos++] = 0x00; // section_length
-    buf[pos++] = (uint8_t)(mod->network_id >> 8);
-    buf[pos++] = (uint8_t)(mod->network_id & 0xFF);
-    buf[pos++] = 0xC0 | ((mod->nit_version << 1) & 0x3E) | 0x01;
-    buf[pos++] = 0x00; // section_number
-    buf[pos++] = 0x00; // last_section_number
+    clear_psi_section_list(mod->nit_out);
 
-    const uint16_t network_desc_len_pos = pos;
-    buf[pos++] = 0xF0;
-    buf[pos++] = 0x00;
-
-    uint16_t network_desc_start = pos;
-    if(mod->network_name && mod->network_name[0] != '\0')
+    typedef struct
     {
-        const bool use_utf8 = is_utf8_codepage(mod->codepage);
-        size_t raw_len = strlen(mod->network_name);
-        const size_t max_raw = use_utf8 ? 254 : 255;
-        if(raw_len > max_raw) raw_len = max_raw;
+        uint16_t sid;
+        uint8_t service_type;
+    } nit_service_item_t;
 
-        uint8_t tmp[256];
-        const size_t out_len = write_encoded_text(tmp, sizeof(tmp), mod->network_name, raw_len, use_utf8);
-        if(out_len > 0)
-            pos = append_descriptor(buf, pos, 0x40, tmp, (uint8_t)out_len);
-    }
-    uint16_t network_desc_len = pos - network_desc_start;
-    buf[network_desc_len_pos] = 0xF0 | ((network_desc_len >> 8) & 0x0F);
-    buf[network_desc_len_pos + 1] = (uint8_t)(network_desc_len & 0xFF);
-
-    const uint16_t ts_loop_len_pos = pos;
-    buf[pos++] = 0xF0;
-    buf[pos++] = 0x00;
-    uint16_t ts_loop_start = pos;
-
-    // Основной TS
-    uint16_t desc_len_pos = pos + 4;
-    buf[pos++] = (uint8_t)(mod->tsid >> 8);
-    buf[pos++] = (uint8_t)(mod->tsid & 0xFF);
-    buf[pos++] = (uint8_t)(mod->onid >> 8);
-    buf[pos++] = (uint8_t)(mod->onid & 0xFF);
-    buf[pos++] = 0xF0;
-    buf[pos++] = 0x00;
-
-    uint16_t desc_start = pos;
-    // service_list_descriptor
+    typedef struct
     {
-        uint8_t tmp[1024];
-        uint16_t tmp_len = 0;
-        asc_list_for(mod->services)
-        {
-            mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
-            if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0)
-                continue;
-            tmp[tmp_len++] = (uint8_t)(svc->pnr_out >> 8);
-            tmp[tmp_len++] = (uint8_t)(svc->pnr_out & 0xFF);
-            tmp[tmp_len++] = (uint8_t)(svc->has_service_type_id ? svc->service_type_id : 1);
-        }
-        if(tmp_len > 0)
-        {
-            if(tmp_len > 255)
-                tmp_len = (uint16_t)((255 / 3) * 3);
-            pos = append_descriptor(buf, pos, 0x41, tmp, (uint8_t)tmp_len);
-        }
+        uint16_t sid;
+        uint16_t lcn;
+    } nit_lcn_item_t;
+
+    typedef struct
+    {
+        uint16_t tsid;
+        uint16_t onid;
+    } nit_ts_item_t;
+
+    size_t svc_count = 0;
+    size_t lcn_count = 0;
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0)
+            continue;
+        ++svc_count;
+        if(svc->has_lcn && svc->lcn > 0 && svc->lcn <= 1023)
+            ++lcn_count;
     }
 
-    // logical_channel_descriptor (LCN) - NorDig (0x83)
+    nit_service_item_t *svc_items = NULL;
+    nit_lcn_item_t *lcn_items = NULL;
+    if(svc_count > 0)
+        svc_items = (nit_service_item_t *)calloc(svc_count, sizeof(*svc_items));
+    if(lcn_count > 0)
+        lcn_items = (nit_lcn_item_t *)calloc(lcn_count, sizeof(*lcn_items));
+
+    if((svc_count > 0 && !svc_items) || (lcn_count > 0 && !lcn_items))
     {
-        uint8_t tmp[1024];
-        uint16_t tmp_len = 0;
-        asc_list_for(mod->services)
+        asc_log_error(MSG("не удалось выделить память для NIT (services=%zu, lcn=%zu)"), svc_count, lcn_count);
+        free(svc_items);
+        free(lcn_items);
+        return;
+    }
+
+    size_t svc_fill = 0;
+    size_t lcn_fill = 0;
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0)
+            continue;
+
+        svc_items[svc_fill].sid = svc->pnr_out;
+        svc_items[svc_fill].service_type = (uint8_t)(svc->has_service_type_id ? svc->service_type_id : 1);
+        ++svc_fill;
+
+        if(svc->has_lcn && svc->lcn > 0 && svc->lcn <= 1023)
         {
-            mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
-            if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0 || !svc->has_lcn)
-                continue;
-            if(svc->lcn == 0 || svc->lcn > 1023)
-                continue;
-            if(tmp_len + 4 > sizeof(tmp))
-                break;
-            tmp[tmp_len++] = (uint8_t)(svc->pnr_out >> 8);
-            tmp[tmp_len++] = (uint8_t)(svc->pnr_out & 0xFF);
-            tmp[tmp_len++] = (uint8_t)(0xFC | ((svc->lcn >> 8) & 0x03)); // visible=1 + reserved=1
-            tmp[tmp_len++] = (uint8_t)(svc->lcn & 0xFF);
-        }
-        if(tmp_len > 0)
-        {
-            if(tmp_len > 255)
-                tmp_len = (uint16_t)((255 / 4) * 4);
-            pos = append_descriptor(buf, pos, 0x83, tmp, (uint8_t)tmp_len);
+            lcn_items[lcn_fill].sid = svc->pnr_out;
+            lcn_items[lcn_fill].lcn = svc->lcn;
+            ++lcn_fill;
         }
     }
 
-    // cable_delivery_system_descriptor
-    if(is_delivery_cable(mod->delivery))
-    {
-        uint8_t desc[11];
-        memset(desc, 0, sizeof(desc));
-
-        const uint32_t freq_digits = mod->frequency_khz > 0 ? (mod->frequency_khz * 10) : 0;
-        write_bcd(desc, 8, freq_digits);
-
-        desc[4] = 0xFF;
-        desc[5] = 0xF0 | 0x02; // FEC_outer: RS(204/188)
-        desc[6] = parse_modulation(mod->modulation);
-
-        const uint32_t sr_digits = mod->symbolrate_ksps > 0 ? (mod->symbolrate_ksps * 10) : 0;
-        write_bcd(&desc[7], 7, sr_digits);
-        desc[10] = (desc[10] & 0xF0) | parse_fec_inner(mod->fec);
-
-        pos = append_descriptor(buf, pos, 0x44, desc, sizeof(desc));
-    }
-
-    uint16_t desc_len = pos - desc_start;
-    buf[desc_len_pos] = 0xF0 | ((desc_len >> 8) & 0x0F);
-    buf[desc_len_pos + 1] = (uint8_t)(desc_len & 0xFF);
-
-    // Дополнительные TS из network_search (формат: tsid[:onid])
+    nit_ts_item_t *ns_items = NULL;
+    size_t ns_count = 0;
+    size_t ns_cap = 0;
     if(mod->network_search && mod->network_search[0] != '\0')
     {
         char *list = strdup(mod->network_search);
-        char *saveptr = NULL;
-        for(char *token = strtok_r(list, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
+        if(list)
         {
-            while(*token == ' ') token++;
-            if(*token == '\0') continue;
-            char *sep = strchr(token, ':');
-            uint16_t tsid = 0;
-            uint16_t onid = mod->onid;
-            if(sep)
+            char *saveptr = NULL;
+            for(char *token = strtok_r(list, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
             {
-                *sep = '\0';
-                tsid = (uint16_t)atoi(token);
-                onid = (uint16_t)atoi(sep + 1);
+                while(*token == ' ' || *token == '\t') token++;
+                if(*token == '\0') continue;
+
+                char *sep = strchr(token, ':');
+                uint16_t tsid = 0;
+                uint16_t onid = mod->onid;
+                if(sep)
+                {
+                    *sep = '\0';
+                    tsid = (uint16_t)atoi(token);
+                    onid = (uint16_t)atoi(sep + 1);
+                }
+                else
+                {
+                    tsid = (uint16_t)atoi(token);
+                }
+                if(tsid == 0)
+                    continue;
+
+                if(ns_count == ns_cap)
+                {
+                    const size_t new_cap = (ns_cap == 0) ? 8 : (ns_cap * 2);
+                    nit_ts_item_t *tmp = (nit_ts_item_t *)realloc(ns_items, new_cap * sizeof(*ns_items));
+                    if(!tmp)
+                    {
+                        asc_log_warning(MSG("network_search: нехватка памяти, часть TS будет пропущена"));
+                        break;
+                    }
+                    ns_items = tmp;
+                    ns_cap = new_cap;
+                }
+
+                ns_items[ns_count].tsid = tsid;
+                ns_items[ns_count].onid = onid;
+                ++ns_count;
+            }
+            free(list);
+        }
+    }
+
+    // Для мультисекций: собираем несколько NIT Actual секций до тех пор,
+    // пока не поместим все service_list/LCN и network_search.
+    size_t svc_idx = 0;
+    size_t lcn_idx = 0;
+    size_t ns_idx = 0;
+
+    while(svc_idx < svc_count || lcn_idx < lcn_count || ns_idx < ns_count || asc_list_size(mod->nit_out) == 0)
+    {
+        mpegts_psi_t *sec = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x0010);
+        uint8_t *buf = sec->buffer;
+        uint16_t pos = 0;
+
+        buf[pos++] = 0x40; // NIT Actual
+        buf[pos++] = 0x80 | 0x30;
+        buf[pos++] = 0x00; // section_length (set later)
+        buf[pos++] = (uint8_t)(mod->network_id >> 8);
+        buf[pos++] = (uint8_t)(mod->network_id & 0xFF);
+        buf[pos++] = 0xC0 | ((mod->nit_version << 1) & 0x3E) | 0x01;
+        buf[pos++] = 0x00; // section_number (set later)
+        buf[pos++] = 0x00; // last_section_number (set later)
+
+        const uint16_t network_desc_len_pos = pos;
+        buf[pos++] = 0xF0;
+        buf[pos++] = 0x00;
+
+        uint16_t network_desc_start = pos;
+        if(mod->network_name && mod->network_name[0] != '\0')
+        {
+            const bool use_utf8 = is_utf8_codepage(mod->codepage);
+            size_t raw_len = strlen(mod->network_name);
+            const size_t max_raw = use_utf8 ? 254 : 255;
+            if(raw_len > max_raw) raw_len = max_raw;
+
+            uint8_t tmp[256];
+            const size_t out_len = write_encoded_text(tmp, sizeof(tmp), mod->network_name, raw_len, use_utf8);
+            if(out_len > 0)
+                pos = append_descriptor(buf, pos, 0x40, tmp, (uint8_t)out_len);
+        }
+        uint16_t network_desc_len = pos - network_desc_start;
+        buf[network_desc_len_pos] = 0xF0 | ((network_desc_len >> 8) & 0x0F);
+        buf[network_desc_len_pos + 1] = (uint8_t)(network_desc_len & 0xFF);
+
+        const uint16_t ts_loop_len_pos = pos;
+        buf[pos++] = 0xF0;
+        buf[pos++] = 0x00;
+        uint16_t ts_loop_start = pos;
+
+        // Основной TS
+        uint16_t main_desc_len_pos = pos + 4;
+        buf[pos++] = (uint8_t)(mod->tsid >> 8);
+        buf[pos++] = (uint8_t)(mod->tsid & 0xFF);
+        buf[pos++] = (uint8_t)(mod->onid >> 8);
+        buf[pos++] = (uint8_t)(mod->onid & 0xFF);
+        buf[pos++] = 0xF0;
+        buf[pos++] = 0x00;
+
+        const uint16_t main_desc_start = pos;
+
+        // ВАЖНО: delivery descriptor (0x44) должен идти ПОСЛЕ service_list/LCN,
+        // иначе текущий analyzer (modules/mpegts/analyze.c) прекращает разбор дескрипторов на 0x44.
+        const size_t delivery_desc_size = is_delivery_cable(mod->delivery) ? (2 + 11) : 0;
+
+        // service_list_descriptor: разбиваем на несколько descriptor'ов, если нужно
+        while(svc_idx < svc_count)
+        {
+            const size_t remaining = (size_t)MPTS_PSI_SECTION_MAX_SIZE - (size_t)CRC32_SIZE - (size_t)pos;
+            if(remaining <= delivery_desc_size)
+                break;
+            const size_t avail = remaining - delivery_desc_size;
+            if(avail < (2 + 3))
+                break;
+
+            size_t max_payload = avail - 2;
+            if(max_payload > MPTS_DESC_MAX_LEN)
+                max_payload = MPTS_DESC_MAX_LEN;
+            max_payload = (max_payload / 3) * 3;
+            if(max_payload == 0)
+                break;
+
+            const size_t remain_entries = svc_count - svc_idx;
+            size_t payload_len = remain_entries * 3;
+            if(payload_len > max_payload)
+                payload_len = max_payload;
+
+            uint8_t tmp[MPTS_DESC_MAX_LEN];
+            for(size_t i = 0, off = 0; i < payload_len / 3; ++i, off += 3)
+            {
+                const nit_service_item_t *it = &svc_items[svc_idx + i];
+                tmp[off + 0] = (uint8_t)(it->sid >> 8);
+                tmp[off + 1] = (uint8_t)(it->sid & 0xFF);
+                tmp[off + 2] = it->service_type;
+            }
+
+            pos = append_descriptor(buf, pos, 0x41, tmp, (uint8_t)payload_len);
+            svc_idx += payload_len / 3;
+        }
+
+        // logical_channel_descriptor: потенциально несколько тегов, поэтому ограничиваем payload с учётом умножения.
+        const size_t lcn_tags = (mod->lcn_descriptor_tags_count > 0) ? mod->lcn_descriptor_tags_count : 1;
+        while(lcn_idx < lcn_count)
+        {
+            const size_t remaining = (size_t)MPTS_PSI_SECTION_MAX_SIZE - (size_t)CRC32_SIZE - (size_t)pos;
+            if(remaining <= delivery_desc_size)
+                break;
+            const size_t avail = remaining - delivery_desc_size;
+            if(avail < lcn_tags * (2 + 4))
+                break;
+
+            size_t max_payload = (avail / lcn_tags) - 2;
+            if(max_payload > MPTS_LCN_DESC_MAX_LEN)
+                max_payload = MPTS_LCN_DESC_MAX_LEN;
+            max_payload = (max_payload / 4) * 4;
+            if(max_payload == 0)
+                break;
+
+            const size_t remain_entries = lcn_count - lcn_idx;
+            size_t payload_len = remain_entries * 4;
+            if(payload_len > max_payload)
+                payload_len = max_payload;
+
+            uint8_t tmp[MPTS_LCN_DESC_MAX_LEN];
+            for(size_t i = 0, off = 0; i < payload_len / 4; ++i, off += 4)
+            {
+                const nit_lcn_item_t *it = &lcn_items[lcn_idx + i];
+                tmp[off + 0] = (uint8_t)(it->sid >> 8);
+                tmp[off + 1] = (uint8_t)(it->sid & 0xFF);
+                tmp[off + 2] = (uint8_t)(0xFC | ((it->lcn >> 8) & 0x03)); // visible=1 + reserved=1
+                tmp[off + 3] = (uint8_t)(it->lcn & 0xFF);
+            }
+
+            if(mod->lcn_descriptor_tags_count > 0)
+            {
+                for(uint8_t i = 0; i < mod->lcn_descriptor_tags_count; ++i)
+                {
+                    const uint8_t tag = mod->lcn_descriptor_tags[i];
+                    pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)payload_len);
+                }
             }
             else
             {
-                tsid = (uint16_t)atoi(token);
+                const uint8_t tag = mod->lcn_descriptor_tag ? mod->lcn_descriptor_tag : 0x83;
+                pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)payload_len);
             }
-            if(tsid == 0)
-                continue;
-            buf[pos++] = (uint8_t)(tsid >> 8);
-            buf[pos++] = (uint8_t)(tsid & 0xFF);
-            buf[pos++] = (uint8_t)(onid >> 8);
-            buf[pos++] = (uint8_t)(onid & 0xFF);
-            buf[pos++] = 0xF0;
-            buf[pos++] = 0x00; // descriptors length
+
+            lcn_idx += payload_len / 4;
         }
-        free(list);
+
+        // cable_delivery_system_descriptor (0x44)
+        if(is_delivery_cable(mod->delivery))
+        {
+            uint8_t desc[11];
+            memset(desc, 0, sizeof(desc));
+
+            const uint32_t freq_digits = mod->frequency_khz > 0 ? (mod->frequency_khz * 10) : 0;
+            write_bcd(desc, 8, freq_digits);
+
+            desc[4] = 0xFF;
+            desc[5] = 0xF0 | 0x02; // FEC_outer: RS(204/188)
+            desc[6] = parse_modulation(mod->modulation);
+
+            const uint32_t sr_digits = mod->symbolrate_ksps > 0 ? (mod->symbolrate_ksps * 10) : 0;
+            write_bcd(&desc[7], 7, sr_digits);
+            desc[10] = (desc[10] & 0xF0) | parse_fec_inner(mod->fec);
+
+            if((size_t)pos + 2 + sizeof(desc) + CRC32_SIZE <= MPTS_PSI_SECTION_MAX_SIZE)
+                pos = append_descriptor(buf, pos, 0x44, desc, sizeof(desc));
+            else
+                asc_log_warning(MSG("NIT: нет места для cable_delivery_system_descriptor"));
+        }
+
+        uint16_t main_desc_len = pos - main_desc_start;
+        buf[main_desc_len_pos] = 0xF0 | ((main_desc_len >> 8) & 0x0F);
+        buf[main_desc_len_pos + 1] = (uint8_t)(main_desc_len & 0xFF);
+
+        // Дополнительные TS из network_search добавляем только после service_list/LCN, чтобы не отъедать место.
+        if(svc_idx >= svc_count && lcn_idx >= lcn_count)
+        {
+            while(ns_idx < ns_count)
+            {
+                if((size_t)pos + 6 + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
+                    break;
+                buf[pos++] = (uint8_t)(ns_items[ns_idx].tsid >> 8);
+                buf[pos++] = (uint8_t)(ns_items[ns_idx].tsid & 0xFF);
+                buf[pos++] = (uint8_t)(ns_items[ns_idx].onid >> 8);
+                buf[pos++] = (uint8_t)(ns_items[ns_idx].onid & 0xFF);
+                buf[pos++] = 0xF0;
+                buf[pos++] = 0x00; // descriptors length
+                ++ns_idx;
+            }
+        }
+
+        uint16_t ts_loop_len = pos - ts_loop_start;
+        buf[ts_loop_len_pos] = 0xF0 | ((ts_loop_len >> 8) & 0x0F);
+        buf[ts_loop_len_pos + 1] = (uint8_t)(ts_loop_len & 0xFF);
+
+        sec->buffer_size = pos + CRC32_SIZE;
+        PSI_SET_SIZE(sec);
+        asc_list_insert_tail(mod->nit_out, sec);
     }
 
-    uint16_t ts_loop_len = pos - ts_loop_start;
-    buf[ts_loop_len_pos] = 0xF0 | ((ts_loop_len >> 8) & 0x0F);
-    buf[ts_loop_len_pos + 1] = (uint8_t)(ts_loop_len & 0xFF);
+    const size_t sections = asc_list_size(mod->nit_out);
+    const uint8_t last = (sections > 0) ? (uint8_t)(sections - 1) : 0;
+    uint8_t idx = 0;
+    asc_list_for(mod->nit_out)
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(mod->nit_out);
+        psi->buffer[6] = idx;
+        psi->buffer[7] = last;
+        PSI_SET_CRC32(psi);
+        ++idx;
+    }
 
-    mod->nit_out->buffer_size = pos + CRC32_SIZE;
-    PSI_SET_SIZE(mod->nit_out);
-    PSI_SET_CRC32(mod->nit_out);
+    free(svc_items);
+    free(lcn_items);
+    free(ns_items);
 }
 
 static void build_tdt(module_data_t *mod)
@@ -943,11 +1317,44 @@ static void rebuild_tables(module_data_t *mod)
 static void on_si_timer(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
+    const uint64_t now = asc_utime();
+    if(mod->last_si_us != 0)
+    {
+        const uint64_t delta = now - mod->last_si_us;
+        mod->psi_interval_actual_ms = (uint32_t)((delta + 500) / 1000);
+    }
+    mod->last_si_us = now;
+
+    if(mod->pass_eit && !mod->eit_source && !mod->eit_source_warned)
+    {
+        asc_log_warning(MSG("pass_eit включён, но eit_source не найден"));
+        mod->eit_source_warned = true;
+    }
+    if(mod->pass_cat && !mod->cat_source && !mod->cat_source_warned)
+    {
+        asc_log_warning(MSG("pass_cat включён, но cat_source не найден"));
+        mod->cat_source_warned = true;
+    }
+
     rebuild_tables(mod);
 
+    int ready_services = 0;
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(svc->ready && svc->mapping_ready && svc->pnr_out != 0 && svc->pmt_pid_out != 0)
+            ready_services++;
+    }
+    if(ready_services == 0)
+    {
+        // Если все сервисы отклонены (например, spts_only/strict_pnr), не шлём пустые PSI.
+        // Это предотвращает появление "пустого" PAT и делает ошибку очевидной.
+        return;
+    }
+
     if(mod->pat_out)
-        mpegts_psi_demux(mod->pat_out, mpts_send_psi, mod);
-    if(mod->cat_out)
+        demux_psi_section_list(mod, mod->pat_out);
+    if(mod->cat_out && !mod->pass_cat)
         mpegts_psi_demux(mod->cat_out, mpts_send_psi, mod);
 
     asc_list_for(mod->services)
@@ -957,11 +1364,11 @@ static void on_si_timer(void *arg)
             mpegts_psi_demux(svc->pmt_out, mpts_send_psi, mod);
     }
 
-    if(!mod->pass_sdt || mod->service_count != 1)
-        mpegts_psi_demux(mod->sdt_out, mpts_send_psi, mod);
+    if((!mod->pass_sdt || mod->service_count != 1) && mod->sdt_out)
+        demux_psi_section_list(mod, mod->sdt_out);
 
-    if(!mod->pass_nit || mod->service_count != 1)
-        mpegts_psi_demux(mod->nit_out, mpts_send_psi, mod);
+    if((!mod->pass_nit || mod->service_count != 1) && mod->nit_out)
+        demux_psi_section_list(mod, mod->nit_out);
 
     if(!mod->pass_tdt || mod->service_count != 1)
     {
@@ -1012,6 +1419,36 @@ static void on_cbr_timer(void *arg)
     }
 }
 
+static void on_eit(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    if(!psi || psi->buffer_size < 16)
+        return;
+
+    const uint8_t table_id = psi->buffer[0];
+    if(table_id < 0x4E || table_id > 0x6F)
+        return;
+    if(table_id == 0x4F || table_id >= 0x60)
+        return; // только EIT Actual
+
+    const uint16_t pnr_in = EIT_GET_PNR(psi);
+    mpts_service_t *svc = find_service_by_pnr_in(mod, pnr_in);
+    if(!svc || !svc->ready || !svc->mapping_ready || svc->pnr_out == 0)
+        return;
+
+    // Переписываем идентификаторы под выходной MPTS.
+    EIT_SET_PNR(psi, svc->pnr_out);
+    psi->buffer[8] = (uint8_t)(mod->tsid >> 8);
+    psi->buffer[9] = (uint8_t)(mod->tsid & 0xFF);
+    psi->buffer[10] = (uint8_t)(mod->onid >> 8);
+    psi->buffer[11] = (uint8_t)(mod->onid & 0xFF);
+
+    PSI_SET_CRC32(psi);
+    psi->crc32 = PSI_GET_CRC32(psi);
+
+    mpegts_psi_demux(psi, mpts_send_psi, mod);
+}
+
 static void on_pat(void *arg, mpegts_psi_t *psi)
 {
     mpts_service_t *svc = (mpts_service_t *)arg;
@@ -1033,6 +1470,7 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     uint16_t selected_pnr = 0;
     uint16_t selected_pid = 0;
     uint16_t program_count = 0;
+    bool selected_found = false;
 
     PAT_ITEMS_FOREACH(psi, pointer)
     {
@@ -1045,19 +1483,30 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
 
         if(svc->has_pnr)
         {
-            if(pnr == svc->pnr_cfg)
+            if(pnr == svc->pnr_cfg && !selected_found)
             {
                 selected_pnr = pnr;
                 selected_pid = pid;
-                break;
+                selected_found = true;
             }
         }
-        else
+        else if(!selected_found)
         {
             selected_pnr = pnr;
             selected_pid = pid;
-            break;
+            selected_found = true;
         }
+    }
+
+    if(program_count > 1 && mod->spts_only)
+    {
+        if(!svc->spts_only_warned)
+        {
+            asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но spts_only=true; "
+                "вход отклонён"), program_count);
+            svc->spts_only_warned = true;
+        }
+        return;
     }
 
     if(selected_pid == 0)
@@ -1163,14 +1612,21 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
         mpts_send_ts(mod, ts);
         return;
     }
-    if(pid == 0x0012 && mod->pass_eit && allow_pass)
+    if(pid == 0x0012)
     {
-        mpts_send_ts(mod, ts);
+        if(mod->pass_eit && mod->eit_source == svc && mod->eit_in)
+            mpegts_psi_mux(mod->eit_in, ts, on_eit, mod);
         return;
     }
     if(pid == 0x0014 && mod->pass_tdt && allow_pass)
     {
         mpts_send_ts(mod, ts);
+        return;
+    }
+    if(pid == 0x0001)
+    {
+        if(mod->pass_cat && mod->cat_source == svc)
+            mpts_send_ts(mod, ts);
         return;
     }
 
@@ -1194,8 +1650,39 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
         if(mod->pcr_restamp_start_us == 0)
             mod->pcr_restamp_start_us = now;
         const uint64_t elapsed = now - mod->pcr_restamp_start_us;
-        const uint64_t pcr = (elapsed * 27ULL) % PCR_MAX_TICKS;
-        TS_SET_PCR(out, pcr);
+        const uint64_t target = (elapsed * 27ULL) % PCR_MAX_TICKS;
+        if(mod->pcr_smoothing)
+        {
+            const uint64_t in_pcr = TS_GET_PCR(out);
+            const int64_t diff = pcr_diff(target, in_pcr);
+            if(!svc->pcr_smooth_ready)
+            {
+                svc->pcr_smooth_offset = (double)diff;
+                svc->pcr_smooth_ready = true;
+            }
+            else
+            {
+                svc->pcr_smooth_offset += mod->pcr_smooth_alpha * ((double)diff - svc->pcr_smooth_offset);
+            }
+            if(mod->pcr_smooth_max_offset_ticks > 0)
+            {
+                const double limit = (double)mod->pcr_smooth_max_offset_ticks;
+                if(svc->pcr_smooth_offset > limit)
+                    svc->pcr_smooth_offset = limit;
+                else if(svc->pcr_smooth_offset < -limit)
+                    svc->pcr_smooth_offset = -limit;
+            }
+            int64_t out_pcr = (int64_t)in_pcr + (int64_t)svc->pcr_smooth_offset;
+            if(out_pcr < 0)
+                out_pcr += (int64_t)PCR_MAX_TICKS;
+            else if(out_pcr >= (int64_t)PCR_MAX_TICKS)
+                out_pcr %= (int64_t)PCR_MAX_TICKS;
+            TS_SET_PCR(out, (uint64_t)out_pcr);
+        }
+        else
+        {
+            TS_SET_PCR(out, target);
+        }
     }
     mpts_send_ts(mod, out);
 }
@@ -1288,11 +1775,16 @@ static int method_add_input(module_data_t *mod)
 
     asc_list_insert_tail(mod->services, svc);
 
+    if(mod->pass_eit && mod->eit_source == NULL && mod->eit_source_index == svc->index)
+        mod->eit_source = svc;
+    if(mod->pass_cat && mod->cat_source == NULL && mod->cat_source_index == svc->index)
+        mod->cat_source = svc;
+
     mod->psi_dirty = true;
     if(!mod->pass_warned && mod->service_count > 1 &&
-        (mod->pass_nit || mod->pass_sdt || mod->pass_eit || mod->pass_tdt))
+        (mod->pass_nit || mod->pass_sdt || mod->pass_tdt))
     {
-        asc_log_warning(MSG("pass_* режимы корректны только для одного сервиса; используем генерацию"));
+        asc_log_warning(MSG("pass_nit/pass_sdt/pass_tdt корректны только для одного сервиса; используем генерацию"));
         mod->pass_warned = true;
     }
 
@@ -1306,6 +1798,12 @@ static void module_init(module_data_t *mod)
     mod->services = asc_list_init();
     mod->service_count = 0;
     mod->next_pid = 0x0020;
+    mod->lcn_descriptor_tag = 0x83;
+    mod->spts_only = true;
+    mod->eit_source_index = 1;
+    mod->cat_source_index = 1;
+    mod->pcr_smooth_alpha = 0.1;
+    mod->pcr_smooth_max_offset_ticks = 500ULL * 27000ULL;
 
     reserve_pid(mod, 0x0000); // PAT
     reserve_pid(mod, 0x0001); // CAT
@@ -1363,10 +1861,55 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_sdt", &mod->pass_sdt);
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
+    module_option_boolean("pass_cat", &mod->pass_cat);
     module_option_boolean("pcr_restamp", &mod->pcr_restamp);
+    module_option_boolean("pcr_smoothing", &mod->pcr_smoothing);
     module_option_boolean("strict_pnr", &mod->strict_pnr);
+    module_option_boolean("spts_only", &mod->spts_only);
     if(mod->pcr_restamp)
         asc_log_info(MSG("PCR restamp включён"));
+    if(mod->pcr_smoothing && !mod->pcr_restamp)
+    {
+        asc_log_warning(MSG("pcr_smoothing работает только с pcr_restamp; отключаем сглаживание"));
+        mod->pcr_smoothing = false;
+    }
+
+    if(module_option_number("eit_source", &tmp) && tmp > 0)
+        mod->eit_source_index = tmp;
+    if(module_option_number("cat_source", &tmp) && tmp > 0)
+        mod->cat_source_index = tmp;
+    if(module_option_number("lcn_descriptor_tag", &tmp))
+    {
+        if(tmp > 0 && tmp < 256)
+            mod->lcn_descriptor_tag = (uint8_t)tmp;
+        else
+            asc_log_warning(MSG("lcn_descriptor_tag вне диапазона 1..255, игнорируем"));
+    }
+    const char *lcn_tags = NULL;
+    if(module_option_string("lcn_descriptor_tags", &lcn_tags, NULL) && lcn_tags && lcn_tags[0] != '\0')
+    {
+        parse_lcn_descriptor_tags(mod, lcn_tags);
+    }
+
+    const char *alpha_str = NULL;
+    if(module_option_string("pcr_smooth_alpha", &alpha_str, NULL) && alpha_str && alpha_str[0] != '\0')
+    {
+        double value = strtod(alpha_str, NULL);
+        if(value > 0.0 && value < 1.0)
+            mod->pcr_smooth_alpha = value;
+        else if(value >= 1.0 && value <= 100.0)
+            mod->pcr_smooth_alpha = value / 100.0;
+        else
+            asc_log_warning(MSG("pcr_smooth_alpha вне диапазона (0..1 или 1..100), игнорируем"));
+    }
+    if(module_option_number("pcr_smooth_max_offset_ms", &tmp) && tmp > 0)
+        mod->pcr_smooth_max_offset_ticks = (uint64_t)tmp * 27000ULL;
+    if(mod->pcr_smoothing)
+    {
+        asc_log_info(MSG("PCR smoothing включён (alpha=%.3f, max_offset_ms=%llu)"),
+            mod->pcr_smooth_alpha,
+            (unsigned long long)(mod->pcr_smooth_max_offset_ticks / 27000ULL));
+    }
 
     if(module_option_number("pat_version", &tmp))
     {
@@ -1389,16 +1932,50 @@ static void module_init(module_data_t *mod)
         mod->sdt_version_fixed = true;
     }
 
-    mod->pat_out = mpegts_psi_init(MPEGTS_PACKET_PAT, 0x0000);
+    mod->pat_out = asc_list_init();
     mod->cat_out = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
-    mod->sdt_out = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
-    mod->nit_out = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x0010);
+    mod->sdt_out = asc_list_init();
+    mod->nit_out = asc_list_init();
     mod->tdt_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
     mod->tot_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
+    if(mod->pass_eit)
+        mod->eit_in = mpegts_psi_init(MPEGTS_PACKET_EIT, 0x0012);
 
     mod->si_timer = asc_timer_init(mod->si_interval_ms, on_si_timer, mod);
     if(mod->target_bitrate > 0)
         mod->cbr_timer = asc_timer_init(10, on_cbr_timer, mod);
+}
+
+static int method_stats(module_data_t *mod)
+{
+    lua_newtable(lua);
+
+    const uint64_t now = asc_utime();
+    uint64_t bitrate = 0;
+    if(mod->start_us > 0 && now > mod->start_us)
+    {
+        const uint64_t elapsed = now - mod->start_us;
+        bitrate = mod->sent_packets * (uint64_t)TS_PACKET_SIZE * 8ULL * 1000000ULL / elapsed;
+    }
+    const double null_pct = (mod->sent_packets > 0)
+        ? (double)mod->null_packets * 100.0 / (double)mod->sent_packets
+        : 0.0;
+    const uint32_t psi_ms = mod->psi_interval_actual_ms > 0
+        ? mod->psi_interval_actual_ms
+        : (uint32_t)mod->si_interval_ms;
+
+    lua_pushinteger(lua, (lua_Integer)bitrate);
+    lua_setfield(lua, -2, "bitrate_bps");
+    lua_pushnumber(lua, null_pct);
+    lua_setfield(lua, -2, "null_percent");
+    lua_pushinteger(lua, (lua_Integer)psi_ms);
+    lua_setfield(lua, -2, "psi_interval_ms");
+    lua_pushinteger(lua, (lua_Integer)mod->sent_packets);
+    lua_setfield(lua, -2, "packets_sent");
+    lua_pushinteger(lua, (lua_Integer)mod->null_packets);
+    lua_setfield(lua, -2, "packets_null");
+
+    return 1;
 }
 
 static void module_destroy(module_data_t *mod)
@@ -1410,12 +1987,25 @@ static void module_destroy(module_data_t *mod)
     if(mod->cbr_timer)
         asc_timer_destroy(mod->cbr_timer);
 
-    if(mod->pat_out) mpegts_psi_destroy(mod->pat_out);
+    if(mod->pat_out)
+    {
+        clear_psi_section_list(mod->pat_out);
+        asc_list_destroy(mod->pat_out);
+    }
     if(mod->cat_out) mpegts_psi_destroy(mod->cat_out);
-    if(mod->sdt_out) mpegts_psi_destroy(mod->sdt_out);
-    if(mod->nit_out) mpegts_psi_destroy(mod->nit_out);
+    if(mod->sdt_out)
+    {
+        clear_psi_section_list(mod->sdt_out);
+        asc_list_destroy(mod->sdt_out);
+    }
+    if(mod->nit_out)
+    {
+        clear_psi_section_list(mod->nit_out);
+        asc_list_destroy(mod->nit_out);
+    }
     if(mod->tdt_out) mpegts_psi_destroy(mod->tdt_out);
     if(mod->tot_out) mpegts_psi_destroy(mod->tot_out);
+    if(mod->eit_in) mpegts_psi_destroy(mod->eit_in);
 
     if(mod->services)
     {
@@ -1444,6 +2034,7 @@ MODULE_STREAM_METHODS()
 MODULE_LUA_METHODS()
 {
     { "add_input", method_add_input },
+    { "stats", method_stats },
     MODULE_STREAM_METHODS_REF()
 };
 

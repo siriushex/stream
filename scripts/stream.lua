@@ -297,7 +297,7 @@ local function apply_mpts_config(channel_config)
     if general.network_id ~= nil then note("general.network_id") end
     if general.network_name ~= nil then note("general.network_name") end
     if general.onid ~= nil then note("general.onid") end
-    if nit.lcn_version ~= nil then note("nit.lcn_version") end
+    if nit.lcn_descriptor_tag ~= nil then note("nit.lcn_descriptor_tag") end
     if nit.delivery ~= nil and nit.delivery ~= "" then note("nit.delivery") end
     if nit.frequency ~= nil then note("nit.frequency") end
     if nit.symbolrate ~= nil then note("nit.symbolrate") end
@@ -311,7 +311,14 @@ local function apply_mpts_config(channel_config)
     if adv.sdt_version ~= nil then note("advanced.sdt_version") end
     if adv.pass_nit then note("advanced.pass_nit") end
     if adv.pass_tdt then note("advanced.pass_tdt") end
+    if adv.pass_cat then note("advanced.pass_cat") end
     if adv.disable_auto_remap then note("advanced.disable_auto_remap") end
+    if adv.pcr_smoothing then note("advanced.pcr_smoothing") end
+    if adv.pcr_smooth_alpha ~= nil then note("advanced.pcr_smooth_alpha") end
+    if adv.pcr_smooth_max_offset_ms ~= nil then note("advanced.pcr_smooth_max_offset_ms") end
+    if adv.spts_only ~= nil then note("advanced.spts_only") end
+    if adv.eit_source ~= nil then note("advanced.eit_source") end
+    if adv.cat_source ~= nil then note("advanced.cat_source") end
     if #unsupported > 0 then
         log.warning("[" .. channel_config.name .. "] mpts_config fields not supported: " ..
             table.concat(unsupported, ", "))
@@ -368,6 +375,91 @@ local function resolve_stream_ref(ref)
     return channel
 end
 
+-- Экранирование аргументов для shell-команд (безопасный запуск).
+local function shell_escape(value)
+    local text = tostring(value or "")
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+-- Проверка наличия timeout для ограничения длительности скана.
+local function has_timeout()
+    local ok = os.execute("command -v timeout >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+-- Запуск команды с ограничением по времени (если timeout доступен).
+local function run_command(cmd, timeout_sec)
+    local timeout_cmd = ""
+    if timeout_sec and timeout_sec > 0 and has_timeout() then
+        timeout_cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " "
+    end
+    local ok, handle = pcall(io.popen, timeout_cmd .. cmd .. " 2>&1")
+    if not ok or not handle then
+        return nil, "exec failed"
+    end
+    local output = handle:read("*a") or ""
+    handle:close()
+    return output
+end
+
+-- Автоматический скан PAT/SDT для заполнения списка сервисов MPTS.
+local auto_probe_timeout_warned = false
+
+local function probe_mpts_services(input_url, duration_sec)
+    local cfg = parse_url(input_url)
+    if not cfg or not cfg.format then
+        return nil, "invalid input"
+    end
+    local format = tostring(cfg.format or ""):lower()
+    if format ~= "udp" and format ~= "rtp" then
+        return nil, "unsupported input"
+    end
+    if not cfg.addr or not cfg.port then
+        return nil, "invalid input addr/port"
+    end
+
+    local duration = tonumber(duration_sec) or 3
+    if duration < 1 then duration = 1 end
+    if duration > 10 then duration = 10 end
+
+    local script_path = "tools/mpts_pat_scan.py"
+    local handle = io.open(script_path, "r")
+    if not handle then
+        return nil, "mpts_pat_scan.py not found"
+    end
+    handle:close()
+
+    local cmd = table.concat({
+        "python3",
+        shell_escape(script_path),
+        "--addr",
+        shell_escape(cfg.addr),
+        "--port",
+        shell_escape(cfg.port),
+        "--duration",
+        shell_escape(duration),
+        "--input",
+        shell_escape(input_url),
+    }, " ")
+    if not has_timeout() and not auto_probe_timeout_warned then
+        log.warning("[mpts] auto_probe: 'timeout' not found, running scan without wrapper")
+        auto_probe_timeout_warned = true
+    end
+    local output, err = run_command(cmd, duration + 2)
+    if not output or output == "" then
+        return nil, err or "empty output"
+    end
+    local ok, parsed = pcall(json.decode, output)
+    if not ok or type(parsed) ~= "table" then
+        return nil, "invalid output"
+    end
+    local services = parsed.services or {}
+    if type(services) ~= "table" then
+        services = {}
+    end
+    return services
+end
+
 local function build_mpts_mux_options(channel_config)
     local mpts = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
     local general = type(mpts.general) == "table" and mpts.general or {}
@@ -393,8 +485,49 @@ local function build_mpts_mux_options(channel_config)
     if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
     if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
     if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+    if nit.lcn_descriptor_tag ~= nil then
+        local tag = tonumber(nit.lcn_descriptor_tag)
+        if tag ~= nil then
+            opts.lcn_descriptor_tag = tag
+        else
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tag не распознан")
+        end
+    end
+    if nit.lcn_descriptor_tags ~= nil then
+        if type(nit.lcn_descriptor_tags) == "table" then
+            local tags = {}
+            for _, value in ipairs(nit.lcn_descriptor_tags) do
+                local tag = tonumber(value)
+                if tag ~= nil and tag >= 1 and tag <= 255 then
+                    table.insert(tags, tostring(tag))
+                else
+                    log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tags содержит неверное значение")
+                end
+            end
+            if #tags > 0 then
+                opts.lcn_descriptor_tags = table.concat(tags, ",")
+            end
+        elseif type(nit.lcn_descriptor_tags) == "string" then
+            if nit.lcn_descriptor_tags ~= "" then
+                opts.lcn_descriptor_tags = tostring(nit.lcn_descriptor_tags)
+            end
+        else
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tags должен быть строкой или массивом")
+        end
+    end
     if nit.lcn_version ~= nil then
-        log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
+        local lcn_version = tonumber(nit.lcn_version)
+        if lcn_version == nil then
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не распознан")
+        elseif adv.nit_version ~= nil then
+            -- Если явно задан nit_version, lcn_version игнорируем.
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version игнорируется: задан advanced.nit_version")
+        elseif lcn_version < 0 or lcn_version > 31 then
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version вне диапазона 0..31, игнорируем")
+        else
+            -- LCN version используется для совместимости и напрямую задаёт версию NIT.
+            opts.nit_version = lcn_version
+        end
     end
 
     if adv.si_interval_ms ~= nil then
@@ -417,8 +550,20 @@ local function build_mpts_mux_options(channel_config)
     if adv.pass_sdt then opts.pass_sdt = true end
     if adv.pass_eit then opts.pass_eit = true end
     if adv.pass_tdt then opts.pass_tdt = true end
+    if adv.pass_cat then opts.pass_cat = true end
     if adv.pcr_restamp then opts.pcr_restamp = true end
+    if adv.pcr_smoothing then opts.pcr_smoothing = true end
+    if adv.pcr_smooth_alpha ~= nil then
+        opts.pcr_smooth_alpha = tostring(adv.pcr_smooth_alpha)
+    end
+    if adv.pcr_smooth_max_offset_ms ~= nil then
+        opts.pcr_smooth_max_offset_ms = tonumber(adv.pcr_smooth_max_offset_ms)
+    end
     if adv.strict_pnr then opts.strict_pnr = true end
+    if adv.spts_only == false then opts.spts_only = false end
+    if adv.spts_only == true then opts.spts_only = true end
+    if adv.eit_source ~= nil then opts.eit_source = tonumber(adv.eit_source) end
+    if adv.cat_source ~= nil then opts.cat_source = tonumber(adv.cat_source) end
     if adv.target_bitrate ~= nil then
         local bitrate = tonumber(adv.target_bitrate)
         if bitrate ~= nil then
@@ -2025,7 +2170,8 @@ function validate_stream_config(cfg, opts)
         end
     end
 
-    local backup_type = normalize_backup_type(cfg.backup_type, #inputs > 1)
+    local input_count = (type(inputs) == "table") and #inputs or 0
+    local backup_type = normalize_backup_type(cfg.backup_type, input_count > 1)
     local function check_nonneg(value, label)
         if value ~= nil and value < 0 then
             return nil, label .. " must be >= 0"
@@ -3148,9 +3294,55 @@ local function make_mpts_channel(channel_config)
     end
 
     local services = normalize_mpts_services(channel_config.mpts_services)
+    local mpts_cfg = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
+    local adv_cfg = type(mpts_cfg.advanced) == "table" and mpts_cfg.advanced or {}
+    local auto_probe = adv_cfg.auto_probe == true
+    local auto_probe_duration = tonumber(adv_cfg.auto_probe_duration_sec or adv_cfg.auto_probe_duration) or 3
+
+    local function extract_input_url(entry)
+        if type(entry) == "string" then
+            return entry
+        end
+        if type(entry) == "table" then
+            if entry.url then
+                return entry.url
+            end
+            return format_input_url(entry)
+        end
+        return nil
+    end
+
     if #services == 0 and channel_config.input then
-        for _, entry in ipairs(normalize_stream_list(channel_config.input)) do
-            table.insert(services, { input = entry })
+        local inputs = normalize_stream_list(channel_config.input)
+        -- Если список сервисов пустой, можно попробовать авто-скан входов.
+        if auto_probe then
+            local seen = {}
+            for _, entry in ipairs(inputs) do
+                local input_url = extract_input_url(entry)
+                if input_url and not seen[input_url] then
+                    seen[input_url] = true
+                    local scanned, err = probe_mpts_services(input_url, auto_probe_duration)
+                    if scanned and #scanned > 0 then
+                        for _, svc in ipairs(scanned) do
+                            if not svc.input or svc.input == "" then
+                                svc.input = input_url
+                            end
+                            table.insert(services, svc)
+                        end
+                    else
+                        log.warning("[" .. channel_config.name .. "] auto_probe failed for " ..
+                            tostring(input_url) .. ": " .. tostring(err))
+                    end
+                end
+            end
+        end
+        if #services == 0 then
+            for _, entry in ipairs(inputs) do
+                local input_url = extract_input_url(entry)
+                if input_url then
+                    table.insert(services, { input = input_url })
+                end
+            end
         end
     end
     if #services == 0 then
@@ -3218,6 +3410,7 @@ local function make_mpts_channel(channel_config)
     channel_data.mpts_mux = mpts_mux(mux_opts)
     channel_data.tail = channel_data.mpts_mux
 
+    local service_entries = {}
     for idx, service in ipairs(services) do
         local input_url = collect_mpts_input(service)
         if not input_url then
@@ -3237,14 +3430,17 @@ local function make_mpts_channel(channel_config)
         end
         input_cfg.name = channel_config.name .. " svc #" .. idx
 
-        local input_item = {
-            source_url = input_url,
+        table.insert(service_entries, {
+            index = idx,
+            input_url = input_url,
             config = input_cfg,
-            mpts_service = service,
             is_stream_ref = is_stream_ref,
-        }
-        table.insert(channel_data.input, input_item)
+            service = service,
+        })
     end
+
+    local shared_inputs = {}
+    local shared_streams = {}
 
     local function release_mpts_sources()
         for _, input_data in ipairs(channel_data.input) do
@@ -3255,62 +3451,104 @@ local function make_mpts_channel(channel_config)
         end
     end
 
-    for input_id, input_data in ipairs(channel_data.input) do
-        local upstream = nil
-        if input_data.is_stream_ref then
-            local ref_id = input_data.config.stream_id or input_data.config.addr or input_data.config.id
-            if not ref_id and input_data.source_url then
-                ref_id = tostring(input_data.source_url):gsub("^stream://", "")
+    for _, entry in ipairs(service_entries) do
+        if entry.is_stream_ref then
+            local ref_id = entry.config.stream_id or entry.config.addr or entry.config.id
+            if not ref_id and entry.input_url then
+                ref_id = tostring(entry.input_url):gsub("^stream://", "")
             end
             local source_channel = resolve_stream_ref(ref_id)
             if not source_channel then
-                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                     " stream not found: " .. tostring(ref_id))
                 release_mpts_sources()
                 return nil
             end
             if source_channel.is_mpts then
-                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                     " stream refers to MPTS: " .. tostring(ref_id))
                 release_mpts_sources()
                 return nil
             end
             if source_channel.config then
                 if channel_config.id and source_channel.config.id == channel_config.id then
-                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                         " stream refers to itself: " .. tostring(ref_id))
                     release_mpts_sources()
                     return nil
                 end
                 if channel_config.name and source_channel.config.name == channel_config.name then
-                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                         " stream refers to itself: " .. tostring(ref_id))
                     release_mpts_sources()
                     return nil
                 end
             end
-            channel_retain(source_channel, "mpts")
-            input_data.source_channel = source_channel
-            upstream = source_channel.tail:stream()
+            local ref_key = source_channel.config and (source_channel.config.id or source_channel.config.name) or tostring(ref_id)
+            local shared = shared_streams[ref_key]
+            if not shared then
+                channel_retain(source_channel, "mpts")
+                local input_item = {
+                    source_url = entry.input_url,
+                    config = entry.config,
+                    is_stream_ref = true,
+                    source_channel = source_channel,
+                }
+                table.insert(channel_data.input, input_item)
+                shared = {
+                    stream = source_channel.tail:stream(),
+                }
+                shared_streams[ref_key] = shared
+            end
+            entry.upstream = shared.stream
         else
+            local key = entry.input_url
+            local input_item = shared_inputs[key]
+            if not input_item then
+                input_item = {
+                    source_url = entry.input_url,
+                    config = entry.config,
+                    is_stream_ref = false,
+                }
+                table.insert(channel_data.input, input_item)
+                shared_inputs[key] = input_item
+            end
+            entry.shared_input = input_item
+        end
+    end
+
+    for input_id, input_data in ipairs(channel_data.input) do
+        if not input_data.is_stream_ref then
             if not channel_prepare_input(channel_data, input_id, {}) then
                 log.error("[" .. channel_config.name .. "] mpts input #" .. input_id .. " init failed")
                 release_mpts_sources()
                 return nil
             end
-            upstream = input_data.input.tail:stream()
+        end
+    end
+
+    for _, entry in ipairs(service_entries) do
+        local upstream = entry.upstream
+        if not upstream then
+            local input_item = entry.shared_input
+            if not input_item or not input_item.input or not input_item.input.tail then
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index .. " input is not ready")
+                release_mpts_sources()
+                return nil
+            end
+            upstream = input_item.input.tail:stream()
         end
 
-        local svc = input_data.mpts_service or {}
+        local svc = entry.service or {}
         local service_type_id = tonumber(svc.service_type_id)
         if service_type_id ~= nil and (service_type_id < 1 or service_type_id > 255) then
             -- service_type_id в DVB должен быть 1..255; неверные значения игнорируем.
-            log.warning("[" .. channel_config.name .. "] mpts service #" .. input_id ..
+            log.warning("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                 " service_type_id должен быть 1..255; игнорируем " .. tostring(svc.service_type_id))
             service_type_id = nil
         end
         local svc_opts = {
-            name = svc.name or ("svc_" .. tostring(input_id)),
+            name = svc.name or ("svc_" .. tostring(entry.index)),
             pnr = tonumber(svc.pnr),
             service_name = svc.service_name or svc.name,
             service_provider = svc.service_provider or svc.provider_name,

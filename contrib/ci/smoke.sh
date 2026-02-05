@@ -60,3 +60,16 @@ if [[ "${MPTS_STRICT_PNR_SMOKE:-0}" == "1" ]]; then
   STRICT_PNR_PORT="${MPTS_STRICT_PNR_PORT:-9057}"
   PORT="$STRICT_PNR_PORT" contrib/ci/smoke_mpts_strict_pnr.sh
 fi
+
+if [[ "${MPTS_PID_COLLISION_SMOKE:-0}" == "1" ]]; then
+  PORT="${MPTS_PID_COLLISION_PORT:-9059}" contrib/ci/smoke_mpts_pid_collision.sh
+fi
+if [[ "${MPTS_PASS_TABLES_SMOKE:-0}" == "1" ]]; then
+  PORT="${MPTS_PASS_TABLES_PORT:-9058}" contrib/ci/smoke_mpts_pass_tables.sh
+fi
+if [[ "${MPTS_SPTS_ONLY_SMOKE:-0}" == "1" ]]; then
+  PORT="${MPTS_SPTS_ONLY_PORT:-9062}" contrib/ci/smoke_mpts_spts_only.sh
+fi
+if [[ "${MPTS_AUTO_PROBE_SMOKE:-0}" == "1" ]]; then
+  PORT="${MPTS_AUTO_PROBE_PORT:-9063}" contrib/ci/smoke_mpts_auto_probe.sh
+fi
