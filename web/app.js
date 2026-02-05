@@ -5157,9 +5157,15 @@ function updateMptsDeliveryWarning() {
   if (!elements.mptsDeliveryWarning) return;
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
   const delivery = String(elements.mptsDelivery && elements.mptsDelivery.value || '').toLowerCase();
-  if (!mptsEnabled || !delivery || (delivery !== 'dvb-c' && delivery !== 'cable' && delivery !== 'dvb_c')) {
+  if (!mptsEnabled || !delivery) {
     elements.mptsDeliveryWarning.classList.add('is-hidden');
     elements.mptsDeliveryWarning.textContent = '';
+    return;
+  }
+  const isCable = delivery === 'dvb-c' || delivery === 'cable' || delivery === 'dvb_c';
+  if (!isCable) {
+    elements.mptsDeliveryWarning.textContent = `Delivery ${delivery} не поддерживается: сейчас доступен только DVB-C.`;
+    elements.mptsDeliveryWarning.classList.remove('is-hidden');
     return;
   }
   const freq = Number(elements.mptsFrequency && elements.mptsFrequency.value);
