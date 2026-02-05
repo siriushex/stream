@@ -10,6 +10,7 @@ EXPECT_PMT_STREAMS="${EXPECT_PMT_STREAMS:-}"
 EXPECT_PMT_VIDEO="${EXPECT_PMT_VIDEO:-}"
 EXPECT_PMT_AUDIO="${EXPECT_PMT_AUDIO:-}"
 EXPECT_PMT_DATA="${EXPECT_PMT_DATA:-}"
+EXPECT_PMT_PCR="${EXPECT_PMT_PCR:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
 EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
 EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
@@ -146,6 +147,22 @@ if [[ -n "$EXPECT_PMT_DATA" ]]; then
     value="${entry_trim#*=}"
     if ! grep -q "PMT: summary: pnr=${sid} .* data=${value}" "$LOG_FILE"; then
       echo "PMT data mismatch for pnr ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_PCR" ]]; then
+  IFS=',' read -r -a PMT_PCR_LIST <<< "$EXPECT_PMT_PCR"
+  for entry in "${PMT_PCR_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "PMT: summary: pnr=${sid} .* pcr=${value}" "$LOG_FILE"; then
+      echo "PMT PCR mismatch for pnr ${sid} (expected ${value})"
       exit 1
     fi
   done

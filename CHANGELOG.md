@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added optional PMT PCR checks to MPTS verify and CI.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Added PMT stream-type summary logging and CI assertions for stream counts.
 - Tests:
   - Not run (CI script update).
