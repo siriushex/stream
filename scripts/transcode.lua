@@ -423,7 +423,7 @@ local function build_ffmpeg_args(cfg, opts)
         return nil, "input is required", nil
     end
 
-    local outputs = ensure_list(tc.outputs)
+    local outputs = ensure_list((opts and opts.outputs_override) or tc.outputs)
     if #outputs == 0 then
         return nil, "transcode.outputs is required"
     end
@@ -659,6 +659,11 @@ end
 
 local request_stop
 local schedule_restart
+local schedule_worker_restart
+local ensure_workers
+local start_worker
+local start_worker_standby
+local tick_worker
 local build_probe_args
 local parse_probe_json
 local record_alert
@@ -1104,6 +1109,8 @@ local function ensure_switch_warmup(job, target_id, now)
     ensure_warmup_keyframe_probe(job, fo.switch_warmup, entry, started_at)
 end
 
+local warmup_ready -- forward-declared (used by warmup_status)
+
 local function warmup_status(fo, target_id, now)
     if not warmup_enabled(fo) then
         return "disabled"
@@ -1168,7 +1175,7 @@ local function warmup_is_stable(warm, now)
     return true
 end
 
-local function warmup_ready(warm, now)
+warmup_ready = function(warm, now)
     if not warm then
         return false
     end
@@ -1775,6 +1782,67 @@ end
 local function schedule_failover_restart(job, reason, meta)
     if not job or job.state == "ERROR" then
         return false
+    end
+    if job.process_per_output == true then
+        ensure_workers(job)
+        local tc = job.config and job.config.transcode or {}
+        local timeout_sec = tonumber(tc.seamless_cutover_timeout_sec) or 10
+        if timeout_sec < 1 then timeout_sec = 1 end
+        local stable_sec = tonumber(tc.seamless_cutover_min_stable_sec)
+        if stable_sec == nil then
+            stable_sec = job.failover and tonumber(job.failover.switch_warmup_stable_sec) or 1
+        end
+        if stable_sec < 0 then stable_sec = 0 end
+        local min_ms = job.failover and tonumber(job.failover.switch_warmup_min_ms) or 500
+        if min_ms < 0 then min_ms = 0 end
+
+        local any = false
+        local any_cutover = false
+        local started_at = os.time()
+        for _, worker in ipairs(job.workers or {}) do
+            local can_cutover = job.seamless_udp_proxy == true
+                and worker.proxy_enabled == true
+                and worker.proxy_switch
+                and is_udp_url(worker.output and worker.output.url)
+            if can_cutover then
+                worker.cutover = {
+                    target_input_id = job.active_input_id,
+                    reason = reason,
+                    meta = meta,
+                    started_at = started_at,
+                    deadline_ts = started_at + timeout_sec,
+                    stable_sec = stable_sec,
+                    min_out_time_ms = min_ms,
+                }
+                local ok = start_worker_standby and start_worker_standby(job, worker) or false
+                if not ok then
+                    worker.cutover = nil
+                    any = schedule_worker_restart(job, worker, "INPUT_NO_DATA", reason or "input failover", meta) or any
+                else
+                    any_cutover = true
+                    any = true
+                end
+            else
+                any = schedule_worker_restart(job, worker, "INPUT_NO_DATA", reason or "input failover", meta) or any
+            end
+        end
+        if any_cutover and config and config.add_alert then
+            config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_START", reason or "cutover start", {
+                input_index = job.active_input_id and (job.active_input_id - 1) or nil,
+                reason = reason,
+                timeout_sec = timeout_sec,
+                stable_sec = stable_sec,
+                min_out_time_ms = min_ms,
+            })
+        end
+        if any_cutover then
+            job.last_alert = {
+                code = "TRANSCODE_CUTOVER_START",
+                message = reason or "cutover start",
+                ts = started_at,
+            }
+        end
+        return any
     end
     if job.proc then
         schedule_restart(job, nil, "INPUT_NO_DATA", reason or "input failover", meta)
@@ -2690,7 +2758,97 @@ local function restart_allowed(job, output_state, watchdog)
     return true, history
 end
 
+local function restart_allowed_worker(job, worker, watchdog)
+    local now = os.time()
+    local cutoff = now - 600
+    local history = worker and worker.restart_history
+    if type(history) ~= "table" then
+        history = {}
+        if worker then
+            worker.restart_history = history
+        end
+    end
+    prune_time_list(history, cutoff)
+    local limit = watchdog and watchdog.max_restarts_per_10min or 0
+    if limit > 0 and #history >= limit then
+        record_alert(job, "TRANSCODE_RESTART_LIMIT", "restart limit exceeded", {
+            limit = limit,
+            output_index = worker and worker.index or nil,
+            output_url = worker and worker.output and worker.output.url or nil,
+        })
+        if worker then
+            worker.state = "ERROR"
+        end
+        return false, history
+    end
+    return true, history
+end
+
+schedule_worker_restart = function(job, worker, code, message, meta)
+    if not job or not worker then
+        return false
+    end
+    if worker.state == "ERROR" or worker.state == "RESTARTING" then
+        return false
+    end
+    local watchdog = worker.watchdog or job.watchdog
+    if not watchdog then
+        return false
+    end
+    local now = os.time()
+    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    if cooldown > 0 and worker.last_restart_ts then
+        local note = now - worker.last_restart_ts
+        if note < cooldown then
+            log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown) output #" ..
+                tostring(worker.index))
+            return false
+        end
+    end
+
+    if worker.cutover or (worker.standby and worker.standby.proc) then
+        if worker.standby and worker.standby.proc then
+            worker.standby.proc:kill()
+            worker.standby.proc:close()
+        end
+        worker.standby = nil
+        worker.cutover = nil
+    end
+    local reason_code = resolve_restart_reason_code(code)
+    local payload = normalize_restart_meta(meta)
+    payload.output_index = worker.index
+    payload.output_url = worker.output and worker.output.url or nil
+    local alert_message = "output #" .. tostring(worker.index) .. ": " .. tostring(message or "")
+
+    record_alert(job, reason_code, alert_message, payload)
+    local ok, history = restart_allowed_worker(job, worker, watchdog)
+    if not ok then
+        return false
+    end
+    table.insert(history, now)
+
+    worker.last_restart_ts = now
+    worker.last_restart_reason = reason_code
+    if worker.monitor then
+        worker.monitor.last_restart_ts = now
+        worker.monitor.last_restart_reason = reason_code
+    end
+
+    worker.state = "RESTARTING"
+    worker.restart_due_ts = now + compute_restart_delay(watchdog, history)
+    worker.restart_reason_code = reason_code
+    worker.restart_reason_meta = payload
+    request_stop(worker)
+    return true
+end
+
 schedule_restart = function(job, output_state, code, message, meta)
+    if job and job.process_per_output and output_state and job.workers then
+        local worker = job.workers[output_state.index]
+        if worker then
+            return schedule_worker_restart(job, worker, code, message, meta)
+        end
+    end
     if job.state == "ERROR" or job.state == "RESTARTING" then
         return false
     end
@@ -3238,51 +3396,86 @@ end
 
 local function tick_job(job)
     local now = os.time()
-    read_process_output(job)
-
-    if job.proc then
-        local status = job.proc:poll()
-        if status then
-            finalize_process_exit(job, status)
-            if job.state == "RUNNING" then
-                schedule_restart(job, nil, "EXIT_UNEXPECTED", "ffmpeg exited unexpectedly", {
-                    exit = status,
-                })
-            end
-        elseif job.term_sent_ts and now >= (job.kill_due_ts or 0) then
-            job.kill_attempts = (job.kill_attempts or 0) + 1
-            local killed = false
-            if type(job.proc.kill_tree) == "function" then
-                local ok = pcall(job.proc.kill_tree, job.proc)
-                killed = ok
-            end
-            if not killed then
-                job.proc:kill()
-            end
-            job.kill_due_ts = now + 1
+    if job.process_per_output == true then
+        ensure_workers(job)
+        for _, worker in ipairs(job.workers or {}) do
+            tick_worker(job, worker, now)
         end
-    end
+        job.pid = (job.workers and job.workers[1] and job.workers[1].pid) or nil
+        local primary = job.workers and job.workers[1] or nil
+        if primary then
+            job.last_progress = primary.last_progress
+            job.last_progress_ts = primary.last_progress_ts
+            job.last_error_line = primary.last_error_line
+            job.last_error_ts = primary.last_error_ts
+            job.stderr_tail = primary.stderr_tail
+            job.output_bitrate_kbps = primary.output_bitrate_kbps
+            job.last_out_time_ms = primary.last_out_time_ms
+            job.last_out_time_ts = primary.last_out_time_ts
+            job.ffmpeg_exit_code = primary.ffmpeg_exit_code
+            job.ffmpeg_exit_signal = primary.ffmpeg_exit_signal
+        end
+        if job.enabled and type(job.workers) == "table" and #job.workers > 0 then
+            local all_error = true
+            for _, worker in ipairs(job.workers) do
+                if worker and worker.state ~= "ERROR" then
+                    all_error = false
+                    break
+                end
+            end
+            if all_error then
+                job.state = "ERROR"
+            end
+        end
+    else
+        read_process_output(job)
 
-    prune_time_list(job.error_events, now - 60)
+        if job.proc then
+            local status = job.proc:poll()
+            if status then
+                finalize_process_exit(job, status)
+                if job.state == "RUNNING" then
+                    schedule_restart(job, nil, "EXIT_UNEXPECTED", "ffmpeg exited unexpectedly", {
+                        exit = status,
+                    })
+                end
+            elseif job.term_sent_ts and now >= (job.kill_due_ts or 0) then
+                job.kill_attempts = (job.kill_attempts or 0) + 1
+                local killed = false
+                if type(job.proc.kill_tree) == "function" then
+                    local ok = pcall(job.proc.kill_tree, job.proc)
+                    killed = ok
+                end
+                if not killed then
+                    job.proc:kill()
+                end
+                job.kill_due_ts = now + 1
+            end
+        end
+
+        prune_time_list(job.error_events, now - 60)
+    end
 
     if job.state == "RUNNING" then
         local input_probe_triggered = false
         for _, output_state in ipairs(job.output_monitors or {}) do
             local wd = output_state.watchdog
             if wd then
-                if wd.no_progress_timeout_sec > 0 then
-                    local last_ts = job.last_out_time_ts or job.last_progress_ts or job.start_ts
-                    if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
-                        schedule_restart(job, output_state, "NO_PROGRESS", "no progress detected", {
-                            timeout_sec = wd.no_progress_timeout_sec,
+                if job.process_per_output ~= true then
+                    if wd.no_progress_timeout_sec > 0 then
+                        local last_ts = job.last_out_time_ts or job.last_progress_ts or job.start_ts
+                        if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
+                            schedule_restart(job, output_state, "NO_PROGRESS", "no progress detected", {
+                                timeout_sec = wd.no_progress_timeout_sec,
+                            })
+                        end
+                    end
+
+                    if wd.max_error_lines_per_min > 0 and #job.error_events >= wd.max_error_lines_per_min then
+                        schedule_restart(job, output_state, "ERROR_RATE", "ffmpeg errors rate exceeded", {
+                            count = #job.error_events,
                         })
                     end
-                end
-
-                if wd.max_error_lines_per_min > 0 and #job.error_events >= wd.max_error_lines_per_min then
-                    schedule_restart(job, output_state, "ERROR_RATE", "ffmpeg errors rate exceeded", {
-                        count = #job.error_events,
-                    })
                 end
 
                 check_psi_timeout(job, output_state, wd, now)
@@ -3321,10 +3514,27 @@ local function tick_job(job)
         transcode.start(job, { skip_preprobe = true })
     end
 
-    if job.state == "RESTARTING" and (not job.proc) and job.restart_due_ts and now >= job.restart_due_ts then
+    if job.process_per_output ~= true and job.state == "RESTARTING" and (not job.proc) and job.restart_due_ts and now >= job.restart_due_ts then
         job.restart_due_ts = nil
         transcode.start(job)
     end
+end
+
+local function job_has_any_proc(job)
+    if not job then
+        return false
+    end
+    if job.proc then
+        return true
+    end
+    if type(job.workers) == "table" then
+        for _, worker in ipairs(job.workers) do
+            if worker and worker.proc then
+                return true
+            end
+        end
+    end
+    return false
 end
 
 local function ensure_timer(job)
@@ -3339,7 +3549,7 @@ local function ensure_timer(job)
                 return
             end
             tick_job(job)
-            if job.state == "STOPPED" and not job.proc then
+            if job.state == "STOPPED" and not job_has_any_proc(job) then
                 self:close()
                 job.timer = nil
             end
@@ -3390,6 +3600,532 @@ local function stop_output_monitor(output_state)
     output_state.probe = nil
     output_state.probe_inflight = false
     output_state.analyze_pending = false
+end
+
+ensure_workers = function(job)
+    if not job or job.process_per_output ~= true then
+        return
+    end
+    if type(job.workers) == "table" and type(job.outputs) == "table" and #job.workers == #job.outputs then
+        return
+    end
+    job.workers = {}
+    for index, output in ipairs(job.outputs or {}) do
+        local output_state = job.output_monitors and job.output_monitors[index] or nil
+        local worker = {
+            index = index,
+            output = output,
+            monitor = output_state,
+            watchdog = (output_state and output_state.watchdog) or job.watchdog,
+            state = "STOPPED",
+            restart_history = (output_state and output_state.restart_history) or {},
+            error_events = {},
+            stderr_tail = {},
+            last_progress = {},
+        }
+        job.workers[index] = worker
+        if output_state then
+            output_state.worker = worker
+            output_state.restart_history = worker.restart_history
+        end
+    end
+end
+
+local function reset_worker_runtime(worker, now)
+    worker.start_ts = now
+    worker.stderr_tail = {}
+    worker.last_progress = {}
+    worker.last_progress_ts = now
+    worker.last_out_time_ts = now
+    worker.last_out_time_ms = 0
+    worker.stdout_buf = ""
+    worker.stderr_buf = ""
+    worker.error_events = {}
+    worker.output_bitrate_kbps = nil
+    worker.last_error_line = nil
+    worker.last_error_ts = nil
+    worker.ffmpeg_exit_code = nil
+    worker.ffmpeg_exit_signal = nil
+end
+
+local function parse_query_params(query)
+    local out = {}
+    if not query or query == "" then
+        return out
+    end
+    for part in tostring(query):gmatch("([^&]+)") do
+        local k, v = part:match("^([^=]+)=(.*)$")
+        if k and v then
+            out[k] = v
+        elseif part ~= "" then
+            out[part] = true
+        end
+    end
+    return out
+end
+
+local function parse_udp_output_url(url)
+    if not url or url == "" then
+        return nil
+    end
+    local scheme, rest = tostring(url):match("^(%w+)://(.+)$")
+    if not scheme then
+        return nil
+    end
+    scheme = scheme:lower()
+    if scheme ~= "udp" and scheme ~= "rtp" then
+        return nil
+    end
+
+    local base, query = rest:match("^(.-)%?(.*)$")
+    if base then
+        rest = base
+    else
+        query = ""
+    end
+    local slash = rest:find("/", 1, true)
+    if slash then
+        rest = rest:sub(1, slash - 1)
+    end
+
+    local localaddr = nil
+    local at = rest:find("@", 1, true)
+    if at then
+        if at > 1 then
+            localaddr = rest:sub(1, at - 1)
+        end
+        rest = rest:sub(at + 1)
+    end
+
+    local addr, port_str = rest:match("^(.-):(%d+)$")
+    if not addr then
+        addr = rest
+        port_str = "1234"
+    end
+    local port = tonumber(port_str)
+    if not port or port <= 0 or port > 65535 then
+        return nil
+    end
+
+    return {
+        scheme = scheme,
+        addr = addr,
+        port = port,
+        localaddr = localaddr,
+        query = parse_query_params(query),
+    }
+end
+
+local function ensure_udp_proxy(job, worker)
+    if worker.proxy_enabled == true then
+        return true
+    end
+    if not job or job.seamless_udp_proxy ~= true then
+        return false
+    end
+    local parsed = parse_udp_output_url(worker.output and worker.output.url)
+    if not parsed then
+        return false
+    end
+    if not udp_switch or not udp_output then
+        record_alert(job, "TRANSCODE_PROXY_UNAVAILABLE", "udp_switch/udp_output module missing", {
+            output_index = worker.index,
+            output_url = worker.output and worker.output.url or nil,
+        })
+        return false
+    end
+
+    local ok, sw = pcall(udp_switch, {
+        addr = "127.0.0.1",
+        port = 0,
+    })
+    if not ok or not sw then
+        record_alert(job, "TRANSCODE_PROXY_FAILED", "udp_switch init failed", {
+            output_index = worker.index,
+        })
+        return false
+    end
+    local listen_port = sw:port()
+    if not listen_port or listen_port <= 0 then
+        record_alert(job, "TRANSCODE_PROXY_FAILED", "udp_switch port unavailable", {
+            output_index = worker.index,
+        })
+        return false
+    end
+
+    local out_opts = {
+        upstream = sw:stream(),
+        addr = parsed.addr,
+        port = parsed.port,
+        rtp = parsed.scheme == "rtp",
+    }
+    if parsed.localaddr and parsed.localaddr ~= "" then
+        out_opts.localaddr = parsed.localaddr
+    end
+    if worker.output then
+        if worker.output.ttl ~= nil then out_opts.ttl = worker.output.ttl end
+        if worker.output.socket_size ~= nil then out_opts.socket_size = worker.output.socket_size end
+        if worker.output.sync ~= nil then out_opts.sync = worker.output.sync end
+        if worker.output.cbr ~= nil then out_opts.cbr = worker.output.cbr end
+    end
+
+    local ok_out, out = pcall(udp_output, out_opts)
+    if not ok_out or not out then
+        record_alert(job, "TRANSCODE_PROXY_FAILED", "udp_output init failed", {
+            output_index = worker.index,
+        })
+        return false
+    end
+
+    worker.proxy_enabled = true
+    worker.proxy_switch = sw
+    worker.proxy_output = out
+    worker.proxy_listen_port = listen_port
+    worker.proxy_dest = parsed
+    worker.proxy_pkt_size = tonumber(parsed.query and parsed.query.pkt_size) or 1316
+    return true
+end
+
+local function build_worker_output_override(job, worker)
+    if job and job.seamless_udp_proxy == true and is_udp_url(worker.output and worker.output.url) then
+        if ensure_udp_proxy(job, worker) and worker.proxy_listen_port then
+            local out = {}
+            for k, v in pairs(worker.output or {}) do
+                out[k] = v
+            end
+            local pkt = tonumber(worker.proxy_pkt_size) or 1316
+            out.url = "udp://127.0.0.1:" .. tostring(worker.proxy_listen_port) .. "?pkt_size=" .. tostring(pkt)
+            return out
+        end
+    end
+    return worker.output
+end
+
+local function build_worker_ffmpeg_args(job, worker)
+    local output_override = build_worker_output_override(job, worker)
+    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
+        active_input_id = job.active_input_id,
+        gpu_device = job.gpu_device,
+        outputs_override = { output_override },
+    })
+    return argv, err, selected_url, bin_info
+end
+
+local function read_worker_output(job, worker)
+    if not worker.proc then
+        return
+    end
+    local tc = job.config and job.config.transcode or nil
+    local log_mode = get_log_to_main_mode(tc)
+
+    local out_chunk = worker.proc:read_stdout()
+    consume_lines(worker, "stdout_buf", out_chunk, function(line)
+        update_progress(worker, line)
+    end)
+
+    local err_chunk = worker.proc:read_stderr()
+    consume_lines(worker, "stderr_buf", err_chunk, function(line)
+        update_progress(worker, line)
+        local is_error = match_error_line(line)
+        if is_error then
+            mark_error_line(worker, line)
+        end
+        append_stderr_tail(worker, line)
+        if log_mode == "all" then
+            log.info("[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ffmpeg: " .. line)
+        elseif log_mode == "errors" and is_error then
+            log.warning("[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ffmpeg: " .. line)
+        end
+        if job.log_file_handle then
+            job.log_file_handle:write("[output " .. tostring(worker.index) .. "] " .. line .. "\n")
+            job.log_file_handle:flush()
+        end
+    end)
+end
+
+start_worker = function(job, worker)
+    if worker.proc or worker.state == "ERROR" then
+        return false
+    end
+    local argv, err, selected_url, bin_info = build_worker_ffmpeg_args(job, worker)
+    if not argv then
+        record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", {
+            output_index = worker.index,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+    job.ffmpeg_input_url = selected_url
+    if bin_info then
+        job.ffmpeg_path_resolved = bin_info.path
+        job.ffmpeg_path_source = bin_info.source
+        job.ffmpeg_path_exists = bin_info.exists
+        job.ffmpeg_bundled = bin_info.bundled
+    end
+
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg", {
+            output_index = worker.index,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+
+    worker.proc = proc
+    worker.pid = proc:pid()
+    worker.term_sent_ts = nil
+    worker.kill_due_ts = nil
+    worker.kill_attempts = nil
+    reset_worker_runtime(worker, os.time())
+    if worker.monitor then
+        reset_output_monitor_state(worker.monitor, worker.start_ts)
+    end
+    worker.state = "RUNNING"
+    return true
+end
+
+start_worker_standby = function(job, worker)
+    if not job or not worker then
+        return false
+    end
+    if worker.standby and worker.standby.proc then
+        return true
+    end
+    local argv, err, _selected_url = build_worker_ffmpeg_args(job, worker)
+    if not argv then
+        record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", {
+            output_index = worker.index,
+        })
+        return false
+    end
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg standby", {
+            output_index = worker.index,
+        })
+        return false
+    end
+    local standby = {
+        index = worker.index,
+        proc = proc,
+        pid = proc:pid(),
+        watchdog = worker.watchdog,
+        state = "WARMING",
+        error_events = {},
+        stderr_tail = {},
+        last_progress = {},
+        stdout_buf = "",
+        stderr_buf = "",
+    }
+    reset_worker_runtime(standby, os.time())
+    worker.standby = standby
+    return true
+end
+
+tick_worker = function(job, worker, now)
+    -- Tick retiring process (after cutover) to ensure it exits.
+    if worker.retire and worker.retire.proc then
+        local status = worker.retire.proc:poll()
+        if status then
+            finalize_process_exit(worker.retire, status)
+            worker.retire = nil
+        elseif worker.retire.term_sent_ts and now >= (worker.retire.kill_due_ts or 0) then
+            worker.retire.kill_attempts = (worker.retire.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.retire.proc.kill_tree) == "function" then
+                local ok = pcall(worker.retire.proc.kill_tree, worker.retire.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.retire.proc:kill()
+            end
+            worker.retire.kill_due_ts = now + 1
+        end
+    end
+
+    -- Tick standby process (during cutover).
+    local standby = worker.standby
+    if standby and standby.proc then
+        read_worker_output(job, standby)
+        local status = standby.proc:poll()
+        if status then
+            finalize_process_exit(standby, status)
+        elseif standby.term_sent_ts and now >= (standby.kill_due_ts or 0) then
+            standby.kill_attempts = (standby.kill_attempts or 0) + 1
+            local killed = false
+            if type(standby.proc.kill_tree) == "function" then
+                local ok = pcall(standby.proc.kill_tree, standby.proc)
+                killed = ok
+            end
+            if not killed then
+                standby.proc:kill()
+            end
+            standby.kill_due_ts = now + 1
+        end
+        prune_time_list(standby.error_events, now - 60)
+    end
+
+    -- Tick active process.
+    read_worker_output(job, worker)
+    if worker.proc then
+        local status = worker.proc:poll()
+        if status then
+            finalize_process_exit(worker, status)
+            if worker.state == "RUNNING" and not worker.cutover then
+                schedule_worker_restart(job, worker, "EXIT_UNEXPECTED", "ffmpeg exited unexpectedly", {
+                    exit = status,
+                })
+            end
+        elseif worker.term_sent_ts and now >= (worker.kill_due_ts or 0) then
+            worker.kill_attempts = (worker.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.proc.kill_tree) == "function" then
+                local ok = pcall(worker.proc.kill_tree, worker.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.proc:kill()
+            end
+            worker.kill_due_ts = now + 1
+        end
+    end
+
+    prune_time_list(worker.error_events, now - 60)
+
+    if worker.state == "RUNNING" and not worker.cutover then
+        local wd = worker.watchdog
+        if wd and wd.no_progress_timeout_sec > 0 then
+            local last_ts = worker.last_out_time_ts or worker.last_progress_ts or worker.start_ts
+            if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
+                schedule_worker_restart(job, worker, "NO_PROGRESS", "no progress detected", {
+                    timeout_sec = wd.no_progress_timeout_sec,
+                })
+            end
+        end
+        if wd and wd.max_error_lines_per_min > 0 and #worker.error_events >= wd.max_error_lines_per_min then
+            schedule_worker_restart(job, worker, "ERROR_RATE", "ffmpeg errors rate exceeded", {
+                count = #worker.error_events,
+            })
+        end
+    end
+
+    -- Cutover evaluation (UDP proxy).
+    if worker.cutover then
+        local cut = worker.cutover
+        local sw = worker.proxy_switch
+        local deadline = cut.deadline_ts or 0
+
+        if not standby or not standby.proc then
+            record_alert(job, "TRANSCODE_CUTOVER_FAIL", "standby not running", {
+                output_index = worker.index,
+                reason = cut.reason,
+            })
+            worker.cutover = nil
+            worker.standby = nil
+        elseif deadline > 0 and now >= deadline then
+            standby.proc:kill()
+            standby.proc:close()
+            worker.standby = nil
+            worker.cutover = nil
+            record_alert(job, "TRANSCODE_CUTOVER_FAIL", "cutover timeout", {
+                output_index = worker.index,
+                reason = cut.reason,
+                timeout_sec = (deadline - (cut.started_at or (deadline - 1))),
+            })
+        else
+            local min_ms = tonumber(cut.min_out_time_ms) or 500
+            local stable_sec = tonumber(cut.stable_sec) or 1
+            if min_ms < 0 then min_ms = 0 end
+            if stable_sec < 0 then stable_sec = 0 end
+
+            if not standby.ready_ts and standby.last_out_time_ms and standby.last_out_time_ms >= min_ms then
+                standby.ready_ts = now
+            end
+
+            local stable_ok = false
+            if standby.ready_ts then
+                if stable_sec <= 0 then
+                    stable_ok = true
+                else
+                    local ready_age = now - standby.ready_ts
+                    if ready_age >= stable_sec then
+                        local last_progress = standby.last_progress_ts or standby.ready_ts
+                        if not last_progress or (now - last_progress) <= math.max(1, stable_sec) then
+                            stable_ok = true
+                        end
+                    end
+                end
+            end
+
+            local sender = nil
+            if sw then
+                local ok_source, source = pcall(sw.source, sw)
+                local ok_senders, senders = pcall(sw.senders, sw)
+                if ok_senders and type(senders) == "table" then
+                    for _, s in ipairs(senders) do
+                        if not (ok_source and source) or s.addr ~= source.addr or s.port ~= source.port then
+                            sender = s
+                            break
+                        end
+                    end
+                end
+            end
+
+            local active_missing = not worker.proc
+            if (stable_ok or active_missing) and sender and sw then
+                local ok_set = pcall(sw.set_source, sw, sender.addr, sender.port)
+                if ok_set then
+                    if config and config.add_alert then
+                        config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_OK", cut.reason or "cutover ok", {
+                            output_index = worker.index,
+                            input_index = cut.target_input_id and (cut.target_input_id - 1) or nil,
+                            sender = sender,
+                        })
+                    end
+                    job.last_alert = {
+                        code = "TRANSCODE_CUTOVER_OK",
+                        message = cut.reason or "cutover ok",
+                        ts = now,
+                    }
+
+                    if worker.proc then
+                        worker.retire = {
+                            proc = worker.proc,
+                            pid = worker.pid,
+                            watchdog = worker.watchdog,
+                        }
+                        request_stop(worker.retire)
+                    end
+
+                    worker.proc = standby.proc
+                    worker.pid = standby.pid
+                    worker.term_sent_ts = nil
+                    worker.kill_due_ts = nil
+                    worker.kill_attempts = nil
+                    worker.last_progress = standby.last_progress
+                    worker.last_progress_ts = standby.last_progress_ts
+                    worker.last_out_time_ms = standby.last_out_time_ms
+                    worker.last_out_time_ts = standby.last_out_time_ts
+                    worker.stderr_tail = standby.stderr_tail
+                    worker.stdout_buf = standby.stdout_buf or ""
+                    worker.stderr_buf = standby.stderr_buf or ""
+                    worker.error_events = standby.error_events or {}
+                    worker.start_ts = standby.start_ts or worker.start_ts
+                    worker.state = "RUNNING"
+                    worker.standby = nil
+                    worker.cutover = nil
+                end
+            end
+        end
+    end
+
+    if not worker.cutover and worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
+        if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
+            worker.restart_due_ts = nil
+            start_worker(job, worker)
+        end
+    end
 end
 
 function transcode.start(job, opts)
@@ -3452,6 +4188,44 @@ function transcode.start(job, opts)
             ensure_timer(job)
             return true
         end
+    end
+
+    if job.process_per_output == true then
+        ensure_workers(job)
+
+        close_log_file(job)
+        open_log_file(job, job.log_file_path)
+
+        job.start_ts = os.time()
+        job.stderr_tail = {}
+        if job.failover then
+            job.failover.started_at = job.start_ts
+            job.failover.next_probe_ts = job.start_ts
+            job.failover.inactive_since = nil
+            job.failover.global_state = "RUNNING"
+            job.failover.switch_pending = nil
+            job.failover.return_pending = nil
+            job.failover.switch_warmup = nil
+            job.failover.base_profile = nil
+        end
+
+        for _, worker in ipairs(job.workers or {}) do
+            worker.state = "STARTING"
+        end
+        local any_ok = false
+        for _, worker in ipairs(job.workers or {}) do
+            local ok = start_worker(job, worker)
+            any_ok = any_ok or ok
+        end
+        if not any_ok then
+            job.state = "ERROR"
+            return false
+        end
+        job.preprobe_pending = false
+        job.state = "RUNNING"
+        job.pid = (job.workers and job.workers[1] and job.workers[1].pid) or nil
+        ensure_timer(job)
+        return true
     end
 
     local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
@@ -3525,7 +4299,27 @@ function transcode.start(job, opts)
 end
 
 function transcode.stop(job)
-    if job.proc then
+    if job.process_per_output == true then
+        ensure_workers(job)
+        for _, worker in ipairs(job.workers or {}) do
+            worker.restart_due_ts = nil
+            worker.state = "STOPPED"
+            worker.cutover = nil
+            if worker.standby and worker.standby.proc then
+                worker.standby.proc:kill()
+                worker.standby.proc:close()
+            end
+            worker.standby = nil
+            if worker.retire and worker.retire.proc then
+                worker.retire.proc:kill()
+                worker.retire.proc:close()
+            end
+            worker.retire = nil
+            if worker.proc then
+                request_stop(worker)
+            end
+        end
+    elseif job.proc then
         request_stop(job)
     end
     if job.failover then
@@ -3556,6 +4350,16 @@ end
 function transcode.restart(job, reason)
     if job.state == "ERROR" then
         return false
+    end
+    if job.process_per_output == true then
+        ensure_workers(job)
+        local any = false
+        for _, worker in ipairs(job.workers or {}) do
+            any = schedule_worker_restart(job, worker, "RESTART_REQUEST", reason or "manual restart", {
+                reason = reason,
+            }) or any
+        end
+        return any
     end
     return schedule_restart(job, nil, "RESTART_REQUEST", reason or "manual restart", {
         reason = reason,
@@ -3622,6 +4426,8 @@ function transcode.upsert(id, row, force)
     job.watchdog = normalize_watchdog_defaults(tc)
     job.log_file_path = tc.log_file
     job.outputs = normalize_outputs(tc.outputs, job.watchdog)
+    job.process_per_output = normalize_bool(tc.process_per_output, false)
+    job.seamless_udp_proxy = normalize_bool(tc.seamless_udp_proxy, false)
     job.output_monitors = {}
     for index, output in ipairs(job.outputs) do
         job.output_monitors[index] = {
@@ -3630,6 +4436,9 @@ function transcode.upsert(id, row, force)
             watchdog = output.watchdog,
             restart_history = {},
         }
+    end
+    if job.process_per_output == true then
+        ensure_workers(job)
     end
     job.failover = normalize_failover_config(cfg, enabled)
     if job.failover and job.failover.enabled then
@@ -3727,6 +4536,44 @@ function transcode.get_status(id)
             }
         end
     end
+
+    local workers_status = nil
+    if job.process_per_output == true and type(job.workers) == "table" then
+        workers_status = {}
+        for _, worker in ipairs(job.workers) do
+            local proxy_active_source = nil
+            local proxy_senders = nil
+            if worker.proxy_enabled == true and worker.proxy_switch then
+                local ok_source, source = pcall(worker.proxy_switch.source, worker.proxy_switch)
+                if ok_source then
+                    proxy_active_source = source
+                end
+                local ok_senders, senders = pcall(worker.proxy_switch.senders, worker.proxy_switch)
+                if ok_senders then
+                    proxy_senders = senders
+                end
+            end
+            workers_status[#workers_status + 1] = {
+                output_index = worker.index,
+                pid = worker.pid,
+                state = worker.state,
+                restart_reason_code = worker.restart_reason_code,
+                restart_reason_meta = worker.restart_reason_meta,
+                last_progress = worker.last_progress,
+                last_progress_ts = worker.last_progress_ts,
+                stderr_tail = worker.stderr_tail or {},
+                ffmpeg_exit_code = worker.ffmpeg_exit_code,
+                ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
+                output_bitrate_kbps = worker.output_bitrate_kbps,
+                last_out_time_ms = worker.last_out_time_ms,
+                proxy_enabled = worker.proxy_enabled == true,
+                proxy_listen_port = worker.proxy_listen_port,
+                proxy_active_source = proxy_active_source,
+                proxy_senders = proxy_senders,
+                proxy_senders_count = type(proxy_senders) == "table" and #proxy_senders or 0,
+            }
+        end
+    end
     local inputs = collect_failover_input_stats(job)
     local fo = job.failover
     local active_input_url = get_active_input_url(job.config, job.active_input_id, true)
@@ -3776,6 +4623,8 @@ function transcode.get_status(id)
         name = job.name,
         state = job.state,
         pid = job.pid,
+        process_per_output = job.process_per_output == true,
+        seamless_udp_proxy = job.seamless_udp_proxy == true,
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
@@ -3820,6 +4669,7 @@ function transcode.get_status(id)
         inputs_status = inputs,
         outputs = job.outputs,
         outputs_status = outputs_status,
+        workers = workers_status,
         updated_at = job.last_progress_ts or job.start_ts,
     }
 end
