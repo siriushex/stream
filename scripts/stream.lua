@@ -397,6 +397,7 @@ local function build_mpts_mux_options(channel_config)
     if adv.si_interval_ms ~= nil then opts.si_interval_ms = tonumber(adv.si_interval_ms) end
     if adv.pat_version ~= nil then opts.pat_version = tonumber(adv.pat_version) end
     if adv.nit_version ~= nil then opts.nit_version = tonumber(adv.nit_version) end
+    if adv.cat_version ~= nil then opts.cat_version = tonumber(adv.cat_version) end
     if adv.sdt_version ~= nil then opts.sdt_version = tonumber(adv.sdt_version) end
     if adv.disable_auto_remap then opts.disable_auto_remap = true end
     if adv.pass_nit then opts.pass_nit = true end
