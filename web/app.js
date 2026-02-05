@@ -13819,7 +13819,10 @@ function getPlaylistUrl(stream) {
 }
 
 function getPlayBaseUrl() {
-  const port = getSettingNumber('http_play_port', getSettingNumber('http_port', window.location.port || 8000));
+  const configuredPort = getSettingNumber('http_play_port', undefined);
+  const fallbackPort = getSettingNumber('http_port', window.location.port || 8000);
+  // http_play_port=0 трактуем как "использовать основной HTTP порт".
+  const port = (configuredPort && configuredPort > 0) ? configuredPort : fallbackPort;
   const noTls = getSettingBool('http_play_no_tls', false);
   const protocol = noTls ? 'http:' : window.location.protocol;
   const host = window.location.hostname || '127.0.0.1';
@@ -13840,6 +13843,56 @@ function canPlayMpegTs() {
   if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
   const result = elements.playerVideo.canPlayType('video/mp2t');
   return result === 'probably' || result === 'maybe';
+}
+
+let hlsJsPromise = null;
+
+function canPlayHlsNatively() {
+  if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
+  const result = elements.playerVideo.canPlayType('application/vnd.apple.mpegurl');
+  return result === 'probably' || result === 'maybe';
+}
+
+function loadScriptOnce(src, marker) {
+  return new Promise((resolve, reject) => {
+    const selector = marker ? `script[data-marker="${marker}"]` : `script[src="${src}"]`;
+    const existing = document.querySelector(selector);
+    if (existing) {
+      if (existing.dataset.loaded === '1') {
+        resolve();
+        return;
+      }
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    if (marker) script.dataset.marker = marker;
+    script.dataset.loaded = '0';
+    script.addEventListener('load', () => {
+      script.dataset.loaded = '1';
+      resolve();
+    }, { once: true });
+    script.addEventListener('error', () => {
+      reject(new Error(`Failed to load ${src}`));
+    }, { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+function ensureHlsJsLoaded() {
+  if (window.Hls) return Promise.resolve();
+  if (hlsJsPromise) return hlsJsPromise;
+  // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
+  const src = `/vendor/hls.min.js?v=20260205s`;
+  hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
+    hlsJsPromise = null;
+    throw err;
+  });
+  return hlsJsPromise;
 }
 
 async function apiFetch(path, options = {}) {
@@ -15386,7 +15439,7 @@ function formatVideoError(err) {
   return 'Ошибка воспроизведения.';
 }
 
-function attachPlayerSource(url, opts = {}) {
+async function attachPlayerSource(url, opts = {}) {
   resetPlayerMedia();
   if (!url) {
     setPlayerError('Не удалось получить ссылку на предпросмотр.');
@@ -15396,11 +15449,25 @@ function attachPlayerSource(url, opts = {}) {
   setPlayerLoading(true, 'Подключение...');
   state.playerStartTimer = setTimeout(() => {
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
-  }, 8000);
+  }, 10000);
 
   if (opts.mode === 'mpegts') {
     elements.playerVideo.src = url;
     return;
+  }
+
+  if (canPlayHlsNatively()) {
+    elements.playerVideo.src = url;
+    return;
+  }
+
+  if (!window.Hls) {
+    try {
+      await ensureHlsJsLoaded();
+    } catch (err) {
+      setPlayerError('Не удалось загрузить HLS модуль. Проверьте доступ к UI (vendor/hls.min.js).');
+      return;
+    }
   }
 
   if (window.Hls && window.Hls.isSupported()) {
@@ -15415,8 +15482,6 @@ function attachPlayerSource(url, opts = {}) {
     hls.loadSource(url);
     hls.attachMedia(elements.playerVideo);
     state.player = hls;
-  } else if (elements.playerVideo.canPlayType('application/vnd.apple.mpegurl')) {
-    elements.playerVideo.src = url;
   } else {
     setPlayerError('HLS playback not supported in this browser.');
   }
@@ -15471,7 +15536,7 @@ async function startPlayer(stream, opts = {}) {
     elements.playerUrl.title = state.playerShareUrl || '';
   }
   updatePlayerActions();
-  attachPlayerSource(url, { mode: sourceMode });
+  await attachPlayerSource(url, { mode: sourceMode });
   state.playerStarting = false;
 
   if (opts.openTab) {
