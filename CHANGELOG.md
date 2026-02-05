@@ -34,6 +34,7 @@
   - CI: check_branch_name допускает формат codex/<topic>.
   - CI: smoke_mpts больше не фиксирует PID-значения (не зависит от порядка ремапа).
   - MPTS: iso8859 decode поддерживает UTF-8 маркер (0x15) в SDT/descriptor.
+  - CI: smoke_mpts не требует PAT NIT PID (PAT не содержит NIT по умолчанию).
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
