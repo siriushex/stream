@@ -1923,6 +1923,11 @@ function validate_stream_config(cfg, opts)
                 table.insert(services, { input = entry })
             end
         end
+        local adv = type(cfg.mpts_config) == "table" and cfg.mpts_config.advanced or nil
+        if adv and (adv.pass_nit or adv.pass_sdt or adv.pass_eit or adv.pass_tdt) and #services > 1 then
+            local label = cfg.name or cfg.id or "MPTS"
+            log.warning("[" .. tostring(label) .. "] pass_* режимы корректны только для одного сервиса; будет генерация")
+        end
         for idx, service in ipairs(services) do
             local url = collect_mpts_input(service)
             if not url then
