@@ -74,7 +74,8 @@ local function build_json_schema()
         schema = {
             type = "object",
             additionalProperties = false,
-            required = { "summary", "ops", "warnings" },
+            -- Structured Outputs strict schemas require `required` to include every key in `properties`.
+            required = { "summary", "ops", "warnings", "charts" },
             properties = {
                 summary = { type = "string" },
                 warnings = {
@@ -86,7 +87,7 @@ local function build_json_schema()
                     items = {
                         type = "object",
                         additionalProperties = false,
-                        required = { "op", "target" },
+                        required = { "op", "target", "field", "value", "note" },
                         properties = {
                             op = { type = "string" },
                             target = { type = "string" },
@@ -101,7 +102,7 @@ local function build_json_schema()
                     items = {
                         type = "object",
                         additionalProperties = false,
-                        required = { "series" },
+                        required = { "title", "type", "series" },
                         properties = {
                             title = { type = { "string", "null" } },
                             type = { type = { "string", "null" } },
@@ -110,7 +111,7 @@ local function build_json_schema()
                                 items = {
                                     type = "object",
                                     additionalProperties = false,
-                                    required = { "values" },
+                                    required = { "name", "values" },
                                     properties = {
                                         name = { type = { "string", "null" } },
                                         values = {
@@ -135,7 +136,8 @@ local function build_summary_schema()
         schema = {
             type = "object",
             additionalProperties = false,
-            required = { "summary", "top_issues", "suggestions" },
+            -- Structured Outputs strict schemas require `required` to include every key in `properties`.
+            required = { "summary", "top_issues", "suggestions", "charts" },
             properties = {
                 summary = { type = "string" },
                 top_issues = {
@@ -151,7 +153,7 @@ local function build_summary_schema()
                     items = {
                         type = "object",
                         additionalProperties = false,
-                        required = { "series" },
+                        required = { "title", "type", "series" },
                         properties = {
                             title = { type = { "string", "null" } },
                             type = { type = { "string", "null" } },
@@ -160,7 +162,7 @@ local function build_summary_schema()
                                 items = {
                                     type = "object",
                                     additionalProperties = false,
-                                    required = { "values" },
+                                    required = { "name", "values" },
                                     properties = {
                                         name = { type = { "string", "null" } },
                                         values = {
