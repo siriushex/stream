@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - CI: run HLS memfd smoke (`tools/hls_memfd_smoke.sh`) to guard zero-disk/on-demand behavior.
+- Tests:
+  - Not run (CI change only).
+### 2026-02-06
+- Changes:
   - UI: expose HLS memfd storage/on-demand limits in Settings -> HLS.
   - HLS: run memfd idle sweep timer whenever memfd handler is enabled (supports per-stream memfd overrides).
 - Tests:
