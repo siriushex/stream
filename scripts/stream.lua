@@ -397,7 +397,17 @@ local function build_mpts_mux_options(channel_config)
         log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
     end
 
-    if adv.si_interval_ms ~= nil then opts.si_interval_ms = tonumber(adv.si_interval_ms) end
+    if adv.si_interval_ms ~= nil then
+        local interval = tonumber(adv.si_interval_ms)
+        if interval ~= nil then
+            if interval < 50 then
+                -- Интервал SI меньше 50мс нестабилен, игнорируем.
+                log.warning("[" .. channel_config.name .. "] mpts_config.advanced.si_interval_ms < 50, игнорируем")
+            else
+                opts.si_interval_ms = interval
+            end
+        end
+    end
     if adv.pat_version ~= nil then opts.pat_version = tonumber(adv.pat_version) end
     if adv.nit_version ~= nil then opts.nit_version = tonumber(adv.nit_version) end
     if adv.cat_version ~= nil then opts.cat_version = tonumber(adv.cat_version) end
@@ -409,7 +419,17 @@ local function build_mpts_mux_options(channel_config)
     if adv.pass_tdt then opts.pass_tdt = true end
     if adv.pcr_restamp then opts.pcr_restamp = true end
     if adv.strict_pnr then opts.strict_pnr = true end
-    if adv.target_bitrate ~= nil then opts.target_bitrate = tonumber(adv.target_bitrate) end
+    if adv.target_bitrate ~= nil then
+        local bitrate = tonumber(adv.target_bitrate)
+        if bitrate ~= nil then
+            if bitrate <= 0 then
+                -- Нулевой/отрицательный bitrate выключает CBR, используем default (0).
+                log.warning("[" .. channel_config.name .. "] mpts_config.advanced.target_bitrate <= 0, игнорируем")
+            else
+                opts.target_bitrate = bitrate
+            end
+        end
+    end
 
     return opts
 end
