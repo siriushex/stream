@@ -15559,6 +15559,14 @@ function openAnalyze(stream) {
         `Error: ${warmup.error || 'n/a'}`,
       ]
       : null;
+    const warmupTimeline = warmup
+      ? [
+        `Start: ${warmup.start_ts ? formatTimestamp(warmup.start_ts) : 'n/a'}`,
+        `Ready: ${warmup.ready_ts ? formatTimestamp(warmup.ready_ts) : 'n/a'}`,
+        `Last progress: ${warmup.last_progress_ts ? formatTimestamp(warmup.last_progress_ts) : 'n/a'}`,
+        `Deadline: ${warmup.deadline_ts ? formatTimestamp(warmup.deadline_ts) : 'n/a'}`,
+      ]
+      : null;
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length
       ? outputs.map((out, index) => {
@@ -15609,6 +15617,12 @@ function openAnalyze(stream) {
       title: 'Outputs',
       items: outputItems,
     });
+    if (warmupTimeline) {
+      sections.push({
+        title: 'Warmup timeline',
+        items: warmupTimeline,
+      });
+    }
     if (warmupDetails) {
       sections.push({
         title: 'Warmup details',
