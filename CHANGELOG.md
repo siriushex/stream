@@ -2157,6 +2157,7 @@
   - Added MPTS runtime stats panel (bitrate/null%/PSI) to the editor UI.
   - Added LCN version alias (`nit.lcn_version`) and UI warning for NIT version precedence.
   - Added PAT/SDT scan helper to build `mpts_services` from multi-PAT inputs.
+  - Added multi-tag LCN output (`nit.lcn_descriptor_tags`) for receiver compatibility.
   - Extended CI smoke coverage (PID collision + pass tables) and added TS PID scanner.
   - Extended SPTS generator to emit SDT/EIT/CAT for pass-through tests.
 - Tests:

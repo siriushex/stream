@@ -12,6 +12,7 @@
 #define MPTS_MAX_PIDS 8192
 #define PCR_MAX_TICKS ((1ULL << 33) * 300ULL)
 #define MPTS_PNR_MAX 65535
+#define MPTS_MAX_LCN_TAGS 8
 
 typedef struct mpts_service_t mpts_service_t;
 
@@ -108,6 +109,8 @@ struct module_data_t
     int eit_source_index;
     int cat_source_index;
     uint8_t lcn_descriptor_tag;
+    uint8_t lcn_descriptor_tags[MPTS_MAX_LCN_TAGS];
+    uint8_t lcn_descriptor_tags_count;
 
     double pcr_smooth_alpha;
     uint64_t pcr_smooth_max_offset_ticks;
@@ -520,6 +523,55 @@ static uint8_t parse_fec_inner(const char *value)
     return 0x0F;
 }
 
+static void parse_lcn_descriptor_tags(module_data_t *mod, const char *value)
+{
+    if(!mod || !value || value[0] == '\0')
+        return;
+
+    char *dup = strdup(value);
+    if(!dup)
+        return;
+
+    char *saveptr = NULL;
+    for(char *token = strtok_r(dup, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
+    {
+        while(*token == ' ' || *token == '\t')
+            token++;
+        if(*token == '\0')
+            continue;
+
+        char *endptr = NULL;
+        long tag = strtol(token, &endptr, 0);
+        if(endptr == token || tag <= 0 || tag > 255)
+        {
+            asc_log_warning(MSG("lcn_descriptor_tags содержит неверное значение: %s"), token);
+            continue;
+        }
+
+        bool exists = false;
+        for(uint8_t i = 0; i < mod->lcn_descriptor_tags_count; ++i)
+        {
+            if(mod->lcn_descriptor_tags[i] == (uint8_t)tag)
+            {
+                exists = true;
+                break;
+            }
+        }
+        if(exists)
+            continue;
+
+        if(mod->lcn_descriptor_tags_count >= MPTS_MAX_LCN_TAGS)
+        {
+            asc_log_warning(MSG("lcn_descriptor_tags: превышен лимит %d, остальные теги игнорируются"),
+                            MPTS_MAX_LCN_TAGS);
+            break;
+        }
+        mod->lcn_descriptor_tags[mod->lcn_descriptor_tags_count++] = (uint8_t)tag;
+    }
+
+    free(dup);
+}
+
 static bool is_utf8_codepage(const char *value)
 {
     if(!value || value[0] == '\0') return false;
@@ -763,8 +815,19 @@ static void build_nit(module_data_t *mod)
         {
             if(tmp_len > 255)
                 tmp_len = (uint16_t)((255 / 4) * 4);
-            const uint8_t tag = mod->lcn_descriptor_tag ? mod->lcn_descriptor_tag : 0x83;
-            pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)tmp_len);
+            if(mod->lcn_descriptor_tags_count > 0)
+            {
+                for(uint8_t i = 0; i < mod->lcn_descriptor_tags_count; ++i)
+                {
+                    const uint8_t tag = mod->lcn_descriptor_tags[i];
+                    pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)tmp_len);
+                }
+            }
+            else
+            {
+                const uint8_t tag = mod->lcn_descriptor_tag ? mod->lcn_descriptor_tag : 0x83;
+                pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)tmp_len);
+            }
         }
     }
 
@@ -1546,6 +1609,11 @@ static void module_init(module_data_t *mod)
             mod->lcn_descriptor_tag = (uint8_t)tmp;
         else
             asc_log_warning(MSG("lcn_descriptor_tag вне диапазона 1..255, игнорируем"));
+    }
+    const char *lcn_tags = NULL;
+    if(module_option_string("lcn_descriptor_tags", &lcn_tags, NULL) && lcn_tags && lcn_tags[0] != '\0')
+    {
+        parse_lcn_descriptor_tags(mod, lcn_tags);
     }
 
     const char *alpha_str = NULL;

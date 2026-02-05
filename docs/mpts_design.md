@@ -126,6 +126,7 @@
 - `mpts_config.nit.lcn_version` поддерживается как совместимый alias для `advanced.nit_version`
   (используется только если `advanced.nit_version` не задан).
 - `mpts_config.nit.lcn_descriptor_tag` задаёт tag LCN (0x83/0x87/custom).
+- `mpts_config.nit.lcn_descriptor_tags` задаёт несколько LCN тегов (comma‑list или массив).
 - `general.codepage` поддерживает только UTF-8 (маркер 0x15 в дескрипторах).
 - `mpts_services[].service_type_id` допускает значения 1..255 (пусто = 1).
 - `advanced.strict_pnr=true` запрещает использовать входные PAT с несколькими программами без явного `pnr`.

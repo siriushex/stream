@@ -720,6 +720,8 @@ const elements = {
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
   mptsLcnTag: $('#mpts-lcn-tag'),
+  mptsLcnTags: $('#mpts-lcn-tags'),
+  mptsLcnTagsWarning: $('#mpts-lcn-tags-warning'),
   mptsLcnVersion: $('#mpts-lcn-version'),
   mptsLcnVersionWarning: $('#mpts-lcn-version-warning'),
   mptsDeliveryWarning: $('#mpts-delivery-warning'),
@@ -4697,6 +4699,7 @@ function updateMptsFields() {
   updateMptsPnrWarning();
   updateMptsInputWarning();
   updateMptsDeliveryWarning();
+  updateMptsLcnTagsWarning();
   updateMptsLcnVersionWarning();
   updateEditorMptsStatus();
 }
@@ -7173,6 +7176,25 @@ function updateMptsDeliveryWarning() {
   elements.mptsDeliveryWarning.classList.remove('is-hidden');
 }
 
+function updateMptsLcnTagsWarning() {
+  if (!elements.mptsLcnTagsWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const tagsRaw = String(elements.mptsLcnTags && elements.mptsLcnTags.value || '').trim();
+  const tagRaw = String(elements.mptsLcnTag && elements.mptsLcnTag.value || '').trim();
+  if (!mptsEnabled || !tagsRaw) {
+    elements.mptsLcnTagsWarning.classList.add('is-hidden');
+    elements.mptsLcnTagsWarning.textContent = '';
+    return;
+  }
+  if (tagRaw) {
+    elements.mptsLcnTagsWarning.textContent = 'LCN tags override single LCN tag.';
+    elements.mptsLcnTagsWarning.classList.remove('is-hidden');
+    return;
+  }
+  elements.mptsLcnTagsWarning.classList.add('is-hidden');
+  elements.mptsLcnTagsWarning.textContent = '';
+}
+
 function updateMptsLcnVersionWarning() {
   if (!elements.mptsLcnVersionWarning) return;
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
@@ -7200,6 +7222,7 @@ function bindMptsWarningHandlers() {
     elements.streamMpts.addEventListener('change', updateMptsAutoremapWarning);
     elements.streamMpts.addEventListener('change', updateMptsPnrWarning);
     elements.streamMpts.addEventListener('change', updateMptsLcnVersionWarning);
+    elements.streamMpts.addEventListener('change', updateMptsLcnTagsWarning);
   }
   if (elements.mptsStrictPnr) {
     elements.mptsStrictPnr.addEventListener('change', updateMptsPnrWarning);
@@ -10823,6 +10846,13 @@ function openEditor(stream, isNew) {
   if (elements.mptsLcnTag) {
     elements.mptsLcnTag.value = mptsNit.lcn_descriptor_tag || '';
   }
+  if (elements.mptsLcnTags) {
+    if (Array.isArray(mptsNit.lcn_descriptor_tags)) {
+      elements.mptsLcnTags.value = mptsNit.lcn_descriptor_tags.join(',');
+    } else {
+      elements.mptsLcnTags.value = mptsNit.lcn_descriptor_tags || '';
+    }
+  }
   if (elements.mptsLcnVersion) {
     elements.mptsLcnVersion.value = (mptsNit.lcn_version !== undefined && mptsNit.lcn_version !== null)
       ? mptsNit.lcn_version
@@ -11321,6 +11351,16 @@ function readStreamForm() {
       throw new Error('LCN descriptor tag must be between 1 and 255 (MPTS tab)');
     }
     mptsNit.lcn_descriptor_tag = lcnTag;
+  }
+  const lcnTagsRaw = (elements.mptsLcnTags && elements.mptsLcnTags.value || '').trim();
+  if (lcnTagsRaw) {
+    const parts = lcnTagsRaw.split(/[,\s]+/).filter(Boolean);
+    const tags = parts.map((part) => Number(part));
+    const invalid = tags.find((tag) => !Number.isFinite(tag) || tag < 1 || tag > 255);
+    if (invalid !== undefined) {
+      throw new Error('LCN descriptor tags must be between 1 and 255 (MPTS tab)');
+    }
+    mptsNit.lcn_descriptor_tags = tags;
   }
   const lcnVersion = toNumber(elements.mptsLcnVersion && elements.mptsLcnVersion.value);
   if (lcnVersion !== undefined) {
@@ -17453,6 +17493,11 @@ function bindEvents() {
     if (!control) return;
     control.addEventListener('change', updateMptsDeliveryWarning);
     control.addEventListener('input', updateMptsDeliveryWarning);
+  });
+  [elements.mptsLcnTag, elements.mptsLcnTags].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsLcnTagsWarning);
+    control.addEventListener('input', updateMptsLcnTagsWarning);
   });
   [elements.mptsLcnVersion, elements.mptsNitVersion].forEach((control) => {
     if (!control) return;

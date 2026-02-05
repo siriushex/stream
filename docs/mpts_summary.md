@@ -9,7 +9,7 @@
 - `strict_pnr` и `spts_only` для контроля multi‑PAT.
 - PCR restamp + EWMA‑сглаживание (`pcr_smoothing`).
 - Pass‑through EIT/CAT из выбранного источника.
-- LCN tag configurable (`nit.lcn_descriptor_tag`).
+- LCN tags configurable (`nit.lcn_descriptor_tag` / `nit.lcn_descriptor_tags`).
 - Экспорт MPTS метрик (bitrate/null%/PSI interval) в статус и Prometheus.
 - UI для параметров MPTS + массовые операции по сервисам.
 
