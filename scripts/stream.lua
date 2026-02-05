@@ -174,6 +174,27 @@ local function resolve_hls_output_config(channel_data, conf)
         conf.pass_data = setting_bool("hls_pass_data", true)
     end
 
+    if conf.storage == nil or conf.storage == "" then
+        conf.storage = setting_string("hls_storage", "disk")
+    end
+    if conf.stream_id == nil or conf.stream_id == "" then
+        conf.stream_id = stream_id
+    end
+    if conf.storage == "memfd" then
+        if conf.on_demand == nil then
+            conf.on_demand = setting_bool("hls_on_demand", true)
+        end
+        if conf.idle_timeout_sec == nil then
+            conf.idle_timeout_sec = setting_number("hls_idle_timeout_sec", 30)
+        end
+        if conf.max_bytes == nil then
+            conf.max_bytes = setting_number("hls_max_bytes_per_stream", 64 * 1024 * 1024)
+        end
+        if conf.max_segments == nil then
+            conf.max_segments = setting_number("hls_max_segments", conf.cleanup)
+        end
+    end
+
     local resource_path = setting_string("hls_resource_path", "absolute")
     if resource_path == "relative" then
         conf.base_url = nil
@@ -295,6 +316,78 @@ local function apply_mpts_config(channel_config)
         log.warning("[" .. channel_config.name .. "] mpts_config fields not supported: " ..
             table.concat(unsupported, ", "))
     end
+end
+
+-- Нормализация списка MPTS-сервисов для backend.
+local function normalize_mpts_services(value)
+    if type(value) ~= "table" then
+        return {}
+    end
+    local result = {}
+    for _, item in ipairs(value) do
+        if type(item) == "string" then
+            table.insert(result, { input = item })
+        elseif type(item) == "table" then
+            table.insert(result, item)
+        end
+    end
+    return result
+end
+
+local function collect_mpts_input(item)
+    if type(item) == "string" then
+        return item
+    end
+    if type(item) ~= "table" then
+        return nil
+    end
+    if type(item.input) == "string" then
+        return item.input
+    end
+    if type(item.url) == "string" then
+        return item.url
+    end
+    return nil
+end
+
+local function build_mpts_mux_options(channel_config)
+    local mpts = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
+    local general = type(mpts.general) == "table" and mpts.general or {}
+    local nit = type(mpts.nit) == "table" and mpts.nit or {}
+    local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
+
+    local opts = {
+        name = channel_config.name,
+    }
+
+    if general.tsid ~= nil then opts.tsid = tonumber(general.tsid) end
+    if general.onid ~= nil then opts.onid = tonumber(general.onid) end
+    if general.network_id ~= nil then opts.network_id = tonumber(general.network_id) end
+    if general.network_name ~= nil then opts.network_name = tostring(general.network_name) end
+    if general.provider_name ~= nil then opts.provider_name = tostring(general.provider_name) end
+    if general.codepage ~= nil then opts.codepage = tostring(general.codepage) end
+    if general.country ~= nil then opts.country = tostring(general.country) end
+    if general.utc_offset ~= nil then opts.utc_offset = tonumber(general.utc_offset) end
+
+    if nit.delivery ~= nil then opts.delivery = tostring(nit.delivery) end
+    if nit.frequency ~= nil then opts.frequency = tonumber(nit.frequency) end
+    if nit.symbolrate ~= nil then opts.symbolrate = tonumber(nit.symbolrate) end
+    if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
+    if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
+    if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+
+    if adv.si_interval_ms ~= nil then opts.si_interval_ms = tonumber(adv.si_interval_ms) end
+    if adv.pat_version ~= nil then opts.pat_version = tonumber(adv.pat_version) end
+    if adv.nit_version ~= nil then opts.nit_version = tonumber(adv.nit_version) end
+    if adv.sdt_version ~= nil then opts.sdt_version = tonumber(adv.sdt_version) end
+    if adv.disable_auto_remap then opts.disable_auto_remap = true end
+    if adv.pass_nit then opts.pass_nit = true end
+    if adv.pass_sdt then opts.pass_sdt = true end
+    if adv.pass_eit then opts.pass_eit = true end
+    if adv.pass_tdt then opts.pass_tdt = true end
+    if adv.target_bitrate ~= nil then opts.target_bitrate = tonumber(adv.target_bitrate) end
+
+    return opts
 end
 
 local function normalize_backup_type(value, has_multiple)
@@ -1798,17 +1891,45 @@ function validate_stream_config(cfg, opts)
         return nil, "stream config is required"
     end
 
+    local is_mpts = cfg.mpts == true
     local inputs = normalize_stream_list(cfg.input)
-    if not inputs or #inputs == 0 then
-        return nil, "at least one input is required"
-    end
-    for idx, entry in ipairs(inputs) do
-        local resolved = resolve_io_config(entry, true)
-        if not resolved or not resolved.format or not init_input_module[resolved.format] then
-            return nil, "invalid input #" .. idx .. " format"
+
+    if is_mpts then
+        local services = normalize_mpts_services(cfg.mpts_services)
+        if #services == 0 then
+            if not inputs or #inputs == 0 then
+                return nil, "at least one MPTS service input is required"
+            end
+            services = {}
+            for _, entry in ipairs(inputs) do
+                table.insert(services, { input = entry })
+            end
         end
-        if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
-            return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
+        for idx, service in ipairs(services) do
+            local url = collect_mpts_input(service)
+            if not url then
+                return nil, "invalid MPTS service #" .. idx .. " input"
+            end
+            local resolved = resolve_io_config(url, true)
+            if not resolved or not resolved.format or not init_input_module[resolved.format] then
+                return nil, "invalid MPTS service #" .. idx .. " input format"
+            end
+            if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
+                return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
+            end
+        end
+    else
+        if not inputs or #inputs == 0 then
+            return nil, "at least one input is required"
+        end
+        for idx, entry in ipairs(inputs) do
+            local resolved = resolve_io_config(entry, true)
+            if not resolved or not resolved.format or not init_input_module[resolved.format] then
+                return nil, "invalid input #" .. idx .. " format"
+            end
+            if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
+                return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
+            end
         end
     end
 
@@ -2121,8 +2242,16 @@ function http_output_on_request(server, client, request)
         end
         channel_data.clients = channel_data.clients + 1
 
-        if not channel_data.input[1].input then
-            channel_init_input(channel_data, 1)
+        if channel_data.is_mpts then
+            for input_id, input_data in ipairs(channel_data.input) do
+                if not input_data.input then
+                    channel_prepare_input(channel_data, input_id, {})
+                end
+            end
+        else
+            if not channel_data.input[1].input then
+                channel_init_input(channel_data, 1)
+            end
         end
 
         local buffer_size = math.max(128, output_data.config.buffer_size or 4000)
@@ -2263,7 +2392,7 @@ init_output_module.hls = function(channel_data, output_id)
 
     resolve_hls_output_config(channel_data, conf)
 
-    if not conf.path then
+    if conf.storage ~= "memfd" and not conf.path then
         log.error("[" .. conf.name .. "] HLS output requires path")
         return
     end
@@ -2282,6 +2411,12 @@ init_output_module.hls = function(channel_data, output_id)
         round_duration = conf.round_duration,
         ts_extension = conf.ts_extension,
         pass_data = conf.pass_data,
+        storage = conf.storage,
+        stream_id = conf.stream_id,
+        on_demand = conf.on_demand,
+        idle_timeout_sec = conf.idle_timeout_sec,
+        max_segments = conf.max_segments,
+        max_bytes = conf.max_bytes,
     })
 end
 
@@ -2850,7 +2985,137 @@ end
 
 channel_list = {}
 
+-- Создание MPTS-канала с собственным muxer.
+local function make_mpts_channel(channel_config)
+    if not channel_config.name then
+        log.error("[make_mpts_channel] option 'name' is required")
+        return nil
+    end
+
+    local services = normalize_mpts_services(channel_config.mpts_services)
+    if #services == 0 and channel_config.input then
+        for _, entry in ipairs(normalize_stream_list(channel_config.input)) do
+            table.insert(services, { input = entry })
+        end
+    end
+    if #services == 0 then
+        log.error("[" .. channel_config.name .. "] option 'mpts_services' is required for MPTS")
+        return nil
+    end
+
+    if channel_config.output == nil then channel_config.output = {} end
+    ensure_auto_hls_output(channel_config)
+    apply_stream_defaults(channel_config)
+    if channel_config.timeout == nil then channel_config.timeout = 0 end
+    if channel_config.enable == nil then channel_config.enable = true end
+    if channel_config.http_keep_active == nil then channel_config.http_keep_active = 0 end
+
+    if channel_config.enable == false then
+        log.info("[" .. channel_config.name .. "] channel is disabled")
+        return nil
+    end
+
+    local channel_data = {
+        config = channel_config,
+        input = {},
+        output = {},
+        delay = 3,
+        clients = 1, -- MPTS должен работать постоянно
+        is_mpts = true,
+    }
+
+    local function check_output_list()
+        local url_list = channel_config.output
+        local config_list = channel_data.output
+        local module_list = init_output_module
+        local function check_module(config)
+            if not config then return false end
+            if not config.format then return false end
+            if not module_list[config.format] then return false end
+            return true
+        end
+        for n, url in ipairs(url_list) do
+            local item = {}
+            if type(url) == "string" then
+                item.config = parse_url(url)
+            elseif type(url) == "table" then
+                if url.url then
+                    local u = parse_url(url.url)
+                    for k,v in pairs(u) do url[k] = v end
+                end
+                item.config = url
+            end
+            if not check_module(item.config) then
+                log.error("[" .. channel_config.name .. "] wrong output #" .. n .. " format")
+                return false
+            end
+            item.config.name = channel_config.name .. " output #" .. n
+            table.insert(config_list, item)
+        end
+        return true
+    end
+
+    if not check_output_list() then
+        return nil
+    end
+
+    local mux_opts = build_mpts_mux_options(channel_config)
+    channel_data.mpts_mux = mpts_mux(mux_opts)
+    channel_data.tail = channel_data.mpts_mux
+
+    for idx, service in ipairs(services) do
+        local input_url = collect_mpts_input(service)
+        if not input_url then
+            log.error("[" .. channel_config.name .. "] mpts service #" .. idx .. " input is required")
+            return nil
+        end
+
+        local input_cfg = parse_url(input_url)
+        if not input_cfg or not input_cfg.format or not init_input_module[input_cfg.format] then
+            log.error("[" .. channel_config.name .. "] wrong mpts input #" .. idx .. " format")
+            return nil
+        end
+        input_cfg.name = channel_config.name .. " svc #" .. idx
+
+        local input_item = {
+            source_url = input_url,
+            config = input_cfg,
+            mpts_service = service,
+        }
+        table.insert(channel_data.input, input_item)
+    end
+
+    for input_id, input_data in ipairs(channel_data.input) do
+        if not channel_prepare_input(channel_data, input_id, {}) then
+            log.error("[" .. channel_config.name .. "] mpts input #" .. input_id .. " init failed")
+            return nil
+        end
+        local svc = input_data.mpts_service or {}
+        local svc_opts = {
+            name = svc.name or ("svc_" .. tostring(input_id)),
+            pnr = tonumber(svc.pnr),
+            service_name = svc.service_name or svc.name,
+            service_provider = svc.service_provider or svc.provider_name,
+            service_type_id = tonumber(svc.service_type_id),
+            scrambled = svc.scrambled == true,
+        }
+        channel_data.mpts_mux:add_input(input_data.input.tail:stream(), svc_opts)
+    end
+
+    channel_data.active_input_id = (#channel_data.input > 0) and 1 or 0
+
+    for output_id in ipairs(channel_data.output) do
+        channel_init_output(channel_data, output_id)
+    end
+
+    table.insert(channel_list, channel_data)
+    return channel_data
+end
+
 function make_channel(channel_config)
+    if channel_config and channel_config.mpts == true then
+        return make_mpts_channel(channel_config)
+    end
     if not channel_config.name then
         log.error("[make_channel] option 'name' is required")
         return nil
