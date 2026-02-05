@@ -485,6 +485,10 @@ local function build_mpts_mux_options(channel_config)
     if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
     if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
     if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+    if nit.bandwidth ~= nil then opts.bandwidth = tonumber(nit.bandwidth) end
+    if nit.orbital_position ~= nil then opts.orbital_position = tostring(nit.orbital_position) end
+    if nit.polarization ~= nil then opts.polarization = tostring(nit.polarization) end
+    if nit.rolloff ~= nil then opts.rolloff = tostring(nit.rolloff) end
     if nit.lcn_descriptor_tag ~= nil then
         local tag = tonumber(nit.lcn_descriptor_tag)
         if tag ~= nil then
