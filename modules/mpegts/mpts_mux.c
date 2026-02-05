@@ -41,6 +41,8 @@ struct mpts_service_t
     uint8_t service_type_id;
     bool has_service_type_id;
     bool scrambled;
+    uint16_t lcn;
+    bool has_lcn;
 
     bool ready;
     bool mapping_ready;
@@ -597,6 +599,32 @@ static void build_nit(module_data_t *mod)
         }
     }
 
+    // logical_channel_descriptor (LCN) - NorDig (0x83)
+    {
+        uint8_t tmp[1024];
+        uint16_t tmp_len = 0;
+        asc_list_for(mod->services)
+        {
+            mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+            if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0 || !svc->has_lcn)
+                continue;
+            if(svc->lcn == 0 || svc->lcn > 1023)
+                continue;
+            if(tmp_len + 4 > sizeof(tmp))
+                break;
+            tmp[tmp_len++] = (uint8_t)(svc->pnr_out >> 8);
+            tmp[tmp_len++] = (uint8_t)(svc->pnr_out & 0xFF);
+            tmp[tmp_len++] = (uint8_t)(0xFC | ((svc->lcn >> 8) & 0x03)); // visible=1 + reserved=1
+            tmp[tmp_len++] = (uint8_t)(svc->lcn & 0xFF);
+        }
+        if(tmp_len > 0)
+        {
+            if(tmp_len > 255)
+                tmp_len = (uint16_t)((255 / 4) * 4);
+            pos = append_descriptor(buf, pos, 0x83, tmp, (uint8_t)tmp_len);
+        }
+    }
+
     // cable_delivery_system_descriptor
     if(is_delivery_cable(mod->delivery))
     {
@@ -1062,6 +1090,18 @@ static int method_add_input(module_data_t *mod)
             {
                 svc->service_type_id = (uint8_t)st;
                 svc->has_service_type_id = true;
+            }
+        }
+        lua_pop(lua, 1);
+
+        lua_getfield(lua, 3, "lcn");
+        if(lua_type(lua, -1) == LUA_TNUMBER)
+        {
+            const int lcn = lua_tonumber(lua, -1);
+            if(lcn > 0 && lcn <= 1023)
+            {
+                svc->lcn = (uint16_t)lcn;
+                svc->has_lcn = true;
             }
         }
         lua_pop(lua, 1);

@@ -3282,6 +3282,7 @@ local function make_mpts_channel(channel_config)
             service_name = svc.service_name or svc.name,
             service_provider = svc.service_provider or svc.provider_name,
             service_type_id = tonumber(svc.service_type_id),
+            lcn = tonumber(svc.lcn),
             scrambled = svc.scrambled == true,
         }
         channel_data.mpts_mux:add_input(upstream, svc_opts)

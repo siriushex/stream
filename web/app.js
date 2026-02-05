@@ -4910,6 +4910,7 @@ function normalizeMptsServices(list) {
       service_name: item.service_name || '',
       service_provider: item.service_provider || item.provider_name || '',
       service_type_id: item.service_type_id || '',
+      lcn: item.lcn || '',
       pnr: item.pnr || '',
       scrambled: item.scrambled === true,
       name: item.name || '',
@@ -4974,6 +4975,17 @@ function renderMptsServiceList() {
       service.pnr = pnr.value;
     });
 
+    const lcn = document.createElement('input');
+    lcn.className = 'list-input mpts-field mpts-service-input';
+    lcn.type = 'number';
+    lcn.placeholder = 'LCN';
+    lcn.min = '1';
+    lcn.max = '1023';
+    lcn.value = service.lcn || '';
+    lcn.addEventListener('input', () => {
+      service.lcn = lcn.value;
+    });
+
     const serviceType = document.createElement('input');
     serviceType.className = 'list-input mpts-field mpts-service-input';
     serviceType.type = 'number';
@@ -5003,6 +5015,7 @@ function renderMptsServiceList() {
     grid.appendChild(serviceName);
     grid.appendChild(provider);
     grid.appendChild(pnr);
+    grid.appendChild(lcn);
     grid.appendChild(serviceType);
     grid.appendChild(scrambledLabel);
 
@@ -5063,6 +5076,7 @@ function collectMptsServices() {
       service_name: (service.service_name || '').trim(),
       service_provider: (service.service_provider || '').trim(),
       service_type_id: service.service_type_id,
+      lcn: service.lcn,
       pnr: service.pnr,
       scrambled: service.scrambled === true,
       name: (service.name || '').trim(),
