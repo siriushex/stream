@@ -89,9 +89,11 @@ struct module_data_t
     bool pass_tdt;
 
     uint8_t pat_version;
+    uint8_t cat_version;
     uint8_t nit_version;
     uint8_t sdt_version;
     bool pat_version_fixed;
+    bool cat_version_fixed;
     bool nit_version_fixed;
     bool sdt_version_fixed;
 
@@ -108,6 +110,7 @@ struct module_data_t
     int service_count;
 
     mpegts_psi_t *pat_out;
+    mpegts_psi_t *cat_out;
     mpegts_psi_t *sdt_out;
     mpegts_psi_t *nit_out;
     mpegts_psi_t *tdt_out;
@@ -449,6 +452,23 @@ static void build_pat(module_data_t *mod)
     PSI_SET_CRC32(mod->pat_out);
 }
 
+static void build_cat(module_data_t *mod)
+{
+    uint8_t *buf = mod->cat_out->buffer;
+    buf[0] = 0x01; // CAT
+    buf[1] = 0x80 | 0x30; // section_syntax_indicator + reserved
+    buf[2] = 0x00; // section_length (set later)
+    buf[3] = 0xFF; // reserved
+    buf[4] = 0xFF; // reserved
+    buf[5] = 0x01; // current_next_indicator
+    CAT_SET_VERSION(mod->cat_out, mod->cat_version);
+    buf[6] = 0x00; // section_number
+    buf[7] = 0x00; // last_section_number
+    mod->cat_out->buffer_size = 8 + CRC32_SIZE;
+    PSI_SET_SIZE(mod->cat_out);
+    PSI_SET_CRC32(mod->cat_out);
+}
+
 static void build_sdt(module_data_t *mod)
 {
     uint8_t *buf = mod->sdt_out->buffer;
@@ -713,6 +733,8 @@ static void rebuild_tables(module_data_t *mod)
     {
         if(!mod->pat_version_fixed)
             mod->pat_version = (mod->pat_version + 1) & 0x1F;
+        if(!mod->cat_version_fixed)
+            mod->cat_version = (mod->cat_version + 1) & 0x1F;
         if(!mod->nit_version_fixed)
             mod->nit_version = (mod->nit_version + 1) & 0x1F;
         if(!mod->sdt_version_fixed)
@@ -766,6 +788,7 @@ static void rebuild_tables(module_data_t *mod)
     }
 
     build_pat(mod);
+    build_cat(mod);
     build_sdt(mod);
     build_nit(mod);
     build_tdt(mod);
@@ -790,6 +813,8 @@ static void on_si_timer(void *arg)
 
     if(mod->pat_out)
         mpegts_psi_demux(mod->pat_out, mpts_send_psi, mod);
+    if(mod->cat_out)
+        mpegts_psi_demux(mod->cat_out, mpts_send_psi, mod);
 
     asc_list_for(mod->services)
     {
@@ -1133,6 +1158,11 @@ static void module_init(module_data_t *mod)
         mod->pat_version = (uint8_t)(tmp & 0x1F);
         mod->pat_version_fixed = true;
     }
+    if(module_option_number("cat_version", &tmp))
+    {
+        mod->cat_version = (uint8_t)(tmp & 0x1F);
+        mod->cat_version_fixed = true;
+    }
     if(module_option_number("nit_version", &tmp))
     {
         mod->nit_version = (uint8_t)(tmp & 0x1F);
@@ -1145,6 +1175,7 @@ static void module_init(module_data_t *mod)
     }
 
     mod->pat_out = mpegts_psi_init(MPEGTS_PACKET_PAT, 0x0000);
+    mod->cat_out = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
     mod->sdt_out = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
     mod->nit_out = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x0010);
     mod->tdt_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
@@ -1165,6 +1196,7 @@ static void module_destroy(module_data_t *mod)
         asc_timer_destroy(mod->cbr_timer);
 
     if(mod->pat_out) mpegts_psi_destroy(mod->pat_out);
+    if(mod->cat_out) mpegts_psi_destroy(mod->cat_out);
     if(mod->sdt_out) mpegts_psi_destroy(mod->sdt_out);
     if(mod->nit_out) mpegts_psi_destroy(mod->nit_out);
     if(mod->tdt_out) mpegts_psi_destroy(mod->tdt_out);
