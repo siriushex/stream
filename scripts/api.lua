@@ -2750,6 +2750,9 @@ local function ai_metrics(server, client, request)
     local metric_key = query.metric or ""
     local limit = tonumber(query.limit) or 2000
     local on_demand = setting_bool("ai_metrics_on_demand", true)
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    end
     if on_demand and ai_observability and ai_observability.build_metrics_from_logs then
         local interval = setting_number("ai_rollup_interval_sec", 60)
         local result = ai_observability.get_on_demand_metrics
@@ -2818,6 +2821,9 @@ local function ai_summary(server, client, request)
     local range = parse_range_seconds(query.range, 24 * 3600)
     local since_ts = os.time() - range
     local on_demand = setting_bool("ai_metrics_on_demand", true)
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    end
     local summary = {
         total_bitrate_kbps = 0,
         streams_on_air = 0,

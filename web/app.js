@@ -1351,7 +1351,7 @@ const SETTINGS_GENERAL_SECTIONS = [
           },
           {
             type: 'note',
-            text: 'Отключение фонового rollup снижает нагрузку, но агрегаты строятся по запросу.',
+            text: 'Метрики всегда считаются по запросу (фоновый rollup отключён).',
             level: 'advanced',
           },
         ],
@@ -12726,8 +12726,13 @@ function updateObservabilityScopeFields() {
 }
 
 function updateObservabilityOnDemandFields() {
-  if (!elements.settingsObservabilityOnDemand) return;
-  const onDemand = elements.settingsObservabilityOnDemand.checked;
+  if (elements.settingsObservabilityOnDemand) {
+    elements.settingsObservabilityOnDemand.checked = true;
+    elements.settingsObservabilityOnDemand.disabled = true;
+    const field = elements.settingsObservabilityOnDemand.closest ? elements.settingsObservabilityOnDemand.closest('.field') : null;
+    if (field) field.hidden = true;
+  }
+  const onDemand = true;
   const toggleField = (input, hidden) => {
     if (!input) return;
     input.disabled = hidden;
@@ -13119,24 +13124,28 @@ async function loadObservability(showStatus) {
     const logItems = logs && logs.items ? logs.items : [];
 
     let summary = {};
+    const latest = {};
+    let lastBucket = 0;
+    items.forEach((row) => {
+      if (row.ts_bucket && row.ts_bucket > lastBucket) {
+        lastBucket = row.ts_bucket;
+      }
+    });
+    items.forEach((row) => {
+      if (row.ts_bucket === lastBucket) {
+        latest[row.metric_key] = row.value;
+      }
+    });
     if (scope === 'global') {
-      const summaryUrl = new URL('/api/v1/ai/summary', window.location.origin);
-      summaryUrl.searchParams.set('range', range);
-      const summaryResp = await apiJson(summaryUrl.toString());
-      summary = (summaryResp && summaryResp.summary) ? summaryResp.summary : {};
+      summary = {
+        total_bitrate_kbps: latest.total_bitrate_kbps || 0,
+        streams_on_air: latest.streams_on_air || 0,
+        streams_down: latest.streams_down || 0,
+        streams_total: latest.streams_total || 0,
+        input_switch: latest.input_switch || 0,
+        alerts_error: latest.alerts_error || 0,
+      };
     } else {
-      const latest = {};
-      let lastBucket = 0;
-      items.forEach((row) => {
-        if (row.ts_bucket && row.ts_bucket > lastBucket) {
-          lastBucket = row.ts_bucket;
-        }
-      });
-      items.forEach((row) => {
-        if (row.ts_bucket === lastBucket) {
-          latest[row.metric_key] = row.value;
-        }
-      });
       summary = {
         bitrate_kbps: latest.bitrate_kbps || 0,
         on_air: Number(latest.on_air || 0) > 0,
@@ -13147,29 +13156,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
-
-    let aiPayload = null;
-    if (scope === 'global') {
-      const aiEnabled = getSettingBool('ai_enabled', false);
-      const aiKeySet = getSettingBool('ai_api_key_set', false);
-      if (aiEnabled && aiKeySet) {
-        const aiUrl = new URL('/api/v1/ai/summary', window.location.origin);
-        aiUrl.searchParams.set('range', range);
-        aiUrl.searchParams.set('ai', '1');
-        try {
-          aiPayload = await apiJson(aiUrl.toString());
-        } catch (err) {
-          aiPayload = { note: formatNetworkError(err) || 'AI summary failed.' };
-        }
-      } else if (!aiEnabled) {
-        aiPayload = { note: 'AI disabled.' };
-      } else {
-        aiPayload = { note: 'AI key not set.' };
-      }
-    } else {
-      aiPayload = { note: 'AI summary available for global scope.' };
-    }
-    renderObservabilityAiSummary(aiPayload);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
@@ -13635,9 +13621,10 @@ function applySettingsToUI() {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
     const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
-    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const onDemand = true;
     if (elements.settingsObservabilityOnDemand) {
-      elements.settingsObservabilityOnDemand.checked = onDemand;
+      elements.settingsObservabilityOnDemand.checked = true;
+      elements.settingsObservabilityOnDemand.disabled = true;
     }
     elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (!onDemand && metricsDays > 0);
     setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
@@ -14106,7 +14093,7 @@ function collectGeneralSettings() {
   const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
-  const observabilityOnDemand = elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked;
+  const observabilityOnDemand = true;
   if (observabilityEnabled) {
     if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
       throw new Error('Log retention days must be >= 1');

@@ -520,6 +520,10 @@ function ai_observability.configure()
     local logs_days = setting_number("ai_logs_retention_days", 7)
     local rollup_interval = sanitize_interval(setting_number("ai_rollup_interval_sec", 60))
     local on_demand = setting_bool("ai_metrics_on_demand", true)
+    if not on_demand then
+        log.info("[observability] forcing on-demand metrics to reduce load")
+        on_demand = true
+    end
     local metrics_days = setting_number("ai_metrics_retention_days", on_demand and 0 or 30)
 
     ai_observability.state.logs_retention_days = math.max(0, math.floor(logs_days or 0))

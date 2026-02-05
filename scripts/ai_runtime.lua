@@ -244,7 +244,11 @@ local function build_context_options(payload, prompt)
     payload = payload or {}
     local include_logs = payload.include_logs
     if include_logs == nil then
-        include_logs = true
+        if prompt then
+            include_logs = derive_include_logs_from_prompt(prompt)
+        else
+            include_logs = false
+        end
     else
         include_logs = include_logs == true
     end

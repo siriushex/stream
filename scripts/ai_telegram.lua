@@ -129,7 +129,9 @@ end
 
 local function build_summary_snapshot(range_sec)
     local on_demand = false
-    if config and config.get_setting then
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    elseif config and config.get_setting then
         local v = config.get_setting("ai_metrics_on_demand")
         if v == true or v == 1 or v == "1" or v == "true" then
             on_demand = true
@@ -192,7 +194,9 @@ local function build_stream_snapshot(stream_id, range_sec)
     end
 
     local on_demand = false
-    if config and config.get_setting then
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    elseif config and config.get_setting then
         local v = config.get_setting("ai_metrics_on_demand")
         if v == true or v == 1 or v == "1" or v == "true" then
             on_demand = true
