@@ -12,6 +12,20 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI: перестроена вкладка Settings → General на разделы и карточки с поиском, переключателем базовых/расширенных, sticky-панелью действий и едиными switch-контролами.
+  - UI: добавлено подтверждение для Allow apply в AstraAI и переключатель отображения лимитов в разделе безопасности.
+- Tests:
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+### 2026-02-05
+- Changes:
   - Added automatic contrib ffmpeg build fallback for mixaudio module when system libs are missing.
   - Enabled mixaudio and postgres module builds when dependencies are available (pkg-config/pg_config support).
 - Tests:
