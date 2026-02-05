@@ -636,6 +636,9 @@ function main()
     end
 
     config.init({ data_dir = opt.data_dir, db_path = opt.db_path })
+    if opt.config_path and opt.config_path ~= "" and config.set_primary_config_path then
+        config.set_primary_config_path(opt.config_path)
+    end
     if config.read_boot_state and config.lkg_snapshot_path and config.restore_snapshot then
         local boot_state = config.read_boot_state()
         if boot_state and boot_state.status ~= "ok" then
