@@ -12,6 +12,17 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - MPTS: add optional CAT generation with CA_descriptors from `mpts_config.ca` (CA system id, CA PID, private data).
+  - MPTS: include CA_PID from PMT CA_descriptor in auto-remap and rewrite CA_PID inside output PMT (keeps ECM PID consistent after remap).
+  - UI: add MPTS CAT/CA section to edit `mpts_config.ca` and clarify pass-through behavior in the manual.
+  - CI: add `contrib/ci/smoke_mpts_cat.sh` coverage and extend verifier to assert CAT/PMT CAS lines.
+  - Tools: `tools/gen_spts.py` can emit PMT CA_descriptor for CI fixtures.
+- Tests:
+  - `./configure.sh && make`
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_cat.sh`
+### 2026-02-06
+- Changes:
   - MixAudio: modernize FFmpeg API usage to compile against current libavcodec/libavutil.
   - MixAudio: fix module detection to always add system FFmpeg link flags (pkg-config libs).
   - CI: install libavcodec-dev/libavutil-dev/libpq-dev so optional modules (mixaudio/postgres) build in CI.

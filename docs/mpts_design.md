@@ -42,6 +42,13 @@
       "network_search": "2:1,3:1",
       "lcn_descriptor_tag": 131
     },
+    "ca": [
+      {
+        "ca_system_id": 2816,
+        "ca_pid": 800,
+        "private_data": "010203"
+      }
+    ],
     "advanced": {
       "si_interval_ms": 500,
       "auto_probe": false,
@@ -95,7 +102,7 @@
 - NIT (Actual): network_name + service_list + delivery descriptor (DVB‑C/DVB‑T/DVB‑S)
 - LCN: если задан `mpts_services[].lcn`, добавляется logical_channel_descriptor (0x83) в NIT
 - TDT/TOT: UTC время; TOT с local_time_offset_descriptor при задании country/utc_offset
-- CAT: генерируется пустой (без CA descriptors) либо pass‑through при `pass_cat`
+- CAT: генерируется и может содержать CA_descriptors из `mpts_config.ca`, либо pass‑through при `pass_cat`
 - EIT: pass‑through при `pass_eit` из одного источника, фильтруется по service_id
 
 ## CBR режим

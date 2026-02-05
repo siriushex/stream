@@ -50,6 +50,42 @@ def build_pat(tsid: int, programs, version: int = 0) -> bytes:
 
 
 def build_pmt(pnr: int, pcr_pid: int, es_pid: int, stream_type: int = 0x1B, version: int = 0) -> bytes:
+    return build_pmt_with_ca(pnr, pcr_pid, es_pid, stream_type=stream_type, version=version)
+
+
+def hex_to_bytes(text: str) -> bytes:
+    if not text:
+        return b""
+    s = str(text).strip().replace(" ", "").replace("\t", "")
+    if s.lower().startswith("0x"):
+        s = s[2:]
+    if not s:
+        return b""
+    if (len(s) % 2) == 1:
+        raise ValueError("hex string must have even length")
+    return bytes.fromhex(s)
+
+
+def build_ca_descriptor(ca_system_id: int, ca_pid: int, private_data_hex: str = "") -> bytes:
+    priv = hex_to_bytes(private_data_hex)
+    if len(priv) > (255 - 4):
+        raise ValueError("CA private_data too long (max 251 bytes)")
+    payload = struct.pack("!H", ca_system_id & 0xFFFF)
+    payload += bytes([0xE0 | ((ca_pid >> 8) & 0x1F), ca_pid & 0xFF])
+    payload += priv
+    return bytes([0x09, len(payload)]) + payload
+
+
+def build_pmt_with_ca(
+    pnr: int,
+    pcr_pid: int,
+    es_pid: int,
+    stream_type: int = 0x1B,
+    version: int = 0,
+    ca_system_id=None,
+    ca_pid=None,
+    ca_private_data_hex: str = "",
+) -> bytes:
     section = bytearray()
     section.append(0x02)  # table_id
     section.extend(b"\x00\x00")  # section_length placeholder
@@ -59,8 +95,15 @@ def build_pmt(pnr: int, pcr_pid: int, es_pid: int, stream_type: int = 0x1B, vers
     section.append(0x00)
     section.append(0xE0 | ((pcr_pid >> 8) & 0x1F))
     section.append(pcr_pid & 0xFF)
-    section.append(0xF0)
-    section.append(0x00)  # program_info_length
+
+    program_info = b""
+    if ca_system_id is not None and ca_pid is not None:
+        program_info = build_ca_descriptor(int(ca_system_id), int(ca_pid), ca_private_data_hex)
+
+    section.append(0xF0 | ((len(program_info) >> 8) & 0x0F))
+    section.append(len(program_info) & 0xFF)  # program_info_length
+    if program_info:
+        section.extend(program_info)
     # stream info
     section.append(stream_type & 0xFF)
     section.append(0xE0 | ((es_pid >> 8) & 0x1F))
@@ -194,6 +237,9 @@ def pack_null(cc: int) -> bytes:
 
 
 def main() -> int:
+    def parse_int_auto(text: str) -> int:
+        return int(str(text), 0)
+
     parser = argparse.ArgumentParser(description="Generate minimal SPTS over UDP")
     parser.add_argument("--addr", default="127.0.0.1")
     parser.add_argument("--port", type=int, required=True)
@@ -215,6 +261,12 @@ def main() -> int:
     parser.add_argument("--emit-sdt", action="store_true")
     parser.add_argument("--emit-eit", action="store_true")
     parser.add_argument("--emit-cat", action="store_true")
+    parser.add_argument("--pmt-ca-system-id", type=parse_int_auto, default=None,
+                        help="Optional PMT CA_descriptor CA_system_id (e.g. 0x0B00)")
+    parser.add_argument("--pmt-ca-pid", type=parse_int_auto, default=None,
+                        help="Optional PMT CA_descriptor CA_PID (ECM PID)")
+    parser.add_argument("--pmt-ca-private-data", default="",
+                        help="Optional PMT CA_descriptor private_data (hex)")
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--pps", type=int, default=200)
     parser.add_argument("--payload-per-program", type=int, default=3,
@@ -241,7 +293,14 @@ def main() -> int:
             programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
 
     pat = build_pat(args.tsid, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
-    pmt_map = {pmt_pid: build_pmt(pnr, pcr_pid, video_pid)
+    pmt_map = {pmt_pid: build_pmt_with_ca(
+                   pnr,
+                   pcr_pid,
+                   video_pid,
+                   ca_system_id=args.pmt_ca_system_id,
+                   ca_pid=args.pmt_ca_pid,
+                   ca_private_data_hex=args.pmt_ca_private_data,
+               )
                for pnr, pmt_pid, video_pid, pcr_pid in programs}
     services = []
     for idx, (pnr, _, _, _) in enumerate(programs, start=1):

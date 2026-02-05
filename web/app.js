@@ -180,6 +180,7 @@ const state = {
   transcodeWatchdogDefaults: null,
   inputs: [],
   mptsServices: [],
+  mptsCa: [],
   inputEditingIndex: null,
   inputExtras: {},
   settingsSection: 'general',
@@ -859,6 +860,8 @@ const elements = {
   btnAddMptsService: $('#btn-add-mpts-service'),
   btnMptsProbe: $('#btn-mpts-probe'),
   mptsServiceList: $('#mpts-service-list'),
+  btnAddMptsCa: $('#btn-add-mpts-ca'),
+  mptsCaList: $('#mpts-ca-list'),
   mptsBulkPnrStart: $('#mpts-bulk-pnr-start'),
   mptsBulkPnrStep: $('#mpts-bulk-pnr-step'),
   mptsBulkLcnStart: $('#mpts-bulk-lcn-start'),
@@ -6938,6 +6941,99 @@ function normalizeMptsServices(list) {
   });
 }
 
+function normalizeMptsCa(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => {
+    if (!item || typeof item !== 'object') {
+      return { ca_system_id: '', ca_pid: '', private_data: '' };
+    }
+    return {
+      ca_system_id: item.ca_system_id !== undefined ? item.ca_system_id : (item.caid || ''),
+      ca_pid: item.ca_pid !== undefined ? item.ca_pid : (item.pid || ''),
+      private_data: item.private_data || item.data || '',
+    };
+  });
+}
+
+function renderMptsCaList() {
+  if (!elements.mptsCaList) return;
+  elements.mptsCaList.innerHTML = '';
+  state.mptsCa = Array.isArray(state.mptsCa) ? state.mptsCa : [];
+
+  if (state.mptsCa.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No CA descriptors configured.';
+    elements.mptsCaList.appendChild(empty);
+    return;
+  }
+
+  state.mptsCa.forEach((entry, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row mpts-ca-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const grid = document.createElement('div');
+    grid.className = 'mpts-ca-grid';
+
+    const caid = document.createElement('input');
+    caid.className = 'list-input mpts-field mpts-service-input';
+    caid.type = 'text';
+    caid.placeholder = 'CAID (0x0B00)';
+    caid.title = 'CA system id (hex or decimal), 0..65535';
+    caid.value = entry.ca_system_id !== undefined && entry.ca_system_id !== null ? String(entry.ca_system_id) : '';
+    caid.addEventListener('input', () => {
+      entry.ca_system_id = caid.value;
+    });
+
+    const capid = document.createElement('input');
+    capid.className = 'list-input mpts-field mpts-service-input';
+    capid.type = 'number';
+    capid.placeholder = 'CA PID';
+    capid.min = '0';
+    capid.max = '8190';
+    capid.value = entry.ca_pid !== undefined && entry.ca_pid !== null ? String(entry.ca_pid) : '';
+    capid.addEventListener('input', () => {
+      entry.ca_pid = capid.value;
+    });
+
+    const priv = document.createElement('input');
+    priv.className = 'list-input mpts-field mpts-service-input';
+    priv.type = 'text';
+    priv.placeholder = 'private_data (hex, optional)';
+    priv.title = 'Optional descriptor private_data (hex string, even length)';
+    priv.value = entry.private_data !== undefined && entry.private_data !== null ? String(entry.private_data) : '';
+    priv.addEventListener('input', () => {
+      entry.private_data = priv.value;
+    });
+
+    grid.appendChild(caid);
+    grid.appendChild(capid);
+    grid.appendChild(priv);
+
+    const actions = document.createElement('div');
+    actions.className = 'mpts-ca-actions';
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'mpts-ca-remove';
+    remove.textContent = 'x';
+
+    actions.appendChild(remove);
+
+    row.appendChild(idx);
+    row.appendChild(grid);
+    row.appendChild(actions);
+
+    elements.mptsCaList.appendChild(row);
+  });
+}
+
 function renderMptsServiceList() {
   if (!elements.mptsServiceList) return;
   elements.mptsServiceList.innerHTML = '';
@@ -11196,6 +11292,12 @@ function openEditor(stream, isNew) {
     state.mptsServices = normalizeMptsServices(config.input || []);
   }
   renderMptsServiceList();
+
+  state.mptsCa = normalizeMptsCa(mptsConfig.ca || []);
+  renderMptsCaList();
+  // В openEditor MPTS поля частично создаются динамически (список сервисов/CA),
+  // поэтому повторно применяем disabled-состояние после render.
+  updateMptsFields();
 
   state.outputs = normalizeOutputs(config.output || [], stream.id || '');
   renderOutputList();

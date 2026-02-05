@@ -3,7 +3,7 @@
 Краткая сводка реализации MPTS и проверок.
 
 ## Что реализовано
-- Полноценный MPTS mux с PAT/PMT/SDT/NIT/TDT/TOT (CAT пустой или pass‑through).
+- Полноценный MPTS mux с PAT/PMT/SDT/NIT/TDT/TOT и CAT (пустой по умолчанию, CA_descriptors из `mpts_config.ca`, либо pass‑through при `pass_cat`).
 - Auto-remap PID по умолчанию; строгий режим при `disable_auto_remap=true`.
 - CBR с null stuffing по `advanced.target_bitrate`.
 - `strict_pnr` и `spts_only` для контроля multi‑PAT.
