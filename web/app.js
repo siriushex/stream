@@ -775,6 +775,8 @@ const elements = {
   streamTranscodeCommonArgs: $('#stream-transcode-common-args'),
   streamTranscodeInputProbeUdp: $('#stream-transcode-input-probe-udp'),
   streamTranscodeInputProbeRestart: $('#stream-transcode-input-probe-restart'),
+  streamTranscodeRestart: $('#stream-transcode-restart'),
+  streamTranscodeStderr: $('#stream-transcode-stderr'),
   transcodeOutputList: $('#transcode-output-list'),
   btnAddTranscodeOutput: $('#btn-add-transcode-output'),
   transcodeOutputOverlay: $('#transcode-output-overlay'),
@@ -11450,10 +11452,44 @@ function formatTranscodeAlert(alert) {
   return alert.message;
 }
 
+function formatTranscodeRestartMeta(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  const parts = [];
+  if (Number.isFinite(meta.output_index)) {
+    parts.push(`output #${meta.output_index}`);
+  }
+  if (meta.reason) parts.push(meta.reason);
+  if (meta.detail) parts.push(meta.detail);
+  if (Number.isFinite(meta.desync_ms)) {
+    parts.push(`desync ${Math.round(meta.desync_ms)}ms`);
+  }
+  if (Number.isFinite(meta.bitrate_kbps)) {
+    parts.push(`${Math.round(meta.bitrate_kbps)} Kbit/s`);
+  }
+  if (meta.error_line) parts.push(meta.error_line);
+  return parts.join(', ');
+}
+
+function formatTranscodeRestartSummary(transcode) {
+  if (!transcode || !transcode.restart_reason_code) return '';
+  const meta = formatTranscodeRestartMeta(transcode.restart_reason_meta);
+  return meta
+    ? `${transcode.restart_reason_code} (${meta})`
+    : transcode.restart_reason_code;
+}
+
 function updateEditorTranscodeStatus() {
   if (!elements.streamTranscodeStatus) return;
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
+  }
+  if (elements.streamTranscodeRestart) {
+    elements.streamTranscodeRestart.textContent = '';
+    elements.streamTranscodeRestart.classList.remove('is-error');
+  }
+  if (elements.streamTranscodeStderr) {
+    elements.streamTranscodeStderr.textContent = '';
+    elements.streamTranscodeStderr.classList.remove('is-error');
   }
   if (!state.editing || !state.editing.stream) {
     elements.streamTranscodeStatus.textContent = '';
@@ -11477,6 +11513,26 @@ function updateEditorTranscodeStatus() {
     elements.streamTranscodeStatus.textContent = '';
     elements.streamTranscodeStatus.classList.remove('is-error');
     return;
+  }
+  const restartSummary = formatTranscodeRestartSummary(transcode);
+  if (elements.streamTranscodeRestart && restartSummary) {
+    const prefix = (transcodeState === 'ERROR' || transcodeState === 'RESTARTING')
+      ? 'Restart reason'
+      : 'Last restart';
+    elements.streamTranscodeRestart.textContent = `${prefix}: ${restartSummary}`;
+    if (transcodeState === 'ERROR' || transcodeState === 'RESTARTING') {
+      elements.streamTranscodeRestart.classList.add('is-error');
+    }
+  }
+  if (elements.streamTranscodeStderr) {
+    const tail = Array.isArray(transcode.stderr_tail) ? transcode.stderr_tail : [];
+    if (tail.length) {
+      const slice = tail.slice(-6);
+      elements.streamTranscodeStderr.textContent = `FFmpeg stderr (tail):\n${slice.join('\n')}`;
+      if (transcodeState === 'ERROR') {
+        elements.streamTranscodeStderr.classList.add('is-error');
+      }
+    }
   }
   if (transcodeState === 'STARTING') {
     elements.streamTranscodeStatus.textContent = 'Pre-probe in progress...';
