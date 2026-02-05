@@ -2400,6 +2400,11 @@ local function lint_stream_list(list, label, warnings)
             end
 
             if entry.mpts == true then
+                local mpts = type(entry.mpts_config) == "table" and entry.mpts_config or {}
+                local nit = type(mpts.nit) == "table" and mpts.nit or {}
+                local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
+                local spts_only = adv.spts_only ~= false
+
                 local services = entry.mpts_services
                 if type(services) ~= "table" or #services == 0 then
                     if entry.input ~= nil then
@@ -2420,7 +2425,11 @@ local function lint_stream_list(list, label, warnings)
                             else
                                 local key = tostring(input):lower()
                                 if input_seen[key] then
-                                    warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input: " .. tostring(input)
+                                    if spts_only then
+                                        warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input (spts_only=true): " .. tostring(input)
+                                    else
+                                        warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input (shared socket): " .. tostring(input)
+                                    end
                                 end
                                 input_seen[key] = true
                             end
@@ -2436,9 +2445,6 @@ local function lint_stream_list(list, label, warnings)
                     end
                 end
 
-                local mpts = type(entry.mpts_config) == "table" and entry.mpts_config or {}
-                local nit = type(mpts.nit) == "table" and mpts.nit or {}
-                local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
                 local delivery = tostring(nit.delivery or ""):lower()
                 local lcn_version = nit.lcn_version
                 local lcn_tags = nit.lcn_descriptor_tags

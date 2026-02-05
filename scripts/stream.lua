@@ -3278,6 +3278,7 @@ local function make_mpts_channel(channel_config)
     channel_data.mpts_mux = mpts_mux(mux_opts)
     channel_data.tail = channel_data.mpts_mux
 
+    local service_entries = {}
     for idx, service in ipairs(services) do
         local input_url = collect_mpts_input(service)
         if not input_url then
@@ -3297,14 +3298,17 @@ local function make_mpts_channel(channel_config)
         end
         input_cfg.name = channel_config.name .. " svc #" .. idx
 
-        local input_item = {
-            source_url = input_url,
+        table.insert(service_entries, {
+            index = idx,
+            input_url = input_url,
             config = input_cfg,
-            mpts_service = service,
             is_stream_ref = is_stream_ref,
-        }
-        table.insert(channel_data.input, input_item)
+            service = service,
+        })
     end
+
+    local shared_inputs = {}
+    local shared_streams = {}
 
     local function release_mpts_sources()
         for _, input_data in ipairs(channel_data.input) do
@@ -3315,62 +3319,104 @@ local function make_mpts_channel(channel_config)
         end
     end
 
-    for input_id, input_data in ipairs(channel_data.input) do
-        local upstream = nil
-        if input_data.is_stream_ref then
-            local ref_id = input_data.config.stream_id or input_data.config.addr or input_data.config.id
-            if not ref_id and input_data.source_url then
-                ref_id = tostring(input_data.source_url):gsub("^stream://", "")
+    for _, entry in ipairs(service_entries) do
+        if entry.is_stream_ref then
+            local ref_id = entry.config.stream_id or entry.config.addr or entry.config.id
+            if not ref_id and entry.input_url then
+                ref_id = tostring(entry.input_url):gsub("^stream://", "")
             end
             local source_channel = resolve_stream_ref(ref_id)
             if not source_channel then
-                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                     " stream not found: " .. tostring(ref_id))
                 release_mpts_sources()
                 return nil
             end
             if source_channel.is_mpts then
-                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                     " stream refers to MPTS: " .. tostring(ref_id))
                 release_mpts_sources()
                 return nil
             end
             if source_channel.config then
                 if channel_config.id and source_channel.config.id == channel_config.id then
-                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                         " stream refers to itself: " .. tostring(ref_id))
                     release_mpts_sources()
                     return nil
                 end
                 if channel_config.name and source_channel.config.name == channel_config.name then
-                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                         " stream refers to itself: " .. tostring(ref_id))
                     release_mpts_sources()
                     return nil
                 end
             end
-            channel_retain(source_channel, "mpts")
-            input_data.source_channel = source_channel
-            upstream = source_channel.tail:stream()
+            local ref_key = source_channel.config and (source_channel.config.id or source_channel.config.name) or tostring(ref_id)
+            local shared = shared_streams[ref_key]
+            if not shared then
+                channel_retain(source_channel, "mpts")
+                local input_item = {
+                    source_url = entry.input_url,
+                    config = entry.config,
+                    is_stream_ref = true,
+                    source_channel = source_channel,
+                }
+                table.insert(channel_data.input, input_item)
+                shared = {
+                    stream = source_channel.tail:stream(),
+                }
+                shared_streams[ref_key] = shared
+            end
+            entry.upstream = shared.stream
         else
+            local key = entry.input_url
+            local input_item = shared_inputs[key]
+            if not input_item then
+                input_item = {
+                    source_url = entry.input_url,
+                    config = entry.config,
+                    is_stream_ref = false,
+                }
+                table.insert(channel_data.input, input_item)
+                shared_inputs[key] = input_item
+            end
+            entry.shared_input = input_item
+        end
+    end
+
+    for input_id, input_data in ipairs(channel_data.input) do
+        if not input_data.is_stream_ref then
             if not channel_prepare_input(channel_data, input_id, {}) then
                 log.error("[" .. channel_config.name .. "] mpts input #" .. input_id .. " init failed")
                 release_mpts_sources()
                 return nil
             end
-            upstream = input_data.input.tail:stream()
+        end
+    end
+
+    for _, entry in ipairs(service_entries) do
+        local upstream = entry.upstream
+        if not upstream then
+            local input_item = entry.shared_input
+            if not input_item or not input_item.input or not input_item.input.tail then
+                log.error("[" .. channel_config.name .. "] mpts service #" .. entry.index .. " input is not ready")
+                release_mpts_sources()
+                return nil
+            end
+            upstream = input_item.input.tail:stream()
         end
 
-        local svc = input_data.mpts_service or {}
+        local svc = entry.service or {}
         local service_type_id = tonumber(svc.service_type_id)
         if service_type_id ~= nil and (service_type_id < 1 or service_type_id > 255) then
             -- service_type_id в DVB должен быть 1..255; неверные значения игнорируем.
-            log.warning("[" .. channel_config.name .. "] mpts service #" .. input_id ..
+            log.warning("[" .. channel_config.name .. "] mpts service #" .. entry.index ..
                 " service_type_id должен быть 1..255; игнорируем " .. tostring(svc.service_type_id))
             service_type_id = nil
         end
         local svc_opts = {
-            name = svc.name or ("svc_" .. tostring(input_id)),
+            name = svc.name or ("svc_" .. tostring(entry.index)),
             pnr = tonumber(svc.pnr),
             service_name = svc.service_name or svc.name,
             service_provider = svc.service_provider or svc.provider_name,
