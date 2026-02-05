@@ -11512,6 +11512,15 @@ function formatTranscodeAlert(alert) {
   if (alert.code === 'TRANSCODE_RESTART_LIMIT') {
     return `${alert.message}. Reduce errors or increase restart limits.`;
   }
+  if (alert.code === 'TRANSCODE_WARMUP_FAIL') {
+    return `${alert.message}. Warmup failed; check input health and IDR availability.`;
+  }
+  if (alert.code === 'TRANSCODE_WARMUP_TIMEOUT') {
+    return `${alert.message}. Warmup timed out; input may be stalled.`;
+  }
+  if (alert.code === 'TRANSCODE_WARMUP_STOP') {
+    return `${alert.message}. Warmup stopped before completion.`;
+  }
   return alert.message;
 }
 
