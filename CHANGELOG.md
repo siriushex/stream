@@ -32,6 +32,53 @@
   - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
+  - UI: hide/remove Observability AI summary block from the page (AI uses it internally).
+  - UI: AstralAI chat now shows attachment previews (image thumbnails + filenames).
+  - UI: AstralAI chat shows inline image thumbnails and enhanced waiting animation.
+  - UI: AstralAI chat `/help` returns local hints without calling AI.
+  - AstralAI: normalize ai_api_base so trailing `/v1` is handled correctly.
+- Tests:
+  - `./astra scripts/tests/ai_openai_url_unit.lua`
+### 2026-02-05
+- Changes:
+  - AstralAI: auto-include on-demand metrics in AI context when prompt asks for charts/metrics.
+  - AstralAI: clamp and downsample metrics in context to reduce load.
+- Tests:
+  - `scripts/tests/ai_metrics_autoselect_unit.lua`
+### 2026-02-05
+- Changes:
+  - UI: Observability/Help/Access отображаются только при включении соответствующих опций в Settings → General.
+- Tests:
+  - Not run (UI change only).
+### 2026-02-05
+- Changes:
+  - AstralAI: default model `gpt-5.2` with fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
+  - AstralAI: auto-select logs/CLI context by prompt to reduce load.
+  - AstralAI: allow optional `charts` field in AI responses (line/bar series).
+  - AstralAI: AI summary no longer includes logs unless `include_logs=1` is set (lower load).
+  - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
+  - UI: AI chat no longer forces log inclusion; status shows effective model.
+- Tests:
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+  - `./astra scripts/tests/ai_logs_autoselect_unit.lua`
+  - `./astra scripts/tests/ai_cli_autoselect_unit.lua`
+### 2026-02-05
+- Changes:
+  - Analyze: модалка показывает подробные PSI/PMT/PID/codec данные через on-demand analyze API.
+- Tests:
+  - Not run (UI/API change only).
+### 2026-02-05
+- Changes:
+  - AstralAI: default model set to `gpt-5.2` with automatic fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
+  - AstralAI: auto-select logs/CLI context by prompt to reduce load (logs/CLI only when needed).
+  - Observability: when `ai_metrics_on_demand=true`, metrics retention is forced to `0` (no background rollups).
+  - UI: AI chat no longer forces log inclusion; status uses default model when field is empty.
+- Tests:
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+### 2026-02-05
+- Changes:
   - Streams/Adapters: при сохранении синхронизируется `enable` в config_json, чтобы disable не терялся в JSON и после рестарта.
 - Tests:
   - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).

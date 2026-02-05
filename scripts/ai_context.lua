@@ -1,4 +1,4 @@
--- AstralAI context collector (logs + CLI snapshots)
+-- AstralAI context collector (logs + CLI snapshots + metrics)
 
 ai_context = ai_context or {}
 
@@ -64,6 +64,26 @@ local function parse_range_seconds(value, fallback)
         if n then return n * 60 end
     end
     return fallback or (24 * 3600)
+end
+
+local function clamp_range_seconds(value)
+    local max_range = setting_number("ai_metrics_max_range_sec", 7 * 86400)
+    if max_range < 3600 then max_range = 3600 end
+    local range = parse_range_seconds(value, 24 * 3600)
+    if range > max_range then
+        range = max_range
+    end
+    return range
+end
+
+local function resolve_metrics_interval(opts)
+    local interval = tonumber(opts.metrics_interval_sec or opts.interval_sec)
+    if not interval or interval <= 0 then
+        interval = setting_number("ai_rollup_interval_sec", 60)
+    end
+    if interval < 30 then interval = 30 end
+    if interval > 3600 then interval = 3600 end
+    return math.floor(interval)
 end
 
 local function normalize_cli_list(value)
@@ -235,6 +255,55 @@ local function collect_logs(opts)
     return rows or {}
 end
 
+local function downsample_metrics(items, max_items)
+    local total = #items
+    if total <= max_items then
+        return items
+    end
+    local step = math.ceil(total / max_items)
+    local out = {}
+    local idx = 1
+    while idx <= total do
+        table.insert(out, items[idx])
+        idx = idx + step
+    end
+    return out
+end
+
+local function collect_metrics(opts)
+    if not ai_observability or not ai_observability.get_on_demand_metrics then
+        return nil
+    end
+    local scope = opts.metrics_scope
+    local scope_id = opts.metrics_scope_id
+    if not scope then
+        if opts.stream_id and opts.stream_id ~= "" then
+            scope = "stream"
+            scope_id = opts.stream_id
+        else
+            scope = "global"
+            scope_id = nil
+        end
+    end
+    local range_sec = clamp_range_seconds(opts.range_sec or opts.range)
+    local interval_sec = resolve_metrics_interval(opts)
+    local result = ai_observability.get_on_demand_metrics(range_sec, interval_sec, scope, scope_id)
+    if not result then
+        return nil
+    end
+    local max_items = setting_number("ai_metrics_max_items", 200)
+    if max_items < 50 then max_items = 50 end
+    if max_items > 500 then max_items = 500 end
+    local items = result.items or {}
+    local trimmed = downsample_metrics(items, max_items)
+    return {
+        ts = result.ts,
+        mode = result.mode,
+        summary = result.summary or {},
+        items = trimmed,
+    }
+end
+
 local function collect_stream_snapshot(stream_id)
     if not runtime or not runtime.list_status then
         return nil
@@ -336,6 +405,7 @@ function ai_context.build_context(opts)
         ts = os.time(),
         include_logs = opts.include_logs == true,
         include_cli = normalize_cli_list(opts.include_cli),
+        include_metrics = opts.include_metrics == true,
         errors = {},
     }
     if ctx.include_logs then
@@ -370,6 +440,14 @@ function ai_context.build_context(opts)
             elseif err then
                 ctx.errors.femon = err
             end
+        end
+    end
+    if ctx.include_metrics then
+        local metrics, err = collect_metrics(opts)
+        if metrics then
+            ctx.metrics = metrics
+        elseif err then
+            ctx.errors.metrics = err
         end
     end
     if next(ctx.errors) == nil then

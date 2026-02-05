@@ -518,11 +518,14 @@ end
 
 function ai_observability.configure()
     local logs_days = setting_number("ai_logs_retention_days", 7)
-    local metrics_days = setting_number("ai_metrics_retention_days", 30)
     local rollup_interval = sanitize_interval(setting_number("ai_rollup_interval_sec", 60))
     local on_demand = setting_bool("ai_metrics_on_demand", true)
+    local metrics_days = setting_number("ai_metrics_retention_days", on_demand and 0 or 30)
 
     ai_observability.state.logs_retention_days = math.max(0, math.floor(logs_days or 0))
+    if on_demand then
+        metrics_days = 0
+    end
     ai_observability.state.metrics_retention_days = math.max(0, math.floor(metrics_days or 0))
     ai_observability.state.rollup_interval_sec = rollup_interval
     ai_observability.state.metrics_on_demand = on_demand == true

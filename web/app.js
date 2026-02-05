@@ -204,9 +204,13 @@ const state = {
   playerStreamId: null,
   playerMode: null,
   playerUrl: '',
+  playerShareUrl: '',
   playerToken: null,
   playerStartTimer: null,
   playerStarting: false,
+  analyzeJobId: null,
+  analyzePoll: null,
+  analyzeStreamId: null,
   statusTimer: null,
   adapterTimer: null,
   dvbTimer: null,
@@ -258,6 +262,7 @@ const state = {
   aiChatPoll: null,
   aiChatPendingEl: null,
   aiChatBusy: false,
+  aiChatPreviewUrls: [],
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
@@ -312,6 +317,7 @@ const elements = {
   aiChatStatus: $('#ai-chat-status'),
   aiChatFiles: $('#ai-chat-files'),
   aiChatFilesLabel: $('#ai-chat-files-label'),
+  aiChatFilePreviews: $('#ai-chat-file-previews'),
   aiChatIncludeLogs: $('#ai-chat-logs'),
   aiChatCliStream: $('#ai-chat-cli-stream'),
   aiChatCliDvbls: $('#ai-chat-cli-dvbls'),
@@ -333,6 +339,7 @@ const elements = {
   settingsActionStatus: $('#settings-action-status'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
+  settingsShowAccess: $('#settings-show-access'),
   settingsShowEpg: $('#settings-show-epg'),
   settingsShowWebhook: $('#settings-show-webhook'),
   settingsShowLogLimits: $('#settings-show-log-limits'),
@@ -1187,6 +1194,13 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'basic',
           },
           {
+            id: 'settings-show-access',
+            label: 'Показывать Access',
+            type: 'switch',
+            key: 'ui_access_enabled',
+            level: 'basic',
+          },
+          {
             id: 'settings-show-epg',
             label: 'Показывать настройки EPG‑экспорта',
             type: 'switch',
@@ -1208,10 +1222,11 @@ const SETTINGS_GENERAL_SECTIONS = [
         summary: () => {
           const splitter = readBoolValue('settings-show-splitter', false);
           const buffer = readBoolValue('settings-show-buffer', false);
+          const access = readBoolValue('settings-show-access', true);
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · EPG: ${epgText}`;
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText}`;
         },
       },
     ],
@@ -2534,6 +2549,7 @@ function bindGeneralElements() {
     settingsActionStatus: 'settings-action-status',
     settingsShowSplitter: 'settings-show-splitter',
     settingsShowBuffer: 'settings-show-buffer',
+    settingsShowAccess: 'settings-show-access',
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
     settingsEventRequest: 'settings-event-request',
@@ -3084,18 +3100,33 @@ function setSettingsSection(section) {
 }
 
 function applyFeatureVisibility() {
-  const showSplitter = getSettingBool('ui_splitter_enabled', false);
-  const showBuffer = getSettingBool('ui_buffer_enabled', false);
+  const showSplitter = isViewEnabled('splitters');
+  const showBuffer = isViewEnabled('buffers');
+  const showAccess = isViewEnabled('access');
+  const helpEnabled = isViewEnabled('help');
+  const showObservability = isViewEnabled('observability');
 
   const splitterNav = document.querySelector('.nav-link[data-view="splitters"]');
   const bufferNav = document.querySelector('.nav-link[data-view="buffers"]');
+  const accessNav = document.querySelector('.nav-link[data-view="access"]');
+  const helpNav = document.querySelector('.nav-link[data-view="help"]');
+  const observabilityNav = document.querySelector('.nav-link[data-view="observability"]');
   if (splitterNav) splitterNav.hidden = !showSplitter;
   if (bufferNav) bufferNav.hidden = !showBuffer;
+  if (accessNav) accessNav.hidden = !showAccess;
+  if (helpNav) helpNav.hidden = !helpEnabled;
+  if (observabilityNav) observabilityNav.hidden = !showObservability;
 
   const splitterView = document.querySelector('#view-splitters');
   const bufferView = document.querySelector('#view-buffers');
+  const accessView = document.querySelector('#view-access');
+  const helpView = document.querySelector('#view-help');
+  const observabilityView = document.querySelector('#view-observability');
   if (splitterView) splitterView.hidden = !showSplitter;
   if (bufferView) bufferView.hidden = !showBuffer;
+  if (accessView) accessView.hidden = !showAccess;
+  if (helpView) helpView.hidden = !helpEnabled;
+  if (observabilityView) observabilityView.hidden = !showObservability;
 
   const bufferSettingsItem = elements.settingsItems.find((item) => item.dataset.section === 'buffer');
   if (bufferSettingsItem) bufferSettingsItem.hidden = !showBuffer;
@@ -3107,10 +3138,30 @@ function applyFeatureVisibility() {
   const activeView = document.querySelector('.view.active');
   if (activeView) {
     const activeId = activeView.id || '';
-    if ((!showSplitter && activeId === 'view-splitters') || (!showBuffer && activeId === 'view-buffers')) {
+    if (
+      (!showSplitter && activeId === 'view-splitters')
+      || (!showBuffer && activeId === 'view-buffers')
+      || (!showAccess && activeId === 'view-access')
+      || (!helpEnabled && activeId === 'view-help')
+      || (!showObservability && activeId === 'view-observability')
+    ) {
       setView('streams');
     }
   }
+}
+
+function isViewEnabled(name) {
+  if (name === 'splitters') return getSettingBool('ui_splitter_enabled', false);
+  if (name === 'buffers') return getSettingBool('ui_buffer_enabled', false);
+  if (name === 'access') return getSettingBool('ui_access_enabled', true);
+  if (name === 'help') return getSettingBool('ai_enabled', false);
+  if (name === 'observability') {
+    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const logsDays = getSettingNumber('ai_logs_retention_days', 0);
+    const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+    return logsDays > 0 || (!onDemand && metricsDays > 0);
+  }
+  return true;
 }
 
 function toNumber(value) {
@@ -13124,6 +13175,9 @@ function applySettingsToUI() {
   if (elements.settingsShowBuffer) {
     elements.settingsShowBuffer.checked = getSettingBool('ui_buffer_enabled', false);
   }
+  if (elements.settingsShowAccess) {
+    elements.settingsShowAccess.checked = getSettingBool('ui_access_enabled', true);
+  }
   if (elements.settingsEpgInterval) {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
   }
@@ -13267,13 +13321,14 @@ function applySettingsToUI() {
   if (elements.aiChatStatus) {
     const enabled = getSettingBool('ai_enabled', false);
     const model = getSettingString('ai_model', '');
+    const effectiveModel = model || 'gpt-5.2';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
       elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
-    } else if (!keySet || !model) {
-      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key and model.';
+    } else if (!keySet) {
+      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key.';
     } else {
-      elements.aiChatStatus.textContent = '';
+      elements.aiChatStatus.textContent = `Model: ${effectiveModel} (auto fallback if unavailable).`;
     }
   }
   if (elements.settingsWatchdogEnabled) {
@@ -13800,6 +13855,7 @@ function collectGeneralSettings() {
   const payload = {
     ui_splitter_enabled: elements.settingsShowSplitter ? elements.settingsShowSplitter.checked : false,
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
+    ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
   };
   if (elements.settingsEventRequest) {
@@ -14713,6 +14769,290 @@ function buildInputStatusRow(input, index, activeIndex) {
   return row;
 }
 
+function formatHexByte(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 'n/a';
+  return `0x${num.toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
+function formatCasList(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  return items.map((entry) => {
+    if (!entry) return '';
+    const caid = Number.isFinite(entry.caid) ? `0x${Number(entry.caid).toString(16).toUpperCase().padStart(4, '0')}` : 'n/a';
+    const pid = Number.isFinite(entry.pid) ? String(entry.pid) : 'n/a';
+    return `caid=${caid} pid=${pid}`;
+  }).filter(Boolean).join('; ');
+}
+
+function updateAnalyzeHeaderFromTotals(totals, onAir) {
+  if (!totals) return;
+  const cc = Number(totals.cc_errors) || 0;
+  const pes = Number(totals.pes_errors) || 0;
+  if (elements.analyzeRate) {
+    elements.analyzeRate.textContent = formatMaybeBitrate(totals.bitrate);
+    elements.analyzeRate.classList.toggle('warn', !onAir);
+  }
+  if (elements.analyzeCc) {
+    elements.analyzeCc.textContent = `CC:${cc}`;
+    elements.analyzeCc.classList.toggle('ok', cc === 0);
+    elements.analyzeCc.classList.toggle('warn', cc > 0);
+  }
+  if (elements.analyzePes) {
+    elements.analyzePes.textContent = `PES:${pes}`;
+    elements.analyzePes.classList.toggle('ok', pes === 0);
+    elements.analyzePes.classList.toggle('warn', pes > 0);
+  }
+}
+
+function renderAnalyzeSections(sections) {
+  elements.analyzeBody.innerHTML = '';
+  sections.forEach((section) => {
+    const block = document.createElement('div');
+    block.className = 'analyze-section';
+    const title = document.createElement('strong');
+    title.textContent = section.title;
+    block.appendChild(title);
+    section.items.forEach((item) => {
+      if (item && item.nodeType) {
+        block.appendChild(item);
+        return;
+      }
+      const line = document.createElement('div');
+      line.textContent = `- ${item}`;
+      block.appendChild(line);
+    });
+    elements.analyzeBody.appendChild(block);
+  });
+}
+
+function buildAnalyzeBaseSections(stream, stats) {
+  const sections = [];
+  const name = (stream.config && stream.config.name) || stream.id;
+  sections.push({
+    title: 'Stream',
+    items: [
+      `Name: ${name}`,
+      `ID: ${stream.id}`,
+    ],
+  });
+
+  const updated = formatTimestamp(stats.updated_at);
+  const activeIndex = getActiveInputIndex(stats);
+  const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+  const inputItems = inputs.length
+    ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
+    : ['No input stats yet.'];
+  const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
+  let lastSwitch = 'n/a';
+  if (stats.last_switch) {
+    const from = stats.last_switch.from;
+    const to = stats.last_switch.to;
+    const reason = stats.last_switch.reason || 'n/a';
+    const ts = formatTimestamp(stats.last_switch.ts);
+    lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
+  }
+  sections.push(
+    {
+      title: 'Input status',
+      items: [
+        `On air: ${stats.on_air ? 'Yes' : 'No'}`,
+        `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
+        `Active input: ${activeInputLabel}`,
+        `Last update: ${updated}`,
+        `Last switch: ${lastSwitch}`,
+      ],
+    },
+    {
+      title: 'Inputs',
+      items: inputItems,
+    }
+  );
+  return sections;
+}
+
+function buildAnalyzeProgramLines(programs) {
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return ['No PSI/PMT data collected.'];
+  }
+  const lines = [];
+  programs.forEach((program) => {
+    if (!program) return;
+    const name = program.name ? ` ${program.name}` : '';
+    const provider = program.provider ? ` (${program.provider})` : '';
+    lines.push(`PNR ${program.pnr || 'n/a'}${name}${provider}`);
+    lines.push(`  PMT PID: ${program.pmt_pid || 'n/a'} | PCR PID: ${program.pcr || 'n/a'}`);
+    const cas = formatCasList(program.cas);
+    if (cas) lines.push(`  CAS: ${cas}`);
+    const streams = Array.isArray(program.streams) ? program.streams : [];
+    if (!streams.length) {
+      lines.push('  Streams: n/a');
+      return;
+    }
+    streams.forEach((stream) => {
+      if (!stream) return;
+      const typeName = stream.type_name || 'unknown';
+      const typeId = formatHexByte(stream.type_id);
+      const lang = stream.lang ? ` lang=${stream.lang}` : '';
+      const streamCas = formatCasList(stream.cas);
+      const casText = streamCas ? ` cas=${streamCas}` : '';
+      lines.push(`  PID ${stream.pid || 'n/a'} • ${typeName} (${typeId})${lang}${casText}`);
+    });
+  });
+  return lines;
+}
+
+function buildAnalyzePidLines(pids, programs) {
+  if (!Array.isArray(pids) || pids.length === 0) {
+    return ['No PID bitrate stats collected.'];
+  }
+  const meta = {};
+  if (Array.isArray(programs)) {
+    programs.forEach((program) => {
+      const streams = Array.isArray(program && program.streams) ? program.streams : [];
+      streams.forEach((stream) => {
+        if (!stream || stream.pid == null) return;
+        meta[stream.pid] = {
+          type: stream.type_name,
+          type_id: stream.type_id,
+          lang: stream.lang,
+          pnr: program.pnr,
+          name: program.name,
+        };
+      });
+    });
+  }
+  return pids.map((item) => {
+    if (!item) return 'PID n/a';
+    const details = meta[item.pid] || {};
+    const typeName = details.type ? `${details.type} (${formatHexByte(details.type_id)})` : '';
+    const lang = details.lang ? ` lang=${details.lang}` : '';
+    const program = details.pnr ? ` PNR ${details.pnr}${details.name ? ` (${details.name})` : ''}` : '';
+    const metaText = typeName ? ` • ${typeName}${lang}${program}` : (program ? ` •${program}` : '');
+    const bitrate = formatMaybeBitrate(item.bitrate);
+    const errors = `CC ${item.cc_error || 0} / PES ${item.pes_error || 0} / SCR ${item.sc_error || 0}`;
+    return `PID ${item.pid} • ${bitrate}${metaText} • ${errors}`;
+  });
+}
+
+function buildAnalyzeJobSections(job) {
+  if (!job) {
+    return [{
+      title: 'Analyze details',
+      items: ['Analyze job not available.'],
+    }];
+  }
+  if (job.error) {
+    return [{
+      title: 'Analyze details',
+      items: [`Error: ${job.error}`],
+    }];
+  }
+  const totals = job.totals || {};
+  const summary = job.summary || {};
+  const sections = [{
+    title: 'Analyze summary',
+    items: [
+      `Status: ${job.status || 'n/a'}`,
+      `Duration: ${job.duration_sec || 'n/a'}s`,
+      `Input URL: ${job.input_url || 'n/a'}`,
+      `Bitrate: ${formatMaybeBitrate(totals.bitrate)}`,
+      `CC errors: ${summary.cc_errors || totals.cc_errors || 0}`,
+      `PES errors: ${summary.pes_errors || totals.pes_errors || 0}`,
+      `Scrambled: ${totals.scrambled ? 'Yes' : 'No'}`,
+      `Programs: ${summary.programs || 'n/a'}`,
+      `Channels: ${summary.channels || 'n/a'}`,
+    ],
+  }];
+
+  sections.push({
+    title: 'Programs',
+    items: buildAnalyzeProgramLines(job.program_list || []),
+  });
+  sections.push({
+    title: 'PID details',
+    items: buildAnalyzePidLines(job.pids || [], job.program_list || []),
+  });
+  return sections;
+}
+
+function clearAnalyzePoll() {
+  if (state.analyzePoll) {
+    clearTimeout(state.analyzePoll);
+    state.analyzePoll = null;
+  }
+  state.analyzeJobId = null;
+}
+
+function formatAnalyzeError(err) {
+  const networkMessage = formatNetworkError(err);
+  if (networkMessage) return networkMessage;
+  const raw = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+  const text = String(raw || '');
+  if (text.toLowerCase().includes('busy')) return 'Analyze is busy. Try again later.';
+  if (text.toLowerCase().includes('input url')) return 'No input URL available for analyze.';
+  if (text.toLowerCase().includes('transcode')) return 'Analyze is not available for transcode streams.';
+  return text || 'Analyze failed to start.';
+}
+
+function pollAnalyzeJob(stream, stats, jobId, attempt) {
+  const maxAttempts = 20;
+  if (state.analyzeStreamId !== stream.id) return;
+  apiJson(`/api/v1/streams/analyze/${jobId}`).then((job) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    if (job.status === 'running' && attempt < maxAttempts) {
+      const base = buildAnalyzeBaseSections(stream, stats);
+      const sections = base.concat([{
+        title: 'Analyze details',
+        items: ['Analyzing...'],
+      }]);
+      renderAnalyzeSections(sections);
+      state.analyzePoll = setTimeout(() => {
+        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
+      }, 500);
+      return;
+    }
+    updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat(buildAnalyzeJobSections(job));
+    renderAnalyzeSections(sections);
+  }).catch((err) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(sections);
+  });
+}
+
+async function startAnalyzeDetails(stream, stats) {
+  clearAnalyzePoll();
+  state.analyzeStreamId = stream.id;
+  const base = buildAnalyzeBaseSections(stream, stats);
+  const sections = base.concat([{
+    title: 'Analyze details',
+    items: ['Starting analyze...'],
+  }]);
+  renderAnalyzeSections(sections);
+
+  try {
+    const payload = await apiJson(`/api/v1/streams/${stream.id}/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ duration_sec: 4 }),
+    });
+    state.analyzeJobId = payload.id;
+    pollAnalyzeJob(stream, stats, payload.id, 0);
+  } catch (err) {
+    const failSections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(failSections);
+  }
+}
+
 function openAnalyze(stream) {
   const stats = state.stats[stream.id] || {};
   const ccErrors = Number(stats.cc_errors) || 0;
@@ -14721,6 +15061,9 @@ function openAnalyze(stream) {
   const transcode = stats.transcode;
   const transcodeState = stats.transcode_state || (transcode && transcode.state);
   const isTranscode = Boolean(transcodeState);
+
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
 
   if (isTranscode) {
     const inputRate = formatMaybeBitrate(transcode && transcode.input_bitrate_kbps);
@@ -14745,9 +15088,8 @@ function openAnalyze(stream) {
     elements.analyzeRate.classList.toggle('warn', !onAir);
   }
 
-  elements.analyzeBody.innerHTML = '';
-  const sections = [];
   if (isTranscode) {
+    const sections = [];
     const updated = formatTimestamp(transcode && transcode.updated_at);
     const lastAlert = transcode && transcode.last_alert
       ? `${transcode.last_alert.code} @ ${formatTimestamp(transcode.last_alert.ts)}`
@@ -14881,69 +15223,23 @@ function openAnalyze(stream) {
         items: stderrTail.slice(-12),
       });
     }
-  } else {
-    const updated = formatTimestamp(stats.updated_at);
-    const activeIndex = getActiveInputIndex(stats);
-    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-    const inputItems = inputs.length
-      ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
-      : ['No input stats yet.'];
-    const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
-    let lastSwitch = 'n/a';
-    if (stats.last_switch) {
-      const from = stats.last_switch.from;
-      const to = stats.last_switch.to;
-      const reason = stats.last_switch.reason || 'n/a';
-      const ts = formatTimestamp(stats.last_switch.ts);
-      lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
-    }
-    sections.push(
-      {
-        title: 'Input status',
-        items: [
-          `On air: ${onAir ? 'Yes' : 'No'}`,
-          `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
-          `Active input: ${activeInputLabel}`,
-          `Last update: ${updated}`,
-          `Last switch: ${lastSwitch}`,
-        ],
-      },
-      {
-        title: 'Inputs',
-        items: inputItems,
-      },
-      {
-        title: 'Analyze details',
-        items: ['PSI details are available in the server log for now.'],
-      }
-    );
+    renderAnalyzeSections(sections);
+    elements.analyzeRestart.hidden = false;
+    state.activeAnalyzeId = stream.id;
+    setOverlay(elements.analyzeOverlay, true);
+    return;
   }
 
-  sections.forEach((section) => {
-    const block = document.createElement('div');
-    block.className = 'analyze-section';
-    const title = document.createElement('strong');
-    title.textContent = section.title;
-    block.appendChild(title);
-    section.items.forEach((item) => {
-      if (item && item.nodeType) {
-        block.appendChild(item);
-        return;
-      }
-      const line = document.createElement('div');
-      line.textContent = `- ${item}`;
-      block.appendChild(line);
-    });
-    elements.analyzeBody.appendChild(block);
-  });
-
-  elements.analyzeRestart.hidden = !isTranscode;
-  state.activeAnalyzeId = isTranscode ? stream.id : null;
+  elements.analyzeRestart.hidden = true;
+  state.activeAnalyzeId = null;
   setOverlay(elements.analyzeOverlay, true);
+  startAnalyzeDetails(stream, stats);
 }
 
 function closeAnalyze() {
   state.activeAnalyzeId = null;
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
   setOverlay(elements.analyzeOverlay, false);
 }
 
@@ -14962,6 +15258,28 @@ function setAiChatStatus(text) {
   }
 }
 
+function buildAiChatContent(text, attachments) {
+  const wrap = createEl('div', 'ai-chat-content');
+  if (text) {
+    wrap.appendChild(createEl('div', '', text));
+  }
+  if (Array.isArray(attachments) && attachments.length) {
+    const holder = createEl('div', 'ai-chat-user-attachments');
+    attachments.forEach((file) => {
+      if (file && file.data_url && file.mime && file.mime.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = file.data_url;
+        img.alt = file.name || 'attachment';
+        holder.appendChild(img);
+      }
+    });
+    if (holder.children.length) {
+      wrap.appendChild(holder);
+    }
+  }
+  return wrap;
+}
+
 function appendAiChatMessage(role, content) {
   if (!elements.aiChatLog) return null;
   const msg = createEl('div', `ai-chat-msg ${role || 'assistant'}`);
@@ -14976,11 +15294,49 @@ function appendAiChatMessage(role, content) {
 }
 
 function buildTypingNode() {
-  const wrap = createEl('div', 'ai-chat-typing');
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
+  const wrap = createEl('div', 'ai-chat-waiting');
+  wrap.appendChild(createEl('div', 'ai-chat-waiting-photo'));
+  const dots = createEl('div', 'ai-chat-typing');
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  wrap.appendChild(dots);
   return wrap;
+}
+
+function getAiHelpHints() {
+  const root = document.getElementById('help-bubbles');
+  if (root) {
+    const hints = [];
+    root.querySelectorAll('.help-bubble').forEach((el) => {
+      const text = (el.textContent || '').trim();
+      if (text) hints.push(text);
+    });
+    if (hints.length) return hints;
+  }
+  return [
+    'help',
+    'refresh channel <id>',
+    'show channel graphs (24h)',
+    'show errors last 24h',
+    'analyze stream <id>',
+    'scan dvb adapter <n>',
+    'list busy adapters',
+    'check signal lock (femon)',
+    'backup config now',
+    'restart stream <id>',
+  ];
+}
+
+function buildAiHelpNode() {
+  const wrapper = createEl('div');
+  wrapper.appendChild(createEl('div', 'form-note', 'Quick hints:'));
+  const list = createEl('div', 'help-bubbles');
+  getAiHelpHints().forEach((hint) => {
+    list.appendChild(createEl('div', 'help-bubble', hint));
+  });
+  wrapper.appendChild(list);
+  return wrapper;
 }
 
 function clearAiChatPolling() {
@@ -15034,18 +15390,42 @@ async function collectAiChatAttachments() {
 function updateAiChatFilesLabel() {
   if (!elements.aiChatFiles || !elements.aiChatFilesLabel) return;
   const files = Array.from(elements.aiChatFiles.files || []);
+  if (elements.aiChatFilePreviews) {
+    elements.aiChatFilePreviews.innerHTML = '';
+  }
+  if (state.aiChatPreviewUrls && state.aiChatPreviewUrls.length) {
+    state.aiChatPreviewUrls.forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch (err) {}
+    });
+    state.aiChatPreviewUrls = [];
+  }
   if (files.length === 0) {
     elements.aiChatFilesLabel.textContent = 'No attachments';
     return;
   }
   elements.aiChatFilesLabel.textContent = files.map((file) => file.name).join(', ');
+  if (!elements.aiChatFilePreviews) return;
+  const maxFiles = 2;
+  files.slice(0, maxFiles).forEach((file) => {
+    const preview = createEl('div', 'ai-chat-file-preview');
+    if (file.type && file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(file);
+      state.aiChatPreviewUrls.push(url);
+      img.src = url;
+      img.alt = file.name;
+      preview.appendChild(img);
+    }
+    preview.appendChild(createEl('div', '', file.name));
+    elements.aiChatFilePreviews.appendChild(preview);
+  });
 }
 
 function buildAiChatPayload(prompt, attachments) {
-  const payload = {
-    prompt,
-    include_logs: elements.aiChatIncludeLogs ? elements.aiChatIncludeLogs.checked : true,
-  };
+  const payload = { prompt };
+  if (elements.aiChatIncludeLogs) {
+    payload.include_logs = elements.aiChatIncludeLogs.checked;
+  }
   const cli = collectAiChatCliList();
   if (elements.aiChatStreamId && elements.aiChatStreamId.value.trim()) {
     payload.stream_id = elements.aiChatStreamId.value.trim();
@@ -15210,13 +15590,28 @@ async function sendAiChatMessage() {
   if (!elements.aiChatInput || state.aiChatBusy) return;
   const prompt = elements.aiChatInput.value.trim();
   if (!prompt) return;
+  const normalized = prompt.toLowerCase();
+  if (normalized === 'help' || normalized === '/help' || normalized === '?') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('assistant', buildAiHelpNode());
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    return;
+  }
+  const attachments = await collectAiChatAttachments();
   elements.aiChatInput.value = '';
-  appendAiChatMessage('user', prompt);
+  appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
+  if (elements.aiChatFiles) {
+    elements.aiChatFiles.value = '';
+    updateAiChatFilesLabel();
+  }
   const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
   state.aiChatPendingEl = typingMsg;
   setAiChatStatus('Sending to AI...');
   try {
-    const attachments = await collectAiChatAttachments();
     const payload = buildAiChatPayload(prompt, attachments);
     payload.preview_diff = true;
     const job = await apiJson('/api/v1/ai/plan', {
@@ -16141,6 +16536,10 @@ function bindEvents() {
       }
       setAiChatStatus('');
       if (elements.aiChatInput) elements.aiChatInput.value = '';
+      if (elements.aiChatFiles) {
+        elements.aiChatFiles.value = '';
+        updateAiChatFilesLabel();
+      }
     });
   }
   if (elements.aiChatInput) {
