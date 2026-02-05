@@ -118,6 +118,41 @@ local function build_json_schema()
     }
 end
 
+local function build_summary_schema()
+    return {
+        name = "astral_ai_summary",
+        strict = true,
+        schema = {
+            type = "object",
+            additionalProperties = false,
+            required = { "summary", "top_issues", "suggestions" },
+            properties = {
+                summary = { type = "string" },
+                top_issues = {
+                    type = "array",
+                    items = { type = "string" },
+                },
+                suggestions = {
+                    type = "array",
+                    items = { type = "string" },
+                },
+            },
+        },
+    }
+end
+
+local function build_summary_prompt(payload)
+    local parts = {}
+    table.insert(parts, "You are AstralAI observability analyst.")
+    table.insert(parts, "Return JSON only, strictly following the schema.")
+    table.insert(parts, "Keep it short: summary + up to 3 issues + up to 3 suggestions.")
+    if payload then
+        table.insert(parts, "Observability snapshot:")
+        table.insert(parts, json.encode(payload))
+    end
+    return table.concat(parts, "\n")
+end
+
 local function format_refresh_errors(errors)
     if type(errors) ~= "table" or #errors == 0 then
         return nil
@@ -819,4 +854,92 @@ end
 
 function ai_runtime.handle_telegram(payload)
     return nil, "ai telegram not implemented"
+end
+
+function ai_runtime.request_summary(payload, callback)
+    if type(callback) ~= "function" then
+        return nil, "callback required"
+    end
+    if not http_request then
+        return nil, "http_request unavailable"
+    end
+    if not ai_runtime.is_ready() then
+        return nil, "ai not configured"
+    end
+    local api_key = resolve_api_key()
+    if not api_key then
+        return nil, "api key missing"
+    end
+    local base = resolve_api_base()
+    local parsed = parse_url(base)
+    if not parsed or not parsed.host then
+        return nil, "invalid api base"
+    end
+    local path = parsed.path or "/"
+    if path:sub(-1) == "/" then
+        path = path:sub(1, -2)
+    end
+    path = path .. "/v1/responses"
+
+    local prompt = build_summary_prompt(payload)
+    local body = json.encode({
+        model = ai_runtime.config.model,
+        input = prompt,
+        max_output_tokens = ai_runtime.config.max_tokens or 512,
+        temperature = ai_runtime.config.temperature or 0,
+        store = ai_runtime.config.store == true,
+        parallel_tool_calls = false,
+        text = {
+            format = {
+                type = "json_schema",
+                json_schema = build_summary_schema(),
+            },
+        },
+    })
+
+    http_request({
+        host = parsed.host,
+        port = parsed.port or 443,
+        path = path,
+        method = "POST",
+        timeout = 30,
+        tls = (parsed.format == "https"),
+        headers = {
+            "Content-Type: application/json",
+            "Authorization: Bearer " .. api_key,
+            "Connection: close",
+        },
+        content = body,
+        callback = function(_, response)
+            if not response or not response.code then
+                callback(false, "no response")
+                return
+            end
+            if response.code < 200 or response.code >= 300 then
+                callback(false, "http " .. tostring(response.code))
+                return
+            end
+            if not response.content then
+                callback(false, "empty response")
+                return
+            end
+            local decoded = json.decode(response.content)
+            if type(decoded) ~= "table" then
+                callback(false, "invalid json")
+                return
+            end
+            local text, err = extract_output_json(decoded)
+            if not text then
+                callback(false, err or "missing output")
+                return
+            end
+            local parsed_out = json.decode(text)
+            if type(parsed_out) ~= "table" then
+                callback(false, "invalid output json")
+                return
+            end
+            callback(true, parsed_out)
+        end,
+    })
+    return true
 end

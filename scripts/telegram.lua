@@ -686,6 +686,28 @@ local function build_summary_snapshot(range_sec)
     return summary, metrics, nil
 end
 
+local function build_summary_errors(range_sec, limit)
+    if not config or not config.list_ai_log_events then
+        return {}
+    end
+    local since_ts = os.time() - (range_sec or 86400)
+    local rows = config.list_ai_log_events({
+        since = since_ts,
+        level = "ERROR",
+        limit = limit or 20,
+    })
+    local out = {}
+    for _, row in ipairs(rows or {}) do
+        table.insert(out, {
+            ts = row.ts,
+            level = row.level,
+            stream_id = row.stream_id,
+            message = shorten_text(row.message, 120),
+        })
+    end
+    return out
+end
+
 local function downsample_points(points, max_points)
     if #points <= max_points then
         return points
@@ -811,6 +833,7 @@ local function run_summary(now)
         end
         return false
     end
+    local errors = build_summary_errors(24 * 3600, 15)
     local lines = {
         "📊 Summary (24h)",
         "Bitrate: " .. format_kbps(summary.total_bitrate_kbps),
@@ -819,6 +842,45 @@ local function run_summary(now)
     }
     local message = table.concat(lines, "\n")
     enqueue_text(message, { bypass_throttle = true })
+    local function join_list(list, max_items)
+        if type(list) ~= "table" then
+            return ""
+        end
+        local out = {}
+        local limit = max_items or 3
+        for idx, item in ipairs(list) do
+            if idx > limit then break end
+            table.insert(out, tostring(item))
+        end
+        return table.concat(out, "; ")
+    end
+    if ai_runtime and ai_runtime.request_summary and ai_runtime.is_ready and ai_runtime.is_ready() then
+        ai_runtime.request_summary({
+            summary = summary,
+            errors = errors,
+        }, function(ok, result)
+            if not ok or type(result) ~= "table" then
+                return
+            end
+            local ai_lines = { "🤖 AI summary" }
+            local summary_text = shorten_text(result.summary, 220)
+            if summary_text and summary_text ~= "" then
+                table.insert(ai_lines, summary_text)
+            end
+            local issues = result.top_issues or {}
+            local suggestions = result.suggestions or {}
+            local issues_text = join_list(issues, 3)
+            if issues_text ~= "" then
+                table.insert(ai_lines, "Issues: " .. issues_text)
+            end
+            local suggestions_text = join_list(suggestions, 3)
+            if suggestions_text ~= "" then
+                table.insert(ai_lines, "Suggestions: " .. suggestions_text)
+            end
+            local ai_message = table.concat(ai_lines, "\n")
+            enqueue_text(ai_message, { bypass_throttle = true })
+        end)
+    end
     if cfg.summary_include_charts then
         local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)")
         if chart_url then
