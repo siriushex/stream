@@ -5097,6 +5097,7 @@ function updateMptsPnrWarning() {
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
   const counts = new Map();
   let missingCount = 0;
+  const strictPnr = !!(elements.mptsStrictPnr && elements.mptsStrictPnr.checked);
   (state.mptsServices || []).forEach((service) => {
     const value = Number(service.pnr);
     if (!Number.isFinite(value) || value <= 0) {
@@ -5121,7 +5122,10 @@ function updateMptsPnrWarning() {
       elements.mptsPnrMissing.classList.add('is-hidden');
       elements.mptsPnrMissing.textContent = '';
     } else {
-      elements.mptsPnrMissing.textContent = `PNR missing: ${missingCount}. Для MPTS лучше задавать PNR явно.`;
+      const suffix = strictPnr
+        ? 'Strict PNR включён: такие сервисы будут отклонены.'
+        : 'Для MPTS лучше задавать PNR явно.';
+      elements.mptsPnrMissing.textContent = `PNR missing: ${missingCount}. ${suffix}`;
       elements.mptsPnrMissing.classList.remove('is-hidden');
     }
   }
@@ -5180,6 +5184,10 @@ function bindMptsWarningHandlers() {
   }
   if (elements.streamMpts) {
     elements.streamMpts.addEventListener('change', updateMptsAutoremapWarning);
+    elements.streamMpts.addEventListener('change', updateMptsPnrWarning);
+  }
+  if (elements.mptsStrictPnr) {
+    elements.mptsStrictPnr.addEventListener('change', updateMptsPnrWarning);
   }
 }
 
