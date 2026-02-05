@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added NIT service_list parsing and CI assertions.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Added PMT ES PID list logging and CI assertions.
 - Tests:
   - Not run (CI script update).

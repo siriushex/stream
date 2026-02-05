@@ -117,6 +117,7 @@ static const char __fec_inner[] = "fec_inner";
 static const char __network_name[] = "network_name";
 static const char __lcn_list[] = "lcn";
 static const char __free_ca[] = "free_ca";
+static const char __service_list[] = "service_list";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -388,6 +389,7 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
     if(section_end >= 12 && section_end <= psi->buffer_size)
     {
         bool lcn_initialized = false;
+        bool service_list_initialized = false;
         size_t pos = 8;
         if(pos + 2 <= section_end)
         {
@@ -411,6 +413,31 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
                     name[name_len] = '\0';
                     lua_pushstring(lua, name);
                     lua_setfield(lua, -2, __network_name);
+                }
+                if(tag == 0x41 && len >= 3)
+                {
+                    // service_list_descriptor: (service_id, service_type)
+                    if(!service_list_initialized)
+                    {
+                        lua_newtable(lua);
+                        lua_setfield(lua, -2, __service_list);
+                        service_list_initialized = true;
+                    }
+                    lua_getfield(lua, -1, __service_list);
+                    if(lua_type(lua, -1) == LUA_TTABLE)
+                    {
+                        size_t lpos = 0;
+                        while(lpos + 3 <= len)
+                        {
+                            const uint16_t service_id = (uint16_t)((buf[pos + lpos] << 8) | buf[pos + lpos + 1]);
+                            const uint8_t service_type = buf[pos + lpos + 2];
+                            lua_pushnumber(lua, service_id);
+                            lua_pushnumber(lua, service_type);
+                            lua_settable(lua, -3);
+                            lpos += 3;
+                        }
+                    }
+                    lua_pop(lua, 1);
                 }
                 pos += len;
             }
