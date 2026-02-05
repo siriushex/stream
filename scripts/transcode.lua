@@ -858,6 +858,13 @@ local function stop_switch_warmup(job, reason)
         warm.ok = false
         warm.error = reason or warm.error or "warmup stopped"
     end
+    if job and warm and not warm.ok and reason then
+        record_alert(job, "TRANSCODE_WARMUP_STOP", reason, {
+            target = warm.target,
+            target_url = warm.target_url,
+            error = warm.error,
+        })
+    end
 end
 
 local function warmup_enabled(fo)
@@ -1231,11 +1238,23 @@ local function tick_switch_warmup(job, now)
             end
             if not warm.ok then
                 warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
+                record_alert(job, "TRANSCODE_WARMUP_FAIL", warm.error or "warmup failed", {
+                    target = warm.target,
+                    target_url = warm.target_url,
+                    exit_code = exit_code,
+                    exit_signal = exit_signal,
+                })
             end
         else
             warm.ok = false
             warm.error = warm.error or "warmup failed"
             warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
+            record_alert(job, "TRANSCODE_WARMUP_FAIL", warm.error or "warmup failed", {
+                target = warm.target,
+                target_url = warm.target_url,
+                exit_code = exit_code,
+                exit_signal = exit_signal,
+            })
         end
         return
     end
@@ -1248,6 +1267,10 @@ local function tick_switch_warmup(job, now)
         warm.done = true
         warm.ok = false
         warm.error = "warmup timeout"
+        record_alert(job, "TRANSCODE_WARMUP_TIMEOUT", warm.error, {
+            target = warm.target,
+            target_url = warm.target_url,
+        })
         if warm.keyframe_probe and warm.keyframe_probe.proc then
             warm.keyframe_probe.proc:kill()
             warm.keyframe_probe.proc:close()
@@ -2217,6 +2240,9 @@ local function resolve_restart_reason_code(code)
         TRANSCODE_AV_DESYNC = "AV_DESYNC",
         TRANSCODE_EXIT = "EXIT_UNEXPECTED",
         TRANSCODE_INPUT_FAILOVER = "INPUT_NO_DATA",
+        TRANSCODE_WARMUP_FAIL = "WARMUP_FAIL",
+        TRANSCODE_WARMUP_TIMEOUT = "WARMUP_TIMEOUT",
+        TRANSCODE_WARMUP_STOP = "WARMUP_STOP",
         CC_ERRORS = "CC_ERRORS",
         PES_ERRORS = "PES_ERRORS",
         SCRAMBLED = "SCRAMBLED",
