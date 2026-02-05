@@ -208,6 +208,12 @@ local function build_url(base)
     if path:sub(-1) == "/" then
         path = path:sub(1, -2)
     end
+    if path:match("/v1$") then
+        path = path:sub(1, -4)
+    end
+    if path == "" then
+        path = ""
+    end
     return {
         host = parsed.host,
         port = parsed.port or 443,
@@ -489,4 +495,5 @@ ai_openai_client._test = {
     parse_rate_limits = parse_rate_limits,
     should_retry = should_retry,
     detect_model_not_found = detect_model_not_found,
+    build_url = build_url,
 }
