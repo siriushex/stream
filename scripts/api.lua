@@ -2165,6 +2165,16 @@ local function list_metrics(server, client, request)
     end
     local perf = (runtime and runtime.perf) or {}
 
+    local mpts_metrics = nil
+    for id, entry in pairs(status) do
+        if entry and entry.mpts_stats then
+            if not mpts_metrics then
+                mpts_metrics = {}
+            end
+            mpts_metrics[id] = entry.mpts_stats
+        end
+    end
+
     local payload = {
         ts = now,
         version = astra and astra.version or "",
@@ -2198,6 +2208,9 @@ local function list_metrics(server, client, request)
             adapter_refresh_ts = perf.last_adapter_refresh_ts,
         },
     }
+    if mpts_metrics then
+        payload.mpts = mpts_metrics
+    end
 
     local format = ""
     if request and request.query and request.query.format then
@@ -2232,6 +2245,20 @@ local function list_metrics(server, client, request)
         end
         if perf.last_adapter_refresh_ms then
             table.insert(lines, "astra_perf_adapter_refresh_ms " .. tostring(perf.last_adapter_refresh_ms))
+        end
+        if mpts_metrics then
+            for stream_id, stats in pairs(mpts_metrics) do
+                local label = string.format("{stream_id=\"%s\"}", tostring(stream_id):gsub("\"", "\\\""))
+                if stats.bitrate_bps then
+                    table.insert(lines, "astra_mpts_bitrate_bps" .. label .. " " .. tostring(stats.bitrate_bps))
+                end
+                if stats.null_percent then
+                    table.insert(lines, "astra_mpts_null_percent" .. label .. " " .. tostring(stats.null_percent))
+                end
+                if stats.psi_interval_ms then
+                    table.insert(lines, "astra_mpts_psi_interval_ms" .. label .. " " .. tostring(stats.psi_interval_ms))
+                end
+            end
         end
         server:send(client, {
             code = 200,

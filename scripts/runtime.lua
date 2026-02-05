@@ -1068,6 +1068,15 @@ function runtime.list_status()
             entry.inputs_status = entry.inputs
             entry.outputs_status = collect_output_status(stream.channel)
             attach_hls_totals(entry)
+            if stream.channel and stream.channel.is_mpts and stream.channel.mpts_mux
+                and stream.channel.mpts_mux.stats then
+                local ok, stats = pcall(function()
+                    return stream.channel.mpts_mux:stats()
+                end)
+                if ok and type(stats) == "table" then
+                    entry.mpts_stats = stats
+                end
+            end
             status[id] = entry
         end
     end
