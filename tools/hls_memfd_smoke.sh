@@ -96,7 +96,7 @@ cat >"$CFG" <<JSON
       "name": "HLS Demo",
       "type": "udp",
       "enable": true,
-      "input": ["udp://127.0.0.1:${UDP_PORT}?pkt_size=1316"],
+      "input": ["udp://127.0.0.1:${UDP_PORT}"],
       "output": []
     }
   ]
@@ -137,8 +137,14 @@ echo "Playlist ok; segments: ${SEGMENTS[*]}" >&2
 
 echo "Downloading segments..." >&2
 for seg in "${SEGMENTS[@]}"; do
-  url="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/${seg}"
-  code="$(curl -s -o "$WORKDIR/$seg" -w '%{http_code}' "$url" || true)"
+  out_name="${seg##*/}"
+  out_name="${out_name%%\\?*}"
+  if [[ "${seg#'/'}" != "$seg" ]]; then
+    url="http://127.0.0.1:${PORT}${seg}"
+  else
+    url="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/${seg}"
+  fi
+  code="$(curl -s -o "$WORKDIR/$out_name" -w '%{http_code}' "$url" || true)"
   [[ "$code" == "200" ]] || die "segment fetch failed ($code): $url"
 done
 
@@ -155,7 +161,11 @@ done
 wait
 
 echo "Load sanity: 10 clients segment..." >&2
-SEG_URL="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/${SEGMENTS[0]}"
+if [[ "${SEGMENTS[0]#'/'}" != "${SEGMENTS[0]}" ]]; then
+  SEG_URL="http://127.0.0.1:${PORT}${SEGMENTS[0]}"
+else
+  SEG_URL="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/${SEGMENTS[0]}"
+fi
 for _ in $(seq 1 10); do
   curl -s "$SEG_URL" >/dev/null &
 done
@@ -173,4 +183,3 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$SEG_URL" || true)"
 [[ "$code" == "404" ]] || die "expected 404 for old segment after idle, got $code: $SEG_URL"
 
 echo "OK: HLS memfd smoke passed (port=${PORT})." >&2
-
