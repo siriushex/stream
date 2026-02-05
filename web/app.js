@@ -488,6 +488,10 @@ const elements = {
   settingsLogRetentionSec: $('#settings-log-retention-sec'),
   settingsAccessLogMaxEntries: $('#settings-access-log-max-entries'),
   settingsAccessLogRetentionSec: $('#settings-access-log-retention-sec'),
+  settingsObservabilityEnabled: $('#settings-observability-enabled'),
+  settingsObservabilityLogsDays: $('#settings-observability-logs-days'),
+  settingsObservabilityMetricsDays: $('#settings-observability-metrics-days'),
+  settingsObservabilityRollup: $('#settings-observability-rollup'),
   settingsTelegramEnabled: $('#settings-telegram-enabled'),
   settingsTelegramLevel: $('#settings-telegram-level'),
   settingsTelegramToken: $('#settings-telegram-token'),
@@ -10294,6 +10298,15 @@ async function importConfigFile() {
 }
 
 function applySettingsToUI() {
+  const setSelectValue = (select, value, fallback) => {
+    if (!select) return;
+    const target = String(value);
+    if (select.querySelector(`option[value="${target}"]`)) {
+      select.value = target;
+    } else {
+      select.value = String(fallback);
+    }
+  };
   if (elements.settingsShowSplitter) {
     elements.settingsShowSplitter.checked = getSettingBool('ui_splitter_enabled', false);
   }
@@ -10320,6 +10333,15 @@ function applySettingsToUI() {
   }
   if (elements.settingsAccessLogRetentionSec) {
     elements.settingsAccessLogRetentionSec.value = getSettingNumber('access_log_retention_sec', '');
+  }
+  if (elements.settingsObservabilityEnabled) {
+    const logsDays = getSettingNumber('ai_logs_retention_days', 0);
+    const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+    const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
+    elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (metricsDays > 0);
+    setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
+    setSelectValue(elements.settingsObservabilityMetricsDays, metricsDays > 0 ? metricsDays : 30, 30);
+    setSelectValue(elements.settingsObservabilityRollup, rollup || 60, 60);
   }
   if (elements.settingsTelegramEnabled) {
     elements.settingsTelegramEnabled.checked = getSettingBool('telegram_enabled', false);
@@ -10711,6 +10733,21 @@ function collectGeneralSettings() {
   if (accessLogRetention !== undefined && accessLogRetention < 0) {
     throw new Error('Access log retention must be >= 0');
   }
+  const observabilityEnabled = elements.settingsObservabilityEnabled && elements.settingsObservabilityEnabled.checked;
+  const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
+  const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
+  const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
+  if (observabilityEnabled) {
+    if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
+      throw new Error('Log retention days must be >= 1');
+    }
+    if (observabilityMetricsDays !== undefined && observabilityMetricsDays < 1) {
+      throw new Error('Metrics retention days must be >= 1');
+    }
+    if (observabilityRollup !== undefined && observabilityRollup < 30) {
+      throw new Error('Rollup interval must be >= 30 sec');
+    }
+  }
   const telegramEnabled = elements.settingsTelegramEnabled && elements.settingsTelegramEnabled.checked;
   const telegramLevel = elements.settingsTelegramLevel && elements.settingsTelegramLevel.value;
   const telegramChatId = elements.settingsTelegramChatId && elements.settingsTelegramChatId.value.trim();
@@ -10872,6 +10909,16 @@ function collectGeneralSettings() {
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
   if (accessLogMax !== undefined) payload.access_log_max_entries = accessLogMax;
   if (accessLogRetention !== undefined) payload.access_log_retention_sec = accessLogRetention;
+  if (elements.settingsObservabilityEnabled) {
+    if (observabilityEnabled) {
+      payload.ai_logs_retention_days = observabilityLogsDays || 7;
+      payload.ai_metrics_retention_days = observabilityMetricsDays || 30;
+      payload.ai_rollup_interval_sec = observabilityRollup || 60;
+    } else {
+      payload.ai_logs_retention_days = 0;
+      payload.ai_metrics_retention_days = 0;
+    }
+  }
   if (elements.settingsInfluxEnabled) payload.influx_enabled = influxEnabled;
   if (elements.settingsInfluxUrl) payload.influx_url = elements.settingsInfluxUrl.value.trim();
   if (elements.settingsInfluxOrg) payload.influx_org = elements.settingsInfluxOrg.value.trim();
