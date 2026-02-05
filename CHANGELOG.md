@@ -20,6 +20,7 @@
   - AstralAI: default model `gpt-5.2` with fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
   - AstralAI: auto-select logs/CLI context by prompt to reduce load.
   - AstralAI: allow optional `charts` field in AI responses (line/bar series).
+  - AstralAI: AI summary no longer includes logs unless `include_logs=1` is set (lower load).
   - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
   - UI: AI chat no longer forces log inclusion; status shows effective model.
 - Tests:
