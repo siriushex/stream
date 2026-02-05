@@ -241,6 +241,164 @@ function ai_tools.config_diff(old_payload, new_payload)
     return diff
 end
 
+local function deep_copy(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    if json and json.encode then
+        local ok, encoded = pcall(json.encode, value)
+        if ok and encoded then
+            local decoded = json.decode(encoded)
+            if type(decoded) == "table" then
+                return decoded
+            end
+        end
+    end
+    local out = {}
+    for k, v in pairs(value) do
+        out[k] = deep_copy(v)
+    end
+    return out
+end
+
+local function find_item(list, id)
+    if type(list) ~= "table" then
+        return nil
+    end
+    for _, item in ipairs(list) do
+        if type(item) == "table" then
+            local item_id = item.id or item.name
+            if item_id ~= nil and tostring(item_id) == tostring(id) then
+                return item
+            end
+        end
+    end
+    return nil
+end
+
+local function ensure_list(payload, key)
+    if type(payload[key]) ~= "table" then
+        payload[key] = {}
+    end
+    return payload[key]
+end
+
+local function set_path(target, path, value)
+    if type(target) ~= "table" or type(path) ~= "string" or path == "" then
+        return false
+    end
+    local parts = {}
+    for part in path:gmatch("[^%.]+") do
+        table.insert(parts, part)
+    end
+    if #parts == 0 then
+        return false
+    end
+    local node = target
+    for i = 1, #parts - 1 do
+        local key = parts[i]
+        if type(node[key]) ~= "table" then
+            node[key] = {}
+        end
+        node = node[key]
+    end
+    node[parts[#parts]] = value
+    return true
+end
+
+function ai_tools.apply_ops(snapshot, ops)
+    if type(snapshot) ~= "table" then
+        return nil, "snapshot required"
+    end
+    if type(ops) ~= "table" then
+        return nil, "ops required"
+    end
+    local payload = deep_copy(snapshot)
+    local errors = {}
+    local warnings = {}
+    local applied = 0
+
+    local streams = ensure_list(payload, "make_stream")
+    local adapters = payload.dvb_tune or payload.adapters
+    if type(adapters) ~= "table" then
+        adapters = {}
+        payload.dvb_tune = adapters
+    else
+        payload.dvb_tune = adapters
+    end
+
+    for _, item in ipairs(ops) do
+        local op = tostring(item.op or ""):lower()
+        local target = item.target
+        local field = item.field
+        local value = item.value
+        local ok = false
+
+        if op == "set_setting" or op == "set_settings" then
+            if type(target) == "string" and target ~= "" then
+                payload.settings = payload.settings or {}
+                payload.settings[target] = value
+                ok = true
+            end
+        elseif op == "set_stream_field" then
+            local stream = find_item(streams, target)
+            if stream and type(field) == "string" and field ~= "" then
+                ok = set_path(stream, field, value)
+            end
+        elseif op == "set_adapter_field" then
+            local adapter = find_item(adapters, target)
+            if adapter and type(field) == "string" and field ~= "" then
+                ok = set_path(adapter, field, value)
+            end
+        elseif op == "enable_stream" or op == "disable_stream" then
+            local stream = find_item(streams, target)
+            if stream then
+                stream.enable = (op == "enable_stream")
+                ok = true
+            end
+        elseif op == "enable_adapter" or op == "disable_adapter" then
+            local adapter = find_item(adapters, target)
+            if adapter then
+                adapter.enable = (op == "enable_adapter")
+                ok = true
+            end
+        elseif op == "rename_stream" then
+            local stream = find_item(streams, target)
+            if stream and value and tostring(value) ~= "" then
+                if find_item(streams, tostring(value)) then
+                    table.insert(errors, "stream id already exists: " .. tostring(value))
+                else
+                    stream.id = tostring(value)
+                    ok = true
+                end
+            end
+        elseif op == "rename_adapter" then
+            local adapter = find_item(adapters, target)
+            if adapter and value and tostring(value) ~= "" then
+                if find_item(adapters, tostring(value)) then
+                    table.insert(errors, "adapter id already exists: " .. tostring(value))
+                else
+                    adapter.id = tostring(value)
+                    ok = true
+                end
+            end
+        else
+            table.insert(errors, "unsupported op: " .. tostring(item.op))
+        end
+
+        if ok then
+            applied = applied + 1
+        elseif op ~= "" then
+            table.insert(warnings, "op skipped: " .. tostring(item.op))
+        end
+    end
+
+    if #errors > 0 then
+        return nil, table.concat(errors, "; ")
+    end
+    return payload, { applied = applied, warnings = warnings }
+end
+
 function ai_tools.config_apply(payload, opts)
     if not config or not config.import_astra then
         return nil, "config apply unavailable"

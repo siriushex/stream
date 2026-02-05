@@ -6,6 +6,7 @@ log.set({ debug = true })
 
 dofile(script_path("base.lua"))
 dofile(script_path("config.lua"))
+dofile(script_path("ai_openai_client.lua"))
 dofile(script_path("ai_tools.lua"))
 dofile(script_path("ai_runtime.lua"))
 

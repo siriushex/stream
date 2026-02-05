@@ -1,2 +1,2 @@
-SOURCES="output.c"
-MODULES="hls_output"
+SOURCES="output.c memfd.c"
+MODULES="hls_output hls_memfd"

@@ -21,6 +21,9 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - `docs/TESTING.md` - local and server smoke tests.
 - `docs/OPERATIONS.md` - systemd and ops basics.
 - `docs/TRANSCODE_BUNDLE.md` - bundled ffmpeg/ffprobe packaging.
+- `docs/API.md` - current HTTP API reference.
+- `docs/CLI.md` - CLI modes and examples.
+- `docs/ASTRAL_AI.md` - AstralAI overview and safety rules.
 
 ## Run UI/API server
 - `./astra scripts/server.lua [options]`
@@ -122,12 +125,13 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Watchdog alerts are stored in SQLite (`alerts` table) and exposed via `/api/v1/alerts`.
 - Auth audit events are stored in SQLite (`audit_log` table) and exposed via
   `/api/v1/audit` (admin-only).
-- Keys used in the current code (see `scripts/server.lua` and `scripts/stream.lua`
+  - Keys used in the current code (see `scripts/server.lua` and `scripts/stream.lua`
   for defaults and exact behavior):
   - HLS: `hls_dir`, `hls_base_url`, `hls_duration`, `hls_quantity`, `hls_cleanup`,
     `hls_naming`, `hls_round_duration`, `hls_resource_path`, `hls_pass_data`,
     `hls_ts_extension`, `hls_ts_mime`, `hls_use_expires`, `hls_m3u_headers`,
-    `hls_ts_headers`, `hls_session_timeout`.
+    `hls_ts_headers`, `hls_session_timeout`, `hls_storage`, `hls_on_demand`,
+    `hls_idle_timeout_sec`, `hls_max_bytes_per_stream`, `hls_max_segments`.
   - HTTP Play: `http_play_allow`, `http_play_hls`, `http_play_port`,
     `http_play_no_tls`, `http_play_playlist_name`, `http_play_arrange`,
     `http_play_buffer_kb`, `http_play_m3u_header`, `http_play_xspf_title`,

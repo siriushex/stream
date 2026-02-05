@@ -31,6 +31,9 @@ dofile(script_path("splitter.lua"))
 dofile(script_path("buffer.lua"))
 dofile(script_path("epg.lua"))
 dofile(script_path("runtime.lua"))
+dofile(script_path("ai_openai_client.lua"))
+dofile(script_path("ai_charts.lua"))
+dofile(script_path("ai_context.lua"))
 dofile(script_path("telegram.lua"))
 dofile(script_path("ai_runtime.lua"))
 dofile(script_path("ai_tools.lua"))
@@ -827,6 +830,9 @@ function main()
         hls_ts_extension = "ts"
     end
     local hls_ts_mime = setting_string("hls_ts_mime", "video/MP2T")
+    local hls_storage = setting_string("hls_storage", "disk")
+    local hls_on_demand = setting_bool("hls_on_demand", hls_storage == "memfd")
+    local hls_idle_timeout_sec = setting_number("hls_idle_timeout_sec", 30)
 
     local hls_max_age = math.max(1, math.floor(hls_duration * hls_quantity))
     local hls_expires = hls_use_expires and hls_max_age or 0
@@ -873,11 +879,34 @@ function main()
         ts_headers = ts_headers,
         ts_extension = hls_ts_extension,
     })
+    local hls_memfd_handler = nil
+    if hls_memfd then
+        hls_memfd_handler = hls_memfd({
+            skip = opt.hls_route,
+            m3u_headers = m3u_headers,
+            ts_headers = ts_headers,
+            ts_mime = hls_ts_mime,
+        })
+    end
     local web_static = http_static({
         path = opt.web_dir,
         headers = { "Cache-Control: no-cache" },
     })
     web_static_handler = web_static
+    local hls_memfd_timer = nil
+    if hls_memfd_handler and hls_on_demand and hls_idle_timeout_sec > 0 then
+        local sweep_interval = math.max(2, math.min(5, hls_idle_timeout_sec))
+        hls_memfd_timer = timer({
+            interval = sweep_interval,
+            callback = function(self)
+                if hls_memfd_handler and hls_memfd_handler.sweep then
+                    hls_memfd_handler:sweep(hls_idle_timeout_sec)
+                else
+                    self:close()
+                end
+            end,
+        })
+    end
     local function web_index(server, client, request)
         if not request then
             return web_static(server, client, request)
@@ -1212,10 +1241,16 @@ function main()
     end
 
     local function hls_route_handler(server, client, request)
+        local client_data = server:data(client)
         if request and not ensure_http_auth(server, client, request) then
             return nil
         end
         if not request then
+            if client_data.hls_memfd and hls_memfd_handler then
+                hls_memfd_handler(server, client, request)
+                client_data.hls_memfd = nil
+                return nil
+            end
             return hls_static(server, client, request)
         end
 
@@ -1254,16 +1289,30 @@ function main()
                     server:abort(client, 404)
                     return
                 end
-                local file_path = join_path(hls_dir, rel)
-                local fp = io.open(file_path, "rb")
-                if not fp then
+                local payload = nil
+                if hls_memfd_handler and hls_memfd_handler.get_playlist then
+                    payload = hls_memfd_handler:get_playlist(stream_id)
+                end
+                if not payload then
+                    local file_path = join_path(hls_dir, rel)
+                    local fp = io.open(file_path, "rb")
+                    if fp then
+                        payload = fp:read("*a")
+                        fp:close()
+                    end
+                end
+                if not payload then
+                    if hls_memfd_handler then
+                        local handled = hls_memfd_handler(server, client, request)
+                        if handled then
+                            client_data.hls_memfd = true
+                            return
+                        end
+                    end
                     return hls_static(server, client, request)
                 end
-                local content = fp:read("*a")
-                fp:close()
-                local payload = content
                 if can_rewrite then
-                    payload = auth.rewrite_m3u8(content, token, session and session.session_id or nil)
+                    payload = auth.rewrite_m3u8(payload, token, session and session.session_id or nil)
                 end
                 local headers = {
                     "Content-Type: application/vnd.apple.mpegurl",
@@ -1282,6 +1331,14 @@ function main()
                 end
                 server:send(client, { code = 200, headers = headers, content = payload })
                 return
+            end
+
+            if hls_memfd_handler then
+                local handled = hls_memfd_handler(server, client, request)
+                if handled then
+                    client_data.hls_memfd = true
+                    return
+                end
             end
 
             return hls_static(server, client, request)

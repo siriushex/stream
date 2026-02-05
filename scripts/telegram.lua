@@ -426,6 +426,7 @@ local function enqueue_text(text, opts)
         text = message,
         attempts = 0,
         next_try = now,
+        chat_id = opts and opts.chat_id or nil,
     })
     return true
 end
@@ -538,6 +539,7 @@ local function enqueue_document(path, caption, opts)
         attempts = 0,
         next_try = now,
         bypass_throttle = opts and opts.bypass_throttle,
+        chat_id = opts and opts.chat_id or nil,
     })
     return true
 end
@@ -708,67 +710,11 @@ local function build_summary_errors(range_sec, limit)
     return out
 end
 
-local function downsample_points(points, max_points)
-    if #points <= max_points then
-        return points
-    end
-    local step = math.ceil(#points / max_points)
-    local out = {}
-    for i = 1, #points, step do
-        table.insert(out, points[i])
-    end
-    return out
-end
-
 local function build_chart_url(metrics, metric_key, title, color)
-    if not metrics or #metrics == 0 then
-        return nil
+    if ai_charts and ai_charts.build_metric_chart then
+        return ai_charts.build_metric_chart(metrics, metric_key, title, color)
     end
-    local points = {}
-    for _, row in ipairs(metrics) do
-        if row.metric_key == metric_key and row.ts_bucket then
-            table.insert(points, { ts = row.ts_bucket, value = tonumber(row.value) or 0 })
-        end
-    end
-    table.sort(points, function(a, b) return a.ts < b.ts end)
-    if #points == 0 then
-        return nil
-    end
-    points = downsample_points(points, 120)
-    local labels = {}
-    local values = {}
-    for _, pt in ipairs(points) do
-        table.insert(labels, os.date("%H:%M", pt.ts))
-        table.insert(values, pt.value)
-    end
-    local chart = {
-        type = "line",
-        data = {
-            labels = labels,
-            datasets = {
-                {
-                    label = title or metric_key,
-                    data = values,
-                    borderColor = color or "rgb(90,170,229)",
-                    backgroundColor = color and (color:gsub("rgb%((%d+),(%d+),(%d+)%)", "rgba(%1,%2,%3,0.25)"))
-                        or "rgba(90,170,229,0.25)",
-                    fill = true,
-                    lineTension = 0.2,
-                    pointRadius = 0,
-                }
-            }
-        },
-        options = {
-            legend = { display = false },
-            scales = {
-                yAxes = { { ticks = { beginAtZero = true } } },
-                xAxes = { { ticks = { maxTicksLimit = 8 } } },
-            },
-        },
-    }
-    local base = os.getenv("TELEGRAM_CHART_BASE_URL") or "https://quickchart.io/chart"
-    local encoded = url_encode(json.encode(chart))
-    return base .. "?c=" .. encoded .. "&w=800&h=360&format=png"
+    return nil
 end
 
 local function enqueue_photo_url(url, caption, opts)
@@ -798,6 +744,7 @@ local function enqueue_photo_url(url, caption, opts)
         attempts = 0,
         next_try = now,
         bypass_throttle = bypass_throttle,
+        chat_id = opts and opts.chat_id or nil,
     })
     return true
 end
@@ -904,6 +851,7 @@ local function spawn_send(item)
     local cfg = telegram.config
     local url = (cfg.api_base or "https://api.telegram.org")
     url = url:gsub("/+$", "")
+    local chat_id = item.chat_id or cfg.chat_id
     local args = {
         "curl",
         "-sS",
@@ -917,7 +865,7 @@ local function spawn_send(item)
         url = url .. "/bot" .. cfg.token .. "/sendPhoto"
         table.insert(args, url)
         table.insert(args, "-F")
-        table.insert(args, "chat_id=" .. cfg.chat_id)
+        table.insert(args, "chat_id=" .. chat_id)
         table.insert(args, "-F")
         table.insert(args, "photo=" .. item.photo_url)
         if item.caption and item.caption ~= "" then
@@ -928,7 +876,7 @@ local function spawn_send(item)
         url = url .. "/bot" .. cfg.token .. "/sendDocument"
         table.insert(args, url)
         table.insert(args, "-F")
-        table.insert(args, "chat_id=" .. cfg.chat_id)
+        table.insert(args, "chat_id=" .. chat_id)
         table.insert(args, "-F")
         table.insert(args, "document=@" .. item.document_path)
         if item.caption and item.caption ~= "" then
@@ -938,7 +886,7 @@ local function spawn_send(item)
     else
         url = url .. "/bot" .. cfg.token .. "/sendMessage"
         local payload = json.encode({
-            chat_id = cfg.chat_id,
+            chat_id = chat_id,
             text = item.text,
         })
         table.insert(args, "-H")
@@ -1130,6 +1078,13 @@ function telegram.send_test()
         return false, "telegram disabled"
     end
     return enqueue_text("✅ Telegram alerts: test message from Astra Clone", { bypass_throttle = true })
+end
+
+function telegram.send_text(text, opts)
+    if not telegram.config.available then
+        return false, "telegram disabled"
+    end
+    return enqueue_text(text, opts)
 end
 
 function telegram.send_backup_now()

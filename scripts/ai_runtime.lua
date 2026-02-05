@@ -6,6 +6,7 @@ ai_runtime.config = ai_runtime.config or {}
 ai_runtime.jobs = ai_runtime.jobs or {}
 ai_runtime.next_job_id = ai_runtime.next_job_id or 1
 ai_runtime.request_seq = ai_runtime.request_seq or 0
+ai_runtime.last_summary = ai_runtime.last_summary or nil
 
 local function setting_bool(key, fallback)
     if config and config.get_setting then
@@ -65,32 +66,6 @@ local function setting_list(key)
     return out
 end
 
-local function resolve_api_key()
-    local key = setting_string("ai_api_key", "")
-    if key ~= "" then
-        return key
-    end
-    key = os.getenv("ASTRAL_OPENAI_API_KEY")
-    if key == nil or key == "" then
-        key = os.getenv("OPENAI_API_KEY")
-    end
-    if key == nil or key == "" then
-        return nil
-    end
-    return key
-end
-
-local function resolve_api_base()
-    local base = setting_string("ai_api_base", "")
-    if base ~= "" then
-        return base
-    end
-    base = os.getenv("ASTRAL_OPENAI_API_BASE")
-    if base == nil or base == "" then
-        base = "https://api.openai.com"
-    end
-    return base
-end
 
 local function build_json_schema()
     return {
@@ -161,6 +136,83 @@ local function build_summary_prompt(payload)
     return table.concat(parts, "\n")
 end
 
+local build_prompt_text
+
+local function build_context_options(payload)
+    payload = payload or {}
+    return {
+        include_logs = payload.include_logs == nil and true or payload.include_logs == true,
+        include_cli = payload.include_cli,
+        range = payload.range,
+        range_sec = payload.range_sec,
+        stream_id = payload.stream_id,
+        input_url = payload.input_url,
+        femon_url = payload.femon_url,
+        log_limit = payload.log_limit,
+        log_level = payload.log_level,
+        attachments = payload.attachments,
+    }
+end
+
+local function normalize_attachments(items)
+    if type(items) ~= "table" then
+        return nil
+    end
+    local max_items = setting_number("ai_attachments_max", 2)
+    local max_bytes = setting_number("ai_attachments_max_bytes", 1500000)
+    if max_items < 1 then max_items = 1 end
+    if max_bytes < 128000 then max_bytes = 128000 end
+    local out = {}
+    for _, item in ipairs(items) do
+        if #out >= max_items then
+            break
+        end
+        if type(item) == "table" then
+            local data_url = item.data_url or item.url
+            local mime = item.mime
+            local data = item.data
+            if not data_url and mime and data then
+                data_url = "data:" .. tostring(mime) .. ";base64," .. tostring(data)
+            end
+            if data_url and type(data_url) == "string" then
+                if #data_url <= max_bytes then
+                    table.insert(out, { data_url = data_url })
+                else
+                    return nil, "attachment too large"
+                end
+            end
+        end
+    end
+    if #out == 0 then
+        return nil
+    end
+    return out
+end
+
+local function build_openai_input(prompt, context, attachments)
+    local text = build_prompt_text(prompt, context)
+    if type(attachments) ~= "table" or #attachments == 0 then
+        return text
+    end
+    local content = {
+        { type = "input_text", text = text },
+    }
+    for _, item in ipairs(attachments) do
+        if item and item.data_url then
+            table.insert(content, {
+                type = "input_image",
+                image_url = item.data_url,
+            })
+        end
+    end
+    return {
+        {
+            role = "user",
+            content = content,
+        },
+    }
+end
+
 local function format_refresh_errors(errors)
     if type(errors) ~= "table" or #errors == 0 then
         return nil
@@ -174,6 +226,20 @@ local function format_refresh_errors(errors)
         end
     end
     return table.concat(parts, "; ")
+end
+
+local function log_audit(job, ok, message, meta)
+    if not config or not config.add_audit_event then
+        return
+    end
+    config.add_audit_event("ai_" .. tostring(job.kind or "job"), {
+        actor_user_id = job.actor_user_id or 0,
+        actor_username = job.actor_username or "",
+        ip = job.actor_ip or "",
+        ok = ok ~= false,
+        message = message or "",
+        meta = meta,
+    })
 end
 
 local function reload_runtime(force)
@@ -200,10 +266,12 @@ local function reload_runtime(force)
     return true
 end
 
-local function build_prompt_text(prompt, context)
+build_prompt_text = function(prompt, context)
     local parts = {}
     table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
     table.insert(parts, "Do not include markdown or extra text.")
+    table.insert(parts, "Allowed ops: set_setting, set_stream_field, set_adapter_field, enable_stream, disable_stream, enable_adapter, disable_adapter, rename_stream, rename_adapter.")
+    table.insert(parts, "Never use destructive ops (delete/remove/replace-all).")
     if context then
         table.insert(parts, "Context:")
         table.insert(parts, json.encode(context))
@@ -259,6 +327,32 @@ local function validate_plan_output(plan)
     return true
 end
 
+local function validate_summary_output(summary)
+    if type(summary) ~= "table" then
+        return nil, "summary must be object"
+    end
+    if type(summary.summary) ~= "string" then
+        return nil, "summary.summary must be string"
+    end
+    if type(summary.top_issues) ~= "table" then
+        return nil, "summary.top_issues must be array"
+    end
+    if type(summary.suggestions) ~= "table" then
+        return nil, "summary.suggestions must be array"
+    end
+    for idx, item in ipairs(summary.top_issues) do
+        if type(item) ~= "string" then
+            return nil, "summary.top_issues[" .. idx .. "] must be string"
+        end
+    end
+    for idx, item in ipairs(summary.suggestions) do
+        if type(item) ~= "string" then
+            return nil, "summary.suggestions[" .. idx .. "] must be string"
+        end
+    end
+    return true
+end
+
 local function validate_plan_payload(payload)
     if type(payload) ~= "table" then
         return nil, "invalid payload"
@@ -286,206 +380,107 @@ local function validate_plan_payload(payload)
     return nil, "prompt or proposed_config required"
 end
 
-local function extract_output_json(response)
-    if type(response) ~= "table" then
-        return nil, "invalid response"
-    end
-    if type(response.output) ~= "table" then
-        return nil, "missing output"
-    end
-    for _, item in ipairs(response.output) do
-        if item.type == "message" and type(item.content) == "table" then
-            for _, chunk in ipairs(item.content) do
-                if chunk.type == "output_text" and chunk.text and chunk.text ~= "" then
-                    return chunk.text
-                end
-            end
-        end
-    end
-    return nil, "output text missing"
-end
-
-local function normalize_headers(headers)
-    if type(headers) ~= "table" then
-        return {}
-    end
-    local out = {}
-    for k, v in pairs(headers) do
-        if type(k) == "string" then
-            out[string.lower(k)] = v
-        end
-    end
-    return out
-end
-
-local function parse_rate_limits(headers)
-    if type(headers) ~= "table" then
-        return {}
-    end
-    local out = {}
-    local keys = {
-        "x-ratelimit-limit-requests",
-        "x-ratelimit-remaining-requests",
-        "x-ratelimit-reset-requests",
-        "x-ratelimit-limit-tokens",
-        "x-ratelimit-remaining-tokens",
-        "x-ratelimit-reset-tokens",
-    }
-    for _, key in ipairs(keys) do
-        if headers[key] then
-            out[key] = headers[key]
-        end
-    end
-    return out
-end
-
-local function should_retry(code)
-    if not code then
-        return false
-    end
-    if code == 429 or code == 408 or code == 409 then
-        return true
-    end
-    if code >= 500 and code < 600 then
-        return true
-    end
-    return false
-end
-
-local function schedule_retry(job, prompt, delay_sec)
-    job.next_try_ts = os.time() + delay_sec
-    timer({
-        interval = delay_sec,
-        callback = function(self)
-            self:close()
-            schedule_openai_plan(job, prompt)
-        end,
-    })
-end
-
-local function schedule_openai_plan(job, prompt)
-    if not http_request then
+local function schedule_openai_plan(job, prompt, context_opts)
+    if not ai_openai_client or not ai_openai_client.request_json_schema then
         job.status = "error"
-        job.error = "http_request unavailable"
+        job.error = "openai client unavailable"
         return
     end
-    local api_key = resolve_api_key()
-    if not api_key then
+    if not ai_openai_client.has_api_key or not ai_openai_client.has_api_key() then
         job.status = "error"
         job.error = "api key missing"
         return
     end
-    local base = resolve_api_base()
-    local parsed = parse_url(base)
-    if not parsed or not parsed.host then
+    local context = ai_prompt and ai_prompt.build_context and ai_prompt.build_context({}) or {}
+    if ai_context and ai_context.build_context then
+        local extra = ai_context.build_context(build_context_options(context_opts))
+        if extra then
+            context.ai_context = extra
+        end
+    end
+    local attachments, attach_err = normalize_attachments(context_opts and context_opts.attachments)
+    if attach_err then
         job.status = "error"
-        job.error = "invalid api base"
+        job.error = attach_err
         return
     end
-    local path = parsed.path or "/"
-    if path:sub(-1) == "/" then
-        path = path:sub(1, -2)
-    end
-    path = path .. "/v1/responses"
-    local context = ai_prompt and ai_prompt.build_context and ai_prompt.build_context({}) or {}
-    local payload = {
-        model = ai_runtime.config.model,
-        input = build_prompt_text(prompt, context),
-        max_output_tokens = ai_runtime.config.max_tokens or 512,
-        temperature = ai_runtime.config.temperature or 0,
-        store = ai_runtime.config.store == true,
-        parallel_tool_calls = false,
-        text = {
-            format = {
-                type = "json_schema",
-                json_schema = build_json_schema(),
-            },
-        },
-    }
-
-    local body = json.encode(payload)
+    local input = build_openai_input(prompt, context, attachments)
     ai_runtime.request_seq = ai_runtime.request_seq + 1
     local req_id = ai_runtime.request_seq
     job.status = "running"
     job.request_id = req_id
-    job.attempts = (job.attempts or 0) + 1
-    job.max_attempts = job.max_attempts or 3
-    http_request({
-        host = parsed.host,
-        port = parsed.port or 443,
-        path = path,
-        method = "POST",
-        timeout = 30,
-        tls = (parsed.format == "https"),
-        headers = {
-            "Content-Type: application/json",
-            "Authorization: Bearer " .. api_key,
-            "Connection: close",
-        },
-        content = body,
-        callback = function(_, response)
-            if not response or not response.code then
-                job.status = "error"
-                job.error = "no response"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            local headers = normalize_headers(response.headers)
-            job.rate_limits = parse_rate_limits(headers)
-            if response.code < 200 or response.code >= 300 then
-                if should_retry(response.code) and job.attempts < job.max_attempts then
-                    job.status = "retry"
-                    job.error = "http " .. tostring(response.code)
-                    schedule_retry(job, prompt, (job.attempts == 1) and 1 or (job.attempts == 2) and 5 or 15)
-                    return
-                end
-                job.status = "error"
-                job.error = "http " .. tostring(response.code)
-                log_audit(job, false, job.error, { mode = "prompt", code = response.code })
-                return
-            end
-            if not response.content then
-                job.status = "error"
-                job.error = "empty response"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            local decoded = json.decode(response.content)
-            if type(decoded) ~= "table" then
-                job.status = "error"
-                job.error = "invalid json"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            local text, err = extract_output_json(decoded)
-            if not text then
-                job.status = "error"
-                job.error = err or "missing output"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            local plan = json.decode(text)
-            if type(plan) ~= "table" then
-                job.status = "error"
-                job.error = "invalid plan json"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            local ok, plan_err = validate_plan_output(plan)
-            if not ok then
-                job.status = "error"
-                job.error = plan_err or "plan validation failed"
-                log_audit(job, false, job.error, { mode = "prompt" })
-                return
-            end
-            job.status = "done"
-            job.result = {
-                plan = plan,
-                summary = plan.summary or "",
-            }
-            log_audit(job, true, "plan ready", { mode = "prompt" })
+    job.attempts = 0
+    job.max_attempts = 3
+    ai_openai_client.request_json_schema({
+        input = input,
+        json_schema = build_json_schema(),
+        model = ai_runtime.config.model,
+        max_output_tokens = ai_runtime.config.max_tokens or 512,
+        temperature = ai_runtime.config.temperature or 0,
+        store = ai_runtime.config.store == true,
+        max_attempts = job.max_attempts,
+        on_retry = function(attempt, delay, meta)
+            job.status = "retry"
+            job.error = meta and meta.code and ("http " .. tostring(meta.code)) or "retry"
+            job.attempts = attempt
+            job.next_try_ts = os.time() + delay
+            job.rate_limits = meta and meta.rate_limits or nil
         end,
-    })
+    }, function(ok, result, meta)
+        job.rate_limits = meta and meta.rate_limits or nil
+        job.attempts = meta and meta.attempts or job.attempts
+        if not ok then
+            job.status = "error"
+            job.error = result or "request failed"
+            log_audit(job, false, job.error, { mode = "prompt", code = meta and meta.code })
+            return
+        end
+        local plan = result
+        local valid, plan_err = validate_plan_output(plan)
+        if not valid then
+            job.status = "error"
+            job.error = plan_err or "plan validation failed"
+            log_audit(job, false, job.error, { mode = "prompt" })
+            return
+        end
+        local diff = nil
+        local diff_error = nil
+        if context_opts and context_opts.preview_diff then
+            if ai_tools and ai_tools.apply_ops then
+                local current, snap_err = ai_tools.config_snapshot()
+                if current then
+                    local next_config, apply_err = ai_tools.apply_ops(current, plan.ops or {})
+                    if next_config then
+                        local diff_out, diff_err = ai_tools.config_diff(current, next_config)
+                        if diff_out then
+                            diff = diff_out
+                        else
+                            diff_error = diff_err or "diff failed"
+                        end
+                    else
+                        diff_error = apply_err or "apply ops failed"
+                    end
+                else
+                    diff_error = snap_err or "snapshot failed"
+                end
+            else
+                diff_error = "diff preview unavailable"
+            end
+        end
+        job.status = "done"
+        job.result = {
+            plan = plan,
+            summary = plan.summary or "",
+            diff = diff,
+            diff_error = diff_error,
+        }
+        log_audit(job, true, "plan ready", {
+            mode = "prompt",
+            plan_id = job.id,
+            diff_summary = diff and diff.summary or nil,
+            diff_error = diff_error,
+        })
+    end)
 end
 
 function ai_runtime.configure()
@@ -498,7 +493,10 @@ function ai_runtime.configure()
     cfg.allow_apply = setting_bool("ai_allow_apply", false)
     cfg.allowed_chat_ids = setting_list("ai_telegram_allowed_chat_ids")
 
-    local has_key = resolve_api_key() ~= nil
+    local has_key = false
+    if ai_openai_client and ai_openai_client.has_api_key then
+        has_key = ai_openai_client.has_api_key()
+    end
     cfg.has_api_key = has_key
 
     if cfg.enabled then
@@ -522,6 +520,9 @@ function ai_runtime.is_ready()
     if not ai_runtime.is_enabled() then
         return false
     end
+    if not ai_openai_client or not ai_openai_client.request_json_schema then
+        return false
+    end
     if not ai_runtime.config.model or ai_runtime.config.model == "" then
         return false
     end
@@ -541,6 +542,10 @@ function ai_runtime.status()
         allow_apply = cfg.allow_apply == true,
         api_key_set = cfg.has_api_key == true,
     }
+end
+
+function ai_runtime.get_last_summary()
+    return ai_runtime.last_summary
 end
 
 function ai_runtime.list_jobs()
@@ -568,20 +573,6 @@ local function create_job(kind, payload)
     return job
 end
 
-local function log_audit(job, ok, message, meta)
-    if not config or not config.add_audit_event then
-        return
-    end
-    config.add_audit_event("ai_" .. tostring(job.kind or "job"), {
-        actor_user_id = job.actor_user_id or 0,
-        actor_username = job.actor_username or "",
-        ip = job.actor_ip or "",
-        ok = ok ~= false,
-        message = message or "",
-        meta = meta,
-    })
-end
-
 function ai_runtime.plan(payload, ctx)
     local job = create_job("plan", {
         requested_by = ctx and ctx.user or "",
@@ -604,6 +595,7 @@ function ai_runtime.plan(payload, ctx)
         return job
     end
     if validated.mode == "diff" then
+        job.payload.proposed_config = validated.proposed_config
         log_audit(job, true, "plan requested", { mode = "diff" })
         local ok, err = ai_tools.config_validate(validated.proposed_config)
         if not ok then
@@ -636,14 +628,19 @@ function ai_runtime.plan(payload, ctx)
         return job
     end
     if validated.mode == "prompt" then
-        log_audit(job, true, "plan requested", { mode = "prompt", prompt_len = #(tostring(validated.prompt)) })
+        log_audit(job, true, "plan requested", {
+            mode = "prompt",
+            prompt_len = #(tostring(validated.prompt)),
+            include_logs = payload and payload.include_logs or nil,
+            include_cli = payload and payload.include_cli or nil,
+        })
         if not ai_runtime.is_ready() then
             job.status = "error"
             job.error = "ai not configured"
             log_audit(job, false, job.error, { mode = "prompt" })
             return job
         end
-        schedule_openai_plan(job, tostring(validated.prompt))
+        schedule_openai_plan(job, tostring(validated.prompt), payload)
         return job
     end
     job.status = "error"
@@ -654,6 +651,10 @@ end
 
 function ai_runtime.validate_plan_output(plan)
     return validate_plan_output(plan)
+end
+
+function ai_runtime.validate_summary_output(summary)
+    return validate_summary_output(summary)
 end
 
 function ai_runtime.apply(payload, ctx)
@@ -684,11 +685,12 @@ function ai_runtime.apply(payload, ctx)
         return nil, job.error
     end
     local proposed = payload.proposed_config or payload.config
-    if type(proposed) ~= "table" then
-        job.status = "error"
-        job.error = "proposed_config required"
-        log_audit(job, false, job.error)
-        return nil, job.error
+    local plan = payload.plan
+    if payload.plan_id and ai_runtime.jobs then
+        local plan_job = ai_runtime.jobs[tostring(payload.plan_id)]
+        if plan_job and plan_job.result and plan_job.result.plan then
+            plan = plan_job.result.plan
+        end
     end
     local mode = tostring(payload.mode or "merge")
     if mode ~= "merge" and mode ~= "replace" then
@@ -696,6 +698,42 @@ function ai_runtime.apply(payload, ctx)
         job.error = "invalid apply mode"
         log_audit(job, false, job.error)
         return nil, job.error
+    end
+    job.plan_id = payload.plan_id
+
+    local current, snap_err = ai_tools.config_snapshot()
+    if not current then
+        job.status = "error"
+        job.error = snap_err or "snapshot failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    if type(proposed) ~= "table" then
+        if plan and type(plan.ops) == "table" then
+            if ai_tools and ai_tools.apply_ops then
+                local next_config, apply_err = ai_tools.apply_ops(current, plan.ops)
+                if not next_config then
+                    job.status = "error"
+                    job.error = apply_err or "apply ops failed"
+                    log_audit(job, false, job.error)
+                    return nil, job.error
+                end
+                proposed = next_config
+                job.plan_id = payload.plan_id
+                job.plan_ops = plan.ops
+            else
+                job.status = "error"
+                job.error = "apply ops unavailable"
+                log_audit(job, false, job.error)
+                return nil, job.error
+            end
+        else
+            job.status = "error"
+            job.error = "proposed_config required"
+            log_audit(job, false, job.error)
+            return nil, job.error
+        end
     end
 
     local ok, err = ai_tools.config_validate(proposed)
@@ -717,18 +755,19 @@ function ai_runtime.apply(payload, ctx)
         end
     end
 
-    local current, snap_err = ai_tools.config_snapshot()
-    if not current then
-        job.status = "error"
-        job.error = snap_err or "snapshot failed"
-        log_audit(job, false, job.error)
-        return nil, job.error
-    end
     local diff, diff_err = ai_tools.config_diff(current, proposed)
     if not diff then
         job.status = "error"
         job.error = diff_err or "diff failed"
         log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    local allow_destructive = payload.allow_destructive == true or payload.force == true
+    if mode == "replace" and not allow_destructive then
+        job.status = "error"
+        job.error = "destructive replace requires allow_destructive"
+        log_audit(job, false, job.error, { mode = mode, diff_summary = diff.summary })
         return nil, job.error
     end
 
@@ -856,98 +895,77 @@ function ai_runtime.apply(payload, ctx)
     log_audit(job, true, "apply ok", {
         revision_id = revision_id,
         diff_summary = diff.summary,
+        plan_id = payload.plan_id,
+        plan_ops = job.plan_ops,
     })
+    if config and config.add_audit_event then
+        config.add_audit_event("ai_change", {
+            actor_user_id = job.actor_user_id or 0,
+            actor_username = job.actor_username or "",
+            ip = job.actor_ip or "",
+            ok = true,
+            message = "ai apply",
+            meta = {
+                revision_id = revision_id,
+                diff_summary = diff.summary,
+                plan_id = payload.plan_id,
+                plan_ops = job.plan_ops,
+            },
+        })
+    end
     return job
 end
 
 function ai_runtime.handle_telegram(payload)
-    return nil, "ai telegram not implemented"
+    if ai_telegram and ai_telegram.handle then
+        return ai_telegram.handle(payload)
+    end
+    return nil, "ai telegram handler unavailable"
 end
 
 function ai_runtime.request_summary(payload, callback)
     if type(callback) ~= "function" then
         return nil, "callback required"
     end
-    if not http_request then
-        return nil, "http_request unavailable"
-    end
     if not ai_runtime.is_ready() then
         return nil, "ai not configured"
     end
-    local api_key = resolve_api_key()
-    if not api_key then
-        return nil, "api key missing"
+    if not ai_openai_client or not ai_openai_client.request_json_schema then
+        return nil, "openai client unavailable"
     end
-    local base = resolve_api_base()
-    local parsed = parse_url(base)
-    if not parsed or not parsed.host then
-        return nil, "invalid api base"
+    local summary_payload = {}
+    if payload and type(payload) == "table" then
+        for key, value in pairs(payload) do
+            summary_payload[key] = value
+        end
     end
-    local path = parsed.path or "/"
-    if path:sub(-1) == "/" then
-        path = path:sub(1, -2)
+    if ai_context and ai_context.build_context then
+        summary_payload.context = ai_context.build_context(build_context_options(payload))
     end
-    path = path .. "/v1/responses"
-
-    local prompt = build_summary_prompt(payload)
-    local body = json.encode({
-        model = ai_runtime.config.model,
+    local prompt = build_summary_prompt(summary_payload)
+    ai_openai_client.request_json_schema({
         input = prompt,
+        json_schema = build_summary_schema(),
+        model = ai_runtime.config.model,
         max_output_tokens = ai_runtime.config.max_tokens or 512,
         temperature = ai_runtime.config.temperature or 0,
         store = ai_runtime.config.store == true,
-        parallel_tool_calls = false,
-        text = {
-            format = {
-                type = "json_schema",
-                json_schema = build_summary_schema(),
-            },
-        },
-    })
-
-    http_request({
-        host = parsed.host,
-        port = parsed.port or 443,
-        path = path,
-        method = "POST",
-        timeout = 30,
-        tls = (parsed.format == "https"),
-        headers = {
-            "Content-Type: application/json",
-            "Authorization: Bearer " .. api_key,
-            "Connection: close",
-        },
-        content = body,
-        callback = function(_, response)
-            if not response or not response.code then
-                callback(false, "no response")
-                return
-            end
-            if response.code < 200 or response.code >= 300 then
-                callback(false, "http " .. tostring(response.code))
-                return
-            end
-            if not response.content then
-                callback(false, "empty response")
-                return
-            end
-            local decoded = json.decode(response.content)
-            if type(decoded) ~= "table" then
-                callback(false, "invalid json")
-                return
-            end
-            local text, err = extract_output_json(decoded)
-            if not text then
-                callback(false, err or "missing output")
-                return
-            end
-            local parsed_out = json.decode(text)
-            if type(parsed_out) ~= "table" then
-                callback(false, "invalid output json")
-                return
-            end
-            callback(true, parsed_out)
-        end,
-    })
+    }, function(ok, result, meta)
+        if not ok then
+            callback(false, result or "request failed")
+            return
+        end
+        local valid, err = validate_summary_output(result)
+        if not valid then
+            callback(false, err or "summary validation failed")
+            return
+        end
+        ai_runtime.last_summary = {
+            ts = os.time(),
+            summary = result,
+            rate_limits = meta and meta.rate_limits or nil,
+        }
+        callback(true, result)
+    end)
     return true
 end

@@ -6,6 +6,7 @@ log.set({ debug = true })
 
 dofile(script_path("base.lua"))
 dofile(script_path("config.lua"))
+dofile(script_path("ai_openai_client.lua"))
 dofile(script_path("ai_tools.lua"))
 dofile(script_path("ai_prompt.lua"))
 dofile(script_path("ai_runtime.lua"))
@@ -52,15 +53,16 @@ assert_true(diff.summary.updated == 0, "expected no updated")
 config.set_setting("ai_enabled", true)
 ai_runtime.configure()
 
-local job = ai_runtime.plan({ proposed_config = payload }, { user = "test" })
+local job = ai_runtime.plan({ proposed_config = payload, preview_diff = true }, { user = "test" })
 assert_true(job and job.status == "done", "plan job should be done")
 assert_true(job.result and job.result.summary, "plan summary missing")
+assert_true(job.result and job.result.diff, "plan diff missing")
 
 local ok, err = ai_runtime.validate_plan_output({
     summary = "ok",
     warnings = {},
     ops = {
-        { op = "noop", target = "config" },
+        { op = "set_setting", target = "http_play_stream", value = true },
     },
 })
 assert_true(ok, err or "plan validation failed")

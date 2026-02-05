@@ -154,11 +154,26 @@ local dvb_scan = {
     jobs = {},
 }
 
+local stream_analyze = {
+    seq = 0,
+    jobs = {},
+    active = 0,
+}
+
 local function dvb_scan_cleanup()
     local now = os.time()
     for id, job in pairs(dvb_scan.jobs) do
         if job and job.status ~= "running" and job.finished_at and (now - job.finished_at) > 300 then
             dvb_scan.jobs[id] = nil
+        end
+    end
+end
+
+local function stream_analyze_cleanup()
+    local now = os.time()
+    for id, job in pairs(stream_analyze.jobs) do
+        if job and job.status ~= "running" and job.finished_at and (now - job.finished_at) > 300 then
+            stream_analyze.jobs[id] = nil
         end
     end
 end
@@ -1480,6 +1495,169 @@ local function dvb_scan_finish(job, status, err)
     dvb_scan_cleanup()
 end
 
+local function stream_analyze_finish(job, status, err)
+    if job.timer then
+        job.timer:close()
+        job.timer = nil
+    end
+    if job.analyze then
+        job.analyze = nil
+    end
+    if job.input then
+        kill_input(job.input)
+        job.input = nil
+    end
+    job.finished_at = os.time()
+    job.status = status
+    if err then
+        job.error = err
+    end
+    dvb_scan_build_channels(job)
+    job.summary = {
+        programs = job.programs and tostring(#(function()
+            local count = 0
+            for _ in pairs(job.programs or {}) do count = count + 1 end
+            return { count = count }
+        end)().count) or 0,
+        channels = job.channels and #job.channels or 0,
+        bitrate = job.totals and job.totals.bitrate or nil,
+        cc_errors = job.totals and job.totals.cc_errors or nil,
+        pes_errors = job.totals and job.totals.pes_errors or nil,
+        scrambled = job.totals and job.totals.scrambled or nil,
+    }
+    stream_analyze_cleanup()
+    stream_analyze.active = math.max(0, stream_analyze.active - 1)
+end
+
+local function get_analyze_limit()
+    local limit = setting_number("monitor_analyze_max_concurrency", 2)
+    if not limit or limit < 1 then
+        limit = 1
+    end
+    return limit
+end
+
+local function resolve_stream_input_url(stream_id)
+    local status = runtime and runtime.get_stream_status and runtime.get_stream_status(stream_id) or nil
+    if status and status.transcode_state then
+        return nil, "transcode stream is not supported"
+    end
+    if status and status.active_input_url then
+        return status.active_input_url
+    end
+    local row = config.get_stream(stream_id)
+    if not row then
+        return nil, "stream not found"
+    end
+    local cfg = row.config or {}
+    local inputs = cfg.input
+    if type(inputs) == "table" and #inputs > 0 then
+        return inputs[1]
+    end
+    if type(inputs) == "string" and inputs ~= "" then
+        return inputs
+    end
+    return nil, "no input url"
+end
+
+local function start_stream_analyze(server, client, request)
+    if not require_auth(request) then
+        return error_response(server, client, 401, "unauthorized")
+    end
+    if not analyze then
+        return error_response(server, client, 501, "analyze module is not found")
+    end
+    local body = parse_json_body(request) or {}
+    local stream_id = body.stream_id or body.id
+    if not stream_id or stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local limit = get_analyze_limit()
+    if stream_analyze.active >= limit then
+        return error_response(server, client, 429, "analyze busy")
+    end
+    local duration = tonumber(body.duration_sec) or 3
+    if duration < 2 then duration = 2 end
+    if duration > 10 then duration = 10 end
+
+    local input_url, err = resolve_stream_input_url(stream_id)
+    if not input_url then
+        return error_response(server, client, 400, err or "input url not found")
+    end
+
+    stream_analyze.seq = stream_analyze.seq + 1
+    local id = tostring(stream_analyze.seq)
+    local job = {
+        id = id,
+        stream_id = tostring(stream_id),
+        input_url = tostring(input_url),
+        status = "running",
+        started_at = os.time(),
+        programs = {},
+        services = {},
+        channels = {},
+        totals = {},
+    }
+
+    local conf = parse_url(input_url)
+    if not conf then
+        return error_response(server, client, 400, "invalid input url")
+    end
+    conf.name = "stream-analyze-" .. tostring(stream_id)
+
+    local input = init_input(conf)
+    if not input then
+        return error_response(server, client, 500, "failed to init input")
+    end
+    job.input = input
+    stream_analyze.active = stream_analyze.active + 1
+    job.analyze = analyze({
+        upstream = input.tail:stream(),
+        name = conf.name,
+        join_pid = true,
+        callback = function(data)
+            if type(data) ~= "table" then
+                return
+            end
+            if data.error then
+                job.error = data.error
+                return
+            end
+            if data.psi == "pat" then
+                dvb_scan_add_pat(job, data)
+            elseif data.psi == "pmt" then
+                dvb_scan_add_pmt(job, data)
+            elseif data.psi == "sdt" then
+                dvb_scan_add_sdt(job, data)
+            elseif data.analyze and data.total then
+                job.totals = data.total
+            end
+        end,
+    })
+
+    job.timer = timer({
+        interval = duration,
+        callback = function(self)
+            self:close()
+            stream_analyze_finish(job, "done")
+        end,
+    })
+
+    stream_analyze.jobs[id] = job
+    json_response(server, client, 200, { id = job.id, status = job.status, stream_id = job.stream_id })
+end
+
+local function get_stream_analyze(server, client, request, id)
+    if not require_auth(request) then
+        return error_response(server, client, 401, "unauthorized")
+    end
+    local job = stream_analyze.jobs[id]
+    if not job then
+        return error_response(server, client, 404, "analyze job not found")
+    end
+    json_response(server, client, 200, job)
+end
+
 local function dvb_scan_config_from_adapter(adapter_id)
     local row = config.get_adapter(adapter_id)
     if not row then
@@ -2472,6 +2650,37 @@ local function ai_metrics(server, client, request)
     local scope_id = query.id or query.stream_id or ""
     local metric_key = query.metric or ""
     local limit = tonumber(query.limit) or 2000
+    local on_demand = setting_bool("ai_metrics_on_demand", true)
+    if on_demand and ai_observability and ai_observability.build_metrics_from_logs then
+        local interval = setting_number("ai_rollup_interval_sec", 60)
+        local result = ai_observability.get_on_demand_metrics
+            and ai_observability.get_on_demand_metrics(range, interval, scope, scope_id)
+            or { items = ai_observability.build_metrics_from_logs(range, interval, scope, scope_id), mode = "on_demand" }
+        local items = result.items or {}
+        if metric_key and metric_key ~= "" then
+            local filtered = {}
+            for _, item in ipairs(items) do
+                if item.metric_key == metric_key then
+                    table.insert(filtered, item)
+                end
+            end
+            items = filtered
+        end
+        table.sort(items, function(a, b)
+            if a.ts_bucket == b.ts_bucket then
+                return tostring(a.metric_key) < tostring(b.metric_key)
+            end
+            return (a.ts_bucket or 0) < (b.ts_bucket or 0)
+        end)
+        json_response(server, client, 200, {
+            since = since_ts,
+            range = range,
+            items = items,
+            mode = result.mode or "on_demand",
+        })
+        return
+    end
+
     local rows = config.list_ai_metrics({
         since = since_ts,
         scope = scope,
@@ -2483,6 +2692,7 @@ local function ai_metrics(server, client, request)
         since = since_ts,
         range = range,
         items = rows,
+        mode = "rollup",
     })
 end
 
@@ -2494,13 +2704,21 @@ local function ai_summary(server, client, request)
         return error_response(server, client, 400, "observability unavailable")
     end
     local query = request and request.query or {}
+    local include_logs = true
+    if query.include_logs ~= nil then
+        local value = tostring(query.include_logs)
+        if value == "0" or value == "false" then
+            include_logs = false
+        end
+    end
+    local include_cli = query.include_cli or query.cli
+    local cli_stream_id = query.stream_id or query.id
+    local cli_input_url = query.input_url or query.url
+    local cli_femon_url = query.femon_url
+    local cli_log_limit = tonumber(query.log_limit) or nil
     local range = parse_range_seconds(query.range, 24 * 3600)
     local since_ts = os.time() - range
-    local metrics = config.list_ai_metrics({
-        since = since_ts,
-        scope = "global",
-        limit = 10000,
-    })
+    local on_demand = setting_bool("ai_metrics_on_demand", true)
     local summary = {
         total_bitrate_kbps = 0,
         streams_on_air = 0,
@@ -2510,26 +2728,105 @@ local function ai_summary(server, client, request)
         alerts_error = 0,
     }
     local last_bucket = 0
-    for _, row in ipairs(metrics) do
-        if row.ts_bucket and row.ts_bucket > last_bucket then
-            last_bucket = row.ts_bucket
+    local metrics = {}
+    if on_demand and ai_observability and ai_observability.build_metrics_from_logs then
+        local interval = setting_number("ai_rollup_interval_sec", 60)
+        local result = ai_observability.get_on_demand_metrics
+            and ai_observability.get_on_demand_metrics(range, interval, "global", "")
+            or nil
+        if result then
+            metrics = result.items or {}
+            summary = result.summary or summary
+            last_bucket = result.bucket or 0
         end
-    end
-    if last_bucket > 0 then
+    else
+        metrics = config.list_ai_metrics({
+            since = since_ts,
+            scope = "global",
+            limit = 10000,
+        })
         for _, row in ipairs(metrics) do
-            if row.ts_bucket == last_bucket then
-                if summary[row.metric_key] ~= nil then
-                    summary[row.metric_key] = row.value
+            if row.ts_bucket and row.ts_bucket > last_bucket then
+                last_bucket = row.ts_bucket
+            end
+        end
+        if last_bucket > 0 then
+            for _, row in ipairs(metrics) do
+                if row.ts_bucket == last_bucket then
+                    if summary[row.metric_key] ~= nil then
+                        summary[row.metric_key] = row.value
+                    end
                 end
             end
         end
     end
-    json_response(server, client, 200, {
-        range = range,
-        latest_bucket = last_bucket,
+
+    local want_ai = query.ai == "1" or query.ai == "true" or query.mode == "ai"
+    if not want_ai then
+        return json_response(server, client, 200, {
+            range = range,
+            latest_bucket = last_bucket,
+            summary = summary,
+            note = "AI summary not enabled; returning latest rollup snapshot",
+        })
+    end
+    if not ai_runtime or not ai_runtime.is_ready or not ai_runtime.is_ready() then
+        return json_response(server, client, 200, {
+            range = range,
+            latest_bucket = last_bucket,
+            summary = summary,
+            ai = nil,
+            note = "AI not configured",
+        })
+    end
+    if include_logs and (not config or not config.list_ai_log_events) then
+        return json_response(server, client, 200, {
+            range = range,
+            latest_bucket = last_bucket,
+            summary = summary,
+            ai = nil,
+            note = "AI log events unavailable",
+        })
+    end
+    local errors = {}
+    if include_logs and config and config.list_ai_log_events then
+        errors = config.list_ai_log_events({
+            since = since_ts,
+            level = "ERROR",
+            limit = 20,
+        })
+    end
+    local responded = false
+    ai_runtime.request_summary({
         summary = summary,
-        note = "AI summary not enabled; returning latest rollup snapshot",
-    })
+        errors = errors,
+        range_sec = range,
+        include_logs = include_logs,
+        include_cli = include_cli,
+        stream_id = cli_stream_id,
+        input_url = cli_input_url,
+        femon_url = cli_femon_url,
+        log_limit = cli_log_limit,
+    }, function(ok, result)
+        if responded then return end
+        responded = true
+        if not ok then
+            return json_response(server, client, 200, {
+                range = range,
+                latest_bucket = last_bucket,
+                summary = summary,
+                ai = nil,
+                note = "AI summary failed",
+            })
+        end
+        json_response(server, client, 200, {
+            range = range,
+            latest_bucket = last_bucket,
+            summary = summary,
+            ai = result,
+            note = "AI summary",
+        })
+    end)
 end
 
 local function ai_plan(server, client, request)

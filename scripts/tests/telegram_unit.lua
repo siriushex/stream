@@ -50,3 +50,4 @@ local ok3 = t.enqueue_text("world")
 assert_eq(ok3, false, "throttle blocks second distinct message")
 
 print("telegram_unit: ok")
+astra.exit()

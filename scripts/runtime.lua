@@ -528,6 +528,16 @@ local function collect_output_status(channel)
             type = conf.format,
             url = format_output_status_url(conf),
         }
+        if conf.format == "hls" and output_data and output_data.output and output_data.output.stats then
+            local ok, stats = pcall(function()
+                return output_data.output:stats()
+            end)
+            if ok and type(stats) == "table" then
+                entry.hls_segments = stats.current_segments
+                entry.hls_bytes = stats.current_bytes
+                entry.hls_active = stats.active
+            end
+        end
         local audio_fix = output_data and output_data.audio_fix or nil
         if audio_fix then
             local cooldown = audio_fix.config and audio_fix.config.restart_cooldown_sec or 0
@@ -551,6 +561,35 @@ local function collect_output_status(channel)
     end
 
     return outputs
+end
+
+local function attach_hls_totals(entry)
+    if not entry or type(entry.outputs_status) ~= "table" then
+        return
+    end
+    local total_segments = 0
+    local total_bytes = 0
+    local has = false
+    for _, out in ipairs(entry.outputs_status) do
+        if type(out) == "table" then
+            local seg = tonumber(out.hls_segments)
+            local bytes = tonumber(out.hls_bytes)
+            if seg then
+                total_segments = total_segments + seg
+                has = true
+            end
+            if bytes then
+                total_bytes = total_bytes + bytes
+                has = true
+            end
+        end
+    end
+    if has then
+        entry.hls_segments = total_segments
+        entry.hls_bytes = total_bytes
+        entry.current_segments = total_segments
+        entry.current_bytes = total_bytes
+    end
 end
 
 local function apply_stream(id, row, force)
@@ -921,6 +960,7 @@ function runtime.list_status()
             entry.global_state = fo and fo.global_state or "RUNNING"
             entry.inputs_status = entry.inputs
             entry.outputs_status = collect_output_status(stream.channel)
+            attach_hls_totals(entry)
             status[id] = entry
         end
     end
@@ -969,6 +1009,7 @@ function runtime.get_stream_status(id)
     entry.global_state = fo and fo.global_state or "RUNNING"
     entry.inputs_status = entry.inputs
     entry.outputs_status = collect_output_status(stream.channel)
+    attach_hls_totals(entry)
     record_perf()
     return entry
 end
