@@ -2302,6 +2302,13 @@ local function set_settings(server, client, request)
             then
                 telegram.configure()
             end
+            if ai_runtime and ai_runtime.configure
+                and (body.ai_enabled ~= nil or body.ai_model ~= nil or body.ai_max_tokens ~= nil
+                    or body.ai_temperature ~= nil or body.ai_store ~= nil
+                    or body.ai_allow_apply ~= nil or body.ai_telegram_allowed_chat_ids ~= nil)
+            then
+                ai_runtime.configure()
+            end
             if watchdog and watchdog.configure
                 and (body.resource_watchdog_enabled ~= nil or body.resource_watchdog_interval_sec ~= nil
                     or body.resource_watchdog_cpu_pct ~= nil or body.resource_watchdog_rss_mb ~= nil
@@ -2339,6 +2346,89 @@ local function telegram_backup(server, client)
         return error_response(server, client, 400, err or "telegram disabled")
     end
     json_response(server, client, 200, { status = "queued" })
+end
+
+local function ai_status(server, client)
+    if not ai_runtime or not ai_runtime.status then
+        return json_response(server, client, 200, { enabled = false, ready = false })
+    end
+    json_response(server, client, 200, ai_runtime.status())
+end
+
+local function ai_jobs(server, client)
+    if not ai_runtime or not ai_runtime.list_jobs then
+        return json_response(server, client, 200, { status = ai_runtime and ai_runtime.status and ai_runtime.status() or {}, jobs = {} })
+    end
+    json_response(server, client, 200, { status = ai_runtime.status(), jobs = ai_runtime.list_jobs() })
+end
+
+local function ai_plan(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ai_runtime or not ai_runtime.plan then
+        return error_response(server, client, 400, "ai runtime unavailable")
+    end
+    if not ai_runtime.is_enabled or not ai_runtime.is_enabled() then
+        return error_response(server, client, 400, "ai disabled")
+    end
+    if not ai_runtime.is_ready or not ai_runtime.is_ready() then
+        return error_response(server, client, 400, "ai not configured")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local ok, err = ai_runtime.plan(body, { user = request and request.user or "" })
+    if not ok then
+        return error_response(server, client, 501, err or "ai plan not implemented")
+    end
+    json_response(server, client, 200, ok)
+end
+
+local function ai_apply(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ai_runtime or not ai_runtime.apply then
+        return error_response(server, client, 400, "ai runtime unavailable")
+    end
+    if not ai_runtime.is_enabled or not ai_runtime.is_enabled() then
+        return error_response(server, client, 400, "ai disabled")
+    end
+    if not ai_runtime.is_ready or not ai_runtime.is_ready() then
+        return error_response(server, client, 400, "ai not configured")
+    end
+    if not (ai_runtime.config and ai_runtime.config.allow_apply) then
+        return error_response(server, client, 403, "ai apply disabled")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local ok, err = ai_runtime.apply(body, { user = request and request.user or "" })
+    if not ok then
+        return error_response(server, client, 501, err or "ai apply not implemented")
+    end
+    json_response(server, client, 200, ok)
+end
+
+local function ai_telegram(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ai_runtime or not ai_runtime.handle_telegram then
+        return error_response(server, client, 400, "ai runtime unavailable")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local ok, err = ai_runtime.handle_telegram(body)
+    if not ok then
+        return error_response(server, client, 501, err or "ai telegram not implemented")
+    end
+    json_response(server, client, 200, ok)
 end
 
 local function resolve_server_entry(body)
@@ -4103,6 +4193,18 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/backup" and method == "POST" then
         return telegram_backup(server, client)
+    end
+    if path == "/api/v1/ai/jobs" and method == "GET" then
+        return ai_jobs(server, client)
+    end
+    if path == "/api/v1/ai/plan" and method == "POST" then
+        return ai_plan(server, client, request)
+    end
+    if path == "/api/v1/ai/apply" and method == "POST" then
+        return ai_apply(server, client, request)
+    end
+    if path == "/api/v1/ai/telegram" and method == "POST" then
+        return ai_telegram(server, client, request)
     end
     if path == "/api/v1/servers/status" and method == "GET" then
         return server_status_list(server, client, request)

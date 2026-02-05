@@ -32,6 +32,10 @@ dofile(script_path("buffer.lua"))
 dofile(script_path("epg.lua"))
 dofile(script_path("runtime.lua"))
 dofile(script_path("telegram.lua"))
+dofile(script_path("ai_runtime.lua"))
+dofile(script_path("ai_tools.lua"))
+dofile(script_path("ai_prompt.lua"))
+dofile(script_path("ai_telegram.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("api.lua"))
 
@@ -725,6 +729,9 @@ function main()
     end
     if telegram and telegram.configure then
         telegram.configure()
+    end
+    if ai_runtime and ai_runtime.configure then
+        ai_runtime.configure()
     end
     if watchdog and watchdog.configure then
         watchdog.configure()
