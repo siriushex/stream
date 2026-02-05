@@ -229,6 +229,17 @@ local function derive_cli_from_prompt(prompt, payload)
     return list
 end
 
+local function derive_include_metrics_from_prompt(prompt)
+    local text = tostring(prompt or ""):lower()
+    if text:find("graph") or text:find("chart") or text:find("diagram") or text:find("plot") then
+        return true
+    end
+    if text:find("metrics") or text:find("trend") or text:find("stats") or text:find("summary") then
+        return true
+    end
+    return false
+end
+
 local function build_context_options(payload, prompt)
     payload = payload or {}
     local include_logs = payload.include_logs
@@ -245,9 +256,14 @@ local function build_context_options(payload, prompt)
     if include_cli == nil and prompt then
         include_cli = derive_cli_from_prompt(prompt, payload)
     end
+    local include_metrics = payload.include_metrics
+    if include_metrics == nil and prompt then
+        include_metrics = derive_include_metrics_from_prompt(prompt)
+    end
     return {
         include_logs = include_logs,
         include_cli = include_cli,
+        include_metrics = include_metrics == true,
         range = payload.range,
         range_sec = payload.range_sec,
         stream_id = payload.stream_id,
