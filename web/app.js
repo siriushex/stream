@@ -750,6 +750,7 @@ const elements = {
   mptsPnrWarning: $('#mpts-pnr-warning'),
   mptsPnrMissing: $('#mpts-pnr-missing'),
   mptsDupInputWarning: $('#mpts-dup-input-warning'),
+  mptsSptsWarning: $('#mpts-spts-warning'),
   mptsManual: $('#mpts-manual'),
   mptsEnabledStatus: $('#mpts-enabled-status'),
   btnMptsEnable: $('#btn-mpts-enable'),
@@ -4895,6 +4896,7 @@ function buildStreamTile(stream) {
     </div>
     <div class="tile-details" id="${detailsId}">
       <div class="tile-inputs" data-role="tile-inputs"></div>
+      <div class="tile-mpts-meta is-hidden" data-role="tile-mpts-meta">MPTS: -</div>
     </div>
     <div class="tile-menu">
       <button class="menu-item" data-action="edit">Edit</button>
@@ -7139,10 +7141,24 @@ function updateMptsInputWarning() {
   if (!mptsEnabled || duplicates.length === 0) {
     elements.mptsDupInputWarning.classList.add('is-hidden');
     elements.mptsDupInputWarning.textContent = '';
+    if (elements.mptsSptsWarning) {
+      elements.mptsSptsWarning.classList.add('is-hidden');
+      elements.mptsSptsWarning.textContent = '';
+    }
     return;
   }
   elements.mptsDupInputWarning.textContent = `Duplicate inputs: ${duplicates.join(', ')}`;
   elements.mptsDupInputWarning.classList.remove('is-hidden');
+  if (elements.mptsSptsWarning) {
+    const sptsOnly = !!(elements.mptsSptsOnly && elements.mptsSptsOnly.checked);
+    if (sptsOnly) {
+      elements.mptsSptsWarning.textContent = 'SPTS only включён: дублирование входов обычно означает multi-PAT и будет отклонено.';
+      elements.mptsSptsWarning.classList.remove('is-hidden');
+    } else {
+      elements.mptsSptsWarning.classList.add('is-hidden');
+      elements.mptsSptsWarning.textContent = '';
+    }
+  }
 }
 
 function updateMptsDeliveryWarning() {
@@ -7223,9 +7239,13 @@ function bindMptsWarningHandlers() {
     elements.streamMpts.addEventListener('change', updateMptsPnrWarning);
     elements.streamMpts.addEventListener('change', updateMptsLcnVersionWarning);
     elements.streamMpts.addEventListener('change', updateMptsLcnTagsWarning);
+    elements.streamMpts.addEventListener('change', updateMptsInputWarning);
   }
   if (elements.mptsStrictPnr) {
     elements.mptsStrictPnr.addEventListener('change', updateMptsPnrWarning);
+  }
+  if (elements.mptsSptsOnly) {
+    elements.mptsSptsOnly.addEventListener('change', updateMptsInputWarning);
   }
 }
 
@@ -11625,6 +11645,28 @@ function updateTileInputs(tile, stats) {
   renderTileInputs(container, inputs, activeIndex);
 }
 
+function updateTileMptsMeta(tile, stream, stats) {
+  const meta = tile.querySelector('[data-role="tile-mpts-meta"]');
+  if (!meta) return;
+  const isMpts = stream && stream.config && stream.config.mpts === true;
+  if (!isMpts) {
+    meta.classList.add('is-hidden');
+    meta.textContent = 'MPTS: -';
+    return;
+  }
+  const mpts = stats && stats.mpts_stats;
+  if (!mpts) {
+    meta.classList.add('is-hidden');
+    meta.textContent = 'MPTS: -';
+    return;
+  }
+  const bitrate = formatBitrateBps(mpts.bitrate_bps);
+  const nullPct = formatPercentOneDecimal(mpts.null_percent);
+  const psi = Number.isFinite(Number(mpts.psi_interval_ms)) ? `${Math.round(mpts.psi_interval_ms)} ms` : '-';
+  meta.textContent = `MPTS: ${bitrate} • null ${nullPct} • PSI ${psi}`;
+  meta.classList.remove('is-hidden');
+}
+
 function updateTiles() {
   if (state.viewMode === 'table') {
     updateStreamTableRows();
@@ -11722,6 +11764,7 @@ function updateTiles() {
     }
 
     updateTileInputs(tile, stats);
+    updateTileMptsMeta(tile, stream, stats);
     tile.classList.toggle('ok', enabled && onAir);
     tile.classList.toggle('warn', enabled && !onAir);
     tile.classList.toggle('disabled', !enabled);

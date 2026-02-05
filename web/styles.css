@@ -720,6 +720,12 @@ select {
   color: var(--muted);
 }
 
+.tile-mpts-meta {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .tile-input-row.state-active .input-badge {
   color: var(--success);
   border-color: var(--success);
