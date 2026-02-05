@@ -217,7 +217,7 @@ entry = data.get(arch, {}).get(profile)
 if not entry:
     print('', file=sys.stderr)
     sys.exit(1)
-print(f\"{entry['url']}|{entry['sha256']}\")
+print(f"{entry['url']}|{entry['sha256']}")
 PY
     )"
     IFS='|' read -r FFMPEG_SRC_URL FFMPEG_SHA <<<"$SOURCE_LINE"

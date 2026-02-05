@@ -97,7 +97,7 @@ if [[ -n "$EXPECT_PMT_PNRS" ]]; then
 fi
 
 if [[ -n "$EXPECT_SERVICE_COUNT" ]]; then
-  sdt_count=$(grep -c "^SDT: sid:" "$LOG_FILE" || true)
+  sdt_count=$(grep -c "SDT: sid:" "$LOG_FILE" || true)
   if [[ "$sdt_count" != "$EXPECT_SERVICE_COUNT" ]]; then
     echo "SDT service count mismatch (expected ${EXPECT_SERVICE_COUNT}, got ${sdt_count})"
     exit 1
@@ -286,21 +286,21 @@ if [[ -n "$EXPECT_NIT_TS_LIST" ]]; then
 fi
 
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then
-  if grep -q "^CC: " "$LOG_FILE"; then
+  if grep -q "CC: " "$LOG_FILE"; then
     echo "Continuity counter errors detected"
     exit 1
   fi
 fi
 
 if [[ "$EXPECT_NO_PES_ERRORS" == "1" ]]; then
-  if grep -q "^PES: " "$LOG_FILE"; then
+  if grep -q "PES: " "$LOG_FILE"; then
     echo "PES errors detected"
     exit 1
   fi
 fi
 
 if [[ "$EXPECT_NO_SCRAMBLED" == "1" ]]; then
-  if grep -q "^Scrambled: " "$LOG_FILE"; then
+  if grep -q "Scrambled: " "$LOG_FILE"; then
     echo "Scrambled packets detected"
     exit 1
   fi
@@ -433,7 +433,7 @@ if [[ -n "$EXPECT_SERVICE_TYPE" ]]; then
 fi
 
 if [[ -n "$EXPECT_BITRATE_KBIT" ]]; then
-  bitrate_line="$(grep -E "^Bitrate: [0-9]+ Kbit/s" "$LOG_FILE" | tail -n 1 | awk '{print $2}')"
+  bitrate_line="$(grep -E "Bitrate: [0-9]+ Kbit/s" "$LOG_FILE" | tail -n 1 | sed -E 's/.*Bitrate: ([0-9]+) Kbit\\/s.*/\\1/')"
   if [[ -z "$bitrate_line" ]]; then
     echo "Bitrate not found"
     exit 1
