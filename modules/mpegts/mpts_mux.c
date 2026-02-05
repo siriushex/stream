@@ -315,13 +315,9 @@ static bool service_map_pids(mpts_service_t *svc)
     size_t pid_count = 0;
 
     uint16_t pcr_pid = PMT_GET_PCR(svc->pmt);
-    bool pcr_from_pmt = true;
     bool pcr_auto = false;
     if(pcr_pid == 0 || pcr_pid >= NULL_TS_PID)
-    {
         pcr_pid = 0;
-        pcr_from_pmt = false;
-    }
 
     const uint8_t *ptr;
     PMT_ITEMS_FOREACH(svc->pmt, ptr)
