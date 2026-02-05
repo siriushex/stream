@@ -959,6 +959,12 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
         return;
     }
 
+    if(svc->has_pnr && selected_pnr != svc->pnr_cfg)
+    {
+        asc_log_warning(SVC_MSG(svc, "PNR %d не найден в PAT, использую %d"),
+                        svc->pnr_cfg, selected_pnr);
+    }
+
     svc->pnr_in = selected_pnr;
     svc->pmt_pid_in = selected_pid;
     svc->pmt->pid = selected_pid;
