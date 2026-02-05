@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI: honor `retry-after` / `x-ratelimit-reset-*` headers when scheduling retries (reduces retry load on 429).
+- Tests:
+  - `./astra scripts/tests/ai_openai_retry_delay_unit.lua`
+### 2026-02-06
+- Changes:
   - CI: run HLS memfd smoke (`tools/hls_memfd_smoke.sh`) to guard zero-disk/on-demand behavior.
 - Tests:
   - Not run (CI change only).

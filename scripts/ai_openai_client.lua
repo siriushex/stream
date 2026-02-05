@@ -37,6 +37,7 @@ local function parse_rate_limits(headers)
     end
     local out = {}
     local keys = {
+        "retry-after",
         "x-ratelimit-limit-requests",
         "x-ratelimit-remaining-requests",
         "x-ratelimit-reset-requests",
@@ -50,6 +51,65 @@ local function parse_rate_limits(headers)
         end
     end
     return out
+end
+
+local function parse_duration_seconds(value)
+    if value == nil then
+        return nil
+    end
+    local text = tostring(value):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return nil
+    end
+    local number, unit = text:match("^(%d+%.?%d*)([a-z]+)$")
+    if not number then
+        number = text:match("^(%d+%.?%d*)$")
+        if not number then
+            return nil
+        end
+        unit = "s"
+    end
+    local n = tonumber(number)
+    if not n then
+        return nil
+    end
+    if unit == "ms" then
+        return n / 1000
+    end
+    if unit == "s" or unit == "sec" or unit == "secs" then
+        return n
+    end
+    if unit == "m" or unit == "min" or unit == "mins" then
+        return n * 60
+    end
+    if unit == "h" or unit == "hr" or unit == "hrs" then
+        return n * 3600
+    end
+    return nil
+end
+
+function ai_openai_client.compute_retry_delay(meta, fallback_delay)
+    local delay = tonumber(fallback_delay) or 15
+    local rl = type(meta) == "table" and meta.rate_limits or nil
+    if type(rl) == "table" then
+        local function apply_candidate(candidate)
+            local parsed = parse_duration_seconds(candidate)
+            if parsed and parsed > delay then
+                delay = parsed
+            end
+        end
+        apply_candidate(rl["retry-after"])
+        apply_candidate(rl["x-ratelimit-reset-requests"])
+        apply_candidate(rl["x-ratelimit-reset-tokens"])
+    end
+    delay = math.ceil(delay)
+    if delay < 1 then
+        delay = 1
+    end
+    if delay > 300 then
+        delay = 300
+    end
+    return delay
 end
 
 local function normalize_proxy(value)
@@ -77,14 +137,36 @@ local function normalize_api_base(value)
     return out
 end
 
+local function make_temp_path(prefix, ext)
+    local path = os.tmpname()
+    if type(path) ~= "string" or path == "" then
+        local suffix = ext or ""
+        path = "/tmp/" .. tostring(prefix or "astral-ai")
+            .. "-" .. tostring(os.time())
+            .. "-" .. tostring(math.random(100000, 999999))
+            .. suffix
+    end
+    return path
+end
+
+local function read_text_file(path)
+    if type(path) ~= "string" or path == "" then
+        return ""
+    end
+    local ok, fh = pcall(io.open, path, "rb")
+    if not ok or not fh then
+        return ""
+    end
+    local text = fh:read("*a") or ""
+    fh:close()
+    return text
+end
+
 local function write_temp_body(body)
     if type(body) ~= "string" or body == "" then
         return nil
     end
-    local path = os.tmpname()
-    if type(path) ~= "string" or path == "" then
-        path = "/tmp/astral-ai-body-" .. tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999)) .. ".json"
-    end
+    local path = make_temp_path("astral-ai-body", ".json")
     local ok, fh = pcall(io.open, path, "wb")
     if not ok or not fh then
         return nil
@@ -257,6 +339,20 @@ local function split_curl_output(raw)
         return body, tonumber(status)
     end
     return raw, nil
+end
+
+local function parse_curl_headers(raw)
+    if type(raw) ~= "string" or raw == "" then
+        return {}
+    end
+    local out = {}
+    for line in raw:gmatch("[^\r\n]+") do
+        local key, value = line:match("^([^:]+):%s*(.*)$")
+        if key and value then
+            out[tostring(key):lower()] = value
+        end
+    end
+    return out
 end
 
 local function should_retry(code)
@@ -549,27 +645,40 @@ function ai_openai_client.request_json_schema(opts, callback)
             })
         end
         local body_path = nil
+        local headers_path = nil
         if #proxies > 0 then
             body_path = write_temp_body(body)
+            headers_path = make_temp_path("astral-ai-headers", ".txt")
         end
-        local function cleanup_body()
+        local function cleanup_temp()
             if body_path then
                 pcall(os.remove, body_path)
                 body_path = nil
             end
+            if headers_path then
+                pcall(os.remove, headers_path)
+                headers_path = nil
+            end
+        end
+        local function read_rate_headers()
+            if not headers_path then
+                return {}
+            end
+            return parse_curl_headers(read_text_file(headers_path))
         end
         if #proxies > 0 then
             if not ensure_curl_available() then
-                cleanup_body()
+                cleanup_temp()
                 return callback(false, "curl unavailable for proxy", { attempts = attempts })
             end
 
             local function handle_result(ok, response_body, response_code, err_text)
-                cleanup_body()
+                local rate_headers = read_rate_headers()
+                cleanup_temp()
                 local meta = {
                     attempts = attempts,
                     code = response_code,
-                    rate_limits = {},
+                    rate_limits = parse_rate_limits(rate_headers),
                     model = models[model_index],
                 }
                 if scrubbed > 0 then
@@ -592,6 +701,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                 if not ok then
                     if should_retry(response_code) and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
+                        delay = ai_openai_client.compute_retry_delay(meta, delay)
                         if type(opts.on_retry) == "function" then
                             pcall(opts.on_retry, attempts, delay, meta)
                         end
@@ -628,6 +738,8 @@ function ai_openai_client.request_json_schema(opts, callback)
                     tostring(timeout),
                     "--connect-timeout",
                     tostring(math.min(5, timeout)),
+                    "-D",
+                    headers_path or "/dev/null",
                     "-H",
                     "Content-Type: application/json",
                     "-H",
@@ -753,6 +865,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                     end
                     if should_retry(response.code) and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
+                        delay = ai_openai_client.compute_retry_delay(meta, delay)
                         if type(opts.on_retry) == "function" then
                             pcall(opts.on_retry, attempts, delay, meta)
                         end
