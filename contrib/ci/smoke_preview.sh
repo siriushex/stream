@@ -39,11 +39,7 @@ PY
 }
 
 json_get() {
-  python3 - <<PY
-import json,sys
-data=json.load(sys.stdin)
-print(data.get("$1",""))
-PY
+  python3 -c "import json,sys; data=json.load(sys.stdin); print(data.get('$1',''))"
 }
 
 echo "[preview-smoke] build" >&2
@@ -53,15 +49,27 @@ make
 echo "[preview-smoke] start server on :${PORT}" >&2
 ./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
-sleep 2
+for _ in $(seq 1 40); do
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/index.html" || true)"
+  if [[ "$code" == "200" ]]; then
+    break
+  fi
+  sleep 0.25
+done
 
 BASE="http://127.0.0.1:${PORT}"
 
 echo "[preview-smoke] login" >&2
-LOGIN_JSON="$(curl -fsS -X POST "${BASE}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}')"
+LOGIN_JSON="$(curl -s -X POST "${BASE}/api/v1/auth/login" -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}' || true)"
+if [[ "${LOGIN_JSON:0:1}" != "{" ]]; then
+  echo "login failed: ${LOGIN_JSON}" >&2
+  tail -n 200 "$LOG_FILE" >&2 || true
+  exit 1
+fi
 TOKEN="$(printf '%s' "$LOGIN_JSON" | json_get token)"
 if [[ -z "$TOKEN" ]]; then
   echo "login failed (no token)" >&2
+  tail -n 200 "$LOG_FILE" >&2 || true
   exit 1
 fi
 
@@ -146,4 +154,3 @@ if [[ "$code" != "404" ]]; then
 fi
 
 echo "[preview-smoke] ok" >&2
-
