@@ -20,6 +20,9 @@ local error_patterns = {
 local UDP_PROBE_ANALYZE_US = 2000000
 local UDP_PROBE_SIZE = 2000000
 local ANALYZE_MAX_CONCURRENCY_DEFAULT = 4
+local STDERR_TAIL_MAX = 200
+local WARMUP_STDERR_MAX = 30
+local WARMUP_TIMEOUT_EXTRA = 2
 
 local function normalize_stream_type(cfg)
     local t = cfg and cfg.type
@@ -403,6 +406,10 @@ local function normalize_watchdog_defaults(tc)
     end
     return {
         restart_delay_sec = num("restart_delay_sec", 4),
+        restart_jitter_sec = num("restart_jitter_sec", 2),
+        restart_backoff_base_sec = num("restart_backoff_base_sec", 2),
+        restart_backoff_factor = num("restart_backoff_factor", 2),
+        restart_backoff_max_sec = num("restart_backoff_max_sec", 30),
         no_progress_timeout_sec = num("no_progress_timeout_sec", 8),
         max_error_lines_per_min = num("max_error_lines_per_min", 20),
         desync_threshold_ms = num("desync_threshold_ms", 500),
@@ -417,6 +424,7 @@ local function normalize_watchdog_defaults(tc)
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
         restart_cooldown_sec = num("restart_cooldown_sec", 1200),
+        stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
 
@@ -443,6 +451,10 @@ local function normalize_output_watchdog(wd, base)
     end
     return {
         restart_delay_sec = num("restart_delay_sec", 4),
+        restart_jitter_sec = num("restart_jitter_sec", 2),
+        restart_backoff_base_sec = num("restart_backoff_base_sec", 2),
+        restart_backoff_factor = num("restart_backoff_factor", 2),
+        restart_backoff_max_sec = num("restart_backoff_max_sec", 30),
         no_progress_timeout_sec = num("no_progress_timeout_sec", 8),
         max_error_lines_per_min = num("max_error_lines_per_min", 20),
         desync_threshold_ms = num("desync_threshold_ms", 500),
@@ -457,6 +469,7 @@ local function normalize_output_watchdog(wd, base)
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
         restart_cooldown_sec = num("restart_cooldown_sec", 1200),
+        stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
 
@@ -480,6 +493,10 @@ end
 
 local request_stop
 local schedule_restart
+local build_probe_args
+local parse_probe_json
+local record_alert
+local extract_exit_info
 
 local function resolve_primary_format(cfg)
     local entry = pick_input_entry(cfg, 1, true)
@@ -505,6 +522,13 @@ local function normalize_failover_config(cfg, enabled)
     local no_data_timeout = read_number_opt(cfg, "no_data_timeout_sec") or 3
     local probe_interval = read_number_opt(cfg, "probe_interval_sec") or 3
     local stable_ok = read_number_opt(cfg, "stable_ok_sec") or 5
+    local switch_pending_timeout = read_number_opt(cfg,
+        "backup_switch_pending_timeout_sec", "backup_switch_pending_timeout") or 15
+    local switch_warmup = read_number_opt(cfg, "backup_switch_warmup_sec", "backup_switch_warmup") or 3
+    local compat_check = normalize_bool(cfg.backup_compat_check, true)
+    local compat_refresh = read_number_opt(cfg, "backup_compat_refresh_sec") or 300
+    local compat_probe_sec = read_number_opt(cfg, "backup_compat_probe_sec") or 2
+    local compat_probe_timeout = read_number_opt(cfg, "backup_compat_probe_timeout_sec") or 8
     local stop_if_all_inactive_sec = read_number_opt(cfg,
         "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec") or 20
     local warm_max = tonumber(cfg.backup_active_warm_max)
@@ -518,6 +542,11 @@ local function normalize_failover_config(cfg, enabled)
     if initial_delay < 0 then initial_delay = 0 end
     if return_delay < 0 then return_delay = 0 end
     if start_delay < 0 then start_delay = 0 end
+    if switch_pending_timeout < 0 then switch_pending_timeout = 0 end
+    if switch_warmup < 0 then switch_warmup = 0 end
+    if compat_refresh < 0 then compat_refresh = 0 end
+    if compat_probe_sec < 0 then compat_probe_sec = 0 end
+    if compat_probe_timeout < 0 then compat_probe_timeout = 0 end
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
 
     return {
@@ -527,9 +556,15 @@ local function normalize_failover_config(cfg, enabled)
         initial_delay = initial_delay,
         start_delay = start_delay,
         return_delay = return_delay,
+        switch_pending_timeout_sec = switch_pending_timeout,
+        switch_warmup_sec = switch_warmup,
         no_data_timeout = no_data_timeout,
         probe_interval = probe_interval,
         stable_ok = stable_ok,
+        compat_check = compat_check,
+        compat_refresh_sec = compat_refresh,
+        compat_probe_sec = compat_probe_sec,
+        compat_probe_timeout_sec = compat_probe_timeout,
         stop_if_all_inactive_sec = stop_if_all_inactive_sec,
         warm_max = warm_max,
         started_at = os.time(),
@@ -587,6 +622,391 @@ local function build_failover_inputs(cfg, label)
         }
     end
     return items, invalid
+end
+
+local function consume_warmup_lines(warm, buffer_key, chunk, handler)
+    if not chunk or chunk == "" then
+        return
+    end
+    warm[buffer_key] = (warm[buffer_key] or "") .. chunk
+    while true do
+        local line, rest = warm[buffer_key]:match("^(.-)\n(.*)$")
+        if not line then
+            break
+        end
+        warm[buffer_key] = rest
+        handler(line:gsub("\r$", ""))
+    end
+end
+
+local function append_warmup_stderr(warm, line)
+    if not line or line == "" then
+        return
+    end
+    local tail = warm.stderr_tail
+    if type(tail) ~= "table" then
+        tail = {}
+        warm.stderr_tail = tail
+    end
+    table.insert(tail, line)
+    while #tail > WARMUP_STDERR_MAX do
+        table.remove(tail, 1)
+    end
+end
+
+local function stop_switch_warmup(job, reason)
+    local fo = job and job.failover or nil
+    if not fo or not fo.switch_warmup then
+        return
+    end
+    local warm = fo.switch_warmup
+    if warm.proc then
+        warm.proc:kill()
+        warm.proc:close()
+        warm.proc = nil
+    end
+    if warm.done == nil then
+        warm.done = true
+        warm.ok = false
+        warm.error = reason or warm.error or "warmup stopped"
+    end
+end
+
+local function warmup_enabled(fo)
+    return fo and tonumber(fo.switch_warmup_sec) and tonumber(fo.switch_warmup_sec) > 0
+end
+
+local function build_switch_warmup_args(job, input_entry, warmup_sec)
+    local tc = job.config and job.config.transcode or {}
+    local bin = resolve_ffmpeg_path(tc)
+    if not bin then
+        return nil, "ffmpeg not found", nil
+    end
+    local url = get_input_url(input_entry)
+    if not url or url == "" then
+        return nil, "input url missing", nil
+    end
+    local argv = { bin }
+    table.insert(argv, "-hide_banner")
+    table.insert(argv, "-nostats")
+    table.insert(argv, "-nostdin")
+    table.insert(argv, "-loglevel")
+    table.insert(argv, "warning")
+    append_args(argv, tc.ffmpeg_global_args)
+    append_args(argv, tc.decoder_args)
+    if type(input_entry) == "table" and input_entry.args then
+        append_args(argv, input_entry.args)
+    end
+    table.insert(argv, "-i")
+    table.insert(argv, tostring(url))
+    if warmup_sec and warmup_sec > 0 then
+        table.insert(argv, "-t")
+        table.insert(argv, tostring(warmup_sec))
+    end
+    table.insert(argv, "-map")
+    table.insert(argv, "0:v:0?")
+    table.insert(argv, "-map")
+    table.insert(argv, "0:a:0?")
+    table.insert(argv, "-f")
+    table.insert(argv, "null")
+    table.insert(argv, "-")
+    return argv, nil, url
+end
+
+local function ensure_switch_warmup(job, target_id, now)
+    local fo = job and job.failover or nil
+    if not warmup_enabled(fo) then
+        return
+    end
+    if not process or type(process.spawn) ~= "function" then
+        return
+    end
+    if not fo or not fo.inputs or not fo.inputs[target_id] then
+        return
+    end
+    local warm = fo.switch_warmup
+    local warmup_sec = tonumber(fo.switch_warmup_sec) or 0
+    if warm and warm.target == target_id then
+        if not warm.done then
+            return
+        end
+        if warm.ok then
+            return
+        end
+        if warm.next_retry_ts and now and now < warm.next_retry_ts then
+            return
+        end
+    elseif warm and warm.target ~= target_id then
+        stop_switch_warmup(job, "warmup replaced")
+    end
+    local entry = pick_input_entry(job.config, target_id, true)
+    local argv, err, url = build_switch_warmup_args(job, entry, warmup_sec)
+    local started_at = now or os.time()
+    if not argv then
+        fo.switch_warmup = {
+            target = target_id,
+            target_url = url,
+            start_ts = started_at,
+            done = true,
+            ok = false,
+            error = err or "warmup config error",
+        }
+        return
+    end
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        fo.switch_warmup = {
+            target = target_id,
+            target_url = url,
+            start_ts = started_at,
+            done = true,
+            ok = false,
+            error = "warmup spawn failed",
+        }
+        return
+    end
+    fo.switch_warmup = {
+        target = target_id,
+        target_url = url,
+        start_ts = started_at,
+        deadline_ts = started_at + warmup_sec + WARMUP_TIMEOUT_EXTRA,
+        duration_sec = warmup_sec,
+        proc = proc,
+        stdout_buf = "",
+        stderr_buf = "",
+    }
+end
+
+local function warmup_status(fo, target_id)
+    if not warmup_enabled(fo) then
+        return "disabled"
+    end
+    local warm = fo and fo.switch_warmup or nil
+    if not warm or warm.target ~= target_id then
+        return "idle"
+    end
+    if warm.done then
+        return warm.ok and "ok" or "failed"
+    end
+    return "running"
+end
+
+local function tick_switch_warmup(job, now)
+    local fo = job and job.failover or nil
+    if not warmup_enabled(fo) then
+        return
+    end
+    local warm = fo and fo.switch_warmup or nil
+    if not warm or not warm.proc then
+        return
+    end
+    local out_chunk = warm.proc:read_stdout()
+    if out_chunk then
+        consume_warmup_lines(warm, "stdout_buf", out_chunk, function(_line)
+        end)
+    end
+    local err_chunk = warm.proc:read_stderr()
+    if err_chunk then
+        consume_warmup_lines(warm, "stderr_buf", err_chunk, function(line)
+            append_warmup_stderr(warm, line)
+        end)
+    end
+    local status = warm.proc:poll()
+    if status then
+        warm.proc:close()
+        warm.proc = nil
+        warm.done = true
+        local exit_code, exit_signal = extract_exit_info(status)
+        warm.exit_code = exit_code
+        warm.exit_signal = exit_signal
+        if exit_code == 0 or exit_code == nil then
+            warm.ok = true
+        else
+            warm.ok = false
+            warm.error = warm.error or "warmup failed"
+            warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
+        end
+        return
+    end
+    if warm.deadline_ts and now >= warm.deadline_ts then
+        warm.proc:kill()
+        warm.proc:close()
+        warm.proc = nil
+        warm.done = true
+        warm.ok = false
+        warm.error = "warmup timeout"
+        warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
+    end
+end
+
+local function extract_stream_profile(payload)
+    if type(payload) ~= "table" then
+        return nil
+    end
+    local profile = {
+        video_count = 0,
+        audio_count = 0,
+        video_codec = nil,
+        audio_codec = nil,
+        audio_sample_rate = nil,
+    }
+    for _, stream in ipairs(payload.streams or {}) do
+        if stream.codec_type == "video" then
+            profile.video_count = profile.video_count + 1
+            if not profile.video_codec and stream.codec_name then
+                profile.video_codec = tostring(stream.codec_name)
+            end
+        elseif stream.codec_type == "audio" then
+            profile.audio_count = profile.audio_count + 1
+            if not profile.audio_codec and stream.codec_name then
+                profile.audio_codec = tostring(stream.codec_name)
+            end
+            if not profile.audio_sample_rate and stream.sample_rate then
+                profile.audio_sample_rate = tonumber(stream.sample_rate)
+            end
+        end
+    end
+    profile.has_video = profile.video_count > 0
+    profile.has_audio = profile.audio_count > 0
+    return profile
+end
+
+local function compare_profiles(base, candidate)
+    if not base or not candidate then
+        return true, nil
+    end
+    if base.has_video ~= candidate.has_video then
+        return false, "video_presence_mismatch"
+    end
+    if base.has_audio ~= candidate.has_audio then
+        return false, "audio_presence_mismatch"
+    end
+    if base.audio_count ~= candidate.audio_count then
+        return false, "audio_track_count_mismatch"
+    end
+    if base.video_codec and candidate.video_codec and base.video_codec ~= candidate.video_codec then
+        return false, "video_codec_mismatch"
+    end
+    if base.audio_codec and candidate.audio_codec and base.audio_codec ~= candidate.audio_codec then
+        return false, "audio_codec_mismatch"
+    end
+    if base.audio_sample_rate and candidate.audio_sample_rate and
+        base.audio_sample_rate ~= candidate.audio_sample_rate then
+        return false, "audio_sample_rate_mismatch"
+    end
+    return true, nil
+end
+
+local function ensure_failover_compat_probe(job, input_id, now)
+    local fo = job and job.failover or nil
+    if not fo or fo.compat_check ~= true then
+        return
+    end
+    if not process or type(process.spawn) ~= "function" then
+        return
+    end
+    local input_data = fo.inputs and fo.inputs[input_id] or nil
+    if not input_data or not input_data.source_url then
+        return
+    end
+    if input_data.compat_probe then
+        return
+    end
+    local refresh = tonumber(fo.compat_refresh_sec) or 0
+    if input_data.compat and input_data.compat.checked_at and refresh > 0 then
+        if now - input_data.compat.checked_at < refresh then
+            return
+        end
+    end
+    local ffprobe_bin = resolve_ffprobe_path(job.config.transcode)
+    local args = build_probe_args(input_data.source_url, fo.compat_probe_sec, false, nil, ffprobe_bin)
+    local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        input_data.compat = {
+            checked_at = now,
+            ok = true,
+            error = "ffprobe spawn failed",
+        }
+        input_data.incompatible = false
+        return
+    end
+    input_data.compat_probe = {
+        proc = proc,
+        stdout_buf = "",
+        stderr_buf = "",
+        start_ts = now,
+        deadline_ts = now + (tonumber(fo.compat_probe_timeout_sec) or 8),
+    }
+end
+
+local function tick_failover_compat_probes(job, now)
+    local fo = job and job.failover or nil
+    if not fo or fo.compat_check ~= true or not fo.inputs then
+        return
+    end
+    for idx, input_data in ipairs(fo.inputs) do
+        local probe = input_data.compat_probe
+        if probe and probe.proc then
+            local out_chunk = probe.proc:read_stdout()
+            if out_chunk then
+                probe.stdout_buf = (probe.stdout_buf or "") .. out_chunk
+            end
+            local err_chunk = probe.proc:read_stderr()
+            if err_chunk then
+                probe.stderr_buf = (probe.stderr_buf or "") .. err_chunk
+            end
+            local status = probe.proc:poll()
+            if status then
+                probe.proc:close()
+                input_data.compat_probe = nil
+                local payload, err = parse_probe_json(probe.stdout_buf or "")
+                local profile = payload and extract_stream_profile(payload) or nil
+                if profile then
+                    if idx == 1 then
+                        fo.base_profile = profile
+                    end
+                    if job.active_input_id == idx then
+                        job.active_input_profile = profile
+                    end
+                    local base = fo.base_profile or job.active_input_profile
+                    local ok, reason = compare_profiles(base, profile)
+                    input_data.compat = {
+                        checked_at = now,
+                        ok = ok,
+                        reason = reason,
+                        profile = profile,
+                    }
+                    if ok == false then
+                        input_data.incompatible = true
+                        record_alert(job, "FAILOVER_INCOMPATIBLE_INPUT", "backup input incompatible", {
+                            input_index = idx - 1,
+                            input_url = input_data.source_url,
+                            reason = reason,
+                        })
+                    else
+                        input_data.incompatible = false
+                    end
+                else
+                    input_data.compat = {
+                        checked_at = now,
+                        ok = true,
+                        error = err or "compat probe failed",
+                    }
+                    input_data.incompatible = false
+                end
+            elseif probe.deadline_ts and now >= probe.deadline_ts then
+                probe.proc:kill()
+                probe.proc:close()
+                input_data.compat_probe = nil
+                input_data.compat = {
+                    checked_at = now,
+                    ok = true,
+                    error = "compat probe timeout",
+                }
+                input_data.incompatible = false
+            end
+        end
+    end
 end
 
 local function prepare_failover_input(job, input_id, opts)
@@ -671,6 +1091,13 @@ local function kill_failover_input(job, input_id)
     input_data.probing = nil
     input_data.warm = nil
     input_data.probe_until = nil
+    if input_data.compat_probe and input_data.compat_probe.proc then
+        input_data.compat_probe.proc:kill()
+        input_data.compat_probe.proc:close()
+    end
+    input_data.compat_probe = nil
+    input_data.compat = nil
+    input_data.incompatible = nil
     if input_data.input then
         kill_input(input_data.input)
         input_data.input = nil
@@ -734,7 +1161,7 @@ local function update_failover_input_state(job, input_id, input_data)
     input_data.state = state
 end
 
-local function pick_next_input(inputs, active_id, prefer_ok)
+local function pick_next_input(inputs, active_id, prefer_ok, prefer_compat)
     local total = #inputs
     if total == 0 then
         return nil
@@ -743,7 +1170,9 @@ local function pick_next_input(inputs, active_id, prefer_ok)
         local idx = ((active_id - 1 + offset) % total) + 1
         local input_data = inputs[idx]
         if input_data then
-            if not prefer_ok or input_data.is_ok then
+            if prefer_compat and input_data.incompatible == true then
+                -- skip incompatible input
+            elseif not prefer_ok or input_data.is_ok then
                 return idx
             end
         end
@@ -893,6 +1322,7 @@ local function activate_failover_input(job, input_id, reason)
             }
         end
     end
+    stop_switch_warmup(job, "switch complete")
     local input_data = job.failover and job.failover.inputs and job.failover.inputs[input_id] or nil
     local meta = {
         input_index = input_id - 1,
@@ -911,14 +1341,19 @@ local function activate_next_available_input(job, active_id, reason)
     if total == 0 then
         return false
     end
+    local skip_incompatible = fo.compat_check == true
     for pass = 1, 2 do
         local prefer_ok = pass == 1
         for offset = 1, total do
             local idx = ((active_id - 1 + offset) % total) + 1
             local input_data = fo.inputs[idx]
-            if input_data and (not prefer_ok or input_data.is_ok) then
-                if activate_failover_input(job, idx, reason) then
-                    return true
+            if input_data then
+                if skip_incompatible and input_data.incompatible == true then
+                    -- skip incompatible input
+                elseif not prefer_ok or input_data.is_ok then
+                    if activate_failover_input(job, idx, reason) then
+                        return true
+                    end
                 end
             end
         end
@@ -1020,9 +1455,10 @@ local function transcode_failover_tick(job, now)
         if not active_ok and allow_switch then
             local delay = fo.start_delay
             if down_for >= delay then
-                local next_id = pick_next_input(fo.inputs, active_id, true)
+                local prefer_compat = fo.compat_check == true
+                local next_id = pick_next_input(fo.inputs, active_id, true, prefer_compat)
                 if not next_id then
-                    next_id = pick_next_input(fo.inputs, active_id, false)
+                    next_id = pick_next_input(fo.inputs, active_id, false, prefer_compat)
                 end
                 if next_id then
                     if warmup_enabled(fo) then
@@ -1158,6 +1594,14 @@ local function collect_failover_input_stats(job)
         entry.last_ok_ts = input_data and input_data.last_ok_ts or nil
         entry.last_error = input_data and input_data.last_error or nil
         entry.fail_count = input_data and tonumber(input_data.fail_count) or 0
+        entry.incompatible = input_data and input_data.incompatible == true or false
+        if input_data and input_data.compat then
+            entry.compat = input_data.compat
+            entry.compat_checked_at = input_data.compat.checked_at
+            entry.compat_ok = input_data.compat.ok
+            entry.compat_reason = input_data.compat.reason
+            entry.compat_error = input_data.compat.error
+        end
 
         if active_id == idx then
             entry.active = true
@@ -1251,7 +1695,7 @@ local function send_event(payload, stream_id)
     })
 end
 
-local function record_alert(job, code, message, meta)
+record_alert = function(job, code, message, meta)
     local ts = os.time()
     job.last_alert = {
         code = code,
@@ -1269,6 +1713,86 @@ local function record_alert(job, code, message, meta)
         message = message,
         ts = ts,
     }, job.id)
+end
+
+local function append_stderr_tail(job, line)
+    if not line or line == "" then
+        return
+    end
+    local tail = job.stderr_tail
+    if type(tail) ~= "table" then
+        tail = {}
+        job.stderr_tail = tail
+    end
+    table.insert(tail, line)
+    while #tail > STDERR_TAIL_MAX do
+        table.remove(tail, 1)
+    end
+end
+
+local function normalize_restart_meta(meta)
+    if type(meta) == "table" then
+        return meta
+    end
+    if meta ~= nil then
+        return { detail = meta }
+    end
+    return {}
+end
+
+local function resolve_restart_reason_code(code)
+    if not code then
+        return "UNKNOWN"
+    end
+    local map = {
+        TRANSCODE_STALL = "NO_PROGRESS",
+        TRANSCODE_ERRORS_RATE = "ERROR_RATE",
+        TRANSCODE_PROBE_FAILED = "OUTPUT_PROBE_FAIL",
+        TRANSCODE_LOW_BITRATE = "LOW_BITRATE",
+        TRANSCODE_AV_DESYNC = "AV_DESYNC",
+        TRANSCODE_EXIT = "EXIT_UNEXPECTED",
+        TRANSCODE_INPUT_FAILOVER = "INPUT_NO_DATA",
+    }
+    if map[code] then
+        return map[code]
+    end
+    return code
+end
+
+local function compute_restart_delay(watchdog, history)
+    local base = watchdog and tonumber(watchdog.restart_delay_sec) or 0
+    if base < 0 then
+        base = 0
+    end
+    local jitter = watchdog and tonumber(watchdog.restart_jitter_sec) or 0
+    if jitter < 0 then
+        jitter = 0
+    end
+    local backoff_base = watchdog and tonumber(watchdog.restart_backoff_base_sec) or 0
+    if backoff_base < 0 then
+        backoff_base = 0
+    end
+    local backoff_factor = watchdog and tonumber(watchdog.restart_backoff_factor) or 2
+    if backoff_factor < 1 then
+        backoff_factor = 1
+    end
+    local backoff_max = watchdog and tonumber(watchdog.restart_backoff_max_sec) or 0
+    if backoff_max < 0 then
+        backoff_max = 0
+    end
+    local attempts = type(history) == "table" and #history or 0
+    local backoff = 0
+    if backoff_base > 0 and attempts > 1 then
+        backoff = backoff_base * (backoff_factor ^ (attempts - 2))
+        if backoff_max > 0 and backoff > backoff_max then
+            backoff = backoff_max
+        end
+    end
+    local delay = base + backoff
+    if jitter > 0 then
+        delay = delay + (math.random() * jitter)
+    end
+    return delay
 end
 
 local function mark_error_line(job, line)
@@ -1370,7 +1894,7 @@ local function parse_probe_bitrate_kbps(payload)
     return nil
 end
 
-local function build_probe_args(url, duration_sec, include_packets, extra_args, ffprobe_bin)
+build_probe_args = function(url, duration_sec, include_packets, extra_args, ffprobe_bin)
     local bin = ffprobe_bin or "ffprobe"
     local args = {
         bin,
@@ -1387,7 +1911,7 @@ local function build_probe_args(url, duration_sec, include_packets, extra_args, 
     end
     table.insert(args, "-show_streams")
     table.insert(args, "-show_format")
-    local entries = "stream=index,codec_type,bit_rate:format=bit_rate"
+    local entries = "stream=index,codec_type,codec_name,bit_rate,sample_rate:format=bit_rate"
     if include_packets then
         entries = entries .. ":packet=pts_time,stream_index,size"
     end
@@ -1534,6 +2058,7 @@ local function read_process_output(job)
         if is_error then
             mark_error_line(job, line)
         end
+        append_stderr_tail(job, line)
         if log_mode == "all" then
             log.info("[transcode " .. tostring(job.id) .. "] ffmpeg: " .. line)
         elseif log_mode == "errors" and is_error then
@@ -1571,7 +2096,21 @@ request_stop = function(job)
     end
     job.proc:terminate()
     job.term_sent_ts = os.time()
-    job.kill_due_ts = job.term_sent_ts + 5
+    local stop_timeout = tonumber(job.watchdog and job.watchdog.stop_timeout_sec) or 5
+    if stop_timeout < 1 then
+        stop_timeout = 1
+    end
+    job.kill_due_ts = job.term_sent_ts + stop_timeout
+    job.kill_attempts = 0
+end
+
+extract_exit_info = function(status)
+    if type(status) ~= "table" then
+        return nil, nil
+    end
+    local exit_code = status.exit_code or status.code
+    local exit_signal = status.signal or status.exit_signal
+    return exit_code, exit_signal
 end
 
 local function finalize_process_exit(job, status)
@@ -1581,10 +2120,14 @@ local function finalize_process_exit(job, status)
     if job.proc then
         job.proc:close()
     end
+    local exit_code, exit_signal = extract_exit_info(status)
+    job.ffmpeg_exit_code = exit_code
+    job.ffmpeg_exit_signal = exit_signal
     job.proc = nil
     job.pid = nil
     job.term_sent_ts = nil
     job.kill_due_ts = nil
+    job.kill_attempts = nil
     job.last_exit = status
 end
 
@@ -1609,18 +2152,18 @@ local function restart_allowed(job, output_state, watchdog)
             output_url = output_state and output_state.url or nil,
         })
         job.state = "ERROR"
-        return false
+        return false, history
     end
-    return true
+    return true, history
 end
 
 schedule_restart = function(job, output_state, code, message, meta)
     if job.state == "ERROR" or job.state == "RESTARTING" then
-        return
+        return false
     end
     local watchdog = output_state and output_state.watchdog or job.watchdog
     if not watchdog then
-        return
+        return false
     end
     local now = os.time()
     local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
@@ -1629,35 +2172,45 @@ schedule_restart = function(job, output_state, code, message, meta)
         if note < cooldown then
             log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown) output #" ..
                 tostring(output_state.index))
-            return
+            return false
         end
     end
-    local payload = meta or {}
+    local reason_code = resolve_restart_reason_code(code)
+    local payload = normalize_restart_meta(meta)
     local alert_message = message
     if output_state then
         payload.output_index = output_state.index
         payload.output_url = output_state.url
         alert_message = "output #" .. tostring(output_state.index) .. ": " .. tostring(message or "")
     end
-    record_alert(job, code, alert_message, payload)
-    if not restart_allowed(job, output_state, watchdog) then
-        return
+    record_alert(job, reason_code, alert_message, payload)
+    local ok, history = restart_allowed(job, output_state, watchdog)
+    if not ok then
+        return false
     end
-    table.insert(job.restart_history, now)
+    table.insert(history, now)
+    if history ~= job.restart_history then
+        if type(job.restart_history) ~= "table" then
+            job.restart_history = {}
+        end
+        prune_time_list(job.restart_history, now - 600)
+        table.insert(job.restart_history, now)
+    end
     if output_state then
-        output_state.restart_history = output_state.restart_history or {}
-        table.insert(output_state.restart_history, now)
         output_state.last_restart_ts = now
-        output_state.last_restart_reason = code
+        output_state.last_restart_reason = reason_code
     end
     job.state = "RESTARTING"
-    job.restart_due_ts = now + watchdog.restart_delay_sec
-    job.restart_reason = code
+    job.restart_due_ts = now + compute_restart_delay(watchdog, history)
+    job.restart_reason = reason_code
+    job.restart_reason_code = reason_code
+    job.restart_reason_meta = payload
     job.restart_output_index = output_state and output_state.index or nil
     request_stop(job)
+    return true
 end
 
-local function parse_probe_json(raw)
+parse_probe_json = function(raw)
     local ok, payload = pcall(json.decode, raw)
     if not ok then
         return nil, "invalid json"
@@ -1818,6 +2371,13 @@ local function handle_input_probe_result(job, payload, err)
         local bitrate = parse_probe_bitrate_kbps(payload)
         job.input_last_ok_ts = now
         job.input_last_error = nil
+        local profile = extract_stream_profile(payload)
+        if profile then
+            job.active_input_profile = profile
+            if job.failover and job.active_input_id == 1 then
+                job.failover.base_profile = profile
+            end
+        end
         if bitrate then
             job.input_bitrate_kbps = bitrate
         end
@@ -2072,7 +2632,15 @@ local function tick_job(job)
                 })
             end
         elseif job.term_sent_ts and now >= (job.kill_due_ts or 0) then
-            job.proc:kill()
+            job.kill_attempts = (job.kill_attempts or 0) + 1
+            local killed = false
+            if type(job.proc.kill_tree) == "function" then
+                local ok = pcall(job.proc.kill_tree, job.proc)
+                killed = ok
+            end
+            if not killed then
+                job.proc:kill()
+            end
             job.kill_due_ts = now + 1
         end
     end
@@ -2124,6 +2692,8 @@ local function tick_job(job)
     end
 
     tick_probes(job, now)
+    tick_switch_warmup(job, now)
+    tick_failover_compat_probes(job, now)
     transcode_failover_tick(job, now)
 
     if job.preprobe_pending and job.state == "STARTING" and not job.input_probe_inflight and not job.input_probe then
@@ -2253,11 +2823,17 @@ function transcode.start(job, opts)
     job.proc = proc
     job.pid = proc:pid()
     job.start_ts = os.time()
+    job.stderr_tail = {}
+    job.active_input_profile = nil
     if job.failover then
         job.failover.started_at = job.start_ts
         job.failover.next_probe_ts = job.start_ts
         job.failover.inactive_since = nil
         job.failover.global_state = "RUNNING"
+        job.failover.switch_pending = nil
+        job.failover.return_pending = nil
+        job.failover.switch_warmup = nil
+        job.failover.base_profile = nil
     end
     job.last_progress = {}
     job.last_progress_ts = job.start_ts
@@ -2292,6 +2868,16 @@ function transcode.stop(job)
     if job.proc then
         request_stop(job)
     end
+    if job.failover then
+        stop_switch_warmup(job, "stop")
+        job.failover.switch_pending = nil
+        job.failover.return_pending = nil
+        if job.failover.inputs then
+            for idx, _ in ipairs(job.failover.inputs) do
+                kill_failover_input(job, idx)
+            end
+        end
+    end
     for _, output_state in ipairs(job.output_monitors or {}) do
         stop_output_monitor(output_state)
     end
@@ -2311,21 +2897,9 @@ function transcode.restart(job, reason)
     if job.state == "ERROR" then
         return false
     end
-    local watchdog = job.watchdog
-    if not watchdog then
-        return false
-    end
-    if not restart_allowed(job, nil, watchdog) then
-        return false
-    end
-    local now = os.time()
-    table.insert(job.restart_history, now)
-    job.state = "RESTARTING"
-    job.restart_due_ts = now + watchdog.restart_delay_sec
-    job.restart_reason = reason
-    job.restart_output_index = nil
-    request_stop(job)
-    return true
+    return schedule_restart(job, nil, "RESTART_REQUEST", reason or "manual restart", {
+        reason = reason,
+    })
 end
 
 function transcode.upsert(id, row, force)
@@ -2484,17 +3058,38 @@ function transcode.get_status(id)
     local inputs = collect_failover_input_stats(job)
     local fo = job.failover
     local active_input_url = get_active_input_url(job.config, job.active_input_id, true)
+    local warm_status = nil
+    if fo and fo.switch_warmup then
+        local warm = fo.switch_warmup
+        warm_status = {
+            target = warm.target,
+            target_url = warm.target_url,
+            ok = warm.ok,
+            done = warm.done,
+            error = warm.error,
+            start_ts = warm.start_ts,
+            duration_sec = warm.duration_sec,
+            exit_code = warm.exit_code,
+            exit_signal = warm.exit_signal,
+            stderr_tail = warm.stderr_tail,
+        }
+    end
     return {
         id = job.id,
         name = job.name,
         state = job.state,
         pid = job.pid,
         restarts_10min = #job.restart_history,
+        restart_reason_code = job.restart_reason_code,
+        restart_reason_meta = job.restart_reason_meta,
         last_progress = job.last_progress,
         last_progress_ts = job.last_progress_ts,
         last_error = job.last_error_line,
         last_error_ts = job.last_error_ts,
         last_alert = job.last_alert,
+        stderr_tail = job.stderr_tail or {},
+        ffmpeg_exit_code = job.ffmpeg_exit_code,
+        ffmpeg_exit_signal = job.ffmpeg_exit_signal,
         desync_ms_last = job.last_desync_ms,
         input_bitrate_kbps = job.input_bitrate_kbps,
         output_bitrate_kbps = job.output_bitrate_kbps,
@@ -2512,6 +3107,9 @@ function transcode.get_status(id)
         backup_type = fo and fo.mode or nil,
         global_state = fo and fo.global_state or "RUNNING",
         last_switch = fo and fo.last_switch or nil,
+        switch_pending = fo and fo.switch_pending or nil,
+        return_pending = fo and fo.return_pending or nil,
+        switch_warmup = warm_status,
         inputs = inputs,
         inputs_status = inputs,
         outputs = job.outputs,
