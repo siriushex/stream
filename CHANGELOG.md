@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Transcode: add warmup failure/timeout/stop alerts for failover diagnostics.
+- Tests:
+  - Not run (logic change only).
+### 2026-02-05
+- Changes:
   - UI: editor warmup badge now includes timeline (start/ready/last/deadline).
 - Tests:
   - Not run (UI change only).
