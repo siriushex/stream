@@ -15,7 +15,16 @@ if [[ -z "$base_ref" ]]; then
 fi
 
 # Ensure base ref is available even with shallow checkout.
-git fetch origin "$base_ref":"refs/remotes/origin/$base_ref" --depth=1
+git fetch origin "$base_ref":"refs/remotes/origin/$base_ref" --depth=50
+
+# If merge base is missing, deepen fetch to avoid "no merge base" in shallow clones.
+if ! git merge-base "origin/$base_ref" HEAD >/dev/null 2>&1; then
+  if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
+    git fetch --unshallow origin || git fetch origin "$base_ref":"refs/remotes/origin/$base_ref" --depth=2000
+  else
+    git fetch origin "$base_ref":"refs/remotes/origin/$base_ref" --depth=2000
+  fi
+fi
 
 if ! git diff --name-only "origin/$base_ref...HEAD" | grep -q '^CHANGELOG.md$'; then
   echo "ERROR: CHANGELOG.md not updated in this PR."
