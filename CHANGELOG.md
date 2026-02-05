@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI: Observability/Help/Access отображаются только при включении соответствующих опций в Settings → General.
+- Tests:
+  - Not run (UI change only).
+### 2026-02-05
+- Changes:
   - AstralAI: default model `gpt-5.2` with fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
   - AstralAI: auto-select logs/CLI context by prompt to reduce load.
   - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
