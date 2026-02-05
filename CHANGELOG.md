@@ -15,6 +15,7 @@
   - Added observability data tables and rollup timers for AI logs/metrics.
   - Added AI observability API endpoints: `/api/v1/ai/logs`, `/api/v1/ai/metrics`, `/api/v1/ai/summary`.
   - Added Settings → General controls for observability retention + rollup interval.
+  - Added Observability view with summary cards and charts.
   - Reconfigured observability on settings updates.
 - Tests:
   - Not run (UI + API wiring only).
