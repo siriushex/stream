@@ -164,7 +164,15 @@ def main() -> int:
     args = parser.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((args.addr, args.port))
+    try:
+        first_octet = int(args.addr.split(".")[0])
+        if 224 <= first_octet <= 239:
+            mreq = socket.inet_aton(args.addr) + socket.inet_aton("0.0.0.0")
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    except Exception:
+        pass
     sock.settimeout(0.2)
 
     pat_asm = SectionAssembler()

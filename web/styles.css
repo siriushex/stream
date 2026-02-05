@@ -2286,6 +2286,12 @@ select {
   margin-bottom: 8px;
 }
 
+.list-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .text-link {
   background: transparent;
   border: none;

@@ -1673,6 +1673,7 @@
             <div class="mpts-manual-body">
               <div class="mpts-manual-step">1) Enable MPTS for the stream (button above or “Create Multi Program Stream” on General tab).</div>
               <div class="mpts-manual-step">2) Add services in the list below. Each service needs its own input URL (UDP or stream://).</div>
+              <div class="mpts-manual-step">2a) Для UDP можно использовать “Probe input” — сервисы подтянутся из PAT/SDT.</div>
               <div class="mpts-manual-step">3) Set PNR/LCN/provider/service name and (optionally) service type.</div>
               <div class="mpts-manual-step">4) Configure NIT/PSI and advanced options (auto-remap, PCR restamp, pass-through).</div>
               <div class="mpts-manual-step">5) Configure outputs on the General tab and click Apply/Save.</div>
@@ -1776,7 +1777,10 @@
             <div class="list-block">
               <div class="list-header">
                 <span>SERVICE LIST</span>
-                <button class="text-link mpts-field" type="button" id="btn-add-mpts-service">NEW SERVICE</button>
+                <div class="list-actions">
+                  <button class="text-link mpts-field" type="button" id="btn-mpts-probe">PROBE INPUT</button>
+                  <button class="text-link mpts-field" type="button" id="btn-add-mpts-service">NEW SERVICE</button>
+                </div>
               </div>
               <div class="list" id="mpts-service-list"></div>
             </div>

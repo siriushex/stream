@@ -847,6 +847,7 @@ const elements = {
   outputList: $('#output-list'),
   btnAddInput: $('#btn-add-input'),
   btnAddMptsService: $('#btn-add-mpts-service'),
+  btnMptsProbe: $('#btn-mpts-probe'),
   mptsServiceList: $('#mpts-service-list'),
   mptsBulkPnrStart: $('#mpts-bulk-pnr-start'),
   mptsBulkPnrStep: $('#mpts-bulk-pnr-step'),
@@ -7310,6 +7311,39 @@ function applyMptsBulkActions() {
     return updated;
   });
   renderMptsServiceList();
+}
+
+async function probeMptsServices() {
+  if (!elements.btnMptsProbe) return;
+  const input = prompt('Enter UDP input (udp://host:port) to scan services:');
+  if (!input) return;
+  const durationRaw = prompt('Scan duration (seconds)', '3');
+  let duration = Number(durationRaw);
+  if (!Number.isFinite(duration) || duration <= 0) duration = 3;
+  duration = Math.min(Math.max(duration, 1), 10);
+
+  setStatus('Scanning MPTS services...', 'sticky');
+  try {
+    const payload = await apiJson('/api/v1/mpts/scan', {
+      method: 'POST',
+      body: JSON.stringify({ input, duration }),
+    });
+    const services = Array.isArray(payload.services) ? payload.services : [];
+    if (!services.length) {
+      setStatus('No services found', 'sticky');
+      return;
+    }
+    const replace = confirm('Replace current service list with scanned services?');
+    if (replace) {
+      state.mptsServices = services;
+    } else {
+      state.mptsServices = (state.mptsServices || []).concat(services);
+    }
+    renderMptsServiceList();
+    setStatus(`Loaded ${services.length} services`);
+  } catch (err) {
+    setStatus(`Scan failed: ${err.message || err}`);
+  }
 }
 
 function setOutputGroup(group) {
@@ -17466,6 +17500,11 @@ function bindEvents() {
       state.mptsServices = state.mptsServices || [];
       state.mptsServices.push({ input: '' });
       renderMptsServiceList();
+    });
+  }
+  if (elements.btnMptsProbe) {
+    elements.btnMptsProbe.addEventListener('click', () => {
+      probeMptsServices();
     });
   }
   if (elements.btnMptsEnable && elements.streamMpts) {
