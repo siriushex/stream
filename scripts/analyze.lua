@@ -82,6 +82,7 @@ dump_psi_info["pmt"] = function(info)
     local streams_video = 0
     local streams_audio = 0
     local streams_data = 0
+    local pcr_in_es = false
     for _, stream_info in pairs(info.streams) do
         streams_total = streams_total + 1
         if stream_info.type_name == "VIDEO" then
@@ -91,6 +92,9 @@ dump_psi_info["pmt"] = function(info)
         else
             streams_data = streams_data + 1
         end
+        if stream_info.pid == info.pcr then
+            pcr_in_es = true
+        end
         log.info(("%s: pid: %d type: 0x%02X"):format(stream_info.type_name,
                                                       stream_info.pid,
                                                       stream_info.type_id))
@@ -99,8 +103,9 @@ dump_psi_info["pmt"] = function(info)
         end
     end
     -- Сводная строка для проверок PMT (количество потоков по типам).
-    log.info(("PMT: summary: pnr=%d pcr=%d streams=%d video=%d audio=%d data=%d")
-        :format(info.pnr, info.pcr, streams_total, streams_video, streams_audio, streams_data))
+    local pcr_flag = pcr_in_es and 1 or 0
+    log.info(("PMT: summary: pnr=%d pcr=%d streams=%d video=%d audio=%d data=%d pcr_in_es=%d")
+        :format(info.pnr, info.pcr, streams_total, streams_video, streams_audio, streams_data, pcr_flag))
     log.info(("PMT: crc32: 0x%X"):format(info.crc32))
 end
 
