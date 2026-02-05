@@ -160,8 +160,41 @@ function ai_runtime.plan(payload, ctx)
         requested_by = ctx and ctx.user or "",
         source = ctx and ctx.source or "api",
     })
-    job.status = "not_implemented"
-    return nil, "ai plan not implemented"
+    if not ai_runtime.is_ready() then
+        job.status = "error"
+        job.error = "ai not configured"
+        return nil, job.error
+    end
+    if type(payload) ~= "table" then
+        job.status = "error"
+        job.error = "invalid payload"
+        return nil, job.error
+    end
+    local ok, err = ai_tools.config_validate(payload)
+    if not ok then
+        job.status = "error"
+        job.error = err or "validation failed"
+        return nil, job.error
+    end
+    local current, snap_err = ai_tools.config_snapshot()
+    if not current then
+        job.status = "error"
+        job.error = snap_err or "snapshot failed"
+        return nil, job.error
+    end
+    local diff, diff_err = ai_tools.config_diff(current, payload)
+    if not diff then
+        job.status = "error"
+        job.error = diff_err or "diff failed"
+        return nil, job.error
+    end
+    job.status = "done"
+    job.result = {
+        validated = true,
+        diff = diff,
+        summary = diff.summary or {},
+    }
+    return job.result
 end
 
 function ai_runtime.apply(payload, ctx)
@@ -176,4 +209,3 @@ end
 function ai_runtime.handle_telegram(payload)
     return nil, "ai telegram not implemented"
 end
-
