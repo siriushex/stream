@@ -410,11 +410,16 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
                     break;
                 if(tag == 0x40 && len > 0)
                 {
-                    size_t name_len = len > 255 ? 255 : len;
-                    char name[256];
-                    memcpy(name, &buf[pos], name_len);
-                    name[name_len] = '\0';
-                    lua_pushstring(lua, name);
+                    char *name = iso8859_decode(&buf[pos], len);
+                    if(name)
+                    {
+                        lua_pushstring(lua, name);
+                        free(name);
+                    }
+                    else
+                    {
+                        lua_pushstring(lua, "");
+                    }
                     lua_setfield(lua, -2, __network_name);
                 }
                 pos += len;
