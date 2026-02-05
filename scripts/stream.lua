@@ -1923,10 +1923,39 @@ function validate_stream_config(cfg, opts)
                 table.insert(services, { input = entry })
             end
         end
-        local adv = type(cfg.mpts_config) == "table" and cfg.mpts_config.advanced or nil
+        local mpts_config = type(cfg.mpts_config) == "table" and cfg.mpts_config or {}
+        local adv = type(mpts_config.advanced) == "table" and mpts_config.advanced or nil
         if adv and (adv.pass_nit or adv.pass_sdt or adv.pass_eit or adv.pass_tdt) and #services > 1 then
             local label = cfg.name or cfg.id or "MPTS"
             log.warning("[" .. tostring(label) .. "] pass_* режимы корректны только для одного сервиса; будет генерация")
+        end
+        if adv and adv.pass_sdt then
+            for _, service in ipairs(services) do
+                if service.service_name or service.service_provider or service.service_type_id or service.scrambled then
+                    local label = cfg.name or cfg.id or "MPTS"
+                    log.warning("[" .. tostring(label) .. "] pass_sdt включает SDT из входа; "
+                        .. "service_name/provider/type/scrambled будут проигнорированы")
+                    break
+                end
+            end
+        end
+        if adv and adv.pass_nit then
+            local general = type(mpts_config.general) == "table" and mpts_config.general or {}
+            local nit = type(mpts_config.nit) == "table" and mpts_config.nit or {}
+            if general.network_id or general.network_name or nit.delivery or nit.frequency or nit.symbolrate
+                or nit.fec or nit.modulation or nit.network_search or nit.lcn_version then
+                local label = cfg.name or cfg.id or "MPTS"
+                log.warning("[" .. tostring(label) .. "] pass_nit включает NIT из входа; "
+                    .. "поля NIT будут проигнорированы")
+            end
+        end
+        if adv and adv.pass_tdt then
+            local general = type(mpts_config.general) == "table" and mpts_config.general or {}
+            if general.country or general.utc_offset then
+                local label = cfg.name or cfg.id or "MPTS"
+                log.warning("[" .. tostring(label) .. "] pass_tdt включает TDT/TOT из входа; "
+                    .. "country/utc_offset будут проигнорированы")
+            end
         end
         for idx, service in ipairs(services) do
             local url = collect_mpts_input(service)
