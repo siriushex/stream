@@ -16,14 +16,16 @@
           "pnr": 101,
           "service_name": "MPTS Test 1",
           "service_provider": "Astral",
-          "service_type_id": 1
+          "service_type_id": 1,
+          "lcn": 101
         },
         {
           "input": "udp://127.0.0.1:12347",
           "pnr": 102,
           "service_name": "MPTS Test 2",
           "service_provider": "Astral",
-          "service_type_id": 1
+          "service_type_id": 1,
+          "lcn": 102
         }
       ],
       "output": [
