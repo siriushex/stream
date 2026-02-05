@@ -270,14 +270,27 @@ local function parse_nvidia_smi_output(raw)
     end
     local metrics = {}
     for line in tostring(raw):gmatch("[^\r\n]+") do
-        local idx, util, mem_used, mem_total = line:match("^%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*$")
+        local idx, util, mem_used, mem_total, sessions =
+            line:match("^%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*$")
         if idx then
             table.insert(metrics, {
                 index = tonumber(idx),
                 util = tonumber(util) or 0,
                 mem_used = tonumber(mem_used) or 0,
                 mem_total = tonumber(mem_total) or 0,
+                session_count = tonumber(sessions),
             })
+        else
+            local idx2, util2, mem_used2, mem_total2 =
+                line:match("^%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*$")
+            if idx2 then
+                table.insert(metrics, {
+                    index = tonumber(idx2),
+                    util = tonumber(util2) or 0,
+                    mem_used = tonumber(mem_used2) or 0,
+                    mem_total = tonumber(mem_total2) or 0,
+                })
+            end
         end
     end
     if #metrics == 0 then
@@ -287,7 +300,7 @@ local function parse_nvidia_smi_output(raw)
 end
 
 local function query_nvidia_gpus()
-    local cmd = "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total " ..
+    local cmd = "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total,encoder.stats.sessionCount " ..
         "--format=csv,noheader,nounits 2>/dev/null"
     local ok, handle = pcall(io.popen, cmd)
     if not ok or not handle then
@@ -297,7 +310,17 @@ local function query_nvidia_gpus()
     handle:close()
     local metrics = parse_nvidia_smi_output(output)
     if not metrics then
-        return nil, "no gpu metrics"
+        cmd = "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total " ..
+            "--format=csv,noheader,nounits 2>/dev/null"
+        local ok2, handle2 = pcall(io.popen, cmd)
+        if ok2 and handle2 then
+            local output2 = handle2:read("*a")
+            handle2:close()
+            metrics = parse_nvidia_smi_output(output2)
+        end
+        if not metrics then
+            return nil, "no gpu metrics"
+        end
     end
     return metrics, nil
 end
@@ -342,7 +365,9 @@ local function check_gpu_overload(tc, metrics, gpu_id)
     end
     local util_limit = tonumber(tc.gpu_util_limit or tc.nvidia_util_limit)
     local mem_limit = tonumber(tc.gpu_mem_limit_mb or tc.nvidia_mem_limit_mb)
-    if (not util_limit or util_limit <= 0) and (not mem_limit or mem_limit <= 0) then
+    local session_limit = tonumber(tc.gpu_session_limit or tc.nvidia_session_limit)
+    if (not util_limit or util_limit <= 0) and (not mem_limit or mem_limit <= 0) and
+        (not session_limit or session_limit <= 0) then
         return nil
     end
     local selected = nil
@@ -371,6 +396,11 @@ local function check_gpu_overload(tc, metrics, gpu_id)
         over = true
         reason.mem_used = selected.mem_used
         reason.mem_limit = mem_limit
+    end
+    if session_limit and session_limit > 0 and (selected.session_count or 0) >= session_limit then
+        over = true
+        reason.session_count = selected.session_count
+        reason.session_limit = session_limit
     end
     if over then
         reason.gpu = selected.index
