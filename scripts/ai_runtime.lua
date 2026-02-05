@@ -138,11 +138,62 @@ end
 
 local build_prompt_text
 
-local function build_context_options(payload)
+local function derive_include_logs_from_prompt(prompt)
+    local text = tostring(prompt or ""):lower()
+    if text:find("log") or text:find("error") or text:find("warn") or text:find("alert") then
+        return true
+    end
+    if text:find("down") or text:find("fail") or text:find("issue") or text:find("problem") then
+        return true
+    end
+    return false
+end
+
+local function derive_cli_from_prompt(prompt, payload)
+    local list = { "stream" }
+    local set = { stream = true }
+    local text = tostring(prompt or ""):lower()
+    if text:find("dvb") or text:find("adapter") or text:find("scan") or text:find("tuner") or text:find("sat") then
+        set.dvbls = true
+    end
+    if text:find("analy") or text:find("pid") or text:find("pmt") or text:find("pcr") or text:find("mpeg") or text:find("ts") then
+        set.analyze = true
+    end
+    if text:find("signal") or text:find("lock") or text:find("femon") or text:find("snr") or text:find("ber") then
+        set.femon = true
+    end
     payload = payload or {}
+    if payload.input_url then
+        set.analyze = true
+    end
+    if payload.femon_url then
+        set.femon = true
+    end
+    if set.dvbls then table.insert(list, "dvbls") end
+    if set.analyze then table.insert(list, "analyze") end
+    if set.femon then table.insert(list, "femon") end
+    return list
+end
+
+local function build_context_options(payload, prompt)
+    payload = payload or {}
+    local include_logs = payload.include_logs
+    if include_logs == nil then
+        if prompt ~= nil then
+            include_logs = derive_include_logs_from_prompt(prompt)
+        else
+            include_logs = true
+        end
+    else
+        include_logs = include_logs == true
+    end
+    local include_cli = payload.include_cli
+    if include_cli == nil and prompt then
+        include_cli = derive_cli_from_prompt(prompt, payload)
+    end
     return {
-        include_logs = payload.include_logs == nil and true or payload.include_logs == true,
-        include_cli = payload.include_cli,
+        include_logs = include_logs,
+        include_cli = include_cli,
         range = payload.range,
         range_sec = payload.range_sec,
         stream_id = payload.stream_id,
@@ -393,7 +444,7 @@ local function schedule_openai_plan(job, prompt, context_opts)
     end
     local context = ai_prompt and ai_prompt.build_context and ai_prompt.build_context({}) or {}
     if ai_context and ai_context.build_context then
-        local extra = ai_context.build_context(build_context_options(context_opts))
+        local extra = ai_context.build_context(build_context_options(context_opts, prompt))
         if extra then
             context.ai_context = extra
         end
@@ -486,7 +537,7 @@ end
 function ai_runtime.configure()
     local cfg = ai_runtime.config
     cfg.enabled = setting_bool("ai_enabled", false)
-    cfg.model = setting_string("ai_model", "")
+    cfg.model = setting_string("ai_model", "gpt-5.2")
     cfg.max_tokens = setting_number("ai_max_tokens", 512)
     cfg.temperature = setting_number("ai_temperature", 0.2)
     cfg.store = setting_bool("ai_store", false)
@@ -966,7 +1017,7 @@ function ai_runtime.request_summary(payload, callback)
         end
     end
     if ai_context and ai_context.build_context then
-        summary_payload.context = ai_context.build_context(build_context_options(payload))
+        summary_payload.context = ai_context.build_context(build_context_options(payload, payload and payload.prompt))
     end
     local prompt = build_summary_prompt(summary_payload)
     ai_openai_client.request_json_schema({

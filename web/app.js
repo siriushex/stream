@@ -337,6 +337,7 @@ const elements = {
   settingsActionStatus: $('#settings-action-status'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
+  settingsShowAccess: $('#settings-show-access'),
   settingsShowEpg: $('#settings-show-epg'),
   settingsShowWebhook: $('#settings-show-webhook'),
   settingsShowLogLimits: $('#settings-show-log-limits'),
@@ -1191,6 +1192,13 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'basic',
           },
           {
+            id: 'settings-show-access',
+            label: 'Показывать Access',
+            type: 'switch',
+            key: 'ui_access_enabled',
+            level: 'basic',
+          },
+          {
             id: 'settings-show-epg',
             label: 'Показывать настройки EPG‑экспорта',
             type: 'switch',
@@ -1212,10 +1220,11 @@ const SETTINGS_GENERAL_SECTIONS = [
         summary: () => {
           const splitter = readBoolValue('settings-show-splitter', false);
           const buffer = readBoolValue('settings-show-buffer', false);
+          const access = readBoolValue('settings-show-access', true);
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · EPG: ${epgText}`;
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText}`;
         },
       },
     ],
@@ -2538,6 +2547,7 @@ function bindGeneralElements() {
     settingsActionStatus: 'settings-action-status',
     settingsShowSplitter: 'settings-show-splitter',
     settingsShowBuffer: 'settings-show-buffer',
+    settingsShowAccess: 'settings-show-access',
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
     settingsEventRequest: 'settings-event-request',
@@ -3090,16 +3100,34 @@ function setSettingsSection(section) {
 function applyFeatureVisibility() {
   const showSplitter = getSettingBool('ui_splitter_enabled', false);
   const showBuffer = getSettingBool('ui_buffer_enabled', false);
+  const showAccess = getSettingBool('ui_access_enabled', true);
+  const helpEnabled = getSettingBool('ai_enabled', false);
+  const observabilityOnDemand = getSettingBool('ai_metrics_on_demand', true);
+  const observabilityLogsDays = getSettingNumber('ai_logs_retention_days', 0);
+  const observabilityMetricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+  const showObservability = observabilityLogsDays > 0 || (!observabilityOnDemand && observabilityMetricsDays > 0);
 
   const splitterNav = document.querySelector('.nav-link[data-view="splitters"]');
   const bufferNav = document.querySelector('.nav-link[data-view="buffers"]');
+  const accessNav = document.querySelector('.nav-link[data-view="access"]');
+  const helpNav = document.querySelector('.nav-link[data-view="help"]');
+  const observabilityNav = document.querySelector('.nav-link[data-view="observability"]');
   if (splitterNav) splitterNav.hidden = !showSplitter;
   if (bufferNav) bufferNav.hidden = !showBuffer;
+  if (accessNav) accessNav.hidden = !showAccess;
+  if (helpNav) helpNav.hidden = !helpEnabled;
+  if (observabilityNav) observabilityNav.hidden = !showObservability;
 
   const splitterView = document.querySelector('#view-splitters');
   const bufferView = document.querySelector('#view-buffers');
+  const accessView = document.querySelector('#view-access');
+  const helpView = document.querySelector('#view-help');
+  const observabilityView = document.querySelector('#view-observability');
   if (splitterView) splitterView.hidden = !showSplitter;
   if (bufferView) bufferView.hidden = !showBuffer;
+  if (accessView) accessView.hidden = !showAccess;
+  if (helpView) helpView.hidden = !helpEnabled;
+  if (observabilityView) observabilityView.hidden = !showObservability;
 
   const bufferSettingsItem = elements.settingsItems.find((item) => item.dataset.section === 'buffer');
   if (bufferSettingsItem) bufferSettingsItem.hidden = !showBuffer;
@@ -3111,7 +3139,13 @@ function applyFeatureVisibility() {
   const activeView = document.querySelector('.view.active');
   if (activeView) {
     const activeId = activeView.id || '';
-    if ((!showSplitter && activeId === 'view-splitters') || (!showBuffer && activeId === 'view-buffers')) {
+    if (
+      (!showSplitter && activeId === 'view-splitters')
+      || (!showBuffer && activeId === 'view-buffers')
+      || (!showAccess && activeId === 'view-access')
+      || (!helpEnabled && activeId === 'view-help')
+      || (!showObservability && activeId === 'view-observability')
+    ) {
       setView('streams');
     }
   }
@@ -13128,6 +13162,9 @@ function applySettingsToUI() {
   if (elements.settingsShowBuffer) {
     elements.settingsShowBuffer.checked = getSettingBool('ui_buffer_enabled', false);
   }
+  if (elements.settingsShowAccess) {
+    elements.settingsShowAccess.checked = getSettingBool('ui_access_enabled', true);
+  }
   if (elements.settingsEpgInterval) {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
   }
@@ -13271,13 +13308,14 @@ function applySettingsToUI() {
   if (elements.aiChatStatus) {
     const enabled = getSettingBool('ai_enabled', false);
     const model = getSettingString('ai_model', '');
+    const effectiveModel = model || 'gpt-5.2';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
       elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
-    } else if (!keySet || !model) {
-      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key and model.';
+    } else if (!keySet) {
+      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key.';
     } else {
-      elements.aiChatStatus.textContent = '';
+      elements.aiChatStatus.textContent = `Model: ${effectiveModel} (auto fallback if unavailable).`;
     }
   }
   if (elements.settingsWatchdogEnabled) {
@@ -13804,6 +13842,7 @@ function collectGeneralSettings() {
   const payload = {
     ui_splitter_enabled: elements.settingsShowSplitter ? elements.settingsShowSplitter.checked : false,
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
+    ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
   };
   if (elements.settingsEventRequest) {
@@ -15286,10 +15325,10 @@ function updateAiChatFilesLabel() {
 }
 
 function buildAiChatPayload(prompt, attachments) {
-  const payload = {
-    prompt,
-    include_logs: elements.aiChatIncludeLogs ? elements.aiChatIncludeLogs.checked : true,
-  };
+  const payload = { prompt };
+  if (elements.aiChatIncludeLogs) {
+    payload.include_logs = elements.aiChatIncludeLogs.checked;
+  }
   const cli = collectAiChatCliList();
   if (elements.aiChatStreamId && elements.aiChatStreamId.value.trim()) {
     payload.stream_id = elements.aiChatStreamId.value.trim();

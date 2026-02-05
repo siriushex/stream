@@ -12,6 +12,17 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AstralAI: default model `gpt-5.2` with fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
+  - AstralAI: auto-select logs/CLI context by prompt to reduce load.
+  - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
+  - UI: AI chat no longer forces log inclusion; status shows effective model.
+- Tests:
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+  - `./astra scripts/tests/ai_logs_autoselect_unit.lua`
+  - `./astra scripts/tests/ai_cli_autoselect_unit.lua`
+### 2026-02-05
+- Changes:
   - Analyze: модалка показывает подробные PSI/PMT/PID/codec данные через on-demand analyze API.
 - Tests:
   - Not run (UI/API change only).
