@@ -56,5 +56,16 @@ local job = ai_runtime.plan({ proposed_config = payload }, { user = "test" })
 assert_true(job and job.status == "done", "plan job should be done")
 assert_true(job.result and job.result.summary, "plan summary missing")
 
+local ok, err = ai_runtime.validate_plan_output({
+    summary = "ok",
+    warnings = {},
+    ops = {
+        { op = "noop", target = "config" },
+    },
+})
+assert_true(ok, err or "plan validation failed")
+local ok2 = ai_runtime.validate_plan_output({ summary = true, warnings = {}, ops = {} })
+assert_true(ok2 == nil, "expected invalid plan to fail")
+
 print("ai plan smoke ok")
 astra.exit()

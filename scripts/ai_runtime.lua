@@ -133,6 +133,50 @@ local function build_prompt_text(prompt, context)
     return table.concat(parts, "\n")
 end
 
+local function validate_plan_output(plan)
+    if type(plan) ~= "table" then
+        return nil, "plan must be object"
+    end
+    if type(plan.summary) ~= "string" then
+        return nil, "plan.summary must be string"
+    end
+    if type(plan.ops) ~= "table" then
+        return nil, "plan.ops must be array"
+    end
+    if type(plan.warnings) ~= "table" then
+        return nil, "plan.warnings must be array"
+    end
+    for idx, item in ipairs(plan.ops) do
+        if type(item) ~= "table" then
+            return nil, "plan.ops[" .. idx .. "] must be object"
+        end
+        if type(item.op) ~= "string" or item.op == "" then
+            return nil, "plan.ops[" .. idx .. "].op required"
+        end
+        if type(item.target) ~= "string" or item.target == "" then
+            return nil, "plan.ops[" .. idx .. "].target required"
+        end
+        if item.field ~= nil and type(item.field) ~= "string" then
+            return nil, "plan.ops[" .. idx .. "].field must be string or null"
+        end
+        if item.note ~= nil and type(item.note) ~= "string" then
+            return nil, "plan.ops[" .. idx .. "].note must be string or null"
+        end
+        if item.value ~= nil then
+            local t = type(item.value)
+            if t ~= "string" and t ~= "number" and t ~= "boolean" then
+                return nil, "plan.ops[" .. idx .. "].value must be primitive"
+            end
+        end
+    end
+    for idx, warning in ipairs(plan.warnings) do
+        if type(warning) ~= "string" then
+            return nil, "plan.warnings[" .. idx .. "] must be string"
+        end
+    end
+    return true
+end
+
 local function validate_plan_payload(payload)
     if type(payload) ~= "table" then
         return nil, "invalid payload"
@@ -345,6 +389,13 @@ local function schedule_openai_plan(job, prompt)
                 log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
+            local ok, plan_err = validate_plan_output(plan)
+            if not ok then
+                job.status = "error"
+                job.error = plan_err or "plan validation failed"
+                log_audit(job, false, job.error, { mode = "prompt" })
+                return
+            end
             job.status = "done"
             job.result = {
                 plan = plan,
@@ -517,6 +568,10 @@ function ai_runtime.plan(payload, ctx)
     job.error = "prompt or proposed_config required"
     log_audit(job, false, job.error)
     return job
+end
+
+function ai_runtime.validate_plan_output(plan)
+    return validate_plan_output(plan)
 end
 
 function ai_runtime.apply(payload, ctx)
