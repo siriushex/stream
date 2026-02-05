@@ -38,5 +38,20 @@ assert_true(err and err:find("too many ops"), "expected guardrail error")
 local ok2, err2 = ai_runtime.apply({ plan = plan, allow_destructive = true }, { user = "test" })
 assert_true(ok2 ~= nil, err2 or "expected apply to pass with allow_destructive")
 
+local disable_plan = {
+    summary = "disable stream",
+    warnings = {},
+    ops = {
+        { op = "disable_stream", target = "s1" },
+    },
+}
+
+local ok3, err3 = ai_runtime.apply({ plan = disable_plan }, { user = "test" })
+assert_true(ok3 == nil, "expected disable guardrail to block apply")
+assert_true(err3 and err3:find("disable ops require"), "expected disable guardrail error")
+
+local ok4, err4 = ai_runtime.apply({ plan = disable_plan, allow_destructive = true }, { user = "test" })
+assert_true(ok4 ~= nil, err4 or "expected disable apply to pass with allow_destructive")
+
 print("ai_apply_guardrail_unit: ok")
 astra.exit()
