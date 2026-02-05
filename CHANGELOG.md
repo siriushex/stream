@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - tools/gen_spts.py: added optional extra program fields to generate multi-program PAT for tests.
+- Tests:
+  - Not run (test utility update).
+### 2026-02-05
+- Changes:
   - MPTS strict_pnr error is now logged once per service to avoid spam.
 - Tests:
   - Not run (log change).

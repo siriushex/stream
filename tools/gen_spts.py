@@ -25,8 +25,8 @@ def crc32_mpegts(data: bytes) -> int:
     return crc & 0xFFFFFFFF
 
 
-def build_pat(tsid: int, pnr: int, pmt_pid: int, version: int = 0) -> bytes:
-    # PAT section without NIT (single program)
+def build_pat(tsid: int, programs, version: int = 0) -> bytes:
+    # PAT без NIT (допускает несколько программ для тестов)
     section = bytearray()
     section.append(0x00)  # table_id
     # section_length placeholder
@@ -36,9 +36,10 @@ def build_pat(tsid: int, pnr: int, pmt_pid: int, version: int = 0) -> bytes:
     section.append(0x00)  # section_number
     section.append(0x00)  # last_section_number
     # program loop
-    section.extend(struct.pack("!H", pnr & 0xFFFF))
-    section.append(0xE0 | ((pmt_pid >> 8) & 0x1F))
-    section.append(pmt_pid & 0xFF)
+    for pnr, pmt_pid in programs:
+        section.extend(struct.pack("!H", pnr & 0xFFFF))
+        section.append(0xE0 | ((pmt_pid >> 8) & 0x1F))
+        section.append(pmt_pid & 0xFF)
     # section_length
     sec_len = len(section) - 3 + 4  # after section_length to CRC
     section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
@@ -110,22 +111,36 @@ def main() -> int:
     parser.add_argument("--pmt-pid", type=int, default=0x1000)
     parser.add_argument("--video-pid", type=int, default=0x0100)
     parser.add_argument("--pcr-pid", type=int, default=0x0100)
+    parser.add_argument("--extra-pnr", type=int, default=0)
+    parser.add_argument("--extra-pmt-pid", type=int, default=0)
+    parser.add_argument("--extra-video-pid", type=int, default=0)
+    parser.add_argument("--extra-pcr-pid", type=int, default=0)
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--pps", type=int, default=200)
     args = parser.parse_args()
 
-    pat = build_pat(1, args.pnr, args.pmt_pid)
-    pmt = build_pmt(args.pnr, args.pcr_pid, args.video_pid)
+    programs = [(args.pnr, args.pmt_pid, args.video_pid, args.pcr_pid)]
+    if args.extra_pnr > 0 and args.extra_pmt_pid > 0:
+        # Дополнительная программа для проверки multi-PAT/strict_pnr.
+        extra_video = args.extra_video_pid if args.extra_video_pid > 0 else args.video_pid + 1
+        extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
+        programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
+
+    pat = build_pat(1, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
+    pmt_map = {pmt_pid: build_pmt(pnr, pcr_pid, video_pid)
+               for pnr, pmt_pid, video_pid, pcr_pid in programs}
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target = (args.addr, args.port)
 
     start = time.time()
     next_tick = start
-    pat_cc = 0
-    pmt_cc = 0
-    vid_cc = 0
-    null_cc = 0
+    cc_map = {}
+
+    def next_cc(pid: int) -> int:
+        value = cc_map.get(pid, 0)
+        cc_map[pid] = (value + 1) & 0x0F
+        return value
 
     # Basic pacing: packets per second
     interval = 1.0 / max(1, args.pps)
@@ -136,20 +151,17 @@ def main() -> int:
             time.sleep(max(0, next_tick - now))
         next_tick += interval
 
-        sock.sendto(pack_section(0x0000, pat, pat_cc), target)
-        pat_cc = (pat_cc + 1) & 0x0F
-        sock.sendto(pack_section(args.pmt_pid, pmt, pmt_cc), target)
-        pmt_cc = (pmt_cc + 1) & 0x0F
-
-        # Few dummy payload packets for ES PID
-        for _ in range(3):
-            sock.sendto(pack_payload(args.video_pid, vid_cc), target)
-            vid_cc = (vid_cc + 1) & 0x0F
+        sock.sendto(pack_section(0x0000, pat, next_cc(0x0000)), target)
+        for pnr, pmt_pid, video_pid, _ in programs:
+            pmt = pmt_map[pmt_pid]
+            sock.sendto(pack_section(pmt_pid, pmt, next_cc(pmt_pid)), target)
+            # Few dummy payload packets for ES PID
+            for _ in range(3):
+                sock.sendto(pack_payload(video_pid, next_cc(video_pid)), target)
 
         # Null padding
         for _ in range(2):
-            sock.sendto(pack_null(null_cc), target)
-            null_cc = (null_cc + 1) & 0x0F
+            sock.sendto(pack_null(next_cc(NULL_PID)), target)
 
     sock.close()
     return 0
