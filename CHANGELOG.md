@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Added UI warning for disable auto-remap in MPTS settings.
+- Tests:
+  - Not run (UI change).
+### 2026-02-05
+- Changes:
   - Improved disable_auto_remap PID conflict logs with PMT/PNR context.
 - Tests:
   - Not run (log detail change).

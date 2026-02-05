@@ -696,6 +696,7 @@ const elements = {
   mptsPassEit: $('#mpts-pass-eit'),
   mptsPassTdt: $('#mpts-pass-tdt'),
   mptsPassWarning: $('#mpts-pass-warning'),
+  mptsAutoremapWarning: $('#mpts-autoremap-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -2728,6 +2729,7 @@ function updateMptsFields() {
     elements.streamInputBlock.classList.toggle('is-hidden', enabled);
   }
   updateMptsPassWarning();
+  updateMptsAutoremapWarning();
 }
 
 function truncateText(text, max) {
@@ -5054,6 +5056,7 @@ function renderMptsServiceList() {
   });
 
   updateMptsPassWarning();
+  updateMptsAutoremapWarning();
 }
 
 function updateMptsPassWarning() {
@@ -5066,6 +5069,22 @@ function updateMptsPassWarning() {
   const serviceCount = (state.mptsServices || []).length;
   const shouldShow = mptsEnabled && passEnabled && serviceCount > 1;
   elements.mptsPassWarning.classList.toggle('is-hidden', !shouldShow);
+}
+
+function updateMptsAutoremapWarning() {
+  if (!elements.mptsAutoremapWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const disableAuto = !!(elements.mptsDisableAutoremap && elements.mptsDisableAutoremap.checked);
+  elements.mptsAutoremapWarning.classList.toggle('is-hidden', !(mptsEnabled && disableAuto));
+}
+
+function bindMptsWarningHandlers() {
+  if (elements.mptsDisableAutoremap) {
+    elements.mptsDisableAutoremap.addEventListener('change', updateMptsAutoremapWarning);
+  }
+  if (elements.streamMpts) {
+    elements.streamMpts.addEventListener('change', updateMptsAutoremapWarning);
+  }
 }
 
 function collectMptsServices() {
@@ -8671,6 +8690,7 @@ function openEditor(stream, isNew) {
   if (elements.mptsPassTdt) {
     elements.mptsPassTdt.checked = mptsAdv.pass_tdt === true;
   }
+  updateMptsAutoremapWarning();
   const epgConfig = config.epg || {};
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';
@@ -14026,6 +14046,8 @@ function bindEvents() {
     if (!control) return;
     control.addEventListener('change', updateMptsPassWarning);
   });
+
+  bindMptsWarningHandlers();
 
   elements.btnAddOutput.addEventListener('click', () => {
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));
