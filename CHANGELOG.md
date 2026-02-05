@@ -31,6 +31,7 @@
   - CI: исправлен парсинг логов verify_mpts (работает с префиксами логгера).
   - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
   - Release: корректное определение версии из version.h для имени bundle (без падения при отсутствии ASTRA_VERSION).
+  - CI: check_branch_name допускает формат codex/<topic>.
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
