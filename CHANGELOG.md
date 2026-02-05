@@ -21,6 +21,8 @@
   - Added AI plan smoke test fixture.
   - Added server-side validation for AI plan output schema.
   - Added AI apply: backup/validate/diff/apply with runtime reload + rollback.
+  - Added AstralAI settings block in General UI (enable/model/apply toggles).
+  - Bumped UI build stamp to 20260205q.
 - Tests:
   - ./astra scripts/tests/ai_plan_smoke.lua
   - ./astra scripts/tests/ai_apply_smoke.lua
