@@ -11634,6 +11634,20 @@ function updateEditorTranscodeStatus() {
       }
     }
   }
+  if (elements.streamTranscodeWarmup) {
+    const warm = transcode && transcode.switch_warmup;
+    if (warm) {
+      const timeline = [
+        warm.start_ts ? `start ${formatTimestamp(warm.start_ts)}` : null,
+        warm.ready_ts ? `ready ${formatTimestamp(warm.ready_ts)}` : null,
+        warm.last_progress_ts ? `last ${formatTimestamp(warm.last_progress_ts)}` : null,
+        warm.deadline_ts ? `deadline ${formatTimestamp(warm.deadline_ts)}` : null,
+      ].filter(Boolean);
+      if (timeline.length) {
+        elements.streamTranscodeWarmup.textContent += ` | ${timeline.join(' • ')}`;
+      }
+    }
+  }
   if (elements.streamTranscodeStderr) {
     const tail = Array.isArray(transcode.stderr_tail) ? transcode.stderr_tail : [];
     if (tail.length) {
