@@ -746,6 +746,9 @@ const elements = {
   mptsPnrWarning: $('#mpts-pnr-warning'),
   mptsPnrMissing: $('#mpts-pnr-missing'),
   mptsDupInputWarning: $('#mpts-dup-input-warning'),
+  mptsManual: $('#mpts-manual'),
+  mptsEnabledStatus: $('#mpts-enabled-status'),
+  btnMptsEnable: $('#btn-mpts-enable'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4662,8 +4665,19 @@ function updateMptsFields() {
   if (elements.streamInputBlock) {
     elements.streamInputBlock.classList.toggle('is-hidden', enabled);
   }
+  if (elements.mptsEnabledStatus) {
+    elements.mptsEnabledStatus.textContent = enabled ? 'Status: Enabled' : 'Status: Disabled';
+    elements.mptsEnabledStatus.classList.toggle('is-enabled', enabled);
+    elements.mptsEnabledStatus.classList.toggle('is-disabled', !enabled);
+  }
+  if (elements.btnMptsEnable) {
+    elements.btnMptsEnable.disabled = enabled;
+  }
   updateMptsPassWarning();
   updateMptsAutoremapWarning();
+  updateMptsPnrWarning();
+  updateMptsInputWarning();
+  updateMptsDeliveryWarning();
 }
 
 function truncateText(text, max) {
@@ -17280,6 +17294,12 @@ function bindEvents() {
       state.mptsServices = state.mptsServices || [];
       state.mptsServices.push({ input: '' });
       renderMptsServiceList();
+    });
+  }
+  if (elements.btnMptsEnable && elements.streamMpts) {
+    elements.btnMptsEnable.addEventListener('click', () => {
+      elements.streamMpts.checked = true;
+      updateMptsFields();
     });
   }
   if (elements.btnMptsBulkApply) {
