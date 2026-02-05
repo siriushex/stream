@@ -2017,6 +2017,14 @@ select {
   opacity: 0.6;
 }
 
+.mpts-pass-warning {
+  color: var(--warning);
+}
+
+.mpts-pass-warning.is-hidden {
+  display: none;
+}
+
 .output-inline.is-invalid {
   outline: 1px solid var(--danger);
   border-radius: 3px;
