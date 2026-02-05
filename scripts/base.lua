@@ -566,6 +566,11 @@ function init_input(conf)
             if conf.service_name ~= nil then return true end
             if conf.no_sdt == true then return true end
             if conf.no_eit == true then return true end
+            -- Включаем channel() даже если заданы только pass_* флаги.
+            if conf.pass_sdt == true then return true end
+            if conf.pass_eit == true then return true end
+            if conf.pass_nit == true then return true end
+            if conf.pass_tdt == true then return true end
             if conf.map then return true end
             if conf.filter then return true end
             if conf["filter~"] then return true end
