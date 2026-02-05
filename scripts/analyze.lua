@@ -156,7 +156,7 @@ dump_psi_info["nit"] = function(info)
     if info.network_name then
         log.info(("NIT: network_name: %s"):format(info.network_name))
     end
-    if info.delivery == "cable" then
+    if info.delivery == "cable" or info.delivery == "satellite" then
         local tsid = info.tsid or 0
         local onid = info.onid or 0
         local freq = info.frequency_khz or 0
@@ -165,6 +165,13 @@ dump_psi_info["nit"] = function(info)
         local fec = info.fec_inner or "unknown"
         log.info(("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d symbolrate_ksps: %d modulation: %s fec: %s")
             :format(info.delivery, tsid, onid, freq, sr, modulation, fec))
+    elseif info.delivery == "terrestrial" then
+        local tsid = info.tsid or 0
+        local onid = info.onid or 0
+        local freq = info.frequency_khz or 0
+        local modulation = info.modulation or "unknown"
+        log.info(("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d modulation: %s")
+            :format(info.delivery, tsid, onid, freq, modulation))
     end
     if info.service_list then
         local entries = {}
