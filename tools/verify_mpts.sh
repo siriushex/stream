@@ -6,6 +6,8 @@ DURATION_SEC="${2:-5}"
 EXPECT_PNRS="${EXPECT_PNRS:-}"
 EXPECT_PMT_PNRS="${EXPECT_PMT_PNRS:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
+EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
+EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
 EXPECT_SERVICES="${EXPECT_SERVICES:-}"
 EXPECT_PROVIDERS="${EXPECT_PROVIDERS:-}"
 EXPECT_NETWORK_ID="${EXPECT_NETWORK_ID:-}"
@@ -75,6 +77,20 @@ fi
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then
   if grep -q "^CC: " "$LOG_FILE"; then
     echo "Continuity counter errors detected"
+    exit 1
+  fi
+fi
+
+if [[ "$EXPECT_NO_PES_ERRORS" == "1" ]]; then
+  if grep -q "^PES: " "$LOG_FILE"; then
+    echo "PES errors detected"
+    exit 1
+  fi
+fi
+
+if [[ "$EXPECT_NO_SCRAMBLED" == "1" ]]; then
+  if grep -q "^Scrambled: " "$LOG_FILE"; then
+    echo "Scrambled packets detected"
     exit 1
   fi
 fi
