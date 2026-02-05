@@ -1233,6 +1233,13 @@ static void module_init(module_data_t *mod)
 
     if(mod->delivery && mod->delivery[0] != '\0' && !is_delivery_cable(mod->delivery))
         asc_log_warning(MSG("delivery %s не поддерживается; генерируется только DVB-C"), mod->delivery);
+    if(is_delivery_cable(mod->delivery))
+    {
+        if(mod->frequency_khz == 0 || mod->symbolrate_ksps == 0 || !mod->modulation || mod->modulation[0] == '\0')
+        {
+            asc_log_warning(MSG("DVB-C delivery требует frequency/symbolrate/modulation"));
+        }
+    }
 
     module_option_boolean("disable_auto_remap", &mod->disable_auto_remap);
     module_option_boolean("pass_nit", &mod->pass_nit);
