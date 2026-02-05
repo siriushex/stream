@@ -2580,6 +2580,21 @@ function formatTranscodeProgress(progress) {
   return `time=${time} fps=${fps} speed=${speed}`;
 }
 
+function formatRestartMeta(meta) {
+  if (!meta || typeof meta !== 'object') return 'n/a';
+  const parts = [];
+  if (meta.output_index !== undefined) parts.push(`output #${meta.output_index}`);
+  if (meta.desync_ms !== undefined) parts.push(`desync ${Math.round(meta.desync_ms)} ms`);
+  if (meta.bitrate_kbps !== undefined) parts.push(`bitrate ${Math.round(meta.bitrate_kbps)} Kbit/s`);
+  if (meta.timeout_sec !== undefined) parts.push(`timeout ${meta.timeout_sec}s`);
+  if (meta.count !== undefined) parts.push(`errors ${meta.count}`);
+  if (meta.error_line) parts.push(`error "${meta.error_line}"`);
+  if (meta.exit_code !== undefined) parts.push(`exit ${meta.exit_code}`);
+  if (meta.exit_signal !== undefined && meta.exit_signal !== 0) parts.push(`signal ${meta.exit_signal}`);
+  if (!parts.length) return 'n/a';
+  return parts.join(' · ');
+}
+
 function linesToArgs(text) {
   if (!text) return [];
   return text
@@ -4898,7 +4913,7 @@ function renderMptsServiceList() {
     const input = document.createElement('input');
     input.className = 'list-input mpts-field mpts-service-input';
     input.type = 'text';
-    input.placeholder = 'Input URL';
+    input.placeholder = 'Input URL (udp://... или stream://<id>)';
     input.value = service.input || '';
     input.addEventListener('input', () => {
       service.input = input.value;
@@ -4965,15 +4980,36 @@ function renderMptsServiceList() {
     grid.appendChild(serviceType);
     grid.appendChild(scrambledLabel);
 
+    const actions = document.createElement('div');
+    actions.className = 'mpts-service-actions';
+
+    const moveUp = document.createElement('button');
+    moveUp.className = 'icon-btn';
+    moveUp.type = 'button';
+    moveUp.dataset.action = 'mpts-service-up';
+    moveUp.textContent = '↑';
+    moveUp.disabled = index === 0;
+
+    const moveDown = document.createElement('button');
+    moveDown.className = 'icon-btn';
+    moveDown.type = 'button';
+    moveDown.dataset.action = 'mpts-service-down';
+    moveDown.textContent = '↓';
+    moveDown.disabled = index === state.mptsServices.length - 1;
+
     const remove = document.createElement('button');
     remove.className = 'icon-btn';
     remove.type = 'button';
     remove.dataset.action = 'mpts-service-remove';
     remove.textContent = 'x';
 
+    actions.appendChild(moveUp);
+    actions.appendChild(moveDown);
+    actions.appendChild(remove);
+
     row.appendChild(idx);
     row.appendChild(grid);
-    row.appendChild(remove);
+    row.appendChild(actions);
 
     elements.mptsServiceList.appendChild(row);
   });
@@ -12503,6 +12539,11 @@ function openAnalyze(stream) {
     const outputOk = formatTimestamp(transcode && transcode.output_last_ok_ts);
     const inputErr = transcode && transcode.input_last_error ? transcode.input_last_error : 'n/a';
     const outputErr = transcode && transcode.output_last_error ? transcode.output_last_error : 'n/a';
+    const restartCode = transcode && transcode.restart_reason_code ? transcode.restart_reason_code : 'n/a';
+    const restartMeta = formatRestartMeta(transcode && transcode.restart_reason_meta);
+    const exitCode = Number.isFinite(transcode && transcode.ffmpeg_exit_code)
+      ? String(transcode.ffmpeg_exit_code)
+      : 'n/a';
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length
       ? outputs.map((out, index) => {
@@ -12524,6 +12565,9 @@ function openAnalyze(stream) {
         `Output last OK: ${outputOk}`,
         `Input last error: ${inputErr}`,
         `Output last error: ${outputErr}`,
+        `Last restart: ${restartCode}`,
+        `Restart detail: ${restartMeta}`,
+        `FFmpeg exit code: ${exitCode}`,
         `Last alert: ${lastAlert}`,
         `Last error: ${lastError}`,
         `Last desync: ${desync}`,
@@ -12534,6 +12578,13 @@ function openAnalyze(stream) {
       title: 'Outputs',
       items: outputItems,
     });
+    const stderrTail = Array.isArray(transcode && transcode.stderr_tail) ? transcode.stderr_tail : [];
+    if (stderrTail.length) {
+      sections.push({
+        title: 'Transcode stderr (tail)',
+        items: stderrTail.slice(-12),
+      });
+    }
   } else {
     const updated = formatTimestamp(stats.updated_at);
     const activeIndex = getActiveInputIndex(stats);
@@ -13866,6 +13917,24 @@ function bindEvents() {
       const row = event.target.closest('.list-row');
       if (!row) return;
       const index = Number(row.dataset.index);
+      if (action.dataset.action === 'mpts-service-up') {
+        if (index > 0) {
+          const tmp = state.mptsServices[index - 1];
+          state.mptsServices[index - 1] = state.mptsServices[index];
+          state.mptsServices[index] = tmp;
+          renderMptsServiceList();
+        }
+        return;
+      }
+      if (action.dataset.action === 'mpts-service-down') {
+        if (index < state.mptsServices.length - 1) {
+          const tmp = state.mptsServices[index + 1];
+          state.mptsServices[index + 1] = state.mptsServices[index];
+          state.mptsServices[index] = tmp;
+          renderMptsServiceList();
+        }
+        return;
+      }
       if (action.dataset.action === 'mpts-service-remove') {
         state.mptsServices.splice(index, 1);
         renderMptsServiceList();

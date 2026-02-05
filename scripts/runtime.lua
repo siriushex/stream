@@ -660,6 +660,56 @@ local function apply_stream(id, row, force)
     return true
 end
 
+-- Проверка зависимостей MPTS (stream://) для решения о пересборке.
+local function collect_mpts_inputs(cfg)
+    local services = cfg.mpts_services
+    if type(services) ~= "table" or #services == 0 then
+        services = cfg.input
+    end
+    local result = {}
+    if type(services) ~= "table" then
+        return result
+    end
+    for _, item in ipairs(services) do
+        if type(item) == "string" then
+            table.insert(result, item)
+        elseif type(item) == "table" then
+            if type(item.input) == "string" then
+                table.insert(result, item.input)
+            elseif type(item.url) == "string" then
+                table.insert(result, item.url)
+            end
+        end
+    end
+    return result
+end
+
+local function extract_stream_ref(url)
+    if type(url) ~= "string" then
+        return nil
+    end
+    local ref = url:match("^stream://(.+)$")
+    if not ref then
+        return nil
+    end
+    ref = ref:match("^([^#]+)") or ref
+    return ref
+end
+
+local function mpts_depends_on_changed(cfg, changed_refs)
+    if type(cfg) ~= "table" or cfg.mpts ~= true then
+        return false
+    end
+    local inputs = collect_mpts_inputs(cfg)
+    for _, input in ipairs(inputs) do
+        local ref = extract_stream_ref(input)
+        if ref and changed_refs[ref] then
+            return true
+        end
+    end
+    return false
+end
+
 local function normalize_output_list(value)
     if type(value) == "string" then
         return { value }
@@ -744,14 +794,46 @@ end
 function runtime.apply_streams(rows, force)
     local errors = {}
     local desired = {}
+    local ordered_spts = {}
+    local ordered_mpts = {}
+    local changed_refs = {}
     for _, row in ipairs(rows) do
         desired[row.id] = row
+        local cfg = row.config or {}
+        if cfg.mpts == true then
+            table.insert(ordered_mpts, row)
+        else
+            table.insert(ordered_spts, row)
+        end
+    end
+
+    for _, row in ipairs(ordered_spts) do
+        local existing = runtime.streams[row.id]
+        local hash = row.config_json or ""
+        local changed = force or (not existing) or (existing.hash ~= hash)
+        if changed then
+            changed_refs[tostring(row.id)] = true
+            local name = row.config and row.config.name
+            if name and name ~= "" then
+                changed_refs[tostring(name)] = true
+            end
+        end
     end
 
     http_output_keepalive = build_http_output_keepalive(rows)
 
-    for id, row in pairs(desired) do
+    for _, row in ipairs(ordered_spts) do
+        local id = row.id
         local ok, err = apply_stream(id, row, force)
+        if ok == false then
+            table.insert(errors, { id = id, error = err or "apply failed" })
+        end
+    end
+
+    for _, row in ipairs(ordered_mpts) do
+        local id = row.id
+        local mpts_force = force or mpts_depends_on_changed(row.config or {}, changed_refs)
+        local ok, err = apply_stream(id, row, mpts_force)
         if ok == false then
             table.insert(errors, { id = id, error = err or "apply failed" })
         end
@@ -776,8 +858,33 @@ function runtime.apply_stream_row(row, force)
     local all_rows = config.list_streams()
     http_output_keepalive = build_http_output_keepalive(all_rows)
     local ok, err = apply_stream(row.id, row, force)
+    local cfg = row.config or {}
+    local errors = {}
+    if ok and cfg.mpts ~= true then
+        local changed_refs = {}
+        changed_refs[tostring(row.id)] = true
+        if cfg.name and cfg.name ~= "" then
+            changed_refs[tostring(cfg.name)] = true
+        end
+        for _, other in ipairs(all_rows) do
+            local ocfg = other.config or {}
+            if ocfg.mpts == true and mpts_depends_on_changed(ocfg, changed_refs) then
+                local ok2, err2 = apply_stream(other.id, other, true)
+                if ok2 == false then
+                    table.insert(errors, { id = other.id, error = err2 or "apply failed" })
+                end
+            end
+        end
+    end
     cleanup_http_output_instances()
     http_output_keepalive = nil
+    if ok == false then
+        return ok, err
+    end
+    if #errors > 0 then
+        local first = errors[1]
+        return false, "dependent MPTS failed: " .. tostring(first.id) .. " (" .. tostring(first.error) .. ")"
+    end
     return ok, err
 end
 

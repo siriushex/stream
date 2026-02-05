@@ -315,6 +315,16 @@ parse_url_format.file = function(url, data)
     return true
 end
 
+-- Внутренний источник stream://<id> для использования в MPTS.
+parse_url_format.stream = function(url, data)
+    if not url or url == "" then
+        return false
+    end
+    data.stream_id = url
+    data.addr = url
+    return true
+end
+
 function parse_url(url)
     if not url then return nil end
 

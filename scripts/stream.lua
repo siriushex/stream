@@ -350,6 +350,24 @@ local function collect_mpts_input(item)
     return nil
 end
 
+-- Поиск локального stream:// источника по id или name.
+local function resolve_stream_ref(ref)
+    if not ref or ref == "" then
+        return nil
+    end
+    local channel = find_channel("id", ref)
+    if not channel then
+        channel = find_channel("name", ref)
+    end
+    if not channel then
+        local numeric = tonumber(ref)
+        if numeric then
+            channel = find_channel("id", numeric)
+        end
+    end
+    return channel
+end
+
 local function build_mpts_mux_options(channel_config)
     local mpts = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
     local general = type(mpts.general) == "table" and mpts.general or {}
@@ -1911,7 +1929,15 @@ function validate_stream_config(cfg, opts)
                 return nil, "invalid MPTS service #" .. idx .. " input"
             end
             local resolved = resolve_io_config(url, true)
-            if not resolved or not resolved.format or not init_input_module[resolved.format] then
+            if not resolved or not resolved.format then
+                return nil, "invalid MPTS service #" .. idx .. " input format"
+            end
+            if resolved.format == "stream" then
+                local stream_id = resolved.stream_id or resolved.addr or resolved.id
+                if not stream_id or stream_id == "" then
+                    return nil, "MPTS service #" .. idx .. " requires stream://<id>"
+                end
+            elseif not init_input_module[resolved.format] then
                 return nil, "invalid MPTS service #" .. idx .. " input format"
             end
             if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
@@ -1924,7 +1950,13 @@ function validate_stream_config(cfg, opts)
         end
         for idx, entry in ipairs(inputs) do
             local resolved = resolve_io_config(entry, true)
-            if not resolved or not resolved.format or not init_input_module[resolved.format] then
+            if not resolved or not resolved.format then
+                return nil, "invalid input #" .. idx .. " format"
+            end
+            if resolved.format == "stream" then
+                return nil, "stream:// inputs are supported only in MPTS mode"
+            end
+            if not init_input_module[resolved.format] then
                 return nil, "invalid input #" .. idx .. " format"
             end
             if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
@@ -2120,6 +2152,95 @@ local function resolve_http_keep_active(channel_data, output_data)
     return keep_active
 end
 
+-- Канал считается неактивным, если нет клиентов и нет удержания (retain).
+local function channel_is_idle(channel_data)
+    if not channel_data then
+        return true
+    end
+    local clients = tonumber(channel_data.clients or 0) or 0
+    local retained = tonumber(channel_data.retain_count or 0) or 0
+    return (clients + retained) == 0
+end
+
+local function channel_stop_if_idle(channel_data, output_data)
+    if not channel_is_idle(channel_data) then
+        return
+    end
+    if not channel_data.input or not channel_data.input[1] or channel_data.input[1].input == nil then
+        return
+    end
+    if channel_data.keep_timer then
+        channel_data.keep_timer:close()
+        channel_data.keep_timer = nil
+    end
+    local keep_active = resolve_http_keep_active(channel_data, output_data)
+    if keep_active == 0 then
+        for input_id, input_data in ipairs(channel_data.input) do
+            if input_data.input then
+                channel_kill_input(channel_data, input_id)
+            end
+        end
+        channel_data.active_input_id = 0
+        channel_pause_failover(channel_data)
+    elseif keep_active > 0 then
+        channel_data.keep_timer = timer({
+            interval = keep_active,
+            callback = function(self)
+                self:close()
+                channel_data.keep_timer = nil
+                if channel_is_idle(channel_data) then
+                    for input_id, input_data in ipairs(channel_data.input) do
+                        if input_data.input then
+                            channel_kill_input(channel_data, input_id)
+                        end
+                    end
+                    channel_data.active_input_id = 0
+                    channel_pause_failover(channel_data)
+                end
+            end,
+        })
+    end
+end
+
+-- Удержание канала активным (для MPTS stream:// источников).
+local function channel_retain(channel_data, reason)
+    if not channel_data then
+        return false
+    end
+    channel_data.retain_count = (channel_data.retain_count or 0) + 1
+    if channel_data.active_input_id ~= 0 then
+        return true
+    end
+    if channel_data.failover and channel_data.failover.enabled then
+        channel_resume_failover(channel_data)
+    end
+    if #channel_data.input > 0 then
+        if not channel_activate_input(channel_data, 1, reason or "retain") then
+            for input_id = 2, #channel_data.input do
+                if channel_activate_input(channel_data, input_id, reason or "retain") then
+                    break
+                end
+            end
+        end
+    end
+    return true
+end
+
+local function channel_release(channel_data, reason)
+    if not channel_data or not channel_data.retain_count then
+        return false
+    end
+    if channel_data.retain_count <= 0 then
+        channel_data.retain_count = 0
+        return false
+    end
+    channel_data.retain_count = channel_data.retain_count - 1
+    if channel_data.retain_count == 0 then
+        channel_stop_if_idle(channel_data, nil)
+    end
+    return true
+end
+
 function http_output_client(server, client, request, output_data)
     local client_data = server:data(client)
 
@@ -2180,35 +2301,7 @@ function http_output_on_request(server, client, request)
                 channel_data.keep_timer:close()
                 channel_data.keep_timer = nil
             end
-            if channel_data.clients == 0 and channel_data.input[1].input ~= nil then
-                local keep_active = resolve_http_keep_active(channel_data, client_data.output_data)
-                if keep_active == 0 then
-                    for input_id, input_data in ipairs(channel_data.input) do
-                        if input_data.input then
-                            channel_kill_input(channel_data, input_id)
-                        end
-                    end
-                    channel_data.active_input_id = 0
-                    channel_pause_failover(channel_data)
-                elseif keep_active > 0 then
-                    channel_data.keep_timer = timer({
-                        interval = keep_active,
-                        callback = function(self)
-                            self:close()
-                            channel_data.keep_timer = nil
-                            if channel_data.clients == 0 then
-                                for input_id, input_data in ipairs(channel_data.input) do
-                                    if input_data.input then
-                                        channel_kill_input(channel_data, input_id)
-                                    end
-                                end
-                                channel_data.active_input_id = 0
-                                channel_pause_failover(channel_data)
-                            end
-                        end,
-                    })
-                end
-            end
+            channel_stop_if_idle(channel_data, client_data.output_data)
 
             http_output_client(server, client, nil)
             collectgarbage()
@@ -2417,6 +2510,7 @@ init_output_module.hls = function(channel_data, output_id)
         idle_timeout_sec = conf.idle_timeout_sec,
         max_segments = conf.max_segments,
         max_bytes = conf.max_bytes,
+        debug_hold_sec = conf.debug_hold_sec,
     })
 end
 
@@ -3071,7 +3165,12 @@ local function make_mpts_channel(channel_config)
         end
 
         local input_cfg = parse_url(input_url)
-        if not input_cfg or not input_cfg.format or not init_input_module[input_cfg.format] then
+        if not input_cfg or not input_cfg.format then
+            log.error("[" .. channel_config.name .. "] wrong mpts input #" .. idx .. " format")
+            return nil
+        end
+        local is_stream_ref = (input_cfg.format == "stream")
+        if not is_stream_ref and not init_input_module[input_cfg.format] then
             log.error("[" .. channel_config.name .. "] wrong mpts input #" .. idx .. " format")
             return nil
         end
@@ -3081,15 +3180,66 @@ local function make_mpts_channel(channel_config)
             source_url = input_url,
             config = input_cfg,
             mpts_service = service,
+            is_stream_ref = is_stream_ref,
         }
         table.insert(channel_data.input, input_item)
     end
 
-    for input_id, input_data in ipairs(channel_data.input) do
-        if not channel_prepare_input(channel_data, input_id, {}) then
-            log.error("[" .. channel_config.name .. "] mpts input #" .. input_id .. " init failed")
-            return nil
+    local function release_mpts_sources()
+        for _, input_data in ipairs(channel_data.input) do
+            if input_data.source_channel then
+                channel_release(input_data.source_channel, "mpts")
+                input_data.source_channel = nil
+            end
         end
+    end
+
+    for input_id, input_data in ipairs(channel_data.input) do
+        local upstream = nil
+        if input_data.is_stream_ref then
+            local ref_id = input_data.config.stream_id or input_data.config.addr or input_data.config.id
+            if not ref_id and input_data.source_url then
+                ref_id = tostring(input_data.source_url):gsub("^stream://", "")
+            end
+            local source_channel = resolve_stream_ref(ref_id)
+            if not source_channel then
+                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    " stream not found: " .. tostring(ref_id))
+                release_mpts_sources()
+                return nil
+            end
+            if source_channel.is_mpts then
+                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                    " stream refers to MPTS: " .. tostring(ref_id))
+                release_mpts_sources()
+                return nil
+            end
+            if source_channel.config then
+                if channel_config.id and source_channel.config.id == channel_config.id then
+                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                        " stream refers to itself: " .. tostring(ref_id))
+                    release_mpts_sources()
+                    return nil
+                end
+                if channel_config.name and source_channel.config.name == channel_config.name then
+                    log.error("[" .. channel_config.name .. "] mpts input #" .. input_id ..
+                        " stream refers to itself: " .. tostring(ref_id))
+                    release_mpts_sources()
+                    return nil
+                end
+            end
+            channel_retain(source_channel, "mpts")
+            input_data.source_channel = source_channel
+            upstream = source_channel.tail:stream()
+        else
+            if not channel_prepare_input(channel_data, input_id, {}) then
+                log.error("[" .. channel_config.name .. "] mpts input #" .. input_id .. " init failed")
+                release_mpts_sources()
+                return nil
+            end
+            upstream = input_data.input.tail:stream()
+        end
+
         local svc = input_data.mpts_service or {}
         local svc_opts = {
             name = svc.name or ("svc_" .. tostring(input_id)),
@@ -3099,7 +3249,7 @@ local function make_mpts_channel(channel_config)
             service_type_id = tonumber(svc.service_type_id),
             scrambled = svc.scrambled == true,
         }
-        channel_data.mpts_mux:add_input(input_data.input.tail:stream(), svc_opts)
+        channel_data.mpts_mux:add_input(upstream, svc_opts)
     end
 
     channel_data.active_input_id = (#channel_data.input > 0) and 1 or 0
@@ -3497,6 +3647,15 @@ function kill_channel(channel_data)
     if channel_id == 0 then
         log.error("[kill_channel] channel is not found")
         return nil
+    end
+
+    if channel_data.is_mpts and channel_data.input then
+        for _, input_data in ipairs(channel_data.input) do
+            if input_data.source_channel then
+                channel_release(input_data.source_channel, "mpts")
+                input_data.source_channel = nil
+            end
+        end
     end
 
     if channel_data.keep_timer then
