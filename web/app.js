@@ -15542,6 +15542,21 @@ function openAnalyze(stream) {
     if (warmup && warmup.start_ts) {
       warmupStatus += ` (start ${formatTimestamp(warmup.start_ts)})`;
     }
+    const warmupDetails = warmup
+      ? [
+        `Target: ${Number.isFinite(warmup.target) ? `#${warmup.target}` : 'n/a'}`,
+        `Ready: ${warmup.ready ? 'Yes' : 'No'}`,
+        `Stable: ${warmup.stable_ok ? 'Yes' : 'No'}`,
+        `Require IDR: ${warmup.require_idr ? 'Yes' : 'No'}`,
+        `IDR seen: ${warmup.idr_seen ? 'Yes' : 'No'}`,
+        `Last out_time_ms: ${Number.isFinite(warmup.last_out_time_ms) ? Math.round(warmup.last_out_time_ms) : 'n/a'}`,
+        `Min out_time_ms: ${Number.isFinite(warmup.min_out_time_ms) ? Math.round(warmup.min_out_time_ms) : 'n/a'}`,
+        `Stable sec: ${Number.isFinite(warmup.stable_sec) ? Math.round(warmup.stable_sec) : 'n/a'}`,
+        `Ready at: ${warmup.ready_ts ? formatTimestamp(warmup.ready_ts) : 'n/a'}`,
+        `Last progress: ${warmup.last_progress_ts ? formatTimestamp(warmup.last_progress_ts) : 'n/a'}`,
+        `Error: ${warmup.error || 'n/a'}`,
+      ]
+      : null;
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length
       ? outputs.map((out, index) => {
@@ -15592,6 +15607,12 @@ function openAnalyze(stream) {
       title: 'Outputs',
       items: outputItems,
     });
+    if (warmupDetails) {
+      sections.push({
+        title: 'Warmup details',
+        items: warmupDetails,
+      });
+    }
     const inputs = Array.isArray(transcode && transcode.inputs_status) ? transcode.inputs_status : [];
     const activeInputIndex = Number.isFinite(transcode && transcode.active_input_index)
       ? transcode.active_input_index
