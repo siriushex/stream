@@ -434,7 +434,19 @@ local function sanitize_utf8(text)
     local len = #text
     while i <= len do
         local c = text:byte(i)
-        if c < 0x80 then
+        if c < 0x20 then
+            -- Strip most ASCII control bytes (common in colored CLI output, binary logs, etc).
+            -- Keep \t, \n, \r to preserve readable formatting.
+            if c == 0x09 or c == 0x0A or c == 0x0D then
+                table.insert(out, string.char(c))
+            else
+                table.insert(out, " ")
+            end
+            i = i + 1
+        elseif c == 0x7F then
+            table.insert(out, " ")
+            i = i + 1
+        elseif c < 0x80 then
             table.insert(out, string.char(c))
             i = i + 1
         elseif c >= 0xC2 and c <= 0xDF then
