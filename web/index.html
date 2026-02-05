@@ -1704,6 +1704,36 @@
           </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">Services</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>Bulk PNR start</span>
+                <input type="number" id="mpts-bulk-pnr-start" class="mpts-field" placeholder="1001" />
+              </label>
+              <label class="field">
+                <span>Bulk PNR step</span>
+                <input type="number" id="mpts-bulk-pnr-step" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>Bulk LCN start</span>
+                <input type="number" id="mpts-bulk-lcn-start" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>Bulk LCN step</span>
+                <input type="number" id="mpts-bulk-lcn-step" class="mpts-field" placeholder="1" />
+              </label>
+              <label class="field">
+                <span>Bulk provider</span>
+                <input type="text" id="mpts-bulk-provider" class="mpts-field" placeholder="Provider" />
+              </label>
+              <label class="field">
+                <span>Bulk service type</span>
+                <input type="number" id="mpts-bulk-service-type" class="mpts-field" placeholder="1" min="0" max="255" />
+              </label>
+              <label class="field">
+                <span>&nbsp;</span>
+                <button class="btn mpts-field" type="button" id="btn-mpts-bulk-apply">Apply to all services</button>
+              </label>
+            </div>
             <div class="list-block">
               <div class="list-header">
                 <span>SERVICE LIST</span>
@@ -1766,10 +1796,14 @@
                 <span>Network search (stream IDs)</span>
                 <input type="text" id="mpts-network-search" class="mpts-field" placeholder="mpts_a,mpts_b" />
               </label>
+              <label class="field">
+                <span>LCN descriptor tag</span>
+                <input type="text" id="mpts-lcn-tag" class="mpts-field" placeholder="0x83" />
+              </label>
             </div>
             <div class="form-hint is-hidden" id="mpts-delivery-warning"></div>
             <div class="form-hint">Only DVB-C delivery is generated; other delivery types are stored but not applied.</div>
-            <div class="form-hint">LCN задаётся в списке сервисов; поле LCN version пока не применяется.</div>
+            <div class="form-hint">LCN задаётся в списке сервисов; tag 0x83 (NorDig) или совместимые варианты.</div>
           </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">Advanced</div>
@@ -1786,6 +1820,19 @@
                 <input type="checkbox" id="mpts-pcr-restamp" class="mpts-field" />
                 <span>PCR restamp</span>
               </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-pcr-smoothing" class="mpts-field" />
+              <span>PCR smoothing (EWMA)</span>
+            </label>
+              <label class="field">
+                <span>PCR smooth alpha</span>
+                <input type="text" id="mpts-pcr-smooth-alpha" class="mpts-field" placeholder="0.1" />
+              </label>
+              <label class="field">
+                <span>PCR smooth max offset (ms)</span>
+                <input type="number" id="mpts-pcr-smooth-max" class="mpts-field" placeholder="500" />
+              </label>
+              <div class="form-hint">PCR smoothing работает только с PCR restamp.</div>
               <label class="field">
                 <span>PAT version</span>
                 <input type="number" id="mpts-pat-version" class="mpts-field" placeholder="0" />
@@ -1829,13 +1876,31 @@
               <span>Pass EIT</span>
             </label>
             <label class="checkline">
+              <input type="checkbox" id="mpts-pass-cat" class="mpts-field" />
+              <span>Pass CAT</span>
+            </label>
+            <label class="checkline">
               <input type="checkbox" id="mpts-pass-tdt" class="mpts-field" />
               <span>Pass TDT</span>
+            </label>
+            <div class="form-hint">Pass EIT/CAT берётся из выбранного сервиса и фильтруется по service_id.</div>
+            <label class="field">
+              <span>EIT source (service #)</span>
+              <input type="number" id="mpts-eit-source" class="mpts-field" placeholder="1" min="1" />
+            </label>
+            <label class="field">
+              <span>CAT source (service #)</span>
+              <input type="number" id="mpts-cat-source" class="mpts-field" placeholder="1" min="1" />
             </label>
             <label class="checkline">
               <input type="checkbox" id="mpts-strict-pnr" class="mpts-field" />
               <span>Strict PNR</span>
             </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-spts-only" class="mpts-field" />
+              <span>SPTS only (reject multi-PAT)</span>
+            </label>
+            <div class="form-hint">SPTS only отклоняет входы с несколькими программами.</div>
             <div class="form-hint">
               Strict PNR отклоняет входы с несколькими программами, если PNR не задан.
             </div>

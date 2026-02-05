@@ -74,6 +74,76 @@ def build_pmt(pnr: int, pcr_pid: int, es_pid: int, stream_type: int = 0x1B, vers
     section.extend(struct.pack("!I", crc))
     return bytes(section)
 
+def build_service_descriptor(service_type: int, provider: str, name: str) -> bytes:
+    provider_bytes = provider.encode("ascii", "ignore")
+    name_bytes = name.encode("ascii", "ignore")
+    data = bytes([service_type & 0xFF, len(provider_bytes)]) + provider_bytes + bytes([len(name_bytes)]) + name_bytes
+    return bytes([0x48, len(data)]) + data
+
+
+def build_sdt(tsid: int, onid: int, services, version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x42)  # SDT actual
+    section.extend(b"\x00\x00")
+    section.extend(struct.pack("!H", tsid & 0xFFFF))
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    section.extend(struct.pack("!H", onid & 0xFFFF))
+    section.append(0xFF)  # reserved
+    for svc in services:
+        pnr = svc["pnr"]
+        service_type = svc["service_type"]
+        provider = svc["provider"]
+        name = svc["name"]
+        desc = build_service_descriptor(service_type, provider, name)
+        section.extend(struct.pack("!H", pnr & 0xFFFF))
+        section.append(0xFC)  # EIT flags + reserved
+        section.append(0xF0 | ((len(desc) >> 8) & 0x0F))
+        section.append(len(desc) & 0xFF)
+        section.extend(desc)
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
+
+def build_eit(service_id: int, tsid: int, onid: int, version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x4E)  # EIT p/f actual
+    section.extend(b"\x00\x00")
+    section.extend(struct.pack("!H", service_id & 0xFFFF))
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    section.extend(struct.pack("!H", tsid & 0xFFFF))
+    section.extend(struct.pack("!H", onid & 0xFFFF))
+    section.append(0x00)  # segment_last_section_number
+    section.append(0x4E)  # last_table_id
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
+
+def build_cat(version: int = 0) -> bytes:
+    section = bytearray()
+    section.append(0x01)  # CAT
+    section.extend(b"\x00\x00")
+    section.append(0xC1 | ((version & 0x1F) << 1))
+    section.append(0x00)
+    section.append(0x00)
+    sec_len = len(section) - 3 + 4
+    section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
+    section[2] = sec_len & 0xFF
+    crc = crc32_mpegts(section)
+    section.extend(struct.pack("!I", crc))
+    return bytes(section)
+
 
 def pack_section(pid: int, section: bytes, cc: int) -> bytes:
     pkt = bytearray([0xFF] * TS_PACKET_SIZE)
@@ -115,6 +185,14 @@ def main() -> int:
     parser.add_argument("--extra-pmt-pid", type=int, default=0)
     parser.add_argument("--extra-video-pid", type=int, default=0)
     parser.add_argument("--extra-pcr-pid", type=int, default=0)
+    parser.add_argument("--tsid", type=int, default=1)
+    parser.add_argument("--onid", type=int, default=1)
+    parser.add_argument("--service-name", default="Service")
+    parser.add_argument("--provider-name", default="Provider")
+    parser.add_argument("--service-type", type=int, default=1)
+    parser.add_argument("--emit-sdt", action="store_true")
+    parser.add_argument("--emit-eit", action="store_true")
+    parser.add_argument("--emit-cat", action="store_true")
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--pps", type=int, default=200)
     args = parser.parse_args()
@@ -126,9 +204,21 @@ def main() -> int:
         extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
         programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
 
-    pat = build_pat(1, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
+    pat = build_pat(args.tsid, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
     pmt_map = {pmt_pid: build_pmt(pnr, pcr_pid, video_pid)
                for pnr, pmt_pid, video_pid, pcr_pid in programs}
+    services = []
+    for idx, (pnr, _, _, _) in enumerate(programs, start=1):
+        suffix = "" if len(programs) == 1 else f" {idx}"
+        services.append({
+            "pnr": pnr,
+            "service_type": args.service_type,
+            "provider": args.provider_name,
+            "name": f"{args.service_name}{suffix}",
+        })
+    sdt = build_sdt(args.tsid, args.onid, services) if args.emit_sdt else None
+    eit_map = {pnr: build_eit(pnr, args.tsid, args.onid) for pnr, _, _, _ in programs} if args.emit_eit else {}
+    cat = build_cat() if args.emit_cat else None
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target = (args.addr, args.port)
@@ -158,6 +248,13 @@ def main() -> int:
             # Few dummy payload packets for ES PID
             for _ in range(3):
                 sock.sendto(pack_payload(video_pid, next_cc(video_pid)), target)
+        if sdt:
+            sock.sendto(pack_section(0x0011, sdt, next_cc(0x0011)), target)
+        if eit_map:
+            for pnr, eit in eit_map.items():
+                sock.sendto(pack_section(0x0012, eit, next_cc(0x0012)), target)
+        if cat:
+            sock.sendto(pack_section(0x0001, cat, next_cc(0x0001)), target)
 
         # Null padding
         for _ in range(2):

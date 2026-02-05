@@ -12,48 +12,6 @@
 ## Entries
 ### 2026-02-05
 - Changes:
-  - Transcode: add warmup failure/timeout/stop alerts for failover diagnostics.
-- Tests:
-  - Not run (logic change only).
-### 2026-02-05
-- Changes:
-  - UI: editor warmup badge now includes timeline (start/ready/last/deadline).
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - UI: analyze shows warmup timeline (start/ready/last progress/deadline).
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - UI: warmup badge now includes stable/IDR hints on transcode tiles.
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - UI: analyze now shows detailed warmup diagnostics (ready/stable/IDR/timestamps).
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - UI: compact view shows warmup status on transcode tiles.
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - UI: analyze shows GPU overload reason and GPU metrics error.
-- Tests:
-  - Not run (UI change only).
-### 2026-02-05
-- Changes:
-  - Transcode: publish selected GPU stats/limits/overload in status for UI.
-  - UI: GPU info now reflects actual metrics and overload state.
-  - AI: proxy requests write JSON body to temp file for curl payload.
-- Tests:
-  - Not run (UI/status changes).
-### 2026-02-05
-- Changes:
   - MPTS/CI: обновлён verify_mpts (UTF-8 marker, Bitrate parsing, устойчивость к префиксам логов).
   - MPTS: анализатор NIT декодирует network_name с учётом кодировки.
   - CI: check_changelog учитывает shallow clone; check_branch_name допускает codex/<topic>.
@@ -2189,18 +2147,17 @@
   - `POST http://127.0.0.1:9017/api/v1/auth/login`
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_passive` (inputs + switch checks)
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_active` (switch + return checks)
-# 2026-02-05
+### 2026-02-05
 - Changes:
-  - Improved OpenAI client error details and auto‑retry without images on 400 image‑input errors.
-  - Normalized `ai_api_base` to avoid duplicate `/v1` paths.
-  - AI context now includes logs by default and always provides a stream runtime snapshot; dvb/analyze/femon remain on‑demand.
-  - Updated `docs/ASTRAL_AI.md` to reflect minimal‑load defaults and chat behavior.
-  - Adjusted AI autoselect unit test for new log‑default behavior.
-  - Added AI apply guardrail: large plans require `allow_destructive` (configurable via `ai_max_ops`).
-  - Added guardrail: disable ops require `allow_destructive`.
-  - Fixed AI proxy polling timer to avoid zero interval (prevents crash when proxies are set).
-  - Sanitized AI context strings to avoid invalid UTF‑8 in OpenAI requests.
-  - Proxied OpenAI requests now send the body without command‑line truncation.
-  - Added unit tests for AI chat diff preview and OpenAI image fallback behavior.
+  - Added PCR smoothing (EWMA) options and pass-through EIT/CAT handling in MPTS mux.
+  - Added `spts_only` guard, LCN descriptor tag override, and MPTS stats for bitrate/null%/PSI interval.
+  - Fixed PAT program counting so `strict_pnr`/`spts_only` detect multi-PAT reliably.
+  - Updated MPTS UI with bulk actions, pass sources, PCR smoothing fields, and LCN tag input.
+  - Extended CI smoke coverage (PID collision + pass tables) and added TS PID scanner.
+  - Extended SPTS generator to emit SDT/EIT/CAT for pass-through tests.
 - Tests:
-  - Not run (server deploy only).
+  - `python3 -m py_compile tools/gen_spts.py tools/scan_pid.py`
+  - `contrib/ci/smoke_mpts_pid_collision.sh`
+  - `contrib/ci/smoke_mpts_pass_tables.sh`
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_strict_pnr.sh`

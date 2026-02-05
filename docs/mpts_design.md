@@ -39,12 +39,17 @@
       "symbolrate": 6875,
       "modulation": "256QAM",
       "fec": "auto",
-      "network_search": "2:1,3:1"
+      "network_search": "2:1,3:1",
+      "lcn_descriptor_tag": 131
     },
     "advanced": {
       "si_interval_ms": 500,
       "pcr_restamp": false,
+      "pcr_smoothing": false,
+      "pcr_smooth_alpha": 0.1,
+      "pcr_smooth_max_offset_ms": 500,
       "strict_pnr": false,
+      "spts_only": true,
       "pat_version": 0,
       "nit_version": 0,
       "cat_version": 0,
@@ -52,7 +57,10 @@
       "pass_nit": false,
       "pass_sdt": false,
       "pass_eit": false,
+      "pass_cat": false,
       "pass_tdt": false,
+      "eit_source": 1,
+      "cat_source": 1,
       "disable_auto_remap": false,
       "target_bitrate": 50000000
     }
@@ -85,16 +93,23 @@
 - NIT (Actual): network_name + service_list + delivery descriptor (DVB‑C; другие delivery пока не применяются)
 - LCN: если задан `mpts_services[].lcn`, добавляется logical_channel_descriptor (0x83) в NIT
 - TDT/TOT: UTC время; TOT с local_time_offset_descriptor при задании country/utc_offset
-- CAT: генерируется пустой (без CA descriptors)
-- EIT: выключен по умолчанию; pass‑through при `pass_eit` (только для single input)
+- CAT: генерируется пустой (без CA descriptors) либо pass‑through при `pass_cat`
+- EIT: pass‑through при `pass_eit` из одного источника, фильтруется по service_id
 
 ## CBR режим
 - `advanced.target_bitrate` (бит/с)
 - При недостаточном входном битрейте вставляются null‑пакеты (PID 0x1FFF)
 - При превышении входного битрейта логируется предупреждение
 
+## Метрики
+- В статусе стрима доступны: `bitrate_bps`, `null_percent`, `psi_interval_ms`.
+- В `/api/v1/metrics?format=prom` экспортируются метрики `astra_mpts_*` по stream_id.
+
 ## PCR restamp
 - `advanced.pcr_restamp` (bool) — переписывает PCR по локальному времени выхода.
+- `advanced.pcr_smoothing` (bool) — включает EWMA‑сглаживание offset.
+- `advanced.pcr_smooth_alpha` — коэффициент сглаживания (0..1 или 1..100%).
+- `advanced.pcr_smooth_max_offset_ms` — ограничение смещения (мс).
 - Полезно для выравнивания PCR при нестабильных/рвущихся входах.
 
 ## Auto‑remap
@@ -105,13 +120,15 @@
 
 ## Ограничения
 - Для стабильной работы каждый input рекомендуется как SPTS.
-- EIT/CAT pass‑through корректен только при 1 сервисе (иначе возможны коллизии).
+- EIT/CAT pass‑through берётся из одного источника (`eit_source`/`cat_source`).
 - `nit.network_search` принимает список `tsid` или `tsid:onid` через запятую и добавляет их в NIT.
 - `mpts_services[].lcn` допускает значения 1..1023 (0 игнорируется).
 - `mpts_config.nit.lcn_version` не поддерживается и игнорируется.
+- `mpts_config.nit.lcn_descriptor_tag` задаёт tag LCN (0x83/0x87/custom).
 - `general.codepage` поддерживает только UTF-8 (маркер 0x15 в дескрипторах).
 - `mpts_services[].service_type_id` допускает значения 1..255 (пусто = 1).
 - `advanced.strict_pnr=true` запрещает использовать входные PAT с несколькими программами без явного `pnr`.
+- `advanced.spts_only=true` запрещает входы с multi-PAT даже при заданном `pnr`.
 - `advanced.si_interval_ms` меньше 50 игнорируется.
 - `advanced.target_bitrate <= 0` отключает CBR (значение игнорируется).
 

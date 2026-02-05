@@ -298,6 +298,7 @@ local function apply_mpts_config(channel_config)
     if general.network_name ~= nil then note("general.network_name") end
     if general.onid ~= nil then note("general.onid") end
     if nit.lcn_version ~= nil then note("nit.lcn_version") end
+    if nit.lcn_descriptor_tag ~= nil then note("nit.lcn_descriptor_tag") end
     if nit.delivery ~= nil and nit.delivery ~= "" then note("nit.delivery") end
     if nit.frequency ~= nil then note("nit.frequency") end
     if nit.symbolrate ~= nil then note("nit.symbolrate") end
@@ -311,7 +312,14 @@ local function apply_mpts_config(channel_config)
     if adv.sdt_version ~= nil then note("advanced.sdt_version") end
     if adv.pass_nit then note("advanced.pass_nit") end
     if adv.pass_tdt then note("advanced.pass_tdt") end
+    if adv.pass_cat then note("advanced.pass_cat") end
     if adv.disable_auto_remap then note("advanced.disable_auto_remap") end
+    if adv.pcr_smoothing then note("advanced.pcr_smoothing") end
+    if adv.pcr_smooth_alpha ~= nil then note("advanced.pcr_smooth_alpha") end
+    if adv.pcr_smooth_max_offset_ms ~= nil then note("advanced.pcr_smooth_max_offset_ms") end
+    if adv.spts_only ~= nil then note("advanced.spts_only") end
+    if adv.eit_source ~= nil then note("advanced.eit_source") end
+    if adv.cat_source ~= nil then note("advanced.cat_source") end
     if #unsupported > 0 then
         log.warning("[" .. channel_config.name .. "] mpts_config fields not supported: " ..
             table.concat(unsupported, ", "))
@@ -393,6 +401,14 @@ local function build_mpts_mux_options(channel_config)
     if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
     if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
     if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+    if nit.lcn_descriptor_tag ~= nil then
+        local tag = tonumber(nit.lcn_descriptor_tag)
+        if tag ~= nil then
+            opts.lcn_descriptor_tag = tag
+        else
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tag не распознан")
+        end
+    end
     if nit.lcn_version ~= nil then
         log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
     end
@@ -417,8 +433,20 @@ local function build_mpts_mux_options(channel_config)
     if adv.pass_sdt then opts.pass_sdt = true end
     if adv.pass_eit then opts.pass_eit = true end
     if adv.pass_tdt then opts.pass_tdt = true end
+    if adv.pass_cat then opts.pass_cat = true end
     if adv.pcr_restamp then opts.pcr_restamp = true end
+    if adv.pcr_smoothing then opts.pcr_smoothing = true end
+    if adv.pcr_smooth_alpha ~= nil then
+        opts.pcr_smooth_alpha = tostring(adv.pcr_smooth_alpha)
+    end
+    if adv.pcr_smooth_max_offset_ms ~= nil then
+        opts.pcr_smooth_max_offset_ms = tonumber(adv.pcr_smooth_max_offset_ms)
+    end
     if adv.strict_pnr then opts.strict_pnr = true end
+    if adv.spts_only == false then opts.spts_only = false end
+    if adv.spts_only == true then opts.spts_only = true end
+    if adv.eit_source ~= nil then opts.eit_source = tonumber(adv.eit_source) end
+    if adv.cat_source ~= nil then opts.cat_source = tonumber(adv.cat_source) end
     if adv.target_bitrate ~= nil then
         local bitrate = tonumber(adv.target_bitrate)
         if bitrate ~= nil then
