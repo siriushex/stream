@@ -717,6 +717,10 @@ const elements = {
   mptsDelivery: $('#mpts-delivery'),
   mptsFrequency: $('#mpts-frequency'),
   mptsSymbolrate: $('#mpts-symbolrate'),
+  mptsBandwidth: $('#mpts-bandwidth'),
+  mptsOrbitalPosition: $('#mpts-orbital-position'),
+  mptsPolarization: $('#mpts-polarization'),
+  mptsRolloff: $('#mpts-rolloff'),
   mptsFec: $('#mpts-fec'),
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
@@ -7175,8 +7179,29 @@ function updateMptsInputWarning() {
   }
 }
 
+function updateMptsNitFields() {
+  const delivery = String(elements.mptsDelivery && elements.mptsDelivery.value || '').toLowerCase();
+  // Если delivery не выбран, показываем как для DVB-C (самый частый кейс).
+  const effective = delivery || 'dvb-c';
+  const isCable = effective === 'dvb-c' || effective === 'cable' || effective === 'dvb_c';
+  const isTerrestrial = effective === 'dvb-t' || effective === 'terrestrial' || effective === 'dvb_t';
+  const isSatellite = effective === 'dvb-s' || effective === 'satellite' || effective === 'dvb_s' ||
+    effective === 'dvb-s2' || effective === 'dvb_s2';
+
+  $$('.mpts-nit-sat-cable').forEach((node) => {
+    node.classList.toggle('is-hidden', !(isCable || isSatellite));
+  });
+  $$('.mpts-nit-dvbt').forEach((node) => {
+    node.classList.toggle('is-hidden', !isTerrestrial);
+  });
+  $$('.mpts-nit-sat-only').forEach((node) => {
+    node.classList.toggle('is-hidden', !isSatellite);
+  });
+}
+
 function updateMptsDeliveryWarning() {
   if (!elements.mptsDeliveryWarning) return;
+  updateMptsNitFields();
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
   const delivery = String(elements.mptsDelivery && elements.mptsDelivery.value || '').toLowerCase();
   if (!mptsEnabled || !delivery) {
@@ -7185,24 +7210,39 @@ function updateMptsDeliveryWarning() {
     return;
   }
   const isCable = delivery === 'dvb-c' || delivery === 'cable' || delivery === 'dvb_c';
-  if (!isCable) {
-    elements.mptsDeliveryWarning.textContent = `Delivery ${delivery} не поддерживается: сейчас доступен только DVB-C.`;
+  const isTerrestrial = delivery === 'dvb-t' || delivery === 'terrestrial' || delivery === 'dvb_t';
+  const isSatellite = delivery === 'dvb-s' || delivery === 'satellite' || delivery === 'dvb_s' || delivery === 'dvb-s2' || delivery === 'dvb_s2';
+  if (!isCable && !isTerrestrial && !isSatellite) {
+    elements.mptsDeliveryWarning.textContent = `Delivery ${delivery} не поддерживается: доступен только DVB-C/DVB-T/DVB-S.`;
     elements.mptsDeliveryWarning.classList.remove('is-hidden');
     return;
   }
   const freq = Number(elements.mptsFrequency && elements.mptsFrequency.value);
-  const sr = Number(elements.mptsSymbolrate && elements.mptsSymbolrate.value);
-  const mod = String(elements.mptsModulation && elements.mptsModulation.value || '').trim();
   const missing = [];
   if (!Number.isFinite(freq) || freq <= 0) missing.push('frequency');
-  if (!Number.isFinite(sr) || sr <= 0) missing.push('symbolrate');
-  if (!mod) missing.push('modulation');
+  if (isCable || isSatellite) {
+    const sr = Number(elements.mptsSymbolrate && elements.mptsSymbolrate.value);
+    if (!Number.isFinite(sr) || sr <= 0) missing.push('symbolrate');
+  }
+  if (isCable) {
+    const mod = String(elements.mptsModulation && elements.mptsModulation.value || '').trim();
+    if (!mod) missing.push('modulation');
+  }
+  if (isTerrestrial) {
+    const bw = Number(elements.mptsBandwidth && elements.mptsBandwidth.value);
+    if (Number.isFinite(bw) && bw > 0 && ![5, 6, 7, 8].includes(bw)) {
+      elements.mptsDeliveryWarning.textContent = 'DVB-T bandwidth поддерживается только 5/6/7/8 MHz.';
+      elements.mptsDeliveryWarning.classList.remove('is-hidden');
+      return;
+    }
+  }
   if (missing.length === 0) {
     elements.mptsDeliveryWarning.classList.add('is-hidden');
     elements.mptsDeliveryWarning.textContent = '';
     return;
   }
-  elements.mptsDeliveryWarning.textContent = `DVB-C delivery requires: ${missing.join(', ')}`;
+  const label = isCable ? 'DVB-C' : isSatellite ? 'DVB-S' : 'DVB-T';
+  elements.mptsDeliveryWarning.textContent = `${label} delivery requires: ${missing.join(', ')}`;
   elements.mptsDeliveryWarning.classList.remove('is-hidden');
 }
 
@@ -10910,6 +10950,18 @@ function openEditor(stream, isNew) {
   if (elements.mptsSymbolrate) {
     elements.mptsSymbolrate.value = mptsNit.symbolrate || '';
   }
+  if (elements.mptsBandwidth) {
+    elements.mptsBandwidth.value = mptsNit.bandwidth || '';
+  }
+  if (elements.mptsOrbitalPosition) {
+    elements.mptsOrbitalPosition.value = mptsNit.orbital_position || '';
+  }
+  if (elements.mptsPolarization) {
+    elements.mptsPolarization.value = mptsNit.polarization || '';
+  }
+  if (elements.mptsRolloff) {
+    elements.mptsRolloff.value = mptsNit.rolloff || '';
+  }
   if (elements.mptsFec) {
     elements.mptsFec.value = mptsNit.fec || '';
   }
@@ -11429,6 +11481,14 @@ function readStreamForm() {
   if (frequency !== undefined) mptsNit.frequency = frequency;
   const symbolrate = toNumber(elements.mptsSymbolrate && elements.mptsSymbolrate.value);
   if (symbolrate !== undefined) mptsNit.symbolrate = symbolrate;
+  const bandwidth = toNumber(elements.mptsBandwidth && elements.mptsBandwidth.value);
+  if (bandwidth !== undefined) mptsNit.bandwidth = bandwidth;
+  const orbitalPosition = (elements.mptsOrbitalPosition && elements.mptsOrbitalPosition.value || '').trim();
+  if (orbitalPosition) mptsNit.orbital_position = orbitalPosition;
+  const polarization = (elements.mptsPolarization && elements.mptsPolarization.value || '').trim();
+  if (polarization) mptsNit.polarization = polarization;
+  const rolloff = (elements.mptsRolloff && elements.mptsRolloff.value || '').trim();
+  if (rolloff) mptsNit.rolloff = rolloff;
   const fec = (elements.mptsFec && elements.mptsFec.value || '').trim();
   if (fec) mptsNit.fec = fec;
   const modulation = (elements.mptsModulation && elements.mptsModulation.value || '').trim();
@@ -17847,7 +17907,16 @@ function bindEvents() {
     if (!control) return;
     control.addEventListener('change', updateMptsPassWarning);
   });
-  [elements.mptsDelivery, elements.mptsFrequency, elements.mptsSymbolrate, elements.mptsModulation].forEach((control) => {
+  [
+    elements.mptsDelivery,
+    elements.mptsFrequency,
+    elements.mptsSymbolrate,
+    elements.mptsBandwidth,
+    elements.mptsOrbitalPosition,
+    elements.mptsPolarization,
+    elements.mptsRolloff,
+    elements.mptsModulation,
+  ].forEach((control) => {
     if (!control) return;
     control.addEventListener('change', updateMptsDeliveryWarning);
     control.addEventListener('input', updateMptsDeliveryWarning);

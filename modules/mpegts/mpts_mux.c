@@ -7,6 +7,7 @@
 #include <astra.h>
 #include <time.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define PID_DROP 0xFFFF
 #define MPTS_MAX_PIDS 8192
@@ -96,6 +97,13 @@ struct module_data_t
     const char *modulation;
     const char *fec;
     const char *network_search;
+    // DVB-T (terrestrial)
+    int bandwidth_mhz;
+    // DVB-S/S2 (satellite)
+    uint16_t orbital_position_tenths; // 19.2E -> 192
+    bool orbital_position_east;       // true=E, false=W
+    uint8_t sat_polarization;         // 0=H,1=V,2=L,3=R
+    uint8_t sat_rolloff;              // 0=0.35,1=0.25,2=0.20
 
     int si_interval_ms;
     int target_bitrate;
@@ -531,6 +539,26 @@ static bool is_delivery_cable(const char *value)
     return false;
 }
 
+static bool is_delivery_terrestrial(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "terrestrial")) return true;
+    if(!strcasecmp(value, "dvb-t")) return true;
+    if(!strcasecmp(value, "dvb_t")) return true;
+    return false;
+}
+
+static bool is_delivery_satellite(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "satellite")) return true;
+    if(!strcasecmp(value, "dvb-s")) return true;
+    if(!strcasecmp(value, "dvb_s")) return true;
+    if(!strcasecmp(value, "dvb-s2")) return true;
+    if(!strcasecmp(value, "dvb_s2")) return true;
+    return false;
+}
+
 static uint8_t parse_modulation(const char *value)
 {
     if(!value) return 0;
@@ -540,6 +568,133 @@ static uint8_t parse_modulation(const char *value)
     if(!strcasecmp(value, "128qam")) return 0x04;
     if(!strcasecmp(value, "256qam")) return 0x05;
     return 0;
+}
+
+static uint8_t parse_code_rate_3bits(const char *value)
+{
+    // DVB-T code_rate_* (3 bits)
+    if(!value || value[0] == '\0') return 0x07; // reserved/auto
+    if(!strcmp(value, "1/2")) return 0x00;
+    if(!strcmp(value, "2/3")) return 0x01;
+    if(!strcmp(value, "3/4")) return 0x02;
+    if(!strcmp(value, "5/6")) return 0x03;
+    if(!strcmp(value, "7/8")) return 0x04;
+    return 0x07;
+}
+
+static uint8_t parse_terrestrial_bandwidth(int mhz)
+{
+    // bandwidth: 0=8MHz,1=7MHz,2=6MHz,3=5MHz
+    switch(mhz)
+    {
+        case 8: return 0x00;
+        case 7: return 0x01;
+        case 6: return 0x02;
+        case 5: return 0x03;
+        default: return 0x00; // default 8MHz
+    }
+}
+
+static uint8_t parse_terrestrial_constellation(const char *value)
+{
+    // constellation: 0=QPSK,1=16-QAM,2=64-QAM
+    if(!value || value[0] == '\0') return 0x03; // reserved
+    if(!strcasecmp(value, "qpsk")) return 0x00;
+    if(!strcasecmp(value, "16qam") || !strcasecmp(value, "qam16")) return 0x01;
+    if(!strcasecmp(value, "64qam") || !strcasecmp(value, "qam64")) return 0x02;
+    return 0x03;
+}
+
+static uint8_t parse_satellite_modulation_type(const char *value)
+{
+    // modulation_type (2 bits): 0=auto,1=QPSK,2=8PSK,3=16-QAM
+    if(!value || value[0] == '\0') return 0x00;
+    if(!strcasecmp(value, "auto")) return 0x00;
+    if(!strcasecmp(value, "qpsk")) return 0x01;
+    if(!strcasecmp(value, "8psk")) return 0x02;
+    if(!strcasecmp(value, "16qam") || !strcasecmp(value, "qam16")) return 0x03;
+    return 0x00;
+}
+
+static uint8_t parse_satellite_polarization(const char *value)
+{
+    // polarization: 0=H,1=V,2=L,3=R
+    if(!value || value[0] == '\0') return 0;
+    if(!strcasecmp(value, "h") || !strcasecmp(value, "horizontal")) return 0;
+    if(!strcasecmp(value, "v") || !strcasecmp(value, "vertical")) return 1;
+    if(!strcasecmp(value, "l") || !strcasecmp(value, "left")) return 2;
+    if(!strcasecmp(value, "r") || !strcasecmp(value, "right")) return 3;
+    return 0;
+}
+
+static uint8_t parse_satellite_rolloff(const char *value)
+{
+    // roll_off: 0=0.35,1=0.25,2=0.20
+    if(!value || value[0] == '\0') return 0;
+    if(!strcasecmp(value, "0.35") || !strcasecmp(value, "35")) return 0;
+    if(!strcasecmp(value, "0.25") || !strcasecmp(value, "25")) return 1;
+    if(!strcasecmp(value, "0.20") || !strcasecmp(value, "20")) return 2;
+    return 0;
+}
+
+static bool parse_orbital_position(const char *value, uint16_t *tenths_out, bool *east_out)
+{
+    if(!value || value[0] == '\0' || !tenths_out || !east_out)
+        return false;
+
+    // Поддерживаем форматы: "19.2E", "13.0W", "19.2", "-13.0".
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%s", value);
+
+    // trim spaces
+    char *start = buf;
+    while(*start == ' ' || *start == '\t') start++;
+    char *end = start + strlen(start);
+    while(end > start && (end[-1] == ' ' || end[-1] == '\t')) end--;
+    *end = '\0';
+
+    if(*start == '\0')
+        return false;
+
+    bool east = true;
+    const size_t len = strlen(start);
+    if(len > 0)
+    {
+        const char last = start[len - 1];
+        if(last == 'E' || last == 'e')
+        {
+            east = true;
+            start[len - 1] = '\0';
+        }
+        else if(last == 'W' || last == 'w')
+        {
+            east = false;
+            start[len - 1] = '\0';
+        }
+    }
+
+    char *num_end = NULL;
+    const double deg_raw = strtod(start, &num_end);
+    if(num_end == start)
+        return false;
+
+    double deg = deg_raw;
+    if(deg < 0.0)
+    {
+        // Отрицательное значение интерпретируем как W.
+        east = false;
+        deg = -deg;
+    }
+    if(deg > 180.0)
+        return false;
+
+    const long tenths = (long)llround(deg * 10.0);
+    if(tenths < 0 || tenths > 1800)
+        return false;
+
+    *tenths_out = (uint16_t)tenths;
+    *east_out = east;
+    return true;
 }
 
 static uint8_t parse_fec_inner(const char *value)
@@ -1000,9 +1155,12 @@ static void build_nit(module_data_t *mod)
 
         const uint16_t main_desc_start = pos;
 
-        // ВАЖНО: delivery descriptor (0x44) должен идти ПОСЛЕ service_list/LCN,
+        // ВАЖНО: delivery descriptor должен идти ПОСЛЕ service_list/LCN,
         // иначе текущий analyzer (modules/mpegts/analyze.c) прекращает разбор дескрипторов на 0x44.
-        const size_t delivery_desc_size = is_delivery_cable(mod->delivery) ? (2 + 11) : 0;
+        const bool have_delivery_desc = is_delivery_cable(mod->delivery)
+            || is_delivery_satellite(mod->delivery)
+            || is_delivery_terrestrial(mod->delivery);
+        const size_t delivery_desc_size = have_delivery_desc ? (2 + 11) : 0;
 
         // service_list_descriptor: разбиваем на несколько descriptor'ов, если нужно
         while(svc_idx < svc_count)
@@ -1089,7 +1247,7 @@ static void build_nit(module_data_t *mod)
             lcn_idx += payload_len / 4;
         }
 
-        // cable_delivery_system_descriptor (0x44)
+        // delivery_system_descriptor (DVB-C / DVB-T / DVB-S)
         if(is_delivery_cable(mod->delivery))
         {
             uint8_t desc[11];
@@ -1110,6 +1268,71 @@ static void build_nit(module_data_t *mod)
                 pos = append_descriptor(buf, pos, 0x44, desc, sizeof(desc));
             else
                 asc_log_warning(MSG("NIT: нет места для cable_delivery_system_descriptor"));
+        }
+        else if(is_delivery_satellite(mod->delivery))
+        {
+            // satellite_delivery_system_descriptor (0x43)
+            uint8_t desc[11];
+            memset(desc, 0, sizeof(desc));
+
+            // frequency: BCD 8 digits, units 10 kHz
+            const uint32_t freq_digits = mod->frequency_khz > 0 ? (mod->frequency_khz / 10) : 0;
+            write_bcd(desc, 8, freq_digits);
+
+            // orbital_position: BCD 4 digits, units 0.1 degrees
+            write_bcd(&desc[4], 4, mod->orbital_position_tenths);
+
+            const uint8_t mod_type = parse_satellite_modulation_type(mod->modulation);
+            const uint8_t mod_system = (mod_type >= 0x02) ? 0x01 : 0x00; // 8PSK/16QAM -> DVB-S2
+            desc[6] = (uint8_t)((mod->orbital_position_east ? 0x80 : 0x00)
+                | ((mod->sat_polarization & 0x03) << 5)
+                | ((mod->sat_rolloff & 0x03) << 3)
+                | ((mod_system & 0x01) << 2)
+                | (mod_type & 0x03));
+
+            // symbol_rate: BCD 7 digits, units 100 sym/s
+            const uint32_t sr_digits = mod->symbolrate_ksps > 0 ? (mod->symbolrate_ksps * 10) : 0;
+            write_bcd(&desc[7], 7, sr_digits);
+            desc[10] = (desc[10] & 0xF0) | parse_fec_inner(mod->fec);
+
+            if((size_t)pos + 2 + sizeof(desc) + CRC32_SIZE <= MPTS_PSI_SECTION_MAX_SIZE)
+                pos = append_descriptor(buf, pos, 0x43, desc, sizeof(desc));
+            else
+                asc_log_warning(MSG("NIT: нет места для satellite_delivery_system_descriptor"));
+        }
+        else if(is_delivery_terrestrial(mod->delivery))
+        {
+            // terrestrial_delivery_system_descriptor (0x5A)
+            uint8_t desc[11];
+            memset(desc, 0xFF, sizeof(desc)); // reserved_future_use = 0xFF
+
+            // frequency: 32-bit, units 10 Hz
+            const uint64_t freq_10hz = (uint64_t)mod->frequency_khz * 100ULL;
+            desc[0] = (uint8_t)((freq_10hz >> 24) & 0xFF);
+            desc[1] = (uint8_t)((freq_10hz >> 16) & 0xFF);
+            desc[2] = (uint8_t)((freq_10hz >> 8) & 0xFF);
+            desc[3] = (uint8_t)(freq_10hz & 0xFF);
+
+            const uint8_t bw = parse_terrestrial_bandwidth(mod->bandwidth_mhz);
+            const uint8_t constellation = parse_terrestrial_constellation(mod->modulation);
+            const uint8_t cr_hp = parse_code_rate_3bits(mod->fec);
+            const uint8_t cr_lp = 0x07; // reserved/auto
+            const uint8_t hierarchy = 0x00; // none
+            const uint8_t guard = 0x00; // 1/32
+            const uint8_t tx_mode = 0x01; // 8k
+            const uint8_t other_freq = 0x01; // other_frequency_flag
+
+            // byte4: bandwidth + priority=1 + time_slicing=0 + mpe_fec=0 + reserved=3
+            desc[4] = (uint8_t)((bw << 5) | 0x10 | 0x03);
+            // byte5: constellation + hierarchy + code_rate_hp
+            desc[5] = (uint8_t)(((constellation & 0x03) << 6) | ((hierarchy & 0x07) << 3) | (cr_hp & 0x07));
+            // byte6: code_rate_lp + guard_interval + transmission_mode + other_frequency_flag
+            desc[6] = (uint8_t)(((cr_lp & 0x07) << 5) | ((guard & 0x03) << 3) | ((tx_mode & 0x03) << 1) | (other_freq & 0x01));
+
+            if((size_t)pos + 2 + sizeof(desc) + CRC32_SIZE <= MPTS_PSI_SECTION_MAX_SIZE)
+                pos = append_descriptor(buf, pos, 0x5A, desc, sizeof(desc));
+            else
+                asc_log_warning(MSG("NIT: нет места для terrestrial_delivery_system_descriptor"));
         }
 
         uint16_t main_desc_len = pos - main_desc_start;
@@ -1804,6 +2027,11 @@ static void module_init(module_data_t *mod)
     mod->cat_source_index = 1;
     mod->pcr_smooth_alpha = 0.1;
     mod->pcr_smooth_max_offset_ticks = 500ULL * 27000ULL;
+    mod->bandwidth_mhz = 8;
+    mod->orbital_position_tenths = 0;
+    mod->orbital_position_east = true;
+    mod->sat_polarization = 0;
+    mod->sat_rolloff = 0;
 
     reserve_pid(mod, 0x0000); // PAT
     reserve_pid(mod, 0x0001); // CAT
@@ -1838,6 +2066,23 @@ static void module_init(module_data_t *mod)
     module_option_string("modulation", &mod->modulation, NULL);
     module_option_string("fec", &mod->fec, NULL);
     module_option_string("network_search", &mod->network_search, NULL);
+    if(module_option_number("bandwidth", &tmp)) mod->bandwidth_mhz = tmp;
+    const char *orbital_position = NULL;
+    if(module_option_string("orbital_position", &orbital_position, NULL) && orbital_position && orbital_position[0] != '\0')
+    {
+        if(!parse_orbital_position(orbital_position, &mod->orbital_position_tenths, &mod->orbital_position_east))
+            asc_log_warning(MSG("orbital_position '%s' не распознан; используем 0.0E"), orbital_position);
+    }
+    const char *polarization = NULL;
+    if(module_option_string("polarization", &polarization, NULL) && polarization && polarization[0] != '\0')
+    {
+        mod->sat_polarization = parse_satellite_polarization(polarization);
+    }
+    const char *rolloff = NULL;
+    if(module_option_string("rolloff", &rolloff, NULL) && rolloff && rolloff[0] != '\0')
+    {
+        mod->sat_rolloff = parse_satellite_rolloff(rolloff);
+    }
 
     if(module_option_number("si_interval_ms", &tmp))
     {
@@ -1846,13 +2091,29 @@ static void module_init(module_data_t *mod)
     if(module_option_number("target_bitrate", &tmp))
         mod->target_bitrate = tmp;
 
-    if(mod->delivery && mod->delivery[0] != '\0' && !is_delivery_cable(mod->delivery))
-        asc_log_warning(MSG("delivery %s не поддерживается; генерируется только DVB-C"), mod->delivery);
-    if(is_delivery_cable(mod->delivery))
+    const bool delivery_cable = is_delivery_cable(mod->delivery);
+    const bool delivery_terr = is_delivery_terrestrial(mod->delivery);
+    const bool delivery_sat = is_delivery_satellite(mod->delivery);
+    if(mod->delivery && mod->delivery[0] != '\0' && !delivery_cable && !delivery_terr && !delivery_sat)
+        asc_log_warning(MSG("delivery %s не поддерживается; NIT delivery descriptor не будет сгенерирован"), mod->delivery);
+    if(delivery_cable)
     {
         if(mod->frequency_khz == 0 || mod->symbolrate_ksps == 0 || !mod->modulation || mod->modulation[0] == '\0')
-        {
             asc_log_warning(MSG("DVB-C delivery требует frequency/symbolrate/modulation"));
+    }
+    else if(delivery_sat)
+    {
+        if(mod->frequency_khz == 0 || mod->symbolrate_ksps == 0)
+            asc_log_warning(MSG("DVB-S delivery требует frequency/symbolrate"));
+    }
+    else if(delivery_terr)
+    {
+        if(mod->frequency_khz == 0)
+            asc_log_warning(MSG("DVB-T delivery требует frequency"));
+        if(mod->bandwidth_mhz != 5 && mod->bandwidth_mhz != 6 && mod->bandwidth_mhz != 7 && mod->bandwidth_mhz != 8)
+        {
+            asc_log_warning(MSG("DVB-T bandwidth %d не поддерживается; используем 8MHz"), mod->bandwidth_mhz);
+            mod->bandwidth_mhz = 8;
         }
     }
 
