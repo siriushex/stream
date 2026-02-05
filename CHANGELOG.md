@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AI: sanitize NaN/inf in context/payload JSON to avoid OpenAI "Invalid body: failed to parse JSON" errors.
+- Tests:
+  - `./astra scripts/tests/ai_prompt_sanitize_nan_unit.lua`
+### 2026-02-05
+- Changes:
   - AI: fix strict JSON schema (Structured Outputs) by requiring all object keys (prevents OpenAI schema validation errors).
 - Tests:
   - `./astra scripts/tests/ai_openai_strict_schema_unit.lua`
