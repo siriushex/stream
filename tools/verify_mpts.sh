@@ -9,6 +9,11 @@ EXPECT_PROVIDERS="${EXPECT_PROVIDERS:-}"
 EXPECT_NETWORK_ID="${EXPECT_NETWORK_ID:-}"
 EXPECT_TSID="${EXPECT_TSID:-}"
 EXPECT_CAT="${EXPECT_CAT:-0}"
+EXPECT_DELIVERY="${EXPECT_DELIVERY:-}"
+EXPECT_FREQUENCY_KHZ="${EXPECT_FREQUENCY_KHZ:-}"
+EXPECT_SYMBOLRATE_KSPS="${EXPECT_SYMBOLRATE_KSPS:-}"
+EXPECT_MODULATION="${EXPECT_MODULATION:-}"
+EXPECT_FEC="${EXPECT_FEC:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -86,6 +91,41 @@ fi
 if [[ -n "$EXPECT_NETWORK_ID" ]]; then
   if ! grep -q "NIT: network_id: ${EXPECT_NETWORK_ID}" "$LOG_FILE"; then
     echo "NIT network_id mismatch (expected ${EXPECT_NETWORK_ID})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_DELIVERY" ]]; then
+  if ! grep -q "NIT: delivery: ${EXPECT_DELIVERY}" "$LOG_FILE"; then
+    echo "NIT delivery mismatch (expected ${EXPECT_DELIVERY})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_FREQUENCY_KHZ" ]]; then
+  if ! grep -q "freq_khz: ${EXPECT_FREQUENCY_KHZ}" "$LOG_FILE"; then
+    echo "NIT frequency mismatch (expected ${EXPECT_FREQUENCY_KHZ})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_SYMBOLRATE_KSPS" ]]; then
+  if ! grep -q "symbolrate_ksps: ${EXPECT_SYMBOLRATE_KSPS}" "$LOG_FILE"; then
+    echo "NIT symbolrate mismatch (expected ${EXPECT_SYMBOLRATE_KSPS})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_MODULATION" ]]; then
+  if ! grep -q "modulation: ${EXPECT_MODULATION}" "$LOG_FILE"; then
+    echo "NIT modulation mismatch (expected ${EXPECT_MODULATION})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_FEC" ]]; then
+  if ! grep -q "fec: ${EXPECT_FEC}" "$LOG_FILE"; then
+    echo "NIT fec mismatch (expected ${EXPECT_FEC})"
     exit 1
   fi
 fi
