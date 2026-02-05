@@ -1088,7 +1088,7 @@
                       <input type="checkbox" id="settings-telegram-backup-enabled" data-toggle-target="settings-telegram-backup-fields" />
                       <span>Send config backups</span>
                     </label>
-                    <div class="form-grid" id="settings-telegram-backup-fields">
+                  <div class="form-grid" id="settings-telegram-backup-fields">
                     <label class="field">
                       <span>Schedule</span>
                       <select id="settings-telegram-backup-schedule">
@@ -1126,6 +1126,49 @@
                       <button class="btn ghost" type="button" id="settings-telegram-backup-now">Send backup now</button>
                     </div>
                     <small class="form-hint">Backups are sent as a JSON file to the same chat.</small>
+                  </div>
+                    <label class="checkline">
+                      <input type="checkbox" id="settings-telegram-summary-enabled" data-toggle-target="settings-telegram-summary-fields" />
+                      <span>Send AI summary</span>
+                    </label>
+                    <div class="form-grid" id="settings-telegram-summary-fields">
+                    <label class="field">
+                      <span>Schedule</span>
+                      <select id="settings-telegram-summary-schedule">
+                        <option value="DAILY">Daily</option>
+                        <option value="WEEKLY">Weekly</option>
+                        <option value="MONTHLY">Monthly</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Time</span>
+                      <input type="time" id="settings-telegram-summary-time" />
+                    </label>
+                    <label class="field" id="settings-telegram-summary-weekday-field">
+                      <span>Weekday</span>
+                      <select id="settings-telegram-summary-weekday">
+                        <option value="1">Monday</option>
+                        <option value="2">Tuesday</option>
+                        <option value="3">Wednesday</option>
+                        <option value="4">Thursday</option>
+                        <option value="5">Friday</option>
+                        <option value="6">Saturday</option>
+                        <option value="7">Sunday</option>
+                      </select>
+                    </label>
+                    <label class="field" id="settings-telegram-summary-monthday-field">
+                      <span>Month day</span>
+                      <input type="number" id="settings-telegram-summary-monthday" min="1" max="31" />
+                    </label>
+                    <label class="checkline">
+                      <input type="checkbox" id="settings-telegram-summary-charts" />
+                      <span>Include charts</span>
+                    </label>
+                    <div class="field">
+                      <span>&nbsp;</span>
+                      <button class="btn ghost" type="button" id="settings-telegram-summary-now">Send summary now</button>
+                    </div>
+                    <small class="form-hint">Uses observability rollups (24h snapshot).</small>
                   </div>
                 </div>
               </div>

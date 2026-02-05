@@ -79,6 +79,11 @@
 - `GET /api/v1/ai/metrics?range=24h&scope=global|stream&id=<stream_id>&metric=bitrate_kbps`
 - `GET /api/v1/ai/summary?range=24h` — возвращает последнюю агрегированную “сводку” (без AI).
 
+### Telegram summary
+- Планировщик отправляет ежедневную/еженедельную/ежемесячную сводку.
+- Основано на rollup‑метриках Observability.
+- Доп. настройка: `telegram_summary_include_charts` (PNG‑график).
+
 Примечание: AI‑summary пока не подключён, эндпоинт отдаёт последний rollup snapshot.
 
 ## Настройки (через Settings API)
