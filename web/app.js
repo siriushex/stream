@@ -15258,6 +15258,28 @@ function setAiChatStatus(text) {
   }
 }
 
+function buildAiChatContent(text, attachments) {
+  const wrap = createEl('div', 'ai-chat-content');
+  if (text) {
+    wrap.appendChild(createEl('div', '', text));
+  }
+  if (Array.isArray(attachments) && attachments.length) {
+    const holder = createEl('div', 'ai-chat-user-attachments');
+    attachments.forEach((file) => {
+      if (file && file.data_url && file.mime && file.mime.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = file.data_url;
+        img.alt = file.name || 'attachment';
+        holder.appendChild(img);
+      }
+    });
+    if (holder.children.length) {
+      wrap.appendChild(holder);
+    }
+  }
+  return wrap;
+}
+
 function appendAiChatMessage(role, content) {
   if (!elements.aiChatLog) return null;
   const msg = createEl('div', `ai-chat-msg ${role || 'assistant'}`);
@@ -15272,10 +15294,13 @@ function appendAiChatMessage(role, content) {
 }
 
 function buildTypingNode() {
-  const wrap = createEl('div', 'ai-chat-typing');
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
+  const wrap = createEl('div', 'ai-chat-waiting');
+  wrap.appendChild(createEl('div', 'ai-chat-waiting-photo'));
+  const dots = createEl('div', 'ai-chat-typing');
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  wrap.appendChild(dots);
   return wrap;
 }
 
@@ -15530,13 +15555,17 @@ async function sendAiChatMessage() {
   if (!elements.aiChatInput || state.aiChatBusy) return;
   const prompt = elements.aiChatInput.value.trim();
   if (!prompt) return;
+  const attachments = await collectAiChatAttachments();
   elements.aiChatInput.value = '';
-  appendAiChatMessage('user', prompt);
+  appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
+  if (elements.aiChatFiles) {
+    elements.aiChatFiles.value = '';
+    updateAiChatFilesLabel();
+  }
   const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
   state.aiChatPendingEl = typingMsg;
   setAiChatStatus('Sending to AI...');
   try {
-    const attachments = await collectAiChatAttachments();
     const payload = buildAiChatPayload(prompt, attachments);
     payload.preview_diff = true;
     const job = await apiJson('/api/v1/ai/plan', {
