@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - UI: add compact mode toggle for Settings -> General cards.
+- Tests:
+  - Not run (UI change only).
+### 2026-02-06
+- Changes:
   - AI: honor `retry-after` / `x-ratelimit-reset-*` headers when scheduling retries (reduces retry load on 429).
 - Tests:
   - `./astra scripts/tests/ai_openai_retry_delay_unit.lua`
