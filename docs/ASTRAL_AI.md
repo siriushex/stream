@@ -98,6 +98,8 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/summary?range=24h&ai=1&include_logs=1&i
   -H "Authorization: Bearer <token>"
 ```
 
+Примечание: по умолчанию `include_logs=0` (минимальная нагрузка). Логи добавляются только при явном флаге.
+
 ### Пример: AI plan с CLI‑контекстом
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
