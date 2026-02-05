@@ -2208,7 +2208,8 @@ local function channel_retain(channel_data, reason)
         return false
     end
     channel_data.retain_count = (channel_data.retain_count or 0) + 1
-    if channel_data.active_input_id ~= 0 then
+    local active_id = tonumber(channel_data.active_input_id or 0) or 0
+    if active_id ~= 0 then
         return true
     end
     if channel_data.failover and channel_data.failover.enabled then
