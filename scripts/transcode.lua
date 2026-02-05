@@ -692,6 +692,7 @@ local function normalize_failover_config(cfg, enabled)
         "backup_switch_pending_timeout_sec", "backup_switch_pending_timeout") or 15
     local switch_warmup = read_number_opt(cfg, "backup_switch_warmup_sec", "backup_switch_warmup") or 3
     local compat_check = normalize_bool(cfg.backup_compat_check, true)
+    local compat_strict = normalize_bool(cfg.backup_compat_strict, false)
     local compat_refresh = read_number_opt(cfg, "backup_compat_refresh_sec") or 300
     local compat_probe_sec = read_number_opt(cfg, "backup_compat_probe_sec") or 2
     local compat_probe_timeout = read_number_opt(cfg, "backup_compat_probe_timeout_sec") or 8
@@ -739,6 +740,7 @@ local function normalize_failover_config(cfg, enabled)
         probe_interval = probe_interval,
         stable_ok = stable_ok,
         compat_check = compat_check,
+        compat_strict = compat_strict,
         compat_refresh_sec = compat_refresh,
         compat_probe_sec = compat_probe_sec,
         compat_probe_timeout_sec = compat_probe_timeout,
@@ -1198,6 +1200,21 @@ local function tick_switch_warmup(job, now)
     end
 end
 
+local function parse_fraction(value)
+    if not value or value == "" then
+        return nil
+    end
+    local num, den = tostring(value):match("^(%d+)%s*/%s*(%d+)$")
+    if num and den then
+        local n = tonumber(num)
+        local d = tonumber(den)
+        if n and d and d ~= 0 then
+            return n / d
+        end
+    end
+    return tonumber(value)
+end
+
 local function extract_stream_profile(payload)
     if type(payload) ~= "table" then
         return nil
@@ -1208,12 +1225,25 @@ local function extract_stream_profile(payload)
         video_codec = nil,
         audio_codec = nil,
         audio_sample_rate = nil,
+        video_width = nil,
+        video_height = nil,
+        video_fps = nil,
+        audio_channels = nil,
     }
     for _, stream in ipairs(payload.streams or {}) do
         if stream.codec_type == "video" then
             profile.video_count = profile.video_count + 1
             if not profile.video_codec and stream.codec_name then
                 profile.video_codec = tostring(stream.codec_name)
+            end
+            if not profile.video_width and stream.width then
+                profile.video_width = tonumber(stream.width)
+            end
+            if not profile.video_height and stream.height then
+                profile.video_height = tonumber(stream.height)
+            end
+            if not profile.video_fps and stream.avg_frame_rate then
+                profile.video_fps = parse_fraction(stream.avg_frame_rate)
             end
         elseif stream.codec_type == "audio" then
             profile.audio_count = profile.audio_count + 1
@@ -1223,6 +1253,9 @@ local function extract_stream_profile(payload)
             if not profile.audio_sample_rate and stream.sample_rate then
                 profile.audio_sample_rate = tonumber(stream.sample_rate)
             end
+            if not profile.audio_channels and stream.channels then
+                profile.audio_channels = tonumber(stream.channels)
+            end
         end
     end
     profile.has_video = profile.video_count > 0
@@ -1230,7 +1263,7 @@ local function extract_stream_profile(payload)
     return profile
 end
 
-local function compare_profiles(base, candidate)
+local function compare_profiles(base, candidate, strict)
     if not base or not candidate then
         return true, nil
     end
@@ -1252,6 +1285,22 @@ local function compare_profiles(base, candidate)
     if base.audio_sample_rate and candidate.audio_sample_rate and
         base.audio_sample_rate ~= candidate.audio_sample_rate then
         return false, "audio_sample_rate_mismatch"
+    end
+    if strict then
+        if base.video_width and candidate.video_width and base.video_width ~= candidate.video_width then
+            return false, "video_width_mismatch"
+        end
+        if base.video_height and candidate.video_height and base.video_height ~= candidate.video_height then
+            return false, "video_height_mismatch"
+        end
+        if base.video_fps and candidate.video_fps and
+            math.abs(base.video_fps - candidate.video_fps) > 0.05 then
+            return false, "video_fps_mismatch"
+        end
+        if base.audio_channels and candidate.audio_channels and
+            base.audio_channels ~= candidate.audio_channels then
+            return false, "audio_channels_mismatch"
+        end
     end
     return true, nil
 end
@@ -1328,7 +1377,7 @@ local function tick_failover_compat_probes(job, now)
                         job.active_input_profile = profile
                     end
                     local base = fo.base_profile or job.active_input_profile
-                    local ok, reason = compare_profiles(base, profile)
+                    local ok, reason = compare_profiles(base, profile, fo.compat_strict)
                     input_data.compat = {
                         checked_at = now,
                         ok = ok,
@@ -2275,7 +2324,7 @@ build_probe_args = function(url, duration_sec, include_packets, extra_args, ffpr
     end
     table.insert(args, "-show_streams")
     table.insert(args, "-show_format")
-    local entries = "stream=index,codec_type,codec_name,bit_rate,sample_rate:format=bit_rate"
+    local entries = "stream=index,codec_type,codec_name,bit_rate,sample_rate,width,height,avg_frame_rate,channels:format=bit_rate"
     if include_packets then
         entries = entries .. ":packet=pts_time,stream_index,size"
     end
