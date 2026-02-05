@@ -326,6 +326,8 @@ static int module_call(module_data_t *mod)
             free(response);
             http_response_code(client, 503, NULL);
             http_response_header(client, "Retry-After: 1");
+            http_response_header(client, "Content-Type: application/vnd.apple.mpegurl");
+            apply_header_list(client, mod->idx_m3u_headers);
             http_response_header(client, "Content-Length: 0");
             http_response_send(client);
             lua_pushboolean(lua, true);
