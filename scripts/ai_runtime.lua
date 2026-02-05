@@ -133,6 +133,33 @@ local function build_prompt_text(prompt, context)
     return table.concat(parts, "\n")
 end
 
+local function validate_plan_payload(payload)
+    if type(payload) ~= "table" then
+        return nil, "invalid payload"
+    end
+    local prompt = payload.prompt
+    local proposed = payload.proposed_config
+    if prompt ~= nil and type(prompt) ~= "string" then
+        return nil, "prompt must be string"
+    end
+    if proposed ~= nil and type(proposed) ~= "table" then
+        return nil, "proposed_config must be object"
+    end
+    if prompt ~= nil and prompt:match("^%s*$") then
+        prompt = nil
+    end
+    if prompt and proposed then
+        return nil, "provide prompt or proposed_config"
+    end
+    if prompt then
+        return { mode = "prompt", prompt = prompt }
+    end
+    if proposed then
+        return { mode = "diff", proposed_config = proposed }
+    end
+    return nil, "prompt or proposed_config required"
+end
+
 local function extract_output_json(response)
     if type(response) ~= "table" then
         return nil, "invalid response"
@@ -430,9 +457,10 @@ function ai_runtime.plan(payload, ctx)
     job.actor_user_id = ctx and ctx.user_id or 0
     job.actor_username = ctx and ctx.user or ""
     job.actor_ip = ctx and ctx.ip or ""
-    if type(payload) ~= "table" then
+    local validated, payload_err = validate_plan_payload(payload)
+    if not validated then
         job.status = "error"
-        job.error = "invalid payload"
+        job.error = payload_err or "invalid payload"
         log_audit(job, false, job.error)
         return job
     end
@@ -442,9 +470,9 @@ function ai_runtime.plan(payload, ctx)
         log_audit(job, false, job.error)
         return job
     end
-    if payload.proposed_config ~= nil and type(payload.proposed_config) == "table" then
+    if validated.mode == "diff" then
         log_audit(job, true, "plan requested", { mode = "diff" })
-        local ok, err = ai_tools.config_validate(payload.proposed_config)
+        local ok, err = ai_tools.config_validate(validated.proposed_config)
         if not ok then
             job.status = "error"
             job.error = err or "validation failed"
@@ -458,7 +486,7 @@ function ai_runtime.plan(payload, ctx)
             log_audit(job, false, job.error, { mode = "diff" })
             return job
         end
-        local diff, diff_err = ai_tools.config_diff(current, payload.proposed_config)
+        local diff, diff_err = ai_tools.config_diff(current, validated.proposed_config)
         if not diff then
             job.status = "error"
             job.error = diff_err or "diff failed"
@@ -474,15 +502,15 @@ function ai_runtime.plan(payload, ctx)
         log_audit(job, true, "plan ready", { mode = "diff", summary = diff.summary })
         return job
     end
-    if payload.prompt and payload.prompt ~= "" then
-        log_audit(job, true, "plan requested", { mode = "prompt", prompt_len = #(tostring(payload.prompt)) })
+    if validated.mode == "prompt" then
+        log_audit(job, true, "plan requested", { mode = "prompt", prompt_len = #(tostring(validated.prompt)) })
         if not ai_runtime.is_ready() then
             job.status = "error"
             job.error = "ai not configured"
             log_audit(job, false, job.error, { mode = "prompt" })
             return job
         end
-        schedule_openai_plan(job, tostring(payload.prompt))
+        schedule_openai_plan(job, tostring(validated.prompt))
         return job
     end
     job.status = "error"
