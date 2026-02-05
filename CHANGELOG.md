@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Extended MPTS verify script to assert expected SDT service/provider names.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Extended MPTS verify script to assert expected PNRs and updated CI to use it.
 - Tests:
   - Not run (CI script update).
