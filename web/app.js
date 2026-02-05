@@ -309,6 +309,7 @@ const elements = {
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
   observabilityLogs: $('#obs-logs'),
+  observabilityAiSummary: $('#obs-ai-summary'),
   aiChatLog: $('#ai-chat-log'),
   aiChatInput: $('#ai-chat-input'),
   aiChatSend: $('#ai-chat-send'),
@@ -1381,7 +1382,7 @@ const SETTINGS_GENERAL_SECTIONS = [
           },
           {
             type: 'note',
-            text: 'Отключение фонового rollup снижает нагрузку, но агрегаты строятся по запросу.',
+            text: 'Метрики всегда считаются по запросу (фоновый rollup отключён).',
             level: 'advanced',
           },
         ],
@@ -2066,15 +2067,9 @@ const SETTINGS_GENERAL_SECTIONS = [
             hintId: 'settings-ai-model-hint',
           },
           {
-            id: 'settings-ai-chart-mode',
-            label: 'Charts mode',
-            type: 'select',
-            key: 'ai_chart_mode',
+            type: 'note',
+            text: 'Charts mode: Spec only (PNG rendering отключён).',
             level: 'advanced',
-            options: [
-              { value: 'spec', label: 'Spec (default, fast)' },
-              { value: 'image', label: 'Image (render PNG)' },
-            ],
           },
           {
             id: 'settings-ai-max-tokens',
@@ -11875,6 +11870,15 @@ function formatTranscodeAlert(alert) {
   if (alert.code === 'TRANSCODE_RESTART_LIMIT') {
     return `${alert.message}. Reduce errors or increase restart limits.`;
   }
+  if (alert.code === 'TRANSCODE_WARMUP_FAIL') {
+    return `${alert.message}. Warmup failed; check input health and IDR availability.`;
+  }
+  if (alert.code === 'TRANSCODE_WARMUP_TIMEOUT') {
+    return `${alert.message}. Warmup timed out; input may be stalled.`;
+  }
+  if (alert.code === 'TRANSCODE_WARMUP_STOP') {
+    return `${alert.message}. Warmup stopped before completion.`;
+  }
   return alert.message;
 }
 
@@ -13125,8 +13129,13 @@ function updateObservabilityScopeFields() {
 }
 
 function updateObservabilityOnDemandFields() {
-  if (!elements.settingsObservabilityOnDemand) return;
-  const onDemand = elements.settingsObservabilityOnDemand.checked;
+  if (elements.settingsObservabilityOnDemand) {
+    elements.settingsObservabilityOnDemand.checked = true;
+    elements.settingsObservabilityOnDemand.disabled = true;
+    const field = elements.settingsObservabilityOnDemand.closest ? elements.settingsObservabilityOnDemand.closest('.field') : null;
+    if (field) field.hidden = true;
+  }
+  const onDemand = true;
   const toggleField = (input, hidden) => {
     if (!input) return;
     input.disabled = hidden;
@@ -13431,6 +13440,36 @@ function renderObservabilityLogs(items) {
   });
 }
 
+function renderObservabilityAiSummary(payload) {
+  if (!elements.observabilityAiSummary) return;
+  elements.observabilityAiSummary.innerHTML = '';
+  const note = payload && payload.note ? payload.note : '';
+  const ai = payload && payload.ai ? payload.ai : null;
+  if (!ai) {
+    const empty = createEl('div', 'ai-summary-item', note || 'AI summary unavailable.');
+    elements.observabilityAiSummary.appendChild(empty);
+    return;
+  }
+  if (ai.summary) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Summary'));
+    section.appendChild(createEl('div', 'ai-summary-item', ai.summary));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+  if (Array.isArray(ai.top_issues) && ai.top_issues.length) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Top issues'));
+    ai.top_issues.forEach((item) => section.appendChild(createEl('div', 'ai-summary-item', item)));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+  if (Array.isArray(ai.suggestions) && ai.suggestions.length) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Suggestions'));
+    ai.suggestions.forEach((item) => section.appendChild(createEl('div', 'ai-summary-item', item)));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+}
+
 
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
@@ -13450,6 +13489,7 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
     renderObservabilityLogs([]);
+    renderObservabilityAiSummary({ note: 'AI summary unavailable.' });
     return;
   }
 
@@ -13487,24 +13527,28 @@ async function loadObservability(showStatus) {
     const logItems = logs && logs.items ? logs.items : [];
 
     let summary = {};
+    const latest = {};
+    let lastBucket = 0;
+    items.forEach((row) => {
+      if (row.ts_bucket && row.ts_bucket > lastBucket) {
+        lastBucket = row.ts_bucket;
+      }
+    });
+    items.forEach((row) => {
+      if (row.ts_bucket === lastBucket) {
+        latest[row.metric_key] = row.value;
+      }
+    });
     if (scope === 'global') {
-      const summaryUrl = new URL('/api/v1/ai/summary', window.location.origin);
-      summaryUrl.searchParams.set('range', range);
-      const summaryResp = await apiJson(summaryUrl.toString());
-      summary = (summaryResp && summaryResp.summary) ? summaryResp.summary : {};
+      summary = {
+        total_bitrate_kbps: latest.total_bitrate_kbps || 0,
+        streams_on_air: latest.streams_on_air || 0,
+        streams_down: latest.streams_down || 0,
+        streams_total: latest.streams_total || 0,
+        input_switch: latest.input_switch || 0,
+        alerts_error: latest.alerts_error || 0,
+      };
     } else {
-      const latest = {};
-      let lastBucket = 0;
-      items.forEach((row) => {
-        if (row.ts_bucket && row.ts_bucket > lastBucket) {
-          lastBucket = row.ts_bucket;
-        }
-      });
-      items.forEach((row) => {
-        if (row.ts_bucket === lastBucket) {
-          latest[row.metric_key] = row.value;
-        }
-      });
       summary = {
         bitrate_kbps: latest.bitrate_kbps || 0,
         on_air: Number(latest.on_air || 0) > 0,
@@ -13980,9 +14024,10 @@ function applySettingsToUI() {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
     const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
-    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const onDemand = true;
     if (elements.settingsObservabilityOnDemand) {
-      elements.settingsObservabilityOnDemand.checked = onDemand;
+      elements.settingsObservabilityOnDemand.checked = true;
+      elements.settingsObservabilityOnDemand.disabled = true;
     }
     elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (!onDemand && metricsDays > 0);
     setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
@@ -14068,8 +14113,7 @@ function applySettingsToUI() {
     elements.settingsAiModelHint.textContent = 'Default: gpt-5.2 (auto fallback to gpt-5-mini, gpt-4.1 if unavailable).';
   }
   if (elements.settingsAiChartMode) {
-    const mode = getSettingString('ai_chart_mode', 'spec');
-    elements.settingsAiChartMode.value = mode || 'spec';
+    elements.settingsAiChartMode.value = 'spec';
   }
   if (elements.settingsAiMaxTokens) {
     elements.settingsAiMaxTokens.value = getSettingNumber('ai_max_tokens', 512);
@@ -14452,7 +14496,7 @@ function collectGeneralSettings() {
   const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
-  const observabilityOnDemand = elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked;
+  const observabilityOnDemand = true;
   if (observabilityEnabled) {
     if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
       throw new Error('Log retention days must be >= 1');
@@ -14658,7 +14702,7 @@ function collectGeneralSettings() {
     payload.ai_api_base = elements.settingsAiApiBase.value.trim();
   }
   if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
-  if (elements.settingsAiChartMode) payload.ai_chart_mode = elements.settingsAiChartMode.value || 'spec';
+  payload.ai_chart_mode = 'spec';
   if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
   if (aiTemperature !== undefined) payload.ai_temperature = aiTemperature;
   if (elements.settingsAiAllowedChats) {

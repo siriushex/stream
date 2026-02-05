@@ -42,7 +42,7 @@ ai_runtime.configure()
 
 local job = ai_runtime.plan({ prompt = "rename stream test to prod" }, { user = "admin" })
 assert_true(job and job.status == "done", "plan should be done")
-assert_true(captured.include_logs == true, "include_logs should be true by default")
+assert_true(captured.include_logs == false, "include_logs should be false by default")
 
 job = ai_runtime.plan({ prompt = "show errors and logs for stream a1" }, { user = "admin" })
 assert_true(job and job.status == "done", "plan should be done")

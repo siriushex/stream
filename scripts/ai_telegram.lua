@@ -129,7 +129,9 @@ end
 
 local function build_summary_snapshot(range_sec)
     local on_demand = false
-    if config and config.get_setting then
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    elseif config and config.get_setting then
         local v = config.get_setting("ai_metrics_on_demand")
         if v == true or v == 1 or v == "1" or v == "true" then
             on_demand = true
@@ -192,7 +194,9 @@ local function build_stream_snapshot(stream_id, range_sec)
     end
 
     local on_demand = false
-    if config and config.get_setting then
+    if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
+        on_demand = true
+    elseif config and config.get_setting then
         local v = config.get_setting("ai_metrics_on_demand")
         if v == true or v == 1 or v == "1" or v == "true" then
             on_demand = true
@@ -297,7 +301,7 @@ local function parse_command(text)
     local sub = parts[1] or "help"
     local opts = {}
     for i = 2, #parts do
-        local key, value = parts[i]:match("^(%w+)%=(.+)$")
+        local key, value = parts[i]:match("^([%w_%-]+)%=(.+)$")
         if key then
             opts[key] = value
         else
