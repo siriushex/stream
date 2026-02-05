@@ -19,6 +19,7 @@
   - Added AI audit log entries and retry/backoff with rate-limit header capture.
   - Added strict input validation for /api/v1/ai/plan.
   - Added AI plan smoke test fixture.
+  - Added server-side validation for AI plan output schema.
 - Tests:
   - ./astra scripts/tests/ai_plan_smoke.lua
 ### 2026-02-05

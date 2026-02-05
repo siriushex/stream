@@ -71,6 +71,9 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
 - `action`: `ai_plan`
 - `meta`: режим (`diff` или `prompt`), summary/diff.
 
+## Валидация AI‑ответа
+- Сервер валидирует `plan` (summary/ops/warnings) до применения.
+
 ## Переменные окружения
 - `ASTRAL_OPENAI_API_KEY` или `OPENAI_API_KEY`.
 
