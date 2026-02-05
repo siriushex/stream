@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Warn when `mpts_config.nit.lcn_version` is set (ignored).
+- Tests:
+  - Not run (log change).
+### 2026-02-05
+- Changes:
   - Wire MPTS `cat_version` from config into mux options.
 - Tests:
   - Not run (config wiring).

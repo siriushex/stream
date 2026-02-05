@@ -393,6 +393,9 @@ local function build_mpts_mux_options(channel_config)
     if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
     if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
     if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+    if nit.lcn_version ~= nil then
+        log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
+    end
 
     if adv.si_interval_ms ~= nil then opts.si_interval_ms = tonumber(adv.si_interval_ms) end
     if adv.pat_version ~= nil then opts.pat_version = tonumber(adv.pat_version) end
