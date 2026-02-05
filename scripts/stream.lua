@@ -297,7 +297,6 @@ local function apply_mpts_config(channel_config)
     if general.network_id ~= nil then note("general.network_id") end
     if general.network_name ~= nil then note("general.network_name") end
     if general.onid ~= nil then note("general.onid") end
-    if nit.lcn_version ~= nil then note("nit.lcn_version") end
     if nit.lcn_descriptor_tag ~= nil then note("nit.lcn_descriptor_tag") end
     if nit.delivery ~= nil and nit.delivery ~= "" then note("nit.delivery") end
     if nit.frequency ~= nil then note("nit.frequency") end
@@ -410,7 +409,18 @@ local function build_mpts_mux_options(channel_config)
         end
     end
     if nit.lcn_version ~= nil then
-        log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
+        local lcn_version = tonumber(nit.lcn_version)
+        if lcn_version == nil then
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не распознан")
+        elseif adv.nit_version ~= nil then
+            -- Если явно задан nit_version, lcn_version игнорируем.
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version игнорируется: задан advanced.nit_version")
+        elseif lcn_version < 0 or lcn_version > 31 then
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version вне диапазона 0..31, игнорируем")
+        else
+            -- LCN version используется для совместимости и напрямую задаёт версию NIT.
+            opts.nit_version = lcn_version
+        end
     end
 
     if adv.si_interval_ms ~= nil then

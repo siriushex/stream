@@ -1839,10 +1839,16 @@
                 <span>LCN descriptor tag</span>
                 <input type="text" id="mpts-lcn-tag" class="mpts-field" placeholder="0x83" />
               </label>
+              <label class="field">
+                <span>LCN version (optional)</span>
+                <input type="number" id="mpts-lcn-version" class="mpts-field" min="0" max="31" placeholder="0..31" />
+              </label>
             </div>
             <div class="form-hint is-hidden" id="mpts-delivery-warning"></div>
+            <div class="form-hint is-hidden" id="mpts-lcn-version-warning"></div>
             <div class="form-hint">Only DVB-C delivery is generated; other delivery types are stored but not applied.</div>
             <div class="form-hint">LCN задаётся в списке сервисов; tag 0x83 (NorDig) или совместимые варианты.</div>
+            <div class="form-hint">LCN version используется для совместимости и переопределяет NIT version, если он не задан.</div>
           </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">Advanced</div>
