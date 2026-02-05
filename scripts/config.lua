@@ -1873,7 +1873,7 @@ end
 function config.count_alerts(opts)
     opts = opts or {}
     local since = tonumber(opts.since) or 0
-    local until_ts = tonumber(opts.until) or 0
+    local until_ts = tonumber(opts["until"]) or 0
     local where = { "ts >= " .. since }
     if until_ts and until_ts > 0 then
         table.insert(where, "ts < " .. until_ts)
@@ -1915,7 +1915,7 @@ end
 function config.list_ai_log_events(opts)
     opts = opts or {}
     local since = tonumber(opts.since) or 0
-    local until_ts = tonumber(opts.until) or 0
+    local until_ts = tonumber(opts["until"]) or 0
     local limit = tonumber(opts.limit) or 500
     if limit < 1 then
         limit = 1
@@ -1983,7 +1983,7 @@ end
 function config.list_ai_metrics(opts)
     opts = opts or {}
     local since = tonumber(opts.since) or 0
-    local until_ts = tonumber(opts.until) or 0
+    local until_ts = tonumber(opts["until"]) or 0
     local limit = tonumber(opts.limit) or 2000
     if limit < 1 then
         limit = 1
