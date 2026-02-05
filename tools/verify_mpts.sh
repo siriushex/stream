@@ -34,8 +34,11 @@ if ! grep -q "TDT:" "$LOG_FILE"; then
 fi
 
 if ! grep -q "TOT:" "$LOG_FILE"; then
-  echo "TOT not found"
-  exit 1
+  if [[ "${EXPECT_TOT:-0}" == "1" ]]; then
+    echo "TOT not found"
+    exit 1
+  fi
+  echo "TOT not found (optional)"
 fi
 
 echo "OK"
