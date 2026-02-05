@@ -2384,7 +2384,24 @@ local function lint_stream_list(list, label, warnings)
                 end
 
                 local mpts = type(entry.mpts_config) == "table" and entry.mpts_config or {}
+                local nit = type(mpts.nit) == "table" and mpts.nit or {}
                 local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
+                local delivery = tostring(nit.delivery or ""):lower()
+                if delivery ~= "" then
+                    if delivery == "cable" or delivery == "dvb-c" or delivery == "dvb_c" then
+                        if nit.frequency == nil then
+                            warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.frequency is required for DVB-C delivery"
+                        end
+                        if nit.symbolrate == nil then
+                            warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.symbolrate is required for DVB-C delivery"
+                        end
+                        if nit.modulation == nil or tostring(nit.modulation) == "" then
+                            warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.modulation is required for DVB-C delivery"
+                        end
+                    else
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.delivery is not supported (only DVB-C is generated)"
+                    end
+                end
                 local pass_enabled = adv.pass_nit == true or adv.pass_sdt == true or adv.pass_eit == true or adv.pass_tdt == true
                 if pass_enabled and type(entry.mpts_services) == "table" and #entry.mpts_services > 1 then
                     warnings[#warnings + 1] = label .. "[" .. idx .. "] pass_* is intended for single-service MPTS"
