@@ -309,6 +309,7 @@ const elements = {
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
   observabilityLogs: $('#obs-logs'),
+  observabilityAiSummary: $('#obs-ai-summary'),
   aiChatLog: $('#ai-chat-log'),
   aiChatInput: $('#ai-chat-input'),
   aiChatSend: $('#ai-chat-send'),
@@ -13031,6 +13032,36 @@ function renderObservabilityLogs(items) {
   });
 }
 
+function renderObservabilityAiSummary(payload) {
+  if (!elements.observabilityAiSummary) return;
+  elements.observabilityAiSummary.innerHTML = '';
+  const note = payload && payload.note ? payload.note : '';
+  const ai = payload && payload.ai ? payload.ai : null;
+  if (!ai) {
+    const empty = createEl('div', 'ai-summary-item', note || 'AI summary unavailable.');
+    elements.observabilityAiSummary.appendChild(empty);
+    return;
+  }
+  if (ai.summary) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Summary'));
+    section.appendChild(createEl('div', 'ai-summary-item', ai.summary));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+  if (Array.isArray(ai.top_issues) && ai.top_issues.length) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Top issues'));
+    ai.top_issues.forEach((item) => section.appendChild(createEl('div', 'ai-summary-item', item)));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+  if (Array.isArray(ai.suggestions) && ai.suggestions.length) {
+    const section = createEl('div', 'ai-summary-section');
+    section.appendChild(createEl('div', 'ai-summary-label', 'Suggestions'));
+    ai.suggestions.forEach((item) => section.appendChild(createEl('div', 'ai-summary-item', item)));
+    elements.observabilityAiSummary.appendChild(section);
+  }
+}
+
 
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
@@ -13050,6 +13081,7 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
     renderObservabilityLogs([]);
+    renderObservabilityAiSummary({ note: 'AI summary unavailable.' });
     return;
   }
 
@@ -13115,6 +13147,29 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
+
+    let aiPayload = null;
+    if (scope === 'global') {
+      const aiEnabled = getSettingBool('ai_enabled', false);
+      const aiKeySet = getSettingBool('ai_api_key_set', false);
+      if (aiEnabled && aiKeySet) {
+        const aiUrl = new URL('/api/v1/ai/summary', window.location.origin);
+        aiUrl.searchParams.set('range', range);
+        aiUrl.searchParams.set('ai', '1');
+        try {
+          aiPayload = await apiJson(aiUrl.toString());
+        } catch (err) {
+          aiPayload = { note: formatNetworkError(err) || 'AI summary failed.' };
+        }
+      } else if (!aiEnabled) {
+        aiPayload = { note: 'AI disabled.' };
+      } else {
+        aiPayload = { note: 'AI key not set.' };
+      }
+    } else {
+      aiPayload = { note: 'AI summary available for global scope.' };
+    }
+    renderObservabilityAiSummary(aiPayload);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
