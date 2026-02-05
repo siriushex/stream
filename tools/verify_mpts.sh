@@ -4,6 +4,7 @@ set -euo pipefail
 INPUT_URL="${1:-udp://127.0.0.1:12346}"
 DURATION_SEC="${2:-5}"
 EXPECT_PNRS="${EXPECT_PNRS:-}"
+EXPECT_PMT_PNRS="${EXPECT_PMT_PNRS:-}"
 EXPECT_SERVICES="${EXPECT_SERVICES:-}"
 EXPECT_PROVIDERS="${EXPECT_PROVIDERS:-}"
 EXPECT_NETWORK_ID="${EXPECT_NETWORK_ID:-}"
@@ -51,6 +52,20 @@ if [[ -n "$EXPECT_PNRS" ]]; then
     fi
     if ! grep -q "PAT: pid: .* pnr: ${pnr_trim}" "$LOG_FILE"; then
       echo "PAT missing PNR ${pnr_trim}"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_PNRS" ]]; then
+  IFS=',' read -r -a PMT_PNR_LIST <<< "$EXPECT_PMT_PNRS"
+  for pnr in "${PMT_PNR_LIST[@]}"; do
+    pnr_trim="$(echo "$pnr" | xargs)"
+    if [[ -z "$pnr_trim" ]]; then
+      continue
+    fi
+    if ! grep -q "PMT: pnr: ${pnr_trim}" "$LOG_FILE"; then
+      echo "PMT missing PNR ${pnr_trim}"
       exit 1
     fi
   done
