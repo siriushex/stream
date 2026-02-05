@@ -118,6 +118,45 @@ local function build_json_schema()
     }
 end
 
+local function format_refresh_errors(errors)
+    if type(errors) ~= "table" or #errors == 0 then
+        return nil
+    end
+    local parts = {}
+    for _, entry in ipairs(errors) do
+        if type(entry) == "table" then
+            table.insert(parts, tostring(entry.id or "?") .. ": " .. tostring(entry.error or "error"))
+        else
+            table.insert(parts, tostring(entry))
+        end
+    end
+    return table.concat(parts, "; ")
+end
+
+local function reload_runtime(force)
+    local errors = {}
+    if runtime and runtime.refresh_adapters then
+        runtime.refresh_adapters(force)
+    end
+    if runtime and runtime.refresh then
+        local ok, stream_errors = runtime.refresh(force)
+        if ok == false then
+            local detail = format_refresh_errors(stream_errors) or "stream refresh failed"
+            table.insert(errors, detail)
+        end
+    end
+    if splitter and splitter.refresh then
+        splitter.refresh(force)
+    end
+    if buffer and buffer.refresh then
+        buffer.refresh()
+    end
+    if #errors > 0 then
+        return nil, table.concat(errors, "; ")
+    end
+    return true
+end
+
 local function build_prompt_text(prompt, context)
     local parts = {}
     table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
@@ -579,8 +618,203 @@ function ai_runtime.apply(payload, ctx)
         requested_by = ctx and ctx.user or "",
         source = ctx and ctx.source or "api",
     })
-    job.status = "not_implemented"
-    return nil, "ai apply not implemented"
+    job.actor_user_id = ctx and ctx.user_id or 0
+    job.actor_username = ctx and ctx.user or ""
+    job.actor_ip = ctx and ctx.ip or ""
+
+    if not ai_runtime.is_enabled() then
+        job.status = "error"
+        job.error = "ai disabled"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    if not (ai_runtime.config and ai_runtime.config.allow_apply) then
+        job.status = "error"
+        job.error = "ai apply disabled"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    if type(payload) ~= "table" then
+        job.status = "error"
+        job.error = "invalid payload"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    local proposed = payload.proposed_config or payload.config
+    if type(proposed) ~= "table" then
+        job.status = "error"
+        job.error = "proposed_config required"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    local mode = tostring(payload.mode or "merge")
+    if mode ~= "merge" and mode ~= "replace" then
+        job.status = "error"
+        job.error = "invalid apply mode"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    local ok, err = ai_tools.config_validate(proposed)
+    if not ok then
+        job.status = "error"
+        job.error = err or "validation failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    local lint_warnings = {}
+    if config and config.lint_payload then
+        local lint_errors
+        lint_errors, lint_warnings = config.lint_payload(proposed)
+        if lint_errors and #lint_errors > 0 then
+            job.status = "error"
+            job.error = lint_errors[1] or "lint failed"
+            log_audit(job, false, job.error)
+            return nil, job.error
+        end
+    end
+
+    local current, snap_err = ai_tools.config_snapshot()
+    if not current then
+        job.status = "error"
+        job.error = snap_err or "snapshot failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+    local diff, diff_err = ai_tools.config_diff(current, proposed)
+    if not diff then
+        job.status = "error"
+        job.error = diff_err or "diff failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    local revision_id = 0
+    if config and config.create_revision then
+        revision_id = config.create_revision({
+            created_by = job.actor_username or "",
+            comment = tostring(payload.comment or "ai apply"),
+            status = "PENDING",
+        })
+    end
+
+    local lkg_path = nil
+    if config and config.ensure_lkg_snapshot then
+        local ok_lkg, err_lkg = config.ensure_lkg_snapshot()
+        if ok_lkg then
+            lkg_path = ok_lkg
+        else
+            if revision_id > 0 then
+                config.update_revision(revision_id, {
+                    status = "BAD",
+                    error_text = "backup failed: " .. tostring(err_lkg),
+                })
+            end
+            job.status = "error"
+            job.error = "backup failed: " .. tostring(err_lkg)
+            log_audit(job, false, job.error)
+            return nil, job.error
+        end
+    end
+
+    local summary, apply_err = ai_tools.config_apply(proposed, {
+        mode = mode,
+        transaction = true,
+    })
+    if not summary then
+        if revision_id > 0 then
+            config.update_revision(revision_id, {
+                status = "BAD",
+                error_text = tostring(apply_err or "apply failed"),
+            })
+        end
+        job.status = "error"
+        job.error = apply_err or "apply failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    local snapshot_path = nil
+    if revision_id > 0 and config and config.build_snapshot_path then
+        snapshot_path = config.build_snapshot_path(revision_id)
+        local ok_snap, snap_err = config.export_astra_file(snapshot_path)
+        if not ok_snap then
+            config.update_revision(revision_id, {
+                status = "BAD",
+                error_text = "snapshot failed: " .. tostring(snap_err),
+                snapshot_path = snapshot_path,
+            })
+            if lkg_path then
+                config.restore_snapshot(lkg_path)
+                reload_runtime(true)
+            end
+            job.status = "error"
+            job.error = "snapshot failed: " .. tostring(snap_err)
+            log_audit(job, false, job.error)
+            return nil, job.error
+        end
+    end
+
+    local reload_ok, reload_err = reload_runtime(true)
+    if not reload_ok then
+        if revision_id > 0 then
+            config.update_revision(revision_id, {
+                status = "BAD",
+                error_text = tostring(reload_err or "reload failed"),
+                snapshot_path = snapshot_path,
+            })
+        end
+        if config and config.add_alert then
+            config.add_alert("CRITICAL", "", "CONFIG_RELOAD_FAILED",
+                tostring(reload_err or "reload failed"),
+                { revision_id = revision_id })
+        end
+        if lkg_path then
+            config.restore_snapshot(lkg_path)
+            reload_runtime(true)
+        end
+        job.status = "error"
+        job.error = reload_err or "reload failed"
+        log_audit(job, false, job.error)
+        return nil, job.error
+    end
+
+    if revision_id > 0 then
+        config.update_revision(revision_id, {
+            status = "ACTIVE",
+            applied_ts = os.time(),
+            snapshot_path = snapshot_path,
+        })
+        config.set_setting("config_active_revision_id", revision_id)
+        config.set_setting("config_lkg_revision_id", revision_id)
+        if config.update_lkg_snapshot then
+            config.update_lkg_snapshot()
+        end
+        local max_keep = config.get_setting("config_max_revisions")
+        config.prune_revisions(max_keep)
+        if config.mark_boot_ok then
+            config.mark_boot_ok(revision_id)
+        end
+    end
+
+    if config and config.add_alert then
+        config.add_alert("INFO", "", "CONFIG_RELOAD_OK", "config applied", {
+            revision_id = revision_id,
+        })
+    end
+
+    job.status = "done"
+    job.result = {
+        revision_id = revision_id,
+        diff = diff,
+        summary = summary,
+        warnings = lint_warnings or {},
+    }
+    log_audit(job, true, "apply ok", {
+        revision_id = revision_id,
+        diff_summary = diff.summary,
+    })
+    return job
 end
 
 function ai_runtime.handle_telegram(payload)

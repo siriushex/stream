@@ -242,7 +242,22 @@ function ai_tools.config_diff(old_payload, new_payload)
 end
 
 function ai_tools.config_apply(payload, opts)
-    return nil, "config apply not implemented"
+    if not config or not config.import_astra then
+        return nil, "config apply unavailable"
+    end
+    opts = opts or {}
+    local mode = opts.mode or "merge"
+    if mode ~= "merge" and mode ~= "replace" then
+        return nil, "invalid apply mode"
+    end
+    local summary, err = config.import_astra(payload, {
+        mode = mode,
+        transaction = (opts.transaction ~= false),
+    })
+    if not summary then
+        return nil, err or "apply failed"
+    end
+    return summary
 end
 
 function ai_tools.config_verify()
