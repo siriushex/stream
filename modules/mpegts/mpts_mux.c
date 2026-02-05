@@ -928,6 +928,7 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     const uint8_t *pointer;
     uint16_t selected_pnr = 0;
     uint16_t selected_pid = 0;
+    uint16_t program_count = 0;
 
     PAT_ITEMS_FOREACH(psi, pointer)
     {
@@ -935,6 +936,8 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
         const uint16_t pid = PAT_ITEM_GET_PID(psi, pointer);
         if(pnr == 0)
             continue;
+
+        ++program_count;
 
         if(svc->has_pnr)
         {
@@ -957,6 +960,12 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     {
         asc_log_warning(SVC_MSG(svc, "PAT не содержит выбранной программы"));
         return;
+    }
+
+    if(!svc->has_pnr && program_count > 1)
+    {
+        asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d)"),
+                        program_count, selected_pnr);
     }
 
     if(svc->has_pnr && selected_pnr != svc->pnr_cfg)
