@@ -2583,11 +2583,14 @@ function formatTranscodeProgress(progress) {
 function formatRestartMeta(meta) {
   if (!meta || typeof meta !== 'object') return 'n/a';
   const parts = [];
+  if (meta.input_index !== undefined) parts.push(`input #${meta.input_index}`);
   if (meta.output_index !== undefined) parts.push(`output #${meta.output_index}`);
   if (meta.desync_ms !== undefined) parts.push(`desync ${Math.round(meta.desync_ms)} ms`);
   if (meta.bitrate_kbps !== undefined) parts.push(`bitrate ${Math.round(meta.bitrate_kbps)} Kbit/s`);
   if (meta.timeout_sec !== undefined) parts.push(`timeout ${meta.timeout_sec}s`);
   if (meta.count !== undefined) parts.push(`errors ${meta.count}`);
+  if (meta.bad_pts) parts.push('bad pts');
+  if (meta.hang) parts.push('hang');
   if (meta.error_line) parts.push(`error "${meta.error_line}"`);
   if (meta.exit_code !== undefined) parts.push(`exit ${meta.exit_code}`);
   if (meta.exit_signal !== undefined && meta.exit_signal !== 0) parts.push(`signal ${meta.exit_signal}`);
@@ -12780,6 +12783,13 @@ function renderAiPlanResult(job) {
     return wrapper;
   }
   wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
+  if (Array.isArray(plan.help_lines) && plan.help_lines.length) {
+    const helpBlock = createEl('div', 'ai-help-lines');
+    plan.help_lines.forEach((line) => {
+      helpBlock.appendChild(createEl('div', '', `- ${line}`));
+    });
+    wrapper.appendChild(helpBlock);
+  }
   if (Array.isArray(plan.warnings) && plan.warnings.length) {
     const warn = createEl('div', 'form-note', `Warnings: ${plan.warnings.join('; ')}`);
     wrapper.appendChild(warn);

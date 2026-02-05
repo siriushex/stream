@@ -573,6 +573,24 @@ local function create_job(kind, payload)
     return job
 end
 
+local function build_help_plan()
+    return {
+        summary = "AstralAI help",
+        help_lines = {
+            "help — show this list",
+            "refresh channel <id>",
+            "show channel graphs (24h)",
+            "show errors last 24h",
+            "analyze stream <id>",
+            "scan dvb adapter <n>",
+            "list busy adapters",
+            "check signal lock (femon)",
+            "backup config now",
+            "restart stream <id>",
+        },
+    }
+end
+
 function ai_runtime.plan(payload, ctx)
     local job = create_job("plan", {
         requested_by = ctx and ctx.user or "",
@@ -628,9 +646,17 @@ function ai_runtime.plan(payload, ctx)
         return job
     end
     if validated.mode == "prompt" then
+        local prompt_text = tostring(validated.prompt or "")
+        local prompt_clean = prompt_text:lower():gsub("^%s+", ""):gsub("%s+$", "")
+        if prompt_clean == "/help" or prompt_clean == "help" then
+            job.status = "done"
+            job.result = { plan = build_help_plan() }
+            log_audit(job, true, "plan ready", { mode = "prompt", help = true })
+            return job
+        end
         log_audit(job, true, "plan requested", {
             mode = "prompt",
-            prompt_len = #(tostring(validated.prompt)),
+            prompt_len = #prompt_text,
             include_logs = payload and payload.include_logs or nil,
             include_cli = payload and payload.include_cli or nil,
         })

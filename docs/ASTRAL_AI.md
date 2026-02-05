@@ -157,6 +157,7 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
   - **CLI tools**: `--stream`, `--dvbls`, `--analyze`, `--femon` (только при запросе).
 - Apply доступен только если `ai_allow_apply=true`.
  - Для чата включён `preview_diff=true`, чтобы показывать предварительный diff.
+- Команда `help` или `/help` возвращает встроенный список подсказок (без вызова OpenAI).
 
 ## Audit log
 Для каждого AI‑плана пишется запись в `audit_log`:
@@ -168,6 +169,9 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
 
 ## Переменные окружения
 - `ASTRAL_OPENAI_API_KEY` или `OPENAI_API_KEY`.
+- `LLM_PROXY_PRIMARY` / `LLM_PROXY_SECONDARY` — HTTP‑прокси для OpenAI запросов (опционально).
+  - Пример: `http://user:pass@host:port`
+  - Если задано, AstralAI отправляет запросы через `curl` с proxy (без логирования секретов).
 
 ## Важно
 Apply доступен только при `ai_allow_apply=true` и использует backup + rollback.
