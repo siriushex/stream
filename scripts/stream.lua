@@ -408,6 +408,28 @@ local function build_mpts_mux_options(channel_config)
             log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tag не распознан")
         end
     end
+    if nit.lcn_descriptor_tags ~= nil then
+        if type(nit.lcn_descriptor_tags) == "table" then
+            local tags = {}
+            for _, value in ipairs(nit.lcn_descriptor_tags) do
+                local tag = tonumber(value)
+                if tag ~= nil and tag >= 1 and tag <= 255 then
+                    table.insert(tags, tostring(tag))
+                else
+                    log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tags содержит неверное значение")
+                end
+            end
+            if #tags > 0 then
+                opts.lcn_descriptor_tags = table.concat(tags, ",")
+            end
+        elseif type(nit.lcn_descriptor_tags) == "string" then
+            if nit.lcn_descriptor_tags ~= "" then
+                opts.lcn_descriptor_tags = tostring(nit.lcn_descriptor_tags)
+            end
+        else
+            log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_descriptor_tags должен быть строкой или массивом")
+        end
+    end
     if nit.lcn_version ~= nil then
         local lcn_version = tonumber(nit.lcn_version)
         if lcn_version == nil then

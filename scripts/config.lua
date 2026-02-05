@@ -2441,6 +2441,7 @@ local function lint_stream_list(list, label, warnings)
                 local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
                 local delivery = tostring(nit.delivery or ""):lower()
                 local lcn_version = nit.lcn_version
+                local lcn_tags = nit.lcn_descriptor_tags
                 if delivery ~= "" then
                     if delivery == "cable" or delivery == "dvb-c" or delivery == "dvb_c" then
                         if nit.frequency == nil then
@@ -2454,6 +2455,30 @@ local function lint_stream_list(list, label, warnings)
                         end
                     else
                         warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.delivery is not supported (only DVB-C is generated)"
+                    end
+                end
+                if lcn_tags ~= nil then
+                    if type(lcn_tags) == "table" then
+                        for _, value in ipairs(lcn_tags) do
+                            local tag = tonumber(value)
+                            if tag == nil or tag < 1 or tag > 255 then
+                                warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags contains invalid tag"
+                                break
+                            end
+                        end
+                    elseif type(lcn_tags) == "string" then
+                        for token in string.gmatch(lcn_tags, "[^,%s]+") do
+                            local tag = tonumber(token)
+                            if tag == nil or tag < 1 or tag > 255 then
+                                warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags contains invalid tag"
+                                break
+                            end
+                        end
+                    else
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags should be string or array"
+                    end
+                    if nit.lcn_descriptor_tag ~= nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags overrides nit.lcn_descriptor_tag"
                     end
                 end
                 if lcn_version ~= nil then
