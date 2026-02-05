@@ -7,9 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260205r" />
-  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script defer src="/app.js?v=20260205r"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260205s" />
+  <script defer src="/app.js?v=20260205s"></script>
 </head>
 <body>
   <div class="app">
@@ -36,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260205r</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260205s</div>
       </div>
     </header>
 
@@ -2074,6 +2073,17 @@
             <input type="checkbox" id="stream-transcode-log-main" />
             <span>Log ffmpeg to Astra log</span>
           </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-process-per-output" />
+            <span>One ffmpeg process per output (fault isolation)</span>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-seamless-udp-proxy" />
+            <span>Seamless UDP/RTP cutover via local proxy (warm-switch)</span>
+          </label>
+          <div class="form-hint">
+            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
+          </div>
 
           <label class="field">
             <span>Global args (one per line)</span>
@@ -2098,6 +2108,7 @@
           <div class="form-hint" id="stream-transcode-status"></div>
           <div class="form-hint" id="stream-transcode-warmup"></div>
           <div class="form-hint" id="stream-transcode-restart"></div>
+          <div class="form-hint form-hint-pre" id="stream-transcode-workers"></div>
           <div class="form-hint form-hint-pre" id="stream-transcode-stderr"></div>
 
           <label class="checkline">
