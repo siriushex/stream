@@ -16426,9 +16426,62 @@ function buildAiErrorNode(message, detail) {
   wrap.appendChild(createEl('div', '', message || 'AI error'));
   const extra = (detail || '').trim();
   if (extra) {
-    wrap.appendChild(createEl('div', 'form-note', extra));
+    // Preserve newlines for debugging details without dumping raw JSON blobs.
+    wrap.appendChild(createEl('div', 'form-hint form-hint-pre is-error', extra));
   }
   return wrap;
+}
+
+function formatAiJobMeta(job) {
+  if (!job) return '';
+  const parts = [];
+  if (job.model) parts.push(`model=${job.model}`);
+  const attempts = Number.isFinite(job.attempts) ? job.attempts : null;
+  const max = Number.isFinite(job.max_attempts) ? job.max_attempts : null;
+  if (attempts != null && max != null) parts.push(`attempt=${attempts}/${max}`);
+  if (attempts != null && max == null) parts.push(`attempt=${attempts}`);
+  if (job.error && typeof job.error === 'string' && job.error.trim()) parts.push(`last=${job.error.trim()}`);
+  if (job.rate_limits && typeof job.rate_limits === 'object') {
+    const rl = job.rate_limits;
+    const rlParts = [];
+    if (rl.requests_remaining != null) rlParts.push(`req_rem=${rl.requests_remaining}`);
+    if (rl.tokens_remaining != null) rlParts.push(`tok_rem=${rl.tokens_remaining}`);
+    if (rl.reset_seconds != null) rlParts.push(`reset=${rl.reset_seconds}s`);
+    if (rlParts.length) parts.push(`rate(${rlParts.join(' ')})`);
+  }
+  return parts.join(' ');
+}
+
+function computeAiNextPollDelayMs(job) {
+  if (!job || job.status !== 'retry') return 1500;
+  const next = Number(job.next_try_ts);
+  if (!Number.isFinite(next) || next <= 0) return 2500;
+  const now = Math.floor(Date.now() / 1000);
+  const remain = Math.max(0, next - now);
+  // If the next retry is far away, avoid hammering /ai/jobs.
+  if (remain >= 8) return 8000;
+  if (remain >= 4) return 4000;
+  return 2000;
+}
+
+function formatAiJobStatus(job) {
+  if (!job) return 'AI...';
+  const status = job.status || 'running';
+  const attempts = Number.isFinite(job.attempts) ? job.attempts : null;
+  const max = Number.isFinite(job.max_attempts) ? job.max_attempts : null;
+  const attemptText = attempts != null && max != null ? ` (attempt ${attempts}/${max})` : '';
+  if (status === 'retry') {
+    const next = Number(job.next_try_ts);
+    if (Number.isFinite(next) && next > 0) {
+      const now = Math.floor(Date.now() / 1000);
+      const remain = Math.max(0, next - now);
+      const remainText = remain > 0 ? `, next in ${remain}s` : ', retrying...';
+      const last = job.error ? ` ${job.error}` : '';
+      return `AI retry${attemptText}${last}${remainText}`;
+    }
+    return `AI retry${attemptText}...`;
+  }
+  return `AI ${status}${attemptText}...`;
 }
 
 function getAiHelpHints() {
@@ -16468,7 +16521,7 @@ function buildAiHelpNode() {
 
 function clearAiChatPolling() {
   if (state.aiChatPoll) {
-    clearInterval(state.aiChatPoll);
+    clearTimeout(state.aiChatPoll);
     state.aiChatPoll = null;
   }
   state.aiChatJobId = null;
@@ -16674,45 +16727,58 @@ function startAiChatPolling(jobId) {
   state.aiChatBusy = true;
   if (elements.aiChatSend) elements.aiChatSend.disabled = true;
   if (elements.aiChatStop) elements.aiChatStop.disabled = false;
-  let attempts = 0;
-  const maxAttempts = 60;
-  state.aiChatPoll = setInterval(async () => {
-    attempts += 1;
-    if (attempts > maxAttempts) {
+  const startMs = Date.now();
+  const deadlineMs = startMs + (90 * 1000);
+
+  const scheduleNext = (delayMs) => {
+    state.aiChatPoll = setTimeout(() => pollOnce(), delayMs);
+  };
+
+  const pollOnce = async () => {
+    if (!state.aiChatJobId || state.aiChatJobId !== jobId) return;
+    if (Date.now() > deadlineMs) {
       appendAiChatMessage('system', 'AI response timed out.');
       clearAiChatPolling();
       return;
     }
     try {
       const job = await fetchAiJob(jobId);
-      if (!job) return;
-      if (job.status === 'running' || job.status === 'queued' || job.status === 'retry') {
-        setAiChatStatus(`AI ${job.status}...`);
+      if (!job) {
+        scheduleNext(1500);
         return;
       }
+
+      if (job.status === 'running' || job.status === 'queued' || job.status === 'retry') {
+        setAiChatStatus(formatAiJobStatus(job));
+        scheduleNext(computeAiNextPollDelayMs(job));
+        return;
+      }
+
+      if (state.aiChatPendingEl) {
+        state.aiChatPendingEl.remove();
+        state.aiChatPendingEl = null;
+      }
+
       if (job.status === 'done') {
-        if (state.aiChatPendingEl) {
-          state.aiChatPendingEl.remove();
-          state.aiChatPendingEl = null;
-        }
         appendAiChatMessage('assistant', renderAiPlanResult(job));
         setAiChatStatus('');
       } else if (job.status === 'error') {
-        if (state.aiChatPendingEl) {
-          state.aiChatPendingEl.remove();
-          state.aiChatPendingEl = null;
-        }
         const detail = job.error_detail && job.error_detail !== job.error ? job.error_detail : '';
-        appendAiChatMessage('system', buildAiErrorNode(`AI error: ${job.error || 'unknown'}`, detail));
+        const metaLine = formatAiJobMeta(job);
+        const extra = [detail, metaLine].filter(Boolean).join('\n');
+        appendAiChatMessage('system', buildAiErrorNode(`AI error: ${job.error || 'unknown'}`, extra));
         setAiChatStatus('');
       }
+
       clearAiChatPolling();
     } catch (err) {
       const msg = `AI polling error: ${formatNetworkError(err) || err.message}`;
       appendAiChatMessage('system', buildAiErrorNode(msg));
       clearAiChatPolling();
     }
-  }, 1500);
+  };
+
+  pollOnce();
 }
 
 async function sendAiChatMessage() {

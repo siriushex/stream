@@ -13,8 +13,10 @@
 ### 2026-02-06
 - Changes:
   - HLS: use strict no-cache/no-store headers for playlists (m3u8), including memfd 503 responses.
+  - UI: reduce AstralAI chat polling load and show clearer retry/error status details.
 - Tests:
   - `tools/hls_memfd_smoke.sh`
+  - Not run (UI change only).
 ### 2026-02-06
 - Changes:
   - AI: fix OpenAI retry backoff timer scoping (prevents panic on retries).
