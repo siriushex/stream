@@ -122,14 +122,22 @@ dump_psi_info["sdt"] = function(info)
     for _, service in pairs(info.services) do
         local free_ca = service.free_ca and 1 or 0
         local service_type_id = nil
+        local service_name = nil
+        local provider_name = nil
         for _, descriptor_info in pairs(service.descriptors) do
             if descriptor_info.type_name == "service" and descriptor_info.service_type_id then
                 service_type_id = descriptor_info.service_type_id
+                service_name = descriptor_info.service_name
+                provider_name = descriptor_info.service_provider
                 break
             end
         end
         if service_type_id then
             log.info(("SDT: sid: %d free_ca: %d service_type: %d"):format(service.sid, free_ca, service_type_id))
+            if service_name and provider_name then
+                log.info(("SDT: service_name: sid=%d value=%s"):format(service.sid, service_name))
+                log.info(("SDT: service_provider: sid=%d value=%s"):format(service.sid, provider_name))
+            end
         else
             log.info(("SDT: sid: %d free_ca: %d"):format(service.sid, free_ca))
         end
