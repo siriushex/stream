@@ -530,6 +530,9 @@ const elements = {
   settingsTelegramSummaryMonthdayField: $('#settings-telegram-summary-monthday-field'),
   settingsTelegramSummaryNow: $('#settings-telegram-summary-now'),
   settingsAiEnabled: $('#settings-ai-enabled'),
+  settingsAiApiKey: $('#settings-ai-api-key'),
+  settingsAiApiKeyHint: $('#settings-ai-api-key-hint'),
+  settingsAiApiBase: $('#settings-ai-api-base'),
   settingsAiModel: $('#settings-ai-model'),
   settingsAiMaxTokens: $('#settings-ai-max-tokens'),
   settingsAiTemperature: $('#settings-ai-temperature'),
@@ -10757,6 +10760,19 @@ function applySettingsToUI() {
   if (elements.settingsAiEnabled) {
     elements.settingsAiEnabled.checked = getSettingBool('ai_enabled', false);
   }
+  if (elements.settingsAiApiKey) {
+    elements.settingsAiApiKey.value = '';
+  }
+  if (elements.settingsAiApiKeyHint) {
+    const masked = getSettingString('ai_api_key_masked', '');
+    const set = getSettingBool('ai_api_key_set', false);
+    elements.settingsAiApiKeyHint.textContent = set
+      ? `Key set (${masked || 'masked'})`
+      : 'Key not set';
+  }
+  if (elements.settingsAiApiBase) {
+    elements.settingsAiApiBase.value = getSettingString('ai_api_base', '');
+  }
   if (elements.settingsAiModel) {
     elements.settingsAiModel.value = getSettingString('ai_model', '');
   }
@@ -11306,6 +11322,13 @@ function collectGeneralSettings() {
   if (telegramSummaryMonthday !== undefined) payload.telegram_summary_monthday = telegramSummaryMonthday;
   if (elements.settingsTelegramSummaryCharts) payload.telegram_summary_include_charts = telegramSummaryCharts;
   if (elements.settingsAiEnabled) payload.ai_enabled = aiEnabled;
+  if (elements.settingsAiApiKey) {
+    const key = elements.settingsAiApiKey.value.trim();
+    if (key) payload.ai_api_key = key;
+  }
+  if (elements.settingsAiApiBase) {
+    payload.ai_api_base = elements.settingsAiApiBase.value.trim();
+  }
   if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
   if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
   if (aiTemperature !== undefined) payload.ai_temperature = aiTemperature;

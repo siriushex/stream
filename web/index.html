@@ -1192,6 +1192,15 @@
                 <div class="settings-group-body" id="settings-ai-fields">
                   <div class="form-grid">
                     <label class="field">
+                      <span>API Key</span>
+                      <input type="password" id="settings-ai-api-key" placeholder="sk-..." />
+                      <small class="form-hint" id="settings-ai-api-key-hint"></small>
+                    </label>
+                    <label class="field">
+                      <span>API Base</span>
+                      <input type="text" id="settings-ai-api-base" placeholder="https://api.openai.com" />
+                    </label>
+                    <label class="field">
                       <span>Model</span>
                       <input type="text" id="settings-ai-model" placeholder="gpt-4.1-mini" />
                     </label>
@@ -1912,8 +1921,17 @@
             <ul>
               <li><strong>General</strong> — feature toggles, HTTP play, auth, alerts.</li>
               <li><strong>Telegram Alerts</strong> — notifications & test message.</li>
-              <li><strong>AstralAI</strong> — experimental AI planning & apply (opt‑in).</li>
+              <li><strong>AstralAI</strong> — enable AI, set API key/model, and use safe plan/apply endpoints.</li>
               <li><strong>Transcode</strong> — FFmpeg path overrides.</li>
+            </ul>
+
+            <h4>AstralAI</h4>
+            <ul>
+              <li>Enable in <strong>Settings → General → AstralAI</strong>.</li>
+              <li>Provide <strong>API Key</strong> and <strong>Model</strong>. API Base is optional.</li>
+              <li>Plan endpoint: <code>POST /api/v1/ai/plan</code> (read‑only).</li>
+              <li>Apply endpoint: <code>POST /api/v1/ai/apply</code> (requires allow‑apply).</li>
+              <li>AI actions are always <strong>backup → validate → diff → reload</strong>.</li>
             </ul>
 
             <h4>Feature toggles (Settings → General)</h4>

@@ -66,7 +66,11 @@ local function setting_list(key)
 end
 
 local function resolve_api_key()
-    local key = os.getenv("ASTRAL_OPENAI_API_KEY")
+    local key = setting_string("ai_api_key", "")
+    if key ~= "" then
+        return key
+    end
+    key = os.getenv("ASTRAL_OPENAI_API_KEY")
     if key == nil or key == "" then
         key = os.getenv("OPENAI_API_KEY")
     end
@@ -77,7 +81,11 @@ local function resolve_api_key()
 end
 
 local function resolve_api_base()
-    local base = os.getenv("ASTRAL_OPENAI_API_BASE")
+    local base = setting_string("ai_api_base", "")
+    if base ~= "" then
+        return base
+    end
+    base = os.getenv("ASTRAL_OPENAI_API_BASE")
     if base == nil or base == "" then
         base = "https://api.openai.com"
     end

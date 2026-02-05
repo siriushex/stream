@@ -2237,6 +2237,20 @@ local function get_settings(server, client)
         rows.telegram_bot_token_set = false
     end
     rows.telegram_bot_token = nil
+
+    local ai_key = rows.ai_api_key
+    if ai_key ~= nil and tostring(ai_key) ~= "" then
+        local prefix = tostring(ai_key):sub(1, 6)
+        if #prefix < 3 then
+            prefix = tostring(ai_key)
+        end
+        rows.ai_api_key_masked = prefix .. "***"
+        rows.ai_api_key_set = true
+    else
+        rows.ai_api_key_masked = ""
+        rows.ai_api_key_set = false
+    end
+    rows.ai_api_key = nil
     json_response(server, client, 200, rows)
 end
 
@@ -2273,8 +2287,16 @@ local function set_settings(server, client, request)
             body.telegram_bot_token = nil
         end
     end
+    if body.ai_api_key ~= nil then
+        local key = tostring(body.ai_api_key or "")
+        if key == "" then
+            body.ai_api_key = nil
+        end
+    end
     body.telegram_bot_token_masked = nil
     body.telegram_bot_token_set = nil
+    body.ai_api_key_masked = nil
+    body.ai_api_key_set = nil
     apply_config_change(server, client, request, {
         comment = "settings update",
         apply = function()
