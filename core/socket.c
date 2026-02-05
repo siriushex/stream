@@ -586,6 +586,16 @@ int asc_socket_port(asc_socket_t *sock)
     return -1;
 }
 
+const char * asc_socket_recv_addr(asc_socket_t *sock)
+{
+    return inet_ntoa(sock->sockaddr.sin_addr);
+}
+
+int asc_socket_recv_port(asc_socket_t *sock)
+{
+    return ntohs(sock->sockaddr.sin_port);
+}
+
 /*
  *  oooooooo8 ooooooooooo ooooooooooo          oo    oo
  * 888         888    88  88  888  88           88oo88

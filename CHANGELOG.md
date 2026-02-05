@@ -12,6 +12,21 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI: add `Host` and `User-Agent` headers for OpenAI requests (fixes Cloudflare 400 when Host is missing).
+- Tests:
+  - `./astra scripts/tests/ai_openai_host_header_unit.lua`
+### 2026-02-06
+- Changes:
+  - Transcode: add per-output workers (one ffmpeg per output) for fault isolation.
+  - Transcode: add seamless UDP/RTP cutover via local UDP proxy (`udp_switch`) to allow warm-switch without full output downtime.
+  - UI: add per-output + seamless proxy toggles and surface worker/proxy state in Editor and Analyze.
+  - CI: add seamless failover fixture + smoke script.
+- Tests:
+  - `./configure.sh && make`
+  - `contrib/ci/smoke.sh`
+  - `contrib/ci/smoke_transcode_seamless_failover.sh` (intended for Ubuntu/Debian; multicast input)
+### 2026-02-06
+- Changes:
   - AI/Observability: fix sqlite abort by storing md5 fingerprint as hex (no NUL bytes) and making AI log/metric inserts non-fatal.
 - Tests:
   - Not run (covered by CI).
