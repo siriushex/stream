@@ -36,6 +36,7 @@
   - MPTS: iso8859 decode поддерживает UTF-8 маркер (0x15) в SDT/descriptor.
   - CI: smoke_mpts не требует PAT NIT PID (PAT не содержит NIT по умолчанию).
   - MPTS: NIT network_name теперь декодируется с учётом кодировки (UTF-8 marker).
+  - CI: исправлен парсинг Bitrate в verify_mpts (sed regexp).
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05

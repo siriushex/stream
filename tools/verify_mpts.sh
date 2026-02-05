@@ -433,7 +433,7 @@ if [[ -n "$EXPECT_SERVICE_TYPE" ]]; then
 fi
 
 if [[ -n "$EXPECT_BITRATE_KBIT" ]]; then
-  bitrate_line="$(grep -E "Bitrate: [0-9]+ Kbit/s" "$LOG_FILE" | tail -n 1 | sed -E 's/.*Bitrate: ([0-9]+) Kbit\\/s.*/\\1/')"
+  bitrate_line="$(grep -E "Bitrate: [0-9]+ Kbit/s" "$LOG_FILE" | tail -n 1 | sed -E 's/.*Bitrate: ([0-9]+) Kbit\/s.*/\1/')"
   if [[ -z "$bitrate_line" ]]; then
     echo "Bitrate not found"
     exit 1
