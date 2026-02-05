@@ -11443,7 +11443,9 @@ function updateTiles() {
             if (warm.done && !warm.ok) {
               suffix = ' (warmup failed)';
             } else if (warm.ready) {
-              suffix = ' (warmup ready)';
+              const idr = warm.require_idr ? (warm.idr_seen ? ' IDR' : ' no-IDR') : '';
+              const stable = warm.stable_ok ? ' stable' : ' unstable';
+              suffix = ` (warmup ready${stable}${idr})`;
             } else {
               suffix = ' (warmup running)';
             }
