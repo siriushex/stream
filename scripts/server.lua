@@ -581,9 +581,18 @@ local function http_play_stream_id(path)
     return rest
 end
 
+local web_static_handler = nil
+
 local function http_favicon(server, client, request)
     if not request or request.method ~= "GET" then
         return server:abort(client, 405)
+    end
+    if web_static_handler then
+        local orig = request.path
+        request.path = "/favicon.ico"
+        local result = web_static_handler(server, client, request)
+        request.path = orig
+        return result
     end
     server:send(client, { code = 204, headers = { "Content-Length: 0" } })
 end
@@ -855,6 +864,7 @@ function main()
         path = opt.web_dir,
         headers = { "Cache-Control: no-cache" },
     })
+    web_static_handler = web_static
     local function web_index(server, client, request)
         if not request then
             return web_static(server, client, request)

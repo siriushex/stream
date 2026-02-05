@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Serve favicon via web static handler when available (avoid 204 placeholder).
+- Tests:
+  - Not run (server change).
+### 2026-02-05
+- Changes:
   - Added default favicon to stop /favicon.ico warnings in http_server logs.
 - Tests:
   - Not run (static asset).
