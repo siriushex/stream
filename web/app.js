@@ -15408,13 +15408,38 @@ function openAnalyze(stream) {
       ? String(transcode.ffmpeg_exit_signal)
       : 'n/a';
     const gpuInfo = formatGpuInfo(transcode);
+    const outputsStatus = Array.isArray(transcode && transcode.outputs_status)
+      ? transcode.outputs_status
+      : [];
+    const mainOut = outputsStatus.find((entry) => entry.output_index === 1) || outputsStatus[0];
     const outputCc = Number.isFinite(transcode && transcode.output_cc_errors)
       ? String(transcode.output_cc_errors)
-      : 'n/a';
+      : (mainOut && Number.isFinite(mainOut.cc_errors) ? String(mainOut.cc_errors) : 'n/a');
     const outputPes = Number.isFinite(transcode && transcode.output_pes_errors)
       ? String(transcode.output_pes_errors)
+      : (mainOut && Number.isFinite(mainOut.pes_errors) ? String(mainOut.pes_errors) : 'n/a');
+    const outputScrambled = (transcode && transcode.output_scrambled)
+      ? 'Yes'
+      : (mainOut && mainOut.scrambled_active ? 'Yes' : 'No');
+    const outputScrambledCount = mainOut && Number.isFinite(mainOut.scrambled_errors)
+      ? String(mainOut.scrambled_errors)
       : 'n/a';
-    const outputScrambled = transcode && transcode.output_scrambled ? 'Yes' : 'No';
+    const formatPsiAge = (ts, timeout) => {
+      if (!ts) return 'n/a';
+      const age = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+      if (timeout && timeout > 0) {
+        return age > timeout
+          ? `late ${formatShortDuration(age)}`
+          : 'ok';
+      }
+      return `${formatShortDuration(age)} ago`;
+    };
+    const outputPat = mainOut
+      ? formatPsiAge(mainOut.psi_pat_ts, mainOut.pat_timeout_sec)
+      : 'n/a';
+    const outputPmt = mainOut
+      ? formatPsiAge(mainOut.psi_pmt_ts, mainOut.pmt_timeout_sec)
+      : 'n/a';
     const outputMin = Number.isFinite(transcode && transcode.output_bitrate_min_kbps)
       ? `${Math.round(transcode.output_bitrate_min_kbps)} Kbit/s`
       : 'n/a';
@@ -15473,7 +15498,9 @@ function openAnalyze(stream) {
         `Output last error: ${outputErr}`,
         `Output CC errors: ${outputCc}`,
         `Output PES errors: ${outputPes}`,
-        `Output scrambled: ${outputScrambled}`,
+        `Output scrambled: ${outputScrambled} (count ${outputScrambledCount})`,
+        `Output PAT: ${outputPat}`,
+        `Output PMT: ${outputPmt}`,
         `Switch pending: ${switchPending}`,
         `Switch pending since: ${switchPendingSince}`,
         `Switch pending timeout: ${switchPendingTimeout}`,

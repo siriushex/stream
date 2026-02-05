@@ -465,6 +465,7 @@ function ai_openai_client.request_json_schema(opts, callback)
             end
 
             local function spawn_curl(proxy_url)
+                local data_value = body_path and ("@" .. body_path) or body
                 local args = {
                     "curl",
                     "-sS",
@@ -480,7 +481,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                     "POST",
                     (api_base:gsub("/+$", "") .. "/v1/responses"),
                     "--data-binary",
-                    body,
+                    data_value,
                     "-w",
                     "\nHTTP_STATUS:%{http_code}\n",
                 }
