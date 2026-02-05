@@ -180,6 +180,9 @@ local function build_summary_schema()
     }
 end
 
+-- Forward declaration: build_summary_prompt needs sanitize_value.
+local sanitize_value
+
 local function build_summary_prompt(payload)
     local parts = {}
     table.insert(parts, "You are AstralAI observability analyst.")
@@ -472,7 +475,7 @@ local function sanitize_utf8(text)
     return table.concat(out)
 end
 
-local function sanitize_value(value, depth)
+sanitize_value = function(value, depth)
     if depth and depth > 6 then
         return value
     end

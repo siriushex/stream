@@ -28,8 +28,8 @@ assert_true(sanitized.metric_inf ~= math.huge and sanitized.metric_inf ~= -math.
 
 local encoded = json.encode(sanitized)
 local lower = tostring(encoded):lower()
-assert_true(not lower:find("nan", 1, true), "json contains nan")
-assert_true(not lower:find("inf", 1, true), "json contains inf")
+assert_true(not lower:find(":nan", 1, true) and not lower:find(",nan", 1, true), "json contains nan value")
+assert_true(not lower:find(":inf", 1, true) and not lower:find(",inf", 1, true), "json contains inf value")
 
 print("ai_prompt_sanitize_nan_unit: ok")
 astra.exit()
