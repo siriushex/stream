@@ -23,7 +23,23 @@
 - Валидатор до apply.
 - Доступен diff и audit‑лог.
 
-Статус: выполняется. Сейчас план строится локально как diff между текущим конфигом и предложенным payload (без OpenAI‑вызовов).
+Статус: выполняется.
+- Локальный режим: `/api/v1/ai/plan` принимает `proposed_config` и возвращает diff.
+- AI режим: `/api/v1/ai/plan` принимает `prompt` и возвращает job с `plan` (без apply).
+
+Пример (локальный diff):
+```json
+{
+  "proposed_config": { "settings": { "http_play_stream": true } }
+}
+```
+
+Пример (AI план):
+```json
+{
+  "prompt": "Переименуй все стримы с префиксом test_ на prod_."
+}
+```
 
 ### Phase 2 — Controlled apply
 - Apply + rollback.
@@ -42,6 +58,8 @@
 - `ai_store` — хранение на стороне провайдера (по умолчанию false).
 - `ai_allow_apply` — разрешить apply (по умолчанию false).
 - `ai_telegram_allowed_chat_ids` — белый список чатов (список или строка).
+
+AI‑эндпоинты отвечают только когда `ai_enabled=true`.
 
 ## Переменные окружения
 - `ASTRAL_OPENAI_API_KEY` или `OPENAI_API_KEY`.
