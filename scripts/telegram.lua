@@ -720,7 +720,7 @@ local function downsample_points(points, max_points)
     return out
 end
 
-local function build_chart_url(metrics, metric_key, title)
+local function build_chart_url(metrics, metric_key, title, color)
     if not metrics or #metrics == 0 then
         return nil
     end
@@ -749,8 +749,9 @@ local function build_chart_url(metrics, metric_key, title)
                 {
                     label = title or metric_key,
                     data = values,
-                    borderColor = "rgb(90,170,229)",
-                    backgroundColor = "rgba(90,170,229,0.25)",
+                    borderColor = color or "rgb(90,170,229)",
+                    backgroundColor = color and (color:gsub("rgb%((%d+),(%d+),(%d+)%)", "rgba(%1,%2,%3,0.25)"))
+                        or "rgba(90,170,229,0.25)",
                     fill = true,
                     lineTension = 0.2,
                     pointRadius = 0,
@@ -882,9 +883,13 @@ local function run_summary(now)
         end)
     end
     if cfg.summary_include_charts then
-        local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)")
+        local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)", "rgb(90,170,229)")
         if chart_url then
             enqueue_photo_url(chart_url, "📈 Total bitrate (24h)", { bypass_throttle = true })
+        end
+        local down_url = build_chart_url(metrics, "streams_down", "Streams down", "rgb(224,102,102)")
+        if down_url then
+            enqueue_photo_url(down_url, "📉 Streams down (24h)", { bypass_throttle = true })
         end
     end
     cfg.summary_last_ts = now
