@@ -262,6 +262,7 @@ const state = {
   aiChatPoll: null,
   aiChatPendingEl: null,
   aiChatBusy: false,
+  aiChatPreviewUrls: [],
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
@@ -316,6 +317,7 @@ const elements = {
   aiChatStatus: $('#ai-chat-status'),
   aiChatFiles: $('#ai-chat-files'),
   aiChatFilesLabel: $('#ai-chat-files-label'),
+  aiChatFilePreviews: $('#ai-chat-file-previews'),
   aiChatIncludeLogs: $('#ai-chat-logs'),
   aiChatCliStream: $('#ai-chat-cli-stream'),
   aiChatCliDvbls: $('#ai-chat-cli-dvbls'),
@@ -15328,11 +15330,35 @@ async function collectAiChatAttachments() {
 function updateAiChatFilesLabel() {
   if (!elements.aiChatFiles || !elements.aiChatFilesLabel) return;
   const files = Array.from(elements.aiChatFiles.files || []);
+  if (elements.aiChatFilePreviews) {
+    elements.aiChatFilePreviews.innerHTML = '';
+  }
+  if (state.aiChatPreviewUrls && state.aiChatPreviewUrls.length) {
+    state.aiChatPreviewUrls.forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch (err) {}
+    });
+    state.aiChatPreviewUrls = [];
+  }
   if (files.length === 0) {
     elements.aiChatFilesLabel.textContent = 'No attachments';
     return;
   }
   elements.aiChatFilesLabel.textContent = files.map((file) => file.name).join(', ');
+  if (!elements.aiChatFilePreviews) return;
+  const maxFiles = 2;
+  files.slice(0, maxFiles).forEach((file) => {
+    const preview = createEl('div', 'ai-chat-file-preview');
+    if (file.type && file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(file);
+      state.aiChatPreviewUrls.push(url);
+      img.src = url;
+      img.alt = file.name;
+      preview.appendChild(img);
+    }
+    preview.appendChild(createEl('div', '', file.name));
+    elements.aiChatFilePreviews.appendChild(preview);
+  });
 }
 
 function buildAiChatPayload(prompt, attachments) {
@@ -16435,6 +16461,10 @@ function bindEvents() {
       }
       setAiChatStatus('');
       if (elements.aiChatInput) elements.aiChatInput.value = '';
+      if (elements.aiChatFiles) {
+        elements.aiChatFiles.value = '';
+        updateAiChatFilesLabel();
+      }
     });
   }
   if (elements.aiChatInput) {

@@ -3294,6 +3294,33 @@ select {
   opacity: 0.8;
 }
 
+.ai-chat-file-previews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.ai-chat-file-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.ai-chat-file-preview img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
 .ai-chat-actions {
   display: flex;
   gap: 8px;

@@ -18,6 +18,7 @@
 ### 2026-02-05
 - Changes:
   - UI: hide/remove Observability AI summary block from the page (AI uses it internally).
+  - UI: AstralAI chat now shows attachment previews (image thumbnails + filenames).
 - Tests:
   - Not run (UI change only).
 ### 2026-02-05
