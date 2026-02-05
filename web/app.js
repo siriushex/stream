@@ -697,6 +697,7 @@ const elements = {
   mptsPassTdt: $('#mpts-pass-tdt'),
   mptsPassWarning: $('#mpts-pass-warning'),
   mptsAutoremapWarning: $('#mpts-autoremap-warning'),
+  mptsPnrWarning: $('#mpts-pnr-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4975,6 +4976,7 @@ function renderMptsServiceList() {
     pnr.value = service.pnr || '';
     pnr.addEventListener('input', () => {
       service.pnr = pnr.value;
+      updateMptsPnrWarning();
     });
 
     const lcn = document.createElement('input');
@@ -5057,6 +5059,7 @@ function renderMptsServiceList() {
 
   updateMptsPassWarning();
   updateMptsAutoremapWarning();
+  updateMptsPnrWarning();
 }
 
 function updateMptsPassWarning() {
@@ -5076,6 +5079,28 @@ function updateMptsAutoremapWarning() {
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
   const disableAuto = !!(elements.mptsDisableAutoremap && elements.mptsDisableAutoremap.checked);
   elements.mptsAutoremapWarning.classList.toggle('is-hidden', !(mptsEnabled && disableAuto));
+}
+
+function updateMptsPnrWarning() {
+  if (!elements.mptsPnrWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const counts = new Map();
+  (state.mptsServices || []).forEach((service) => {
+    const value = Number(service.pnr);
+    if (!Number.isFinite(value) || value <= 0) return;
+    counts.set(value, (counts.get(value) || 0) + 1);
+  });
+  const duplicates = Array.from(counts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0])
+    .sort((a, b) => a - b);
+  if (!mptsEnabled || duplicates.length === 0) {
+    elements.mptsPnrWarning.classList.add('is-hidden');
+    elements.mptsPnrWarning.textContent = '';
+    return;
+  }
+  elements.mptsPnrWarning.textContent = `PNR duplicates: ${duplicates.join(', ')}`;
+  elements.mptsPnrWarning.classList.remove('is-hidden');
 }
 
 function bindMptsWarningHandlers() {
@@ -8691,6 +8716,7 @@ function openEditor(stream, isNew) {
     elements.mptsPassTdt.checked = mptsAdv.pass_tdt === true;
   }
   updateMptsAutoremapWarning();
+  updateMptsPnrWarning();
   const epgConfig = config.epg || {};
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';

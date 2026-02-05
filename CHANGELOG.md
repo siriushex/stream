@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Added UI warning for duplicate PNR values in MPTS service list.
+- Tests:
+  - Not run (UI change).
+### 2026-02-05
+- Changes:
   - Added UI note about auto-remap PID start (0x0020).
 - Tests:
   - Not run (UI hint).
