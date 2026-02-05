@@ -32,6 +32,7 @@ struct mpts_service_t
     uint16_t pnr_in;
     uint16_t pnr_out;
     bool pnr_conflict_warned;
+    bool pnr_missing_warned;
 
     uint16_t pmt_pid_in;
     uint16_t pmt_pid_out;
@@ -1069,8 +1070,12 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     {
         if(mod->strict_pnr)
         {
-            asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но pnr не задан. "
-                "strict_pnr=true -> поток отклонён"), program_count);
+            if(!svc->pnr_missing_warned)
+            {
+                asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но pnr не задан. "
+                    "strict_pnr=true -> поток отклонён"), program_count);
+                svc->pnr_missing_warned = true;
+            }
             return;
         }
         asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "

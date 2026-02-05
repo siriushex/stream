@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - MPTS strict_pnr error is now logged once per service to avoid spam.
+- Tests:
+  - Not run (log change).
+### 2026-02-05
+- Changes:
   - Added optional `EXPECT_LOG` check to `tools/verify_mpts.sh`.
 - Tests:
   - Not run (script update).
