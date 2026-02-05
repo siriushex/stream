@@ -16,14 +16,16 @@
           "pnr": 101,
           "service_name": "MPTS Test 1",
           "service_provider": "Astral",
-          "service_type_id": 1
+          "service_type_id": 1,
+          "lcn": 101
         },
         {
           "input": "udp://127.0.0.1:12347",
           "pnr": 102,
           "service_name": "MPTS Test 2",
           "service_provider": "Astral",
-          "service_type_id": 1
+          "service_type_id": 1,
+          "lcn": 102
         }
       ],
       "output": [
@@ -37,14 +39,17 @@
           "tsid": 1,
           "onid": 1,
           "network_id": 1,
-          "network_name": "Astral"
+          "network_name": "Astral",
+          "country": "RUS",
+          "utc_offset": 3
         },
         "nit": {
           "delivery": "cable",
           "frequency": 650000,
           "symbolrate": 6875,
           "modulation": "256qam",
-          "fec": "auto"
+          "fec": "auto",
+          "network_search": "2:1,3:1"
         },
         "advanced": {
           "si_interval_ms": 500,

@@ -9,6 +9,7 @@
 
 #define PID_DROP 0xFFFF
 #define MPTS_MAX_PIDS 8192
+#define PCR_MAX_TICKS ((1ULL << 33) * 300ULL)
 #define MPTS_PNR_MAX 65535
 
 typedef struct mpts_service_t mpts_service_t;
@@ -30,17 +31,23 @@ struct mpts_service_t
     bool has_pnr;
     uint16_t pnr_in;
     uint16_t pnr_out;
+    bool pnr_conflict_warned;
+    bool pnr_missing_warned;
 
     uint16_t pmt_pid_in;
     uint16_t pmt_pid_out;
     uint16_t pcr_pid_in;
     uint16_t pcr_pid_out;
+    bool pcr_missing_warned;
+    bool pcr_not_in_es_warned;
 
     char *service_name;
     char *service_provider;
     uint8_t service_type_id;
     bool has_service_type_id;
     bool scrambled;
+    uint16_t lcn;
+    bool has_lcn;
 
     bool ready;
     bool mapping_ready;
@@ -87,11 +94,15 @@ struct module_data_t
     bool pass_sdt;
     bool pass_eit;
     bool pass_tdt;
+    bool pcr_restamp;
+    bool strict_pnr;
 
     uint8_t pat_version;
+    uint8_t cat_version;
     uint8_t nit_version;
     uint8_t sdt_version;
     bool pat_version_fixed;
+    bool cat_version_fixed;
     bool nit_version_fixed;
     bool sdt_version_fixed;
 
@@ -108,6 +119,7 @@ struct module_data_t
     int service_count;
 
     mpegts_psi_t *pat_out;
+    mpegts_psi_t *cat_out;
     mpegts_psi_t *sdt_out;
     mpegts_psi_t *nit_out;
     mpegts_psi_t *tdt_out;
@@ -117,6 +129,8 @@ struct module_data_t
     asc_timer_t *cbr_timer;
     uint64_t cbr_start_us;
     uint64_t sent_packets;
+    uint64_t cbr_last_warn_us;
+    uint64_t pcr_restamp_start_us;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -248,8 +262,13 @@ static bool service_map_pids(mpts_service_t *svc)
     size_t pid_count = 0;
 
     uint16_t pcr_pid = PMT_GET_PCR(svc->pmt);
+    bool pcr_from_pmt = true;
+    bool pcr_auto = false;
     if(pcr_pid == 0 || pcr_pid >= NULL_TS_PID)
+    {
         pcr_pid = 0;
+        pcr_from_pmt = false;
+    }
 
     const uint8_t *ptr;
     PMT_ITEMS_FOREACH(svc->pmt, ptr)
@@ -268,7 +287,10 @@ static bool service_map_pids(mpts_service_t *svc)
         {
             pid_list[pid_count++] = pid;
             if(pcr_pid == 0)
+            {
                 pcr_pid = pid;
+                pcr_auto = true;
+            }
         }
     }
 
@@ -289,7 +311,20 @@ static bool service_map_pids(mpts_service_t *svc)
         }
     }
     if(!has_pcr && pid_count < ASC_ARRAY_SIZE(pid_list))
+    {
         pid_list[pid_count++] = pcr_pid;
+        if(!svc->pcr_not_in_es_warned)
+        {
+            asc_log_warning(SVC_MSG(svc, "PCR PID %d отсутствует в ES, добавлен в список"), pcr_pid);
+            svc->pcr_not_in_es_warned = true;
+        }
+    }
+
+    if(pcr_auto && !svc->pcr_missing_warned)
+    {
+        asc_log_warning(SVC_MSG(svc, "PCR PID не задан в PMT, выбран первый ES PID=%d"), pcr_pid);
+        svc->pcr_missing_warned = true;
+    }
 
     bool ok = true;
 
@@ -300,7 +335,8 @@ static bool service_map_pids(mpts_service_t *svc)
             const uint16_t pid_in = pid_list[i];
             if(pid_in >= NULL_TS_PID || mod->pid_in_use[pid_in])
             {
-                asc_log_error(SVC_MSG(svc, "PID конфликт при disable_auto_remap (PID=%d)"), pid_in);
+                asc_log_error(SVC_MSG(svc, "PID конфликт при disable_auto_remap (PID=%d, PMT=%d)"),
+                              pid_in, svc->pmt_pid_in);
                 ok = false;
                 break;
             }
@@ -312,7 +348,8 @@ static bool service_map_pids(mpts_service_t *svc)
         {
             if(svc->pmt_pid_in >= NULL_TS_PID || mod->pid_in_use[svc->pmt_pid_in])
             {
-                asc_log_error(SVC_MSG(svc, "PMT PID конфликт при disable_auto_remap (PID=%d)"), svc->pmt_pid_in);
+                asc_log_error(SVC_MSG(svc, "PMT PID конфликт при disable_auto_remap (PID=%d, PNR=%d)"),
+                              svc->pmt_pid_in, svc->pnr_in);
                 ok = false;
             }
             else
@@ -403,6 +440,15 @@ static uint16_t append_descriptor(uint8_t *buf, uint16_t offset, uint8_t tag, co
     return offset;
 }
 
+static bool is_delivery_cable(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "cable")) return true;
+    if(!strcasecmp(value, "dvb-c")) return true;
+    if(!strcasecmp(value, "dvb_c")) return true;
+    return false;
+}
+
 static uint8_t parse_modulation(const char *value)
 {
     if(!value) return 0;
@@ -425,6 +471,35 @@ static uint8_t parse_fec_inner(const char *value)
     return 0x0F;
 }
 
+static bool is_utf8_codepage(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "utf-8")) return true;
+    if(!strcasecmp(value, "utf8")) return true;
+    return false;
+}
+
+static size_t write_encoded_text(uint8_t *dst, size_t max_len, const char *text,
+                                 size_t raw_len, bool use_utf8)
+{
+    if(!dst || !text || max_len == 0 || raw_len == 0)
+        return 0;
+
+    size_t pos = 0;
+    if(use_utf8)
+    {
+        // DVB UTF-8 marker (ETSI EN 300 468)
+        dst[pos++] = 0x15;
+        if(pos >= max_len)
+            return pos;
+    }
+
+    if(raw_len > max_len - pos)
+        raw_len = max_len - pos;
+    memcpy(&dst[pos], text, raw_len);
+    return pos + raw_len;
+}
+
 static void build_pat(module_data_t *mod)
 {
     PAT_INIT(mod->pat_out, mod->tsid, mod->pat_version);
@@ -440,10 +515,28 @@ static void build_pat(module_data_t *mod)
     PSI_SET_CRC32(mod->pat_out);
 }
 
+static void build_cat(module_data_t *mod)
+{
+    uint8_t *buf = mod->cat_out->buffer;
+    buf[0] = 0x01; // CAT
+    buf[1] = 0x80 | 0x30; // section_syntax_indicator + reserved
+    buf[2] = 0x00; // section_length (set later)
+    buf[3] = 0xFF; // reserved
+    buf[4] = 0xFF; // reserved
+    buf[5] = 0x01; // current_next_indicator
+    CAT_SET_VERSION(mod->cat_out, mod->cat_version);
+    buf[6] = 0x00; // section_number
+    buf[7] = 0x00; // last_section_number
+    mod->cat_out->buffer_size = 8 + CRC32_SIZE;
+    PSI_SET_SIZE(mod->cat_out);
+    PSI_SET_CRC32(mod->cat_out);
+}
+
 static void build_sdt(module_data_t *mod)
 {
     uint8_t *buf = mod->sdt_out->buffer;
     uint16_t pos = 0;
+    const bool use_utf8 = is_utf8_codepage(mod->codepage);
 
     buf[pos++] = 0x42; // SDT Actual
     buf[pos++] = 0x80 | 0x30; // section_syntax_indicator + reserved
@@ -467,15 +560,39 @@ static void build_sdt(module_data_t *mod)
         const char *service_name = svc->service_name ? svc->service_name : "";
         if(!provider) provider = "";
 
-        size_t provider_len = strlen(provider);
-        size_t service_len = strlen(service_name);
-        if(provider_len > 255) provider_len = 255;
-        if(service_len > 255) service_len = 255;
+        size_t provider_raw_len = strlen(provider);
+        size_t service_raw_len = strlen(service_name);
+        const size_t max_raw = use_utf8 ? 254 : 255;
+        if(provider_raw_len > max_raw) provider_raw_len = max_raw;
+        if(service_raw_len > max_raw) service_raw_len = max_raw;
+
+        size_t provider_len = provider_raw_len + ((use_utf8 && provider_raw_len > 0) ? 1 : 0);
+        size_t service_len = service_raw_len + ((use_utf8 && service_raw_len > 0) ? 1 : 0);
+
         if(3 + provider_len + 1 + service_len > 255)
         {
-            const size_t max_service = 255 > (4 + provider_len) ? (255 - 4 - provider_len) : 0;
-            if(service_len > max_service)
-                service_len = max_service;
+            size_t max_service_len = (255 > (4 + provider_len)) ? (255 - 4 - provider_len) : 0;
+            if(service_len > max_service_len)
+            {
+                if(use_utf8)
+                {
+                    if(max_service_len <= 1)
+                    {
+                        service_raw_len = 0;
+                        service_len = 0;
+                    }
+                    else
+                    {
+                        service_raw_len = max_service_len - 1;
+                        service_len = service_raw_len + 1;
+                    }
+                }
+                else
+                {
+                    service_raw_len = max_service_len;
+                    service_len = service_raw_len;
+                }
+            }
         }
 
         uint8_t desc[512];
@@ -484,11 +601,11 @@ static void build_sdt(module_data_t *mod)
         desc[desc_len++] = (uint8_t)(3 + provider_len + 1 + service_len);
         desc[desc_len++] = (uint8_t)(svc->has_service_type_id ? svc->service_type_id : 1);
         desc[desc_len++] = (uint8_t)provider_len;
-        memcpy(&desc[desc_len], provider, provider_len);
-        desc_len += (uint16_t)provider_len;
+        desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
+                                                 provider, provider_raw_len, use_utf8);
         desc[desc_len++] = (uint8_t)service_len;
-        memcpy(&desc[desc_len], service_name, service_len);
-        desc_len += (uint16_t)service_len;
+        desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
+                                                 service_name, service_raw_len, use_utf8);
 
         buf[pos++] = (uint8_t)(svc->pnr_out >> 8);
         buf[pos++] = (uint8_t)(svc->pnr_out & 0xFF);
@@ -525,8 +642,15 @@ static void build_nit(module_data_t *mod)
     uint16_t network_desc_start = pos;
     if(mod->network_name && mod->network_name[0] != '\0')
     {
-        const size_t name_len = strlen(mod->network_name) > 255 ? 255 : strlen(mod->network_name);
-        pos = append_descriptor(buf, pos, 0x40, (const uint8_t *)mod->network_name, (uint8_t)name_len);
+        const bool use_utf8 = is_utf8_codepage(mod->codepage);
+        size_t raw_len = strlen(mod->network_name);
+        const size_t max_raw = use_utf8 ? 254 : 255;
+        if(raw_len > max_raw) raw_len = max_raw;
+
+        uint8_t tmp[256];
+        const size_t out_len = write_encoded_text(tmp, sizeof(tmp), mod->network_name, raw_len, use_utf8);
+        if(out_len > 0)
+            pos = append_descriptor(buf, pos, 0x40, tmp, (uint8_t)out_len);
     }
     uint16_t network_desc_len = pos - network_desc_start;
     buf[network_desc_len_pos] = 0xF0 | ((network_desc_len >> 8) & 0x0F);
@@ -568,8 +692,34 @@ static void build_nit(module_data_t *mod)
         }
     }
 
+    // logical_channel_descriptor (LCN) - NorDig (0x83)
+    {
+        uint8_t tmp[1024];
+        uint16_t tmp_len = 0;
+        asc_list_for(mod->services)
+        {
+            mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+            if(!svc->ready || !svc->mapping_ready || svc->pnr_out == 0 || !svc->has_lcn)
+                continue;
+            if(svc->lcn == 0 || svc->lcn > 1023)
+                continue;
+            if(tmp_len + 4 > sizeof(tmp))
+                break;
+            tmp[tmp_len++] = (uint8_t)(svc->pnr_out >> 8);
+            tmp[tmp_len++] = (uint8_t)(svc->pnr_out & 0xFF);
+            tmp[tmp_len++] = (uint8_t)(0xFC | ((svc->lcn >> 8) & 0x03)); // visible=1 + reserved=1
+            tmp[tmp_len++] = (uint8_t)(svc->lcn & 0xFF);
+        }
+        if(tmp_len > 0)
+        {
+            if(tmp_len > 255)
+                tmp_len = (uint16_t)((255 / 4) * 4);
+            pos = append_descriptor(buf, pos, 0x83, tmp, (uint8_t)tmp_len);
+        }
+    }
+
     // cable_delivery_system_descriptor
-    if(mod->delivery && !strcasecmp(mod->delivery, "cable"))
+    if(is_delivery_cable(mod->delivery))
     {
         uint8_t desc[11];
         memset(desc, 0, sizeof(desc));
@@ -704,6 +854,8 @@ static void rebuild_tables(module_data_t *mod)
     {
         if(!mod->pat_version_fixed)
             mod->pat_version = (mod->pat_version + 1) & 0x1F;
+        if(!mod->cat_version_fixed)
+            mod->cat_version = (mod->cat_version + 1) & 0x1F;
         if(!mod->nit_version_fixed)
             mod->nit_version = (mod->nit_version + 1) & 0x1F;
         if(!mod->sdt_version_fixed)
@@ -720,16 +872,16 @@ static void rebuild_tables(module_data_t *mod)
         if(!svc->ready || !svc->mapping_ready)
             continue;
 
-        uint16_t pnr = 0;
+        uint16_t requested_pnr = 0;
         if(svc->has_pnr)
-            pnr = svc->pnr_cfg;
+            requested_pnr = svc->pnr_cfg;
         else if(svc->pnr_in > 0)
-            pnr = svc->pnr_in;
+            requested_pnr = svc->pnr_in;
 
-        if(pnr > 0 && pnr <= MPTS_PNR_MAX && !pnr_used[pnr])
+        if(requested_pnr > 0 && requested_pnr <= MPTS_PNR_MAX && !pnr_used[requested_pnr])
         {
-            svc->pnr_out = pnr;
-            pnr_used[pnr] = true;
+            svc->pnr_out = requested_pnr;
+            pnr_used[requested_pnr] = true;
         }
         else
         {
@@ -754,9 +906,23 @@ static void rebuild_tables(module_data_t *mod)
         svc->pnr_out = next_pnr;
         pnr_used[next_pnr] = true;
         next_pnr++;
+
+        // Если был задан PNR (явно или из входа), а мы назначили новый — логируем.
+        if((svc->has_pnr || svc->pnr_in > 0) && !svc->pnr_conflict_warned)
+        {
+            const uint16_t requested_pnr = svc->has_pnr ? svc->pnr_cfg : svc->pnr_in;
+            if(requested_pnr > MPTS_PNR_MAX)
+                asc_log_warning(SVC_MSG(svc, "PNR вне диапазона (PNR=%d), назначен %d"),
+                                requested_pnr, svc->pnr_out);
+            else
+                asc_log_warning(SVC_MSG(svc, "PNR %d уже используется, назначен %d"),
+                                requested_pnr, svc->pnr_out);
+            svc->pnr_conflict_warned = true;
+        }
     }
 
     build_pat(mod);
+    build_cat(mod);
     build_sdt(mod);
     build_nit(mod);
     build_tdt(mod);
@@ -781,6 +947,8 @@ static void on_si_timer(void *arg)
 
     if(mod->pat_out)
         mpegts_psi_demux(mod->pat_out, mpts_send_psi, mod);
+    if(mod->cat_out)
+        mpegts_psi_demux(mod->cat_out, mpts_send_psi, mod);
 
     asc_list_for(mod->services)
     {
@@ -830,6 +998,18 @@ static void on_cbr_timer(void *arg)
             diff = 2000; // ограничение за один тик
         mpts_send_null(mod, (size_t)diff);
     }
+    else if(elapsed > 1000000ULL)
+    {
+        // Если входной битрейт превышает target_bitrate, предупреждаем раз в 5 секунд.
+        const uint64_t actual_bitrate = mod->sent_packets * (uint64_t)TS_PACKET_SIZE * 8ULL * 1000000ULL / elapsed;
+        const uint64_t warn_threshold = (uint64_t)mod->target_bitrate * 105ULL / 100ULL;
+        if(actual_bitrate > warn_threshold && (now - mod->cbr_last_warn_us) > 5000000ULL)
+        {
+            asc_log_warning(MSG("target_bitrate %d ниже входного (%llu), CBR не выдерживается"),
+                            mod->target_bitrate, (unsigned long long)actual_bitrate);
+            mod->cbr_last_warn_us = now;
+        }
+    }
 }
 
 static void on_pat(void *arg, mpegts_psi_t *psi)
@@ -852,6 +1032,7 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     const uint8_t *pointer;
     uint16_t selected_pnr = 0;
     uint16_t selected_pid = 0;
+    uint16_t program_count = 0;
 
     PAT_ITEMS_FOREACH(psi, pointer)
     {
@@ -859,6 +1040,8 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
         const uint16_t pid = PAT_ITEM_GET_PID(psi, pointer);
         if(pnr == 0)
             continue;
+
+        ++program_count;
 
         if(svc->has_pnr)
         {
@@ -881,6 +1064,32 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     {
         asc_log_warning(SVC_MSG(svc, "PAT не содержит выбранной программы"));
         return;
+    }
+
+    if(!svc->has_pnr && program_count > 1)
+    {
+        if(mod->strict_pnr)
+        {
+            if(!svc->pnr_missing_warned)
+            {
+                asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но pnr не задан. "
+                    "strict_pnr=true -> поток отклонён"), program_count);
+                svc->pnr_missing_warned = true;
+            }
+            return;
+        }
+        if(!svc->pnr_missing_warned)
+        {
+            asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "
+                "Рекомендуется явно задать pnr"), program_count, selected_pnr);
+            svc->pnr_missing_warned = true;
+        }
+    }
+
+    if(svc->has_pnr && selected_pnr != svc->pnr_cfg)
+    {
+        asc_log_warning(SVC_MSG(svc, "PNR %d не найден в PAT, использую %d"),
+                        svc->pnr_cfg, selected_pnr);
     }
 
     svc->pnr_in = selected_pnr;
@@ -906,6 +1115,8 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
         return;
 
     svc->pmt_crc = crc32;
+    svc->pcr_missing_warned = false;
+    svc->pcr_not_in_es_warned = false;
 
     if(!service_map_pids(svc))
     {
@@ -976,6 +1187,16 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
     uint8_t out[TS_PACKET_SIZE];
     memcpy(out, ts, TS_PACKET_SIZE);
     TS_SET_PID(out, mapped);
+    if(mod->pcr_restamp && pid == svc->pcr_pid_in && TS_IS_PCR(out))
+    {
+        // PCR restamp: выравниваем по локальному времени выхода.
+        const uint64_t now = asc_utime();
+        if(mod->pcr_restamp_start_us == 0)
+            mod->pcr_restamp_start_us = now;
+        const uint64_t elapsed = now - mod->pcr_restamp_start_us;
+        const uint64_t pcr = (elapsed * 27ULL) % PCR_MAX_TICKS;
+        TS_SET_PCR(out, pcr);
+    }
     mpts_send_ts(mod, out);
 }
 
@@ -1028,6 +1249,18 @@ static int method_add_input(module_data_t *mod)
             {
                 svc->service_type_id = (uint8_t)st;
                 svc->has_service_type_id = true;
+            }
+        }
+        lua_pop(lua, 1);
+
+        lua_getfield(lua, 3, "lcn");
+        if(lua_type(lua, -1) == LUA_TNUMBER)
+        {
+            const int lcn = lua_tonumber(lua, -1);
+            if(lcn > 0 && lcn <= 1023)
+            {
+                svc->lcn = (uint16_t)lcn;
+                svc->has_lcn = true;
             }
         }
         lua_pop(lua, 1);
@@ -1098,6 +1331,8 @@ static void module_init(module_data_t *mod)
     module_option_string("codepage", &mod->codepage, NULL);
     module_option_string("country", &mod->country, NULL);
     if(module_option_number("utc_offset", &tmp)) mod->utc_offset = tmp;
+    if(mod->codepage && mod->codepage[0] != '\0' && !is_utf8_codepage(mod->codepage))
+        asc_log_warning(MSG("codepage %s не поддерживается; используется исходная строка"), mod->codepage);
 
     module_option_string("delivery", &mod->delivery, NULL);
     if(module_option_number("frequency", &tmp)) mod->frequency_khz = (uint32_t)tmp;
@@ -1113,16 +1348,35 @@ static void module_init(module_data_t *mod)
     if(module_option_number("target_bitrate", &tmp))
         mod->target_bitrate = tmp;
 
+    if(mod->delivery && mod->delivery[0] != '\0' && !is_delivery_cable(mod->delivery))
+        asc_log_warning(MSG("delivery %s не поддерживается; генерируется только DVB-C"), mod->delivery);
+    if(is_delivery_cable(mod->delivery))
+    {
+        if(mod->frequency_khz == 0 || mod->symbolrate_ksps == 0 || !mod->modulation || mod->modulation[0] == '\0')
+        {
+            asc_log_warning(MSG("DVB-C delivery требует frequency/symbolrate/modulation"));
+        }
+    }
+
     module_option_boolean("disable_auto_remap", &mod->disable_auto_remap);
     module_option_boolean("pass_nit", &mod->pass_nit);
     module_option_boolean("pass_sdt", &mod->pass_sdt);
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
+    module_option_boolean("pcr_restamp", &mod->pcr_restamp);
+    module_option_boolean("strict_pnr", &mod->strict_pnr);
+    if(mod->pcr_restamp)
+        asc_log_info(MSG("PCR restamp включён"));
 
     if(module_option_number("pat_version", &tmp))
     {
         mod->pat_version = (uint8_t)(tmp & 0x1F);
         mod->pat_version_fixed = true;
+    }
+    if(module_option_number("cat_version", &tmp))
+    {
+        mod->cat_version = (uint8_t)(tmp & 0x1F);
+        mod->cat_version_fixed = true;
     }
     if(module_option_number("nit_version", &tmp))
     {
@@ -1136,6 +1390,7 @@ static void module_init(module_data_t *mod)
     }
 
     mod->pat_out = mpegts_psi_init(MPEGTS_PACKET_PAT, 0x0000);
+    mod->cat_out = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
     mod->sdt_out = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
     mod->nit_out = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x0010);
     mod->tdt_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
@@ -1156,6 +1411,7 @@ static void module_destroy(module_data_t *mod)
         asc_timer_destroy(mod->cbr_timer);
 
     if(mod->pat_out) mpegts_psi_destroy(mod->pat_out);
+    if(mod->cat_out) mpegts_psi_destroy(mod->cat_out);
     if(mod->sdt_out) mpegts_psi_destroy(mod->sdt_out);
     if(mod->nit_out) mpegts_psi_destroy(mod->nit_out);
     if(mod->tdt_out) mpegts_psi_destroy(mod->tdt_out);

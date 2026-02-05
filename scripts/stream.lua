@@ -393,17 +393,43 @@ local function build_mpts_mux_options(channel_config)
     if nit.fec ~= nil then opts.fec = tostring(nit.fec) end
     if nit.modulation ~= nil then opts.modulation = tostring(nit.modulation) end
     if nit.network_search ~= nil then opts.network_search = tostring(nit.network_search) end
+    if nit.lcn_version ~= nil then
+        log.warning("[" .. channel_config.name .. "] mpts_config.nit.lcn_version не поддерживается и будет проигнорирован")
+    end
 
-    if adv.si_interval_ms ~= nil then opts.si_interval_ms = tonumber(adv.si_interval_ms) end
+    if adv.si_interval_ms ~= nil then
+        local interval = tonumber(adv.si_interval_ms)
+        if interval ~= nil then
+            if interval < 50 then
+                -- Интервал SI меньше 50мс нестабилен, игнорируем.
+                log.warning("[" .. channel_config.name .. "] mpts_config.advanced.si_interval_ms < 50, игнорируем")
+            else
+                opts.si_interval_ms = interval
+            end
+        end
+    end
     if adv.pat_version ~= nil then opts.pat_version = tonumber(adv.pat_version) end
     if adv.nit_version ~= nil then opts.nit_version = tonumber(adv.nit_version) end
+    if adv.cat_version ~= nil then opts.cat_version = tonumber(adv.cat_version) end
     if adv.sdt_version ~= nil then opts.sdt_version = tonumber(adv.sdt_version) end
     if adv.disable_auto_remap then opts.disable_auto_remap = true end
     if adv.pass_nit then opts.pass_nit = true end
     if adv.pass_sdt then opts.pass_sdt = true end
     if adv.pass_eit then opts.pass_eit = true end
     if adv.pass_tdt then opts.pass_tdt = true end
-    if adv.target_bitrate ~= nil then opts.target_bitrate = tonumber(adv.target_bitrate) end
+    if adv.pcr_restamp then opts.pcr_restamp = true end
+    if adv.strict_pnr then opts.strict_pnr = true end
+    if adv.target_bitrate ~= nil then
+        local bitrate = tonumber(adv.target_bitrate)
+        if bitrate ~= nil then
+            if bitrate <= 0 then
+                -- Нулевой/отрицательный bitrate выключает CBR, используем default (0).
+                log.warning("[" .. channel_config.name .. "] mpts_config.advanced.target_bitrate <= 0, игнорируем")
+            else
+                opts.target_bitrate = bitrate
+            end
+        end
+    end
 
     return opts
 end
@@ -1923,6 +1949,40 @@ function validate_stream_config(cfg, opts)
                 table.insert(services, { input = entry })
             end
         end
+        local mpts_config = type(cfg.mpts_config) == "table" and cfg.mpts_config or {}
+        local adv = type(mpts_config.advanced) == "table" and mpts_config.advanced or nil
+        if adv and (adv.pass_nit or adv.pass_sdt or adv.pass_eit or adv.pass_tdt) and #services > 1 then
+            local label = cfg.name or cfg.id or "MPTS"
+            log.warning("[" .. tostring(label) .. "] pass_* режимы корректны только для одного сервиса; будет генерация")
+        end
+        if adv and adv.pass_sdt then
+            for _, service in ipairs(services) do
+                if service.service_name or service.service_provider or service.service_type_id or service.scrambled then
+                    local label = cfg.name or cfg.id or "MPTS"
+                    log.warning("[" .. tostring(label) .. "] pass_sdt включает SDT из входа; "
+                        .. "service_name/provider/type/scrambled будут проигнорированы")
+                    break
+                end
+            end
+        end
+        if adv and adv.pass_nit then
+            local general = type(mpts_config.general) == "table" and mpts_config.general or {}
+            local nit = type(mpts_config.nit) == "table" and mpts_config.nit or {}
+            if general.network_id or general.network_name or nit.delivery or nit.frequency or nit.symbolrate
+                or nit.fec or nit.modulation or nit.network_search or nit.lcn_version then
+                local label = cfg.name or cfg.id or "MPTS"
+                log.warning("[" .. tostring(label) .. "] pass_nit включает NIT из входа; "
+                    .. "поля NIT будут проигнорированы")
+            end
+        end
+        if adv and adv.pass_tdt then
+            local general = type(mpts_config.general) == "table" and mpts_config.general or {}
+            if general.country or general.utc_offset then
+                local label = cfg.name or cfg.id or "MPTS"
+                log.warning("[" .. tostring(label) .. "] pass_tdt включает TDT/TOT из входа; "
+                    .. "country/utc_offset будут проигнорированы")
+            end
+        end
         for idx, service in ipairs(services) do
             local url = collect_mpts_input(service)
             if not url then
@@ -2208,7 +2268,8 @@ local function channel_retain(channel_data, reason)
         return false
     end
     channel_data.retain_count = (channel_data.retain_count or 0) + 1
-    if channel_data.active_input_id ~= 0 then
+    local active_id = tonumber(channel_data.active_input_id or 0) or 0
+    if active_id ~= 0 then
         return true
     end
     if channel_data.failover and channel_data.failover.enabled then
@@ -3241,12 +3302,20 @@ local function make_mpts_channel(channel_config)
         end
 
         local svc = input_data.mpts_service or {}
+        local service_type_id = tonumber(svc.service_type_id)
+        if service_type_id ~= nil and (service_type_id < 1 or service_type_id > 255) then
+            -- service_type_id в DVB должен быть 1..255; неверные значения игнорируем.
+            log.warning("[" .. channel_config.name .. "] mpts service #" .. input_id ..
+                " service_type_id должен быть 1..255; игнорируем " .. tostring(svc.service_type_id))
+            service_type_id = nil
+        end
         local svc_opts = {
             name = svc.name or ("svc_" .. tostring(input_id)),
             pnr = tonumber(svc.pnr),
             service_name = svc.service_name or svc.name,
             service_provider = svc.service_provider or svc.provider_name,
-            service_type_id = tonumber(svc.service_type_id),
+            service_type_id = service_type_id,
+            lcn = tonumber(svc.lcn),
             scrambled = svc.scrambled == true,
         }
         channel_data.mpts_mux:add_input(upstream, svc_opts)

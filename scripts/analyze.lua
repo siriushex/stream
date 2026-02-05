@@ -63,6 +63,8 @@ function dump_descriptor(prefix, descriptor_info)
 end
 
 dump_psi_info["cat"] = function(info)
+    -- Даже пустой CAT должен быть заметен в логе.
+    log.info("CAT: present")
     for _, descriptor_info in pairs(info.descriptors) do
         dump_descriptor("CAT: ", descriptor_info)
     end
@@ -76,13 +78,40 @@ dump_psi_info["pmt"] = function(info)
         dump_descriptor("PMT: ", descriptor_info)
     end
 
+    local streams_total = 0
+    local streams_video = 0
+    local streams_audio = 0
+    local streams_data = 0
+    local pcr_in_es = false
+    local es_pids = {}
     for _, stream_info in pairs(info.streams) do
+        streams_total = streams_total + 1
+        if stream_info.type_name == "VIDEO" then
+            streams_video = streams_video + 1
+        elseif stream_info.type_name == "AUDIO" then
+            streams_audio = streams_audio + 1
+        else
+            streams_data = streams_data + 1
+        end
+        if stream_info.pid == info.pcr then
+            pcr_in_es = true
+        end
+        table.insert(es_pids, tostring(stream_info.pid))
         log.info(("%s: pid: %d type: 0x%02X"):format(stream_info.type_name,
                                                       stream_info.pid,
                                                       stream_info.type_id))
         for _, descriptor_info in pairs(stream_info.descriptors) do
             dump_descriptor(stream_info.type_name .. ": ", descriptor_info)
         end
+    end
+    -- Сводная строка для проверок PMT (количество потоков по типам).
+    local pcr_flag = pcr_in_es and 1 or 0
+    table.sort(es_pids)
+    local es_line = #es_pids > 0 and table.concat(es_pids, ",") or ""
+    log.info(("PMT: summary: pnr=%d pcr=%d streams=%d video=%d audio=%d data=%d pcr_in_es=%d")
+        :format(info.pnr, info.pcr, streams_total, streams_video, streams_audio, streams_data, pcr_flag))
+    if es_line ~= "" then
+        log.info(("PMT: es_pids: pnr=%d list=%s"):format(info.pnr, es_line))
     end
     log.info(("PMT: crc32: 0x%X"):format(info.crc32))
 end
@@ -91,12 +120,96 @@ dump_psi_info["sdt"] = function(info)
     log.info(("SDT: tsid: %d"):format(info.tsid))
 
     for _, service in pairs(info.services) do
-        log.info(("SDT: sid: %d"):format(service.sid))
+        local free_ca = service.free_ca and 1 or 0
+        local service_type_id = nil
+        local service_name = nil
+        local provider_name = nil
+        for _, descriptor_info in pairs(service.descriptors) do
+            if descriptor_info.type_name == "service" and descriptor_info.service_type_id then
+                service_type_id = descriptor_info.service_type_id
+                service_name = descriptor_info.service_name
+                provider_name = descriptor_info.service_provider
+                break
+            end
+        end
+        if service_type_id then
+            log.info(("SDT: sid: %d free_ca: %d service_type: %d"):format(service.sid, free_ca, service_type_id))
+            if service_name and provider_name then
+                log.info(("SDT: service_name: sid=%d value=%s"):format(service.sid, service_name))
+                log.info(("SDT: service_provider: sid=%d value=%s"):format(service.sid, provider_name))
+            end
+        else
+            log.info(("SDT: sid: %d free_ca: %d"):format(service.sid, free_ca))
+        end
         for _, descriptor_info in pairs(service.descriptors) do
             dump_descriptor("SDT:     ", descriptor_info)
         end
     end
     log.info(("SDT: crc32: 0x%X"):format(info.crc32))
+end
+
+-- NIT/TDT/TOT используются для проверки MPTS.
+dump_psi_info["nit"] = function(info)
+    local network_id = info.network_id or 0
+    local table_id = info.table_id or 0
+    log.info(("NIT: network_id: %d table_id: 0x%02X"):format(network_id, table_id))
+    if info.network_name then
+        log.info(("NIT: network_name: %s"):format(info.network_name))
+    end
+    if info.delivery == "cable" then
+        local tsid = info.tsid or 0
+        local onid = info.onid or 0
+        local freq = info.frequency_khz or 0
+        local sr = info.symbolrate_ksps or 0
+        local modulation = info.modulation or "unknown"
+        local fec = info.fec_inner or "unknown"
+        log.info(("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d symbolrate_ksps: %d modulation: %s fec: %s")
+            :format(info.delivery, tsid, onid, freq, sr, modulation, fec))
+    end
+    if info.service_list then
+        local entries = {}
+        for sid, stype in pairs(info.service_list) do
+            table.insert(entries, string.format("%d=%d", sid, stype))
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(("NIT: service_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.ts_list then
+        local entries = {}
+        for _, value in pairs(info.ts_list) do
+            table.insert(entries, value)
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(("NIT: ts_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.lcn then
+        local entries = {}
+        for sid, lcn in pairs(info.lcn) do
+            table.insert(entries, string.format("%d=%d", sid, lcn))
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(("NIT: lcn: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.crc32 then
+        log.info(("NIT: crc32: 0x%X"):format(info.crc32))
+    end
+end
+
+dump_psi_info["tdt"] = function(info)
+    log.info("TDT: present")
+end
+
+dump_psi_info["tot"] = function(info)
+    log.info("TOT: present")
+    if info.crc32 then
+        log.info(("TOT: crc32: 0x%X"):format(info.crc32))
+    end
 end
 
 function on_analyze(instance, data)
