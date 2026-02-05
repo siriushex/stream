@@ -14,6 +14,7 @@
 - Changes:
   - AI: add fallback for unsupported response_format/json_schema and expose error detail + model metadata.
   - UI: show AI error details in chat.
+  - Release: pin bundled FFmpeg source to a specific autobuild tag (stable SHA256).
 - Tests:
   - `./astra scripts/tests/ai_openai_fallback_unit.lua`
   - `./astra scripts/tests/ai_telegram_commands_unit.lua`
