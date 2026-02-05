@@ -510,6 +510,9 @@ function ai_openai_client.request_json_schema(opts, callback)
     local input_no_images = strip_input_images(input)
     local stripped_images = false
 
+    -- Forward declare: perform_request uses schedule_retry for backoff retries.
+    local schedule_retry
+
     local function perform_request()
         attempts = attempts + 1
         local payload_input = input
@@ -782,7 +785,7 @@ function ai_openai_client.request_json_schema(opts, callback)
         })
     end
 
-    local function schedule_retry(delay)
+    schedule_retry = function(delay)
         timer({
             interval = delay,
             callback = function(self)

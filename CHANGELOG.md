@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI: fix OpenAI retry backoff timer scoping (prevents panic on retries).
+- Tests:
+  - `./astra scripts/tests/ai_openai_retry_scope_unit.lua`
+### 2026-02-06
+- Changes:
   - MPTS: NIT delivery descriptor support for DVB-T (0x5A) and DVB-S/S2 (0x43).
   - Analyzer: decode DVB-T/S delivery descriptors in NIT (for logs/CI checks).
   - CI: add smoke coverage for DVB-T and DVB-S NIT delivery.
