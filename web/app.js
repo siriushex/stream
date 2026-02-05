@@ -4512,6 +4512,28 @@ function formatGpuInfo(transcode) {
   return `#${device}`;
 }
 
+function formatGpuOverloadReason(reason) {
+  if (!reason || typeof reason !== 'object') return 'n/a';
+  const parts = [];
+  if (reason.gpu !== undefined) parts.push(`#${reason.gpu}`);
+  if (reason.util !== undefined || reason.util_limit !== undefined) {
+    const util = reason.util !== undefined ? `${reason.util}%` : 'n/a';
+    const limit = reason.util_limit !== undefined ? `${reason.util_limit}%` : 'n/a';
+    parts.push(`util ${util}/${limit}`);
+  }
+  if (reason.mem_used !== undefined || reason.mem_limit !== undefined) {
+    const used = reason.mem_used !== undefined ? reason.mem_used : 'n/a';
+    const limit = reason.mem_limit !== undefined ? reason.mem_limit : 'n/a';
+    parts.push(`mem ${used}/${limit} MB`);
+  }
+  if (reason.session_count !== undefined || reason.session_limit !== undefined) {
+    const count = reason.session_count !== undefined ? reason.session_count : 'n/a';
+    const limit = reason.session_limit !== undefined ? reason.session_limit : 'n/a';
+    parts.push(`sess ${count}/${limit}`);
+  }
+  return parts.length ? parts.join(' ') : 'n/a';
+}
+
 function linesToArgs(text) {
   if (!text) return [];
   return text
@@ -15439,6 +15461,10 @@ function openAnalyze(stream) {
       ? String(transcode.ffmpeg_exit_signal)
       : 'n/a';
     const gpuInfo = formatGpuInfo(transcode);
+    const gpuError = transcode && transcode.gpu_metrics_error ? transcode.gpu_metrics_error : 'n/a';
+    const gpuOverload = transcode && transcode.gpu_overload_reason
+      ? formatGpuOverloadReason(transcode.gpu_overload_reason)
+      : 'n/a';
     const outputsStatus = Array.isArray(transcode && transcode.outputs_status)
       ? transcode.outputs_status
       : [];
@@ -15543,6 +15569,8 @@ function openAnalyze(stream) {
         `FFmpeg exit code: ${exitCode}`,
         `FFmpeg exit signal: ${exitSignal}`,
         `GPU: ${gpuInfo}`,
+        `GPU metrics error: ${gpuError}`,
+        `GPU overload reason: ${gpuOverload}`,
         `Last alert: ${lastAlert}`,
         `Last error: ${lastError}`,
         `Last desync: ${desync}`,
