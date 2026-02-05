@@ -975,12 +975,41 @@
             </div>
           </div>
 
-          <div class="settings-section" data-section="hls">
-            <div class="form-stack">
-              <label class="field">
-                <span>Duration</span>
-                <input type="number" id="hls-duration" placeholder="Segments duration in seconds" />
-              </label>
+	          <div class="settings-section" data-section="hls">
+	            <div class="form-stack">
+	              <label class="field">
+	                <span>Storage backend</span>
+	                <select id="hls-storage">
+	                  <option value="disk">Disk (classic)</option>
+	                  <option value="memfd">Memfd (in-memory, zero disk I/O)</option>
+	                </select>
+	              </label>
+	              <div class="form-hint">
+	                Memfd keeps HLS segments in memory and serves them with low CPU (sendfile on Linux).
+	              </div>
+	              <label class="checkline hls-memfd-only" hidden>
+	                <input type="checkbox" id="hls-on-demand" />
+	                <span>On-demand (generate only when clients request /hls/...)</span>
+	              </label>
+	              <label class="field hls-memfd-only" hidden>
+	                <span>Idle timeout (sec)</span>
+	                <input type="number" id="hls-idle-timeout" placeholder="30" min="0" />
+	              </label>
+	              <label class="field hls-memfd-only" hidden>
+	                <span>Max memory per stream (MB)</span>
+	                <input type="number" id="hls-max-bytes-mb" placeholder="64" min="0" />
+	              </label>
+	              <label class="field hls-memfd-only" hidden>
+	                <span>Max segments per stream</span>
+	                <input type="number" id="hls-max-segments" placeholder="12" min="0" />
+	              </label>
+	              <div class="form-hint hls-memfd-only" hidden>
+	                Tip: set 0 to use defaults (bytes: 64MB, segments: window*2).
+	              </div>
+	              <label class="field">
+	                <span>Duration</span>
+	                <input type="number" id="hls-duration" placeholder="Segments duration in seconds" />
+	              </label>
               <label class="field">
                 <span>Quantity</span>
                 <input type="number" id="hls-quantity" placeholder="Number of segments" />

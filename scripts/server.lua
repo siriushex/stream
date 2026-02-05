@@ -949,8 +949,15 @@ function main()
     })
     web_static_handler = web_static
     local hls_memfd_timer = nil
-    if hls_memfd_handler and hls_on_demand and hls_idle_timeout_sec > 0 then
-        local sweep_interval = math.max(2, math.min(5, hls_idle_timeout_sec))
+    -- Всегда запускаем sweep, если доступен memfd handler:
+    -- - on-demand потоки используют sweep для idle-деактивации;
+    -- - если global hls_storage=disk, но отдельные потоки override'ят output.storage=memfd,
+    --   sweep все равно нужен.
+    if hls_memfd_handler then
+        local sweep_interval = 5
+        if hls_idle_timeout_sec > 0 then
+            sweep_interval = math.max(2, math.min(5, hls_idle_timeout_sec))
+        end
         hls_memfd_timer = timer({
             interval = sweep_interval,
             callback = function(self)
