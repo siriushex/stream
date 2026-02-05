@@ -2035,15 +2035,9 @@ const SETTINGS_GENERAL_SECTIONS = [
             hintId: 'settings-ai-model-hint',
           },
           {
-            id: 'settings-ai-chart-mode',
-            label: 'Charts mode',
-            type: 'select',
-            key: 'ai_chart_mode',
+            type: 'note',
+            text: 'Charts mode: Spec only (PNG rendering отключён).',
             level: 'advanced',
-            options: [
-              { value: 'spec', label: 'Spec (default, fast)' },
-              { value: 'image', label: 'Image (render PNG)' },
-            ],
           },
           {
             id: 'settings-ai-max-tokens',
@@ -13674,8 +13668,7 @@ function applySettingsToUI() {
     elements.settingsAiModelHint.textContent = 'Default: gpt-5.2 (auto fallback to gpt-5-mini, gpt-4.1 if unavailable).';
   }
   if (elements.settingsAiChartMode) {
-    const mode = getSettingString('ai_chart_mode', 'spec');
-    elements.settingsAiChartMode.value = mode || 'spec';
+    elements.settingsAiChartMode.value = 'spec';
   }
   if (elements.settingsAiMaxTokens) {
     elements.settingsAiMaxTokens.value = getSettingNumber('ai_max_tokens', 512);
@@ -14264,7 +14257,7 @@ function collectGeneralSettings() {
     payload.ai_api_base = elements.settingsAiApiBase.value.trim();
   }
   if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
-  if (elements.settingsAiChartMode) payload.ai_chart_mode = elements.settingsAiChartMode.value || 'spec';
+  payload.ai_chart_mode = 'spec';
   if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
   if (aiTemperature !== undefined) payload.ai_temperature = aiTemperature;
   if (elements.settingsAiAllowedChats) {
