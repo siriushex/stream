@@ -2359,6 +2359,41 @@ select {
   display: block;
 }
 
+.observability-logs {
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.observability-log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.observability-log-item {
+  display: grid;
+  grid-template-columns: 80px 120px 1fr;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.observability-log-item .time {
+  color: var(--muted);
+}
+
+.observability-log-item .stream {
+  font-weight: 600;
+}
+
+.observability-log-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .analyze-header {
   display: flex;
   align-items: center;

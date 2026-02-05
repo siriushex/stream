@@ -270,6 +270,7 @@ const elements = {
   observabilityChartBitrate: $('#obs-chart-bitrate'),
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
+  observabilityLogs: $('#obs-logs'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
   settingsShowEpg: $('#settings-show-epg'),
@@ -10183,6 +10184,28 @@ function renderObservabilityCharts(items, scope) {
   }
 }
 
+function renderObservabilityLogs(items) {
+  if (!elements.observabilityLogs) return;
+  elements.observabilityLogs.innerHTML = '';
+  const list = Array.isArray(items) ? items : [];
+  if (!list.length) {
+    const empty = createEl('div', 'observability-log-empty', 'No recent errors.');
+    elements.observabilityLogs.appendChild(empty);
+    return;
+  }
+  list.forEach((row) => {
+    const item = document.createElement('div');
+    item.className = 'observability-log-item';
+    const time = createEl('div', 'time', formatLogTime(row.ts || 0));
+    const stream = createEl('div', 'stream', row.stream_id || '-');
+    const message = createEl('div', 'message', row.message || row.component || '');
+    item.appendChild(time);
+    item.appendChild(stream);
+    item.appendChild(message);
+    elements.observabilityLogs.appendChild(item);
+  });
+}
+
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
   const logsDays = getSettingNumber('ai_logs_retention_days', 0);
@@ -10194,6 +10217,7 @@ async function loadObservability(showStatus) {
   if (!enabled) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
+    renderObservabilityLogs([]);
     return;
   }
 
@@ -10203,6 +10227,7 @@ async function loadObservability(showStatus) {
   if (scope === 'stream' && !streamId) {
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
+    renderObservabilityLogs([]);
     return;
   }
   if (showStatus) {
@@ -10218,6 +10243,16 @@ async function loadObservability(showStatus) {
     }
     const metrics = await apiJson(metricsUrl.toString());
     const items = metrics && metrics.items ? metrics.items : [];
+
+    const logsUrl = new URL('/api/v1/ai/logs', window.location.origin);
+    logsUrl.searchParams.set('range', range);
+    logsUrl.searchParams.set('level', 'ERROR');
+    logsUrl.searchParams.set('limit', '20');
+    if (scope === 'stream' && streamId) {
+      logsUrl.searchParams.set('stream_id', streamId);
+    }
+    const logs = await apiJson(logsUrl.toString());
+    const logItems = logs && logs.items ? logs.items : [];
 
     let summary = {};
     if (scope === 'global') {
@@ -10247,6 +10282,7 @@ async function loadObservability(showStatus) {
 
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
+    renderObservabilityLogs(logItems);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
