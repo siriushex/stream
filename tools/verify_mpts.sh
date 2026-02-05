@@ -14,6 +14,7 @@ EXPECT_FREQUENCY_KHZ="${EXPECT_FREQUENCY_KHZ:-}"
 EXPECT_SYMBOLRATE_KSPS="${EXPECT_SYMBOLRATE_KSPS:-}"
 EXPECT_MODULATION="${EXPECT_MODULATION:-}"
 EXPECT_FEC="${EXPECT_FEC:-}"
+EXPECT_NETWORK_NAME="${EXPECT_NETWORK_NAME:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -98,6 +99,13 @@ fi
 if [[ -n "$EXPECT_DELIVERY" ]]; then
   if ! grep -q "NIT: delivery: ${EXPECT_DELIVERY}" "$LOG_FILE"; then
     echo "NIT delivery mismatch (expected ${EXPECT_DELIVERY})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_NETWORK_NAME" ]]; then
+  if ! grep -q "NIT: network_name: ${EXPECT_NETWORK_NAME}" "$LOG_FILE"; then
+    echo "NIT network_name mismatch (expected ${EXPECT_NETWORK_NAME})"
     exit 1
   fi
 fi

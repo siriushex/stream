@@ -106,6 +106,9 @@ dump_psi_info["nit"] = function(info)
     local network_id = info.network_id or 0
     local table_id = info.table_id or 0
     log.info(("NIT: network_id: %d table_id: 0x%02X"):format(network_id, table_id))
+    if info.network_name then
+        log.info(("NIT: network_name: %s"):format(info.network_name))
+    end
     if info.delivery == "cable" then
         local tsid = info.tsid or 0
         local onid = info.onid or 0

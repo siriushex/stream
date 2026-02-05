@@ -114,6 +114,7 @@ static const char __frequency_khz[] = "frequency_khz";
 static const char __symbolrate_ksps[] = "symbolrate_ksps";
 static const char __modulation[] = "modulation";
 static const char __fec_inner[] = "fec_inner";
+static const char __network_name[] = "network_name";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -389,8 +390,28 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
         {
             const uint16_t network_desc_len = (uint16_t)(((buf[pos] & 0x0F) << 8) | buf[pos + 1]);
             pos += 2;
-            if(pos + network_desc_len <= section_end)
-                pos += network_desc_len;
+            size_t network_desc_end = pos + network_desc_len;
+            if(network_desc_end > section_end)
+                network_desc_end = section_end;
+            while(pos + 2 <= network_desc_end)
+            {
+                const uint8_t tag = buf[pos];
+                const uint8_t len = buf[pos + 1];
+                pos += 2;
+                if(pos + len > network_desc_end)
+                    break;
+                if(tag == 0x40 && len > 0)
+                {
+                    size_t name_len = len > 255 ? 255 : len;
+                    char name[256];
+                    memcpy(name, &buf[pos], name_len);
+                    name[name_len] = '\0';
+                    lua_pushstring(lua, name);
+                    lua_setfield(lua, -2, __network_name);
+                }
+                pos += len;
+            }
+            pos = network_desc_end;
         }
         if(pos + 2 <= section_end)
         {
