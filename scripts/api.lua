@@ -603,6 +603,37 @@ local function get_stream(server, client, id)
     })
 end
 
+local function start_stream_preview(server, client, request, stream_id)
+    if not preview or not preview.start then
+        return error_response(server, client, 501, "preview unavailable")
+    end
+    local result, err, code = preview.start(stream_id)
+    if not result then
+        return error_response(server, client, code or 500, err or "preview failed")
+    end
+    if result.mode == "hls" then
+        return json_response(server, client, 200, {
+            url = result.url,
+            mode = "hls",
+        })
+    end
+    return json_response(server, client, 200, {
+        url = result.url,
+        token = result.token,
+        expires_in_sec = result.expires_in_sec,
+        mode = "preview",
+        reused = result.reused == true,
+    })
+end
+
+local function stop_stream_preview(server, client, request, stream_id)
+    if not preview or not preview.stop then
+        return error_response(server, client, 501, "preview unavailable")
+    end
+    preview.stop(stream_id)
+    return json_response(server, client, 200, { status = "ok" })
+end
+
 local function upsert_stream(server, client, id, request)
     local body = parse_json_body(request)
     if not body then
@@ -4414,6 +4445,15 @@ function api.handle_request(server, client, request)
     local stream_analyze_stream = path:match("^/api/v1/streams/([%w%-%_]+)/analyze$")
     if stream_analyze_stream and method == "POST" then
         return start_stream_analyze(server, client, request, stream_analyze_stream)
+    end
+
+    local stream_preview_start = path:match("^/api/v1/streams/([%w%-%_]+)/preview/start$")
+    if stream_preview_start and method == "POST" then
+        return start_stream_preview(server, client, request, stream_preview_start)
+    end
+    local stream_preview_stop = path:match("^/api/v1/streams/([%w%-%_]+)/preview/stop$")
+    if stream_preview_stop and method == "POST" then
+        return stop_stream_preview(server, client, request, stream_preview_stop)
     end
 
     if path == "/api/v1/adapters" and method == "GET" then

@@ -2302,6 +2302,11 @@ local function channel_release(channel_data, reason)
     return true
 end
 
+-- Экспортируем удержание канала для внешних модулей (например, preview-менеджера).
+-- Важно: функции замыкают внутреннюю логику channel_stop_if_idle и failover.
+if _G.channel_retain == nil then _G.channel_retain = channel_retain end
+if _G.channel_release == nil then _G.channel_release = channel_release end
+
 function http_output_client(server, client, request, output_data)
     local client_data = server:data(client)
 

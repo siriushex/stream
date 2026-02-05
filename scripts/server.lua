@@ -41,6 +41,7 @@ dofile(script_path("ai_prompt.lua"))
 dofile(script_path("ai_telegram.lua"))
 dofile(script_path("ai_observability.lua"))
 dofile(script_path("watchdog.lua"))
+dofile(script_path("preview.lua"))
 dofile(script_path("api.lua"))
 
 local opt = {
@@ -924,6 +925,22 @@ function main()
             ts_mime = hls_ts_mime,
         })
     end
+    -- Preview HLS (memfd): отдельный handler с no-store заголовками.
+    local preview_memfd_handler = nil
+    if hls_memfd then
+        preview_memfd_handler = hls_memfd({
+            skip = "/preview",
+            m3u_headers = {
+                "Cache-Control: no-store",
+                "Pragma: no-cache",
+            },
+            ts_headers = {
+                "Cache-Control: no-store",
+                "Pragma: no-cache",
+            },
+            ts_mime = hls_ts_mime,
+        })
+    end
     local web_static = http_static({
         path = opt.web_dir,
         headers = { "Cache-Control: no-cache" },
@@ -1296,6 +1313,38 @@ function main()
         allow_stream(nil)
     end
 
+    local function preview_route_handler(server, client, request)
+        local client_data = server:data(client)
+
+        if not request then
+            if client_data.preview_memfd and preview_memfd_handler then
+                preview_memfd_handler(server, client, request)
+                client_data.preview_memfd = nil
+            end
+            return nil
+        end
+
+        if not preview_memfd_handler or not preview or not preview.extract_token then
+            server:abort(client, 501)
+            return nil
+        end
+
+        local token = preview.extract_token(request.path or "")
+        if not token or not (preview.touch and preview.touch(token)) then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local handled = preview_memfd_handler(server, client, request)
+        if handled then
+            client_data.preview_memfd = true
+            return nil
+        end
+
+        server:abort(client, 404)
+        return nil
+    end
+
     local function hls_route_handler(server, client, request)
         local client_data = server:data(client)
         if request and not ensure_http_auth(server, client, request) then
@@ -1462,6 +1511,7 @@ function main()
         end
     end
 
+    table.insert(main_routes, { "/preview/*", preview_route_handler })
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
     table.insert(main_routes, { "/", web_index })
     table.insert(main_routes, { "/*", web_index })
