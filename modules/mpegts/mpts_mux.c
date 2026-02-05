@@ -94,6 +94,7 @@ struct module_data_t
     bool pass_eit;
     bool pass_tdt;
     bool pcr_restamp;
+    bool strict_pnr;
 
     uint8_t pat_version;
     uint8_t cat_version;
@@ -1066,6 +1067,12 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
 
     if(!svc->has_pnr && program_count > 1)
     {
+        if(mod->strict_pnr)
+        {
+            asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но pnr не задан. "
+                "strict_pnr=true -> поток отклонён"), program_count);
+            return;
+        }
         asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "
             "Рекомендуется явно задать pnr"), program_count, selected_pnr);
     }
@@ -1348,6 +1355,7 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
     module_option_boolean("pcr_restamp", &mod->pcr_restamp);
+    module_option_boolean("strict_pnr", &mod->strict_pnr);
     if(mod->pcr_restamp)
         asc_log_info(MSG("PCR restamp включён"));
 

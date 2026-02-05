@@ -696,6 +696,7 @@ const elements = {
   mptsPassSdt: $('#mpts-pass-sdt'),
   mptsPassEit: $('#mpts-pass-eit'),
   mptsPassTdt: $('#mpts-pass-tdt'),
+  mptsStrictPnr: $('#mpts-strict-pnr'),
   mptsPassWarning: $('#mpts-pass-warning'),
   mptsAutoremapWarning: $('#mpts-autoremap-warning'),
   mptsPnrWarning: $('#mpts-pnr-warning'),
@@ -8785,6 +8786,9 @@ function openEditor(stream, isNew) {
   if (elements.mptsPassTdt) {
     elements.mptsPassTdt.checked = mptsAdv.pass_tdt === true;
   }
+  if (elements.mptsStrictPnr) {
+    elements.mptsStrictPnr.checked = mptsAdv.strict_pnr === true;
+  }
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
   updateMptsInputWarning();
@@ -9237,6 +9241,9 @@ function readStreamForm() {
   }
   if (elements.mptsPassTdt && elements.mptsPassTdt.checked) {
     mptsAdv.pass_tdt = true;
+  }
+  if (elements.mptsStrictPnr && elements.mptsStrictPnr.checked) {
+    mptsAdv.strict_pnr = true;
   }
 
   if (mptsEnabled || hasAnyValue(mptsConfig)) {
