@@ -145,16 +145,36 @@ def build_cat(version: int = 0) -> bytes:
     return bytes(section)
 
 
-def pack_section(pid: int, section: bytes, cc: int) -> bytes:
-    pkt = bytearray([0xFF] * TS_PACKET_SIZE)
-    pkt[0] = SYNC_BYTE
-    pkt[1] = 0x40 | ((pid >> 8) & 0x1F)
-    pkt[2] = pid & 0xFF
-    pkt[3] = 0x10 | (cc & 0x0F)
-    pkt[4] = 0x00  # pointer_field
-    end = 5 + len(section)
-    pkt[5:end] = section
-    return bytes(pkt)
+def packetize_section(pid: int, section: bytes, cc_map: dict[int, int]) -> list[bytes]:
+    """Пакетизация PSI секции в TS пакеты по 188 байт.
+
+    ВАЖНО: старый pack_section работал только для секций <= 183 байта и ломался на больших PAT/SDT.
+    """
+    packets: list[bytes] = []
+    offset = 0
+    pusi = True
+    cc = cc_map.get(pid, 0)
+    while offset < len(section):
+        pkt = bytearray([0xFF] * TS_PACKET_SIZE)
+        pkt[0] = SYNC_BYTE
+        pkt[1] = ((0x40 if pusi else 0x00) | ((pid >> 8) & 0x1F))
+        pkt[2] = pid & 0xFF
+        pkt[3] = 0x10 | (cc & 0x0F)
+        cc = (cc + 1) & 0x0F
+
+        idx = 4
+        if pusi:
+            pkt[idx] = 0x00  # pointer_field
+            idx += 1
+
+        take = min(len(section) - offset, TS_PACKET_SIZE - idx)
+        pkt[idx:idx + take] = section[offset:offset + take]
+        offset += take
+        packets.append(bytes(pkt))
+        pusi = False
+
+    cc_map[pid] = cc
+    return packets
 
 
 def pack_payload(pid: int, cc: int, payload: bytes = b"") -> bytes:
@@ -181,6 +201,8 @@ def main() -> int:
     parser.add_argument("--pmt-pid", type=int, default=0x1000)
     parser.add_argument("--video-pid", type=int, default=0x0100)
     parser.add_argument("--pcr-pid", type=int, default=0x0100)
+    parser.add_argument("--program-count", type=int, default=1,
+                        help="Generate N programs in one TS (multi-program input). Default: 1")
     parser.add_argument("--extra-pnr", type=int, default=0)
     parser.add_argument("--extra-pmt-pid", type=int, default=0)
     parser.add_argument("--extra-video-pid", type=int, default=0)
@@ -195,14 +217,28 @@ def main() -> int:
     parser.add_argument("--emit-cat", action="store_true")
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--pps", type=int, default=200)
+    parser.add_argument("--payload-per-program", type=int, default=3,
+                        help="Dummy ES payload packets per program per tick. Default: 3")
     args = parser.parse_args()
 
-    programs = [(args.pnr, args.pmt_pid, args.video_pid, args.pcr_pid)]
-    if args.extra_pnr > 0 and args.extra_pmt_pid > 0:
-        # Дополнительная программа для проверки multi-PAT/strict_pnr.
-        extra_video = args.extra_video_pid if args.extra_video_pid > 0 else args.video_pid + 1
-        extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
-        programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
+    program_count = max(1, int(args.program_count))
+    programs = []
+    if program_count > 1:
+        # Мультипрограммный вход: PNR/PMT PID/Video PID делаем уникальными по индексам.
+        for i in range(program_count):
+            pnr = args.pnr + i
+            pmt_pid = args.pmt_pid + i
+            video_pid = args.video_pid + i
+            if pmt_pid >= NULL_PID or video_pid >= NULL_PID:
+                raise SystemExit("program-count too large: PID exceeds 0x1FFF")
+            programs.append((pnr, pmt_pid, video_pid, video_pid))
+    else:
+        programs = [(args.pnr, args.pmt_pid, args.video_pid, args.pcr_pid)]
+        if args.extra_pnr > 0 and args.extra_pmt_pid > 0:
+            # Дополнительная программа для проверки multi-PAT/strict_pnr.
+            extra_video = args.extra_video_pid if args.extra_video_pid > 0 else args.video_pid + 1
+            extra_pcr = args.extra_pcr_pid if args.extra_pcr_pid > 0 else extra_video
+            programs.append((args.extra_pnr, args.extra_pmt_pid, extra_video, extra_pcr))
 
     pat = build_pat(args.tsid, [(pnr, pmt_pid) for pnr, pmt_pid, _, _ in programs])
     pmt_map = {pmt_pid: build_pmt(pnr, pcr_pid, video_pid)
@@ -241,20 +277,25 @@ def main() -> int:
             time.sleep(max(0, next_tick - now))
         next_tick += interval
 
-        sock.sendto(pack_section(0x0000, pat, next_cc(0x0000)), target)
+        for pkt in packetize_section(0x0000, pat, cc_map):
+            sock.sendto(pkt, target)
         for pnr, pmt_pid, video_pid, _ in programs:
             pmt = pmt_map[pmt_pid]
-            sock.sendto(pack_section(pmt_pid, pmt, next_cc(pmt_pid)), target)
+            for pkt in packetize_section(pmt_pid, pmt, cc_map):
+                sock.sendto(pkt, target)
             # Few dummy payload packets for ES PID
-            for _ in range(3):
+            for _ in range(max(0, int(args.payload_per_program))):
                 sock.sendto(pack_payload(video_pid, next_cc(video_pid)), target)
         if sdt:
-            sock.sendto(pack_section(0x0011, sdt, next_cc(0x0011)), target)
+            for pkt in packetize_section(0x0011, sdt, cc_map):
+                sock.sendto(pkt, target)
         if eit_map:
             for pnr, eit in eit_map.items():
-                sock.sendto(pack_section(0x0012, eit, next_cc(0x0012)), target)
+                for pkt in packetize_section(0x0012, eit, cc_map):
+                    sock.sendto(pkt, target)
         if cat:
-            sock.sendto(pack_section(0x0001, cat, next_cc(0x0001)), target)
+            for pkt in packetize_section(0x0001, cat, cc_map):
+                sock.sendto(pkt, target)
 
         # Null padding
         for _ in range(2):

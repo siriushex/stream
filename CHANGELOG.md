@@ -2251,3 +2251,16 @@
   - `contrib/ci/smoke_mpts_strict_pnr.sh`
   - Not run (auto-probe UI/runtime update)
   - Not run (auto-probe smoke)
+### 2026-02-05
+- Changes:
+  - MPTS: generate PAT/SDT/NIT as multi-section DVB PSI/SI tables (max 1024 bytes per section) to avoid truncation with large service counts.
+  - Tools: `tools/gen_spts.py` supports `--program-count` and correct PSI packetization across multiple TS packets.
+  - CI: add `contrib/ci/smoke_mpts_multisection.sh` + `tools/mpts_si_verify.py` and run it in GitHub Actions `mpts-smoke`.
+- Tests:
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_pid_collision.sh`
+  - `contrib/ci/smoke_mpts_pass_tables.sh`
+  - `contrib/ci/smoke_mpts_strict_pnr.sh`
+  - `contrib/ci/smoke_mpts_spts_only.sh`
+  - `contrib/ci/smoke_mpts_auto_probe.sh`
+  - `contrib/ci/smoke_mpts_multisection.sh`
