@@ -2302,6 +2302,19 @@ local function parse_analyze_error_count(line, prefix)
     return total
 end
 
+local function parse_analyze_psi_presence(line)
+    if not line or line == "" then
+        return nil
+    end
+    if line:find("PAT:", 1, true) then
+        return "pat"
+    end
+    if line:find("PMT:", 1, true) then
+        return "pmt"
+    end
+    return nil
+end
+
 local function should_trigger_error(now, last_ts, hold_sec)
     if not last_ts then
         return true
@@ -2767,6 +2780,12 @@ local function tick_output_probe(job, output_state, now)
                     probe.last_bitrate = bitrate
                     update_output_bitrate(job, output_state, bitrate, now)
                 end
+                local psi = parse_analyze_psi_presence(line)
+                if psi == "pat" then
+                    output_state.psi_pat_ts = now
+                elseif psi == "pmt" then
+                    output_state.psi_pmt_ts = now
+                end
                 local cc_errors = parse_analyze_error_count(line, "CC:")
                 if cc_errors ~= nil then
                     output_state.cc_errors = cc_errors
@@ -3150,6 +3169,8 @@ local function reset_output_monitor_state(output_state, now)
     output_state.scrambled_errors_ts = nil
     output_state.scrambled_active = nil
     output_state.scrambled_trigger_ts = nil
+    output_state.psi_pat_ts = nil
+    output_state.psi_pmt_ts = nil
     output_state.next_probe_ts = nil
     output_state.analyze_pending = false
     if output_state.watchdog and output_state.watchdog.probe_interval_sec > 0 then
@@ -3479,6 +3500,8 @@ function transcode.get_status(id)
                 scrambled_errors = output_state.scrambled_errors,
                 scrambled_errors_ts = output_state.scrambled_errors_ts,
                 scrambled_active = output_state.scrambled_active or false,
+                psi_pat_ts = output_state.psi_pat_ts,
+                psi_pmt_ts = output_state.psi_pmt_ts,
                 low_bitrate_active = output_state.low_bitrate_active or false,
                 low_bitrate_seconds_accum = output_state.low_bitrate_active and output_state.low_bitrate_seconds or 0,
                 last_restart_ts = output_state.last_restart_ts,
