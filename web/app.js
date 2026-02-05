@@ -3098,14 +3098,11 @@ function setSettingsSection(section) {
 }
 
 function applyFeatureVisibility() {
-  const showSplitter = getSettingBool('ui_splitter_enabled', false);
-  const showBuffer = getSettingBool('ui_buffer_enabled', false);
-  const showAccess = getSettingBool('ui_access_enabled', true);
-  const helpEnabled = getSettingBool('ai_enabled', false);
-  const observabilityOnDemand = getSettingBool('ai_metrics_on_demand', true);
-  const observabilityLogsDays = getSettingNumber('ai_logs_retention_days', 0);
-  const observabilityMetricsDays = getSettingNumber('ai_metrics_retention_days', 0);
-  const showObservability = observabilityLogsDays > 0 || (!observabilityOnDemand && observabilityMetricsDays > 0);
+  const showSplitter = isViewEnabled('splitters');
+  const showBuffer = isViewEnabled('buffers');
+  const showAccess = isViewEnabled('access');
+  const helpEnabled = isViewEnabled('help');
+  const showObservability = isViewEnabled('observability');
 
   const splitterNav = document.querySelector('.nav-link[data-view="splitters"]');
   const bufferNav = document.querySelector('.nav-link[data-view="buffers"]');
@@ -3149,6 +3146,20 @@ function applyFeatureVisibility() {
       setView('streams');
     }
   }
+}
+
+function isViewEnabled(name) {
+  if (name === 'splitters') return getSettingBool('ui_splitter_enabled', false);
+  if (name === 'buffers') return getSettingBool('ui_buffer_enabled', false);
+  if (name === 'access') return getSettingBool('ui_access_enabled', true);
+  if (name === 'help') return getSettingBool('ai_enabled', false);
+  if (name === 'observability') {
+    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const logsDays = getSettingNumber('ai_logs_retention_days', 0);
+    const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+    return logsDays > 0 || (!onDemand && metricsDays > 0);
+  }
+  return true;
 }
 
 function toNumber(value) {
