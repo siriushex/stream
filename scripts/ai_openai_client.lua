@@ -495,8 +495,9 @@ function ai_openai_client.request_json_schema(opts, callback)
                     end
                     return handle_result(false, nil, 0, err or "spawn failed")
                 end
+                local poll_interval = 1
                 timer({
-                    interval = 0.2,
+                    interval = poll_interval,
                     callback = function(self)
                         local status = proc:poll()
                         if not status then
