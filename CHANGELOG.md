@@ -2157,6 +2157,7 @@
   - Added AI apply guardrail: large plans require `allow_destructive` (configurable via `ai_max_ops`).
   - Added guardrail: disable ops require `allow_destructive`.
   - Fixed AI proxy polling timer to avoid zero interval (prevents crash when proxies are set).
+  - Sanitized AI context strings to avoid invalid UTF‑8 in OpenAI requests.
   - Added unit tests for AI chat diff preview and OpenAI image fallback behavior.
 - Tests:
   - Not run (server deploy only).
