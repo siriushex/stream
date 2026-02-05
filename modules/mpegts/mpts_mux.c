@@ -469,6 +469,35 @@ static uint8_t parse_fec_inner(const char *value)
     return 0x0F;
 }
 
+static bool is_utf8_codepage(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(!strcasecmp(value, "utf-8")) return true;
+    if(!strcasecmp(value, "utf8")) return true;
+    return false;
+}
+
+static size_t write_encoded_text(uint8_t *dst, size_t max_len, const char *text,
+                                 size_t raw_len, bool use_utf8)
+{
+    if(!dst || !text || max_len == 0 || raw_len == 0)
+        return 0;
+
+    size_t pos = 0;
+    if(use_utf8)
+    {
+        // DVB UTF-8 marker (ETSI EN 300 468)
+        dst[pos++] = 0x15;
+        if(pos >= max_len)
+            return pos;
+    }
+
+    if(raw_len > max_len - pos)
+        raw_len = max_len - pos;
+    memcpy(&dst[pos], text, raw_len);
+    return pos + raw_len;
+}
+
 static void build_pat(module_data_t *mod)
 {
     PAT_INIT(mod->pat_out, mod->tsid, mod->pat_version);
@@ -505,6 +534,7 @@ static void build_sdt(module_data_t *mod)
 {
     uint8_t *buf = mod->sdt_out->buffer;
     uint16_t pos = 0;
+    const bool use_utf8 = is_utf8_codepage(mod->codepage);
 
     buf[pos++] = 0x42; // SDT Actual
     buf[pos++] = 0x80 | 0x30; // section_syntax_indicator + reserved
@@ -528,15 +558,39 @@ static void build_sdt(module_data_t *mod)
         const char *service_name = svc->service_name ? svc->service_name : "";
         if(!provider) provider = "";
 
-        size_t provider_len = strlen(provider);
-        size_t service_len = strlen(service_name);
-        if(provider_len > 255) provider_len = 255;
-        if(service_len > 255) service_len = 255;
+        size_t provider_raw_len = strlen(provider);
+        size_t service_raw_len = strlen(service_name);
+        const size_t max_raw = use_utf8 ? 254 : 255;
+        if(provider_raw_len > max_raw) provider_raw_len = max_raw;
+        if(service_raw_len > max_raw) service_raw_len = max_raw;
+
+        size_t provider_len = provider_raw_len + ((use_utf8 && provider_raw_len > 0) ? 1 : 0);
+        size_t service_len = service_raw_len + ((use_utf8 && service_raw_len > 0) ? 1 : 0);
+
         if(3 + provider_len + 1 + service_len > 255)
         {
-            const size_t max_service = 255 > (4 + provider_len) ? (255 - 4 - provider_len) : 0;
-            if(service_len > max_service)
-                service_len = max_service;
+            size_t max_service_len = (255 > (4 + provider_len)) ? (255 - 4 - provider_len) : 0;
+            if(service_len > max_service_len)
+            {
+                if(use_utf8)
+                {
+                    if(max_service_len <= 1)
+                    {
+                        service_raw_len = 0;
+                        service_len = 0;
+                    }
+                    else
+                    {
+                        service_raw_len = max_service_len - 1;
+                        service_len = service_raw_len + 1;
+                    }
+                }
+                else
+                {
+                    service_raw_len = max_service_len;
+                    service_len = service_raw_len;
+                }
+            }
         }
 
         uint8_t desc[512];
@@ -545,11 +599,11 @@ static void build_sdt(module_data_t *mod)
         desc[desc_len++] = (uint8_t)(3 + provider_len + 1 + service_len);
         desc[desc_len++] = (uint8_t)(svc->has_service_type_id ? svc->service_type_id : 1);
         desc[desc_len++] = (uint8_t)provider_len;
-        memcpy(&desc[desc_len], provider, provider_len);
-        desc_len += (uint16_t)provider_len;
+        desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
+                                                 provider, provider_raw_len, use_utf8);
         desc[desc_len++] = (uint8_t)service_len;
-        memcpy(&desc[desc_len], service_name, service_len);
-        desc_len += (uint16_t)service_len;
+        desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
+                                                 service_name, service_raw_len, use_utf8);
 
         buf[pos++] = (uint8_t)(svc->pnr_out >> 8);
         buf[pos++] = (uint8_t)(svc->pnr_out & 0xFF);
@@ -586,8 +640,15 @@ static void build_nit(module_data_t *mod)
     uint16_t network_desc_start = pos;
     if(mod->network_name && mod->network_name[0] != '\0')
     {
-        const size_t name_len = strlen(mod->network_name) > 255 ? 255 : strlen(mod->network_name);
-        pos = append_descriptor(buf, pos, 0x40, (const uint8_t *)mod->network_name, (uint8_t)name_len);
+        const bool use_utf8 = is_utf8_codepage(mod->codepage);
+        size_t raw_len = strlen(mod->network_name);
+        const size_t max_raw = use_utf8 ? 254 : 255;
+        if(raw_len > max_raw) raw_len = max_raw;
+
+        uint8_t tmp[256];
+        const size_t out_len = write_encoded_text(tmp, sizeof(tmp), mod->network_name, raw_len, use_utf8);
+        if(out_len > 0)
+            pos = append_descriptor(buf, pos, 0x40, tmp, (uint8_t)out_len);
     }
     uint16_t network_desc_len = pos - network_desc_start;
     buf[network_desc_len_pos] = 0xF0 | ((network_desc_len >> 8) & 0x0F);
@@ -1254,6 +1315,8 @@ static void module_init(module_data_t *mod)
     module_option_string("codepage", &mod->codepage, NULL);
     module_option_string("country", &mod->country, NULL);
     if(module_option_number("utc_offset", &tmp)) mod->utc_offset = tmp;
+    if(mod->codepage && mod->codepage[0] != '\0' && !is_utf8_codepage(mod->codepage))
+        asc_log_warning(MSG("codepage %s не поддерживается; используется исходная строка"), mod->codepage);
 
     module_option_string("delivery", &mod->delivery, NULL);
     if(module_option_number("frequency", &tmp)) mod->frequency_khz = (uint32_t)tmp;
