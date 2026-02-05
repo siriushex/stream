@@ -194,6 +194,7 @@ const state = {
   sessionTimer: null,
   accessLogTimer: null,
   logTimer: null,
+  observabilityTimer: null,
   logCursor: 0,
   logEntries: [],
   logLevelFilter: 'all',
@@ -243,6 +244,7 @@ const POLL_LOG_MS = 8000;
 const POLL_SPLITTER_MS = 10000;
 const POLL_BUFFER_MS = 10000;
 const POLL_SERVER_STATUS_MS = 60000;
+const POLL_OBSERVABILITY_MS = 60000;
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -258,6 +260,16 @@ const elements = {
   views: $$('.view'),
   settingsMenu: $('#settings-menu'),
   settingsItems: $$('#settings-menu .settings-item'),
+  observabilityRange: $('#obs-range'),
+  observabilityScope: $('#obs-scope'),
+  observabilityStream: $('#obs-stream'),
+  observabilityStreamField: $('#obs-stream-field'),
+  observabilityRefresh: $('#obs-refresh'),
+  observabilitySummary: $('#obs-summary'),
+  observabilityEmpty: $('#obs-empty'),
+  observabilityChartBitrate: $('#obs-chart-bitrate'),
+  observabilityChartStreams: $('#obs-chart-streams'),
+  observabilityChartSwitches: $('#obs-chart-switches'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
   settingsShowEpg: $('#settings-show-epg'),
@@ -1061,6 +1073,11 @@ function setView(name) {
     }
   } else {
     stopDvbPolling();
+  }
+  if (name === 'observability') {
+    updateObservabilityStreamOptions();
+    updateObservabilityScopeFields();
+    loadObservability(true);
   }
   syncPollingForView();
 }
@@ -9939,6 +9956,283 @@ function stopAccessLogPolling() {
   }
 }
 
+function startObservabilityPolling() {
+  if (state.observabilityTimer) {
+    clearInterval(state.observabilityTimer);
+  }
+  state.observabilityTimer = setInterval(() => {
+    if (state.currentView === 'observability' && !document.hidden) {
+      loadObservability(false);
+    }
+  }, POLL_OBSERVABILITY_MS);
+}
+
+function stopObservabilityPolling() {
+  if (state.observabilityTimer) {
+    clearInterval(state.observabilityTimer);
+    state.observabilityTimer = null;
+  }
+}
+
+function updateObservabilityStreamOptions() {
+  if (!elements.observabilityStream) return;
+  const current = elements.observabilityStream.value;
+  elements.observabilityStream.innerHTML = '';
+  const placeholder = createEl('option', '', 'Select stream');
+  placeholder.value = '';
+  elements.observabilityStream.appendChild(placeholder);
+  const streams = Array.isArray(state.streams) ? state.streams.slice() : [];
+  streams.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  streams.forEach((stream) => {
+    const option = createEl('option', '', `${stream.id} — ${stream.name || ''}`.trim());
+    option.value = stream.id;
+    elements.observabilityStream.appendChild(option);
+  });
+  if (current) {
+    elements.observabilityStream.value = current;
+  }
+}
+
+function updateObservabilityScopeFields() {
+  if (!elements.observabilityScope || !elements.observabilityStreamField) return;
+  const isStream = elements.observabilityScope.value === 'stream';
+  elements.observabilityStreamField.hidden = !isStream;
+}
+
+function getThemeColor(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return value ? value.trim() : fallback;
+}
+
+function drawEmptyChart(canvas, message) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = rect.width * ratio;
+  canvas.height = rect.height * ratio;
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  ctx.fillStyle = getThemeColor('--muted', '#8f98a3');
+  ctx.font = '12px "IBM Plex Sans", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(message || 'No data', rect.width / 2, rect.height / 2);
+}
+
+function drawLineChart(canvas, series) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = rect.width * ratio;
+  canvas.height = rect.height * ratio;
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const allPoints = series.flatMap((item) => item.points || []);
+  if (!allPoints.length) {
+    drawEmptyChart(canvas, 'No data');
+    return;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  allPoints.forEach((pt) => {
+    minX = Math.min(minX, pt.x);
+    maxX = Math.max(maxX, pt.x);
+    minY = Math.min(minY, pt.y);
+    maxY = Math.max(maxY, pt.y);
+  });
+  if (minX === maxX) {
+    minX -= 1;
+    maxX += 1;
+  }
+  if (minY === maxY) {
+    minY = minY === 0 ? -1 : minY * 0.9;
+    maxY = maxY === 0 ? 1 : maxY * 1.1;
+  }
+
+  const padding = { left: 36, right: 8, top: 10, bottom: 18 };
+  const width = rect.width - padding.left - padding.right;
+  const height = rect.height - padding.top - padding.bottom;
+  const xScale = (x) => padding.left + ((x - minX) / (maxX - minX)) * width;
+  const yScale = (y) => rect.height - padding.bottom - ((y - minY) / (maxY - minY)) * height;
+
+  ctx.strokeStyle = getThemeColor('--border', '#3d434e');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding.left, padding.top);
+  ctx.lineTo(padding.left, rect.height - padding.bottom);
+  ctx.lineTo(rect.width - padding.right, rect.height - padding.bottom);
+  ctx.stroke();
+
+  series.forEach((item) => {
+    const points = item.points || [];
+    if (!points.length) return;
+    ctx.strokeStyle = item.color || getThemeColor('--accent', '#5aaae5');
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    points.forEach((pt, idx) => {
+      const x = xScale(pt.x);
+      const y = yScale(pt.y);
+      if (idx === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.stroke();
+  });
+}
+
+function groupMetrics(items) {
+  const map = {};
+  (items || []).forEach((row) => {
+    if (!row || row.metric_key == null || row.ts_bucket == null) return;
+    const key = String(row.metric_key);
+    if (!map[key]) map[key] = [];
+    map[key].push({
+      x: Number(row.ts_bucket) * 1000,
+      y: Number(row.value) || 0,
+    });
+  });
+  Object.keys(map).forEach((key) => {
+    map[key].sort((a, b) => a.x - b.x);
+  });
+  return map;
+}
+
+function renderObservabilitySummary(summary, scope, streamId) {
+  if (!elements.observabilitySummary) return;
+  elements.observabilitySummary.innerHTML = '';
+  const cards = [];
+  const addCard = (label, value) => {
+    const card = createEl('div', 'summary-card');
+    card.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>`;
+    cards.push(card);
+  };
+
+  if (scope === 'stream') {
+    addCard('Stream', streamId || '—');
+    addCard('Bitrate', formatBitrate(Number(summary.bitrate_kbps) || 0));
+    addCard('On air', summary.on_air ? 'YES' : 'NO');
+    addCard('Input switch', Number(summary.input_switch || 0));
+  } else {
+    addCard('Total bitrate', formatBitrate(Number(summary.total_bitrate_kbps) || 0));
+    addCard('Streams on air', Number(summary.streams_on_air || 0));
+    addCard('Streams down', Number(summary.streams_down || 0));
+    addCard('Input switch', Number(summary.input_switch || 0));
+    addCard('Alerts error', Number(summary.alerts_error || 0));
+  }
+
+  cards.forEach((card) => elements.observabilitySummary.appendChild(card));
+}
+
+function renderObservabilityCharts(items, scope) {
+  const seriesMap = groupMetrics(items || []);
+  const accent = getThemeColor('--accent', '#5aaae5');
+  const warning = getThemeColor('--warning', '#f0b54d');
+  const danger = getThemeColor('--danger', '#e06666');
+  const success = getThemeColor('--success', '#5bc377');
+
+  if (scope === 'stream') {
+    drawLineChart(elements.observabilityChartBitrate, [
+      { color: accent, points: seriesMap.bitrate_kbps || [] },
+    ]);
+    drawLineChart(elements.observabilityChartStreams, [
+      { color: success, points: seriesMap.on_air || [] },
+    ]);
+    drawLineChart(elements.observabilityChartSwitches, [
+      { color: warning, points: seriesMap.input_switch || [] },
+    ]);
+  } else {
+    drawLineChart(elements.observabilityChartBitrate, [
+      { color: accent, points: seriesMap.total_bitrate_kbps || [] },
+    ]);
+    drawLineChart(elements.observabilityChartStreams, [
+      { color: success, points: seriesMap.streams_on_air || [] },
+      { color: danger, points: seriesMap.streams_down || [] },
+    ]);
+    drawLineChart(elements.observabilityChartSwitches, [
+      { color: warning, points: seriesMap.input_switch || [] },
+      { color: danger, points: seriesMap.alerts_error || [] },
+    ]);
+  }
+}
+
+async function loadObservability(showStatus) {
+  if (!elements.observabilityRange) return;
+  const logsDays = getSettingNumber('ai_logs_retention_days', 0);
+  const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+  const enabled = logsDays > 0 || metricsDays > 0;
+  if (elements.observabilityEmpty) {
+    elements.observabilityEmpty.classList.toggle('active', !enabled);
+  }
+  if (!enabled) {
+    renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
+    renderObservabilityCharts([], 'global');
+    return;
+  }
+
+  const range = elements.observabilityRange.value || '24h';
+  const scope = elements.observabilityScope.value || 'global';
+  const streamId = elements.observabilityStream ? elements.observabilityStream.value : '';
+  if (scope === 'stream' && !streamId) {
+    renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
+    renderObservabilityCharts([], 'stream');
+    return;
+  }
+  if (showStatus) {
+    setStatus('Loading observability...');
+  }
+
+  try {
+    const metricsUrl = new URL('/api/v1/ai/metrics', window.location.origin);
+    metricsUrl.searchParams.set('range', range);
+    metricsUrl.searchParams.set('scope', scope);
+    if (scope === 'stream' && streamId) {
+      metricsUrl.searchParams.set('id', streamId);
+    }
+    const metrics = await apiJson(metricsUrl.toString());
+    const items = metrics && metrics.items ? metrics.items : [];
+
+    let summary = {};
+    if (scope === 'global') {
+      const summaryUrl = new URL('/api/v1/ai/summary', window.location.origin);
+      summaryUrl.searchParams.set('range', range);
+      const summaryResp = await apiJson(summaryUrl.toString());
+      summary = (summaryResp && summaryResp.summary) ? summaryResp.summary : {};
+    } else {
+      const latest = {};
+      let lastBucket = 0;
+      items.forEach((row) => {
+        if (row.ts_bucket && row.ts_bucket > lastBucket) {
+          lastBucket = row.ts_bucket;
+        }
+      });
+      items.forEach((row) => {
+        if (row.ts_bucket === lastBucket) {
+          latest[row.metric_key] = row.value;
+        }
+      });
+      summary = {
+        bitrate_kbps: latest.bitrate_kbps || 0,
+        on_air: Number(latest.on_air || 0) > 0,
+        input_switch: latest.input_switch || 0,
+      };
+    }
+
+    renderObservabilitySummary(summary, scope, streamId);
+    renderObservabilityCharts(items, scope);
+  } catch (err) {
+    const message = formatNetworkError(err) || 'Failed to load observability';
+    setStatus(message);
+  }
+}
+
 function syncPollingForView() {
   if (state.currentView === 'dashboard') {
     startStatusPolling();
@@ -9975,6 +10269,11 @@ function syncPollingForView() {
   } else {
     stopSplitterPolling();
   }
+  if (state.currentView === 'observability') {
+    startObservabilityPolling();
+  } else {
+    stopObservabilityPolling();
+  }
 }
 
 function pauseAllPolling() {
@@ -9987,6 +10286,7 @@ function pauseAllPolling() {
   stopLogPolling();
   stopAccessLogPolling();
   stopServerStatusPolling();
+  stopObservabilityPolling();
 }
 
 function resumeAllPolling() {
@@ -11280,6 +11580,7 @@ async function loadStreams() {
   const data = await apiJson('/api/v1/streams');
   state.streams = Array.isArray(data) ? data : [];
   renderStreams();
+  updateObservabilityStreamOptions();
 }
 
 async function saveStream(event) {
@@ -11688,6 +11989,9 @@ async function refreshAll() {
     await loadUsers();
     await loadSessions();
     await loadAccessLog(true);
+    if (state.currentView === 'observability') {
+      await loadObservability(false);
+    }
     setOverlay(elements.loginOverlay, false);
     resumeAllPolling();
   } catch (err) {
@@ -11708,6 +12012,29 @@ function bindEvents() {
       event.stopPropagation();
     });
   });
+
+  if (elements.observabilityRefresh) {
+    elements.observabilityRefresh.addEventListener('click', () => {
+      loadObservability(true);
+    });
+  }
+  if (elements.observabilityRange) {
+    elements.observabilityRange.addEventListener('change', () => {
+      loadObservability(true);
+    });
+  }
+  if (elements.observabilityScope) {
+    elements.observabilityScope.addEventListener('change', () => {
+      updateObservabilityScopeFields();
+      loadObservability(true);
+    });
+  }
+  if (elements.observabilityStream) {
+    elements.observabilityStream.addEventListener('change', () => {
+      loadObservability(true);
+    });
+  }
+  updateObservabilityScopeFields();
 
   elements.settingsItems.forEach((item) => {
     item.addEventListener('click', () => {
