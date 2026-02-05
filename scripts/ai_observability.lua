@@ -262,7 +262,9 @@ function ai_observability.ingest_alert(entry)
     local stream_id = tostring(entry.stream_id or "")
     local code = tostring(entry.code or "alert")
     local message = tostring(entry.message or "")
-    local fingerprint = string.md5(level .. "|" .. stream_id .. "|" .. code .. "|" .. message)
+    -- string.md5() возвращает бинарный digest (16 байт, может содержать \0).
+    -- Для хранения в sqlite используем hex, чтобы не ломать SQL строки.
+    local fingerprint = string.lower(string.hex(string.md5(level .. "|" .. stream_id .. "|" .. code .. "|" .. message)))
     config.add_ai_log_event({
         ts = ts,
         level = level,
