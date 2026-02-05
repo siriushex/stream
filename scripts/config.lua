@@ -1006,6 +1006,9 @@ function config.get_stream(id)
 end
 
 function config.upsert_stream(id, enabled, cfg)
+    if type(cfg) == "table" then
+        cfg.enable = enabled and true or false
+    end
     local payload = json_encode(cfg)
     if config.supports_upsert then
         db_exec(config.db,
@@ -1067,6 +1070,9 @@ function config.upsert_adapter(id, enabled, cfg)
         if updated then
             cfg = cleaned
         end
+    end
+    if type(cleaned) == "table" then
+        cleaned.enable = enabled and true or false
     end
     local payload = json_encode(cleaned)
     if config.supports_upsert then
@@ -2814,9 +2820,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(streams, cfg)
         end
         payload.make_stream = streams
@@ -2828,9 +2832,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(adapters, cfg)
         end
         payload.dvb_tune = adapters
