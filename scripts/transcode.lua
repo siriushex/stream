@@ -1229,6 +1229,9 @@ local function tick_switch_warmup(job, now)
             if not warm.ok and not warm.error then
                 warm.error = "warmup not stable"
             end
+            if not warm.ok then
+                warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
+            end
         else
             warm.ok = false
             warm.error = warm.error or "warmup failed"

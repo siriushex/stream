@@ -15445,14 +15445,9 @@ function openAnalyze(stream) {
       ? formatTimestamp(transcode.switch_grace_until)
       : 'n/a';
     const warmup = transcode && transcode.switch_warmup;
-    let warmupStatus = 'n/a';
-    if (warmup) {
-      const targetLabel = Number.isFinite(warmup.target) ? `#${warmup.target}` : '#?';
-      const url = warmup.target_url ? ` (${shortInputLabel(warmup.target_url)})` : '';
-      const state = warmup.ok ? 'OK' : (warmup.done ? 'FAILED' : 'RUNNING');
-      const started = warmup.start_ts ? ` start ${formatTimestamp(warmup.start_ts)}` : '';
-      const err = warmup.error ? ` error=${warmup.error}` : '';
-      warmupStatus = `${targetLabel}${url}: ${state}${started}${err}`;
+    let warmupStatus = warmup ? formatWarmupSummary(warmup) : 'n/a';
+    if (warmup && warmup.start_ts) {
+      warmupStatus += ` (start ${formatTimestamp(warmup.start_ts)})`;
     }
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length

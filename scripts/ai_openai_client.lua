@@ -402,12 +402,24 @@ function ai_openai_client.request_json_schema(opts, callback)
             },
         }
         local body = json.encode(payload)
+        local body_path = nil
+        if #proxies > 0 then
+            body_path = write_temp_body(body)
+        end
+        local function cleanup_body()
+            if body_path then
+                pcall(os.remove, body_path)
+                body_path = nil
+            end
+        end
         if #proxies > 0 then
             if not ensure_curl_available() then
+                cleanup_body()
                 return callback(false, "curl unavailable for proxy", { attempts = attempts })
             end
 
             local function handle_result(ok, response_body, response_code, err_text)
+                cleanup_body()
                 local meta = {
                     attempts = attempts,
                     code = response_code,
