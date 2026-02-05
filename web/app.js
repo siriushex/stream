@@ -15304,6 +15304,41 @@ function buildTypingNode() {
   return wrap;
 }
 
+function getAiHelpHints() {
+  const root = document.getElementById('help-bubbles');
+  if (root) {
+    const hints = [];
+    root.querySelectorAll('.help-bubble').forEach((el) => {
+      const text = (el.textContent || '').trim();
+      if (text) hints.push(text);
+    });
+    if (hints.length) return hints;
+  }
+  return [
+    'help',
+    'refresh channel <id>',
+    'show channel graphs (24h)',
+    'show errors last 24h',
+    'analyze stream <id>',
+    'scan dvb adapter <n>',
+    'list busy adapters',
+    'check signal lock (femon)',
+    'backup config now',
+    'restart stream <id>',
+  ];
+}
+
+function buildAiHelpNode() {
+  const wrapper = createEl('div');
+  wrapper.appendChild(createEl('div', 'form-note', 'Quick hints:'));
+  const list = createEl('div', 'help-bubbles');
+  getAiHelpHints().forEach((hint) => {
+    list.appendChild(createEl('div', 'help-bubble', hint));
+  });
+  wrapper.appendChild(list);
+  return wrapper;
+}
+
 function clearAiChatPolling() {
   if (state.aiChatPoll) {
     clearInterval(state.aiChatPoll);
@@ -15555,6 +15590,17 @@ async function sendAiChatMessage() {
   if (!elements.aiChatInput || state.aiChatBusy) return;
   const prompt = elements.aiChatInput.value.trim();
   if (!prompt) return;
+  const normalized = prompt.toLowerCase();
+  if (normalized === 'help' || normalized === '/help' || normalized === '?') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('assistant', buildAiHelpNode());
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    return;
+  }
   const attachments = await collectAiChatAttachments();
   elements.aiChatInput.value = '';
   appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
