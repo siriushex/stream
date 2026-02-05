@@ -1,0 +1,35 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_strict_pnr",
+      "name": "MPTS Strict PNR",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12349"
+      ],
+      "mpts_services": [
+        {
+          "input": "udp://127.0.0.1:12349",
+          "service_name": "Strict Test",
+          "service_provider": "Astral"
+        }
+      ],
+      "output": [
+        "udp://127.0.0.1:12350"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "tsid": 1,
+          "onid": 1,
+          "network_id": 1
+        },
+        "advanced": {
+          "strict_pnr": true
+        }
+      }
+    }
+  ]
+}

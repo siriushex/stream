@@ -2326,7 +2326,7 @@ select {
 
 .mpts-service-grid {
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr) 90px 90px 90px;
+  grid-template-columns: minmax(180px, 2fr) minmax(120px, 1.2fr) minmax(120px, 1.2fr) 80px 70px 90px 90px;
   gap: 6px;
   align-items: center;
 }
@@ -2384,6 +2384,14 @@ select {
 
 .mpts-section.is-disabled {
   opacity: 0.6;
+}
+
+.mpts-pass-warning {
+  color: var(--warning);
+}
+
+.mpts-pass-warning.is-hidden {
+  display: none;
 }
 
 .output-inline.is-invalid {

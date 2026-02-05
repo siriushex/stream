@@ -1712,14 +1712,13 @@
               <div class="list" id="mpts-service-list"></div>
             </div>
             <div class="form-hint">Each service defines its own input, PNR, and service labels.</div>
+            <div class="form-hint is-hidden" id="mpts-pnr-warning"></div>
+            <div class="form-hint is-hidden" id="mpts-pnr-missing"></div>
+            <div class="form-hint is-hidden" id="mpts-dup-input-warning"></div>
           </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">NIT</div>
             <div class="form-grid">
-              <label class="field">
-                <span>LCN version</span>
-                <input type="number" id="mpts-lcn-version" class="mpts-field" placeholder="1" />
-              </label>
               <label class="field">
                 <span>Delivery system</span>
                 <select id="mpts-delivery" class="mpts-field">
@@ -1730,6 +1729,9 @@
                   <option value="atsc">ATSC</option>
                 </select>
               </label>
+              <div class="form-hint">
+                Сейчас поддерживается только DVB-C; остальные типы зарезервированы.
+              </div>
               <label class="field">
                 <span>Frequency (kHz)</span>
                 <input type="number" id="mpts-frequency" class="mpts-field" placeholder="650000" />
@@ -1765,17 +1767,24 @@
                 <input type="text" id="mpts-network-search" class="mpts-field" placeholder="mpts_a,mpts_b" />
               </label>
             </div>
+            <div class="form-hint is-hidden" id="mpts-delivery-warning"></div>
+            <div class="form-hint">Only DVB-C delivery is generated; other delivery types are stored but not applied.</div>
+            <div class="form-hint">LCN задаётся в списке сервисов; поле LCN version пока не применяется.</div>
           </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">Advanced</div>
             <div class="form-grid">
               <label class="field">
                 <span>SI interval (ms)</span>
-                <input type="number" id="mpts-si-interval" class="mpts-field" placeholder="500" />
+                <input type="number" id="mpts-si-interval" class="mpts-field" placeholder="500" min="50" />
               </label>
               <label class="field">
                 <span>Target bitrate (bps)</span>
-                <input type="number" id="mpts-target-bitrate" class="mpts-field" placeholder="50000000" />
+                <input type="number" id="mpts-target-bitrate" class="mpts-field" placeholder="50000000" min="1" step="1000" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="mpts-pcr-restamp" class="mpts-field" />
+                <span>PCR restamp</span>
               </label>
               <label class="field">
                 <span>PAT version</span>
@@ -1794,10 +1803,19 @@
                 <input type="number" id="mpts-sdt-version" class="mpts-field" placeholder="0" />
               </label>
             </div>
+            <div class="form-hint">Target bitrate ниже входного приведёт к переполнению (CBR не выдерживается).</div>
+            <div class="form-hint">CAT is generated empty (no CA descriptors yet).</div>
             <label class="checkline">
               <input type="checkbox" id="mpts-disable-autoremap" class="mpts-field" />
               <span>Disable PID auto-remap</span>
             </label>
+            <div class="form-hint">SI interval &lt; 50ms и target bitrate ≤ 0 игнорируются.</div>
+            <div class="form-hint is-hidden" id="mpts-autoremap-warning">
+              Auto-remap выключен: следите за PID/PNR. Конфликты приведут к ошибкам сборки MPTS.
+            </div>
+            <div class="form-hint" id="mpts-autoremap-note">
+              Auto-remap назначает PID последовательно, начиная с 0x0020.
+            </div>
             <label class="checkline">
               <input type="checkbox" id="mpts-pass-nit" class="mpts-field" />
               <span>Pass NIT</span>
@@ -1814,9 +1832,19 @@
               <input type="checkbox" id="mpts-pass-tdt" class="mpts-field" />
               <span>Pass TDT</span>
             </label>
+            <label class="checkline">
+              <input type="checkbox" id="mpts-strict-pnr" class="mpts-field" />
+              <span>Strict PNR</span>
+            </label>
+            <div class="form-hint">
+              Strict PNR отклоняет входы с несколькими программами, если PNR не задан.
+            </div>
+          </div>
+          <div class="form-hint mpts-pass-warning is-hidden" id="mpts-pass-warning">
+            Pass NIT/SDT/EIT/TDT корректен только для одного сервиса.
           </div>
           <div class="form-hint">MPTS settings are applied only when MPTS is enabled.</div>
-          <div class="form-hint">Use stream inputs like <code>stream://stream_id#set_pnr=1</code> to build a multiplex.</div>
+          <div class="form-hint">Use stream inputs like <code>stream://stream_id</code> to build a multiplex.</div>
         </div>
         <div class="tab-content" data-tab-content="backup" data-tab-scope="stream-editor">
           <div class="form-grid">

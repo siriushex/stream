@@ -55,3 +55,8 @@ curl -s "http://127.0.0.1:${PORT}/api/v1/health/outputs" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/export?include_users=0" -b "$COOKIE_JAR" | head -n 1
 
 ./astra scripts/export.lua --data-dir "$DATA_DIR" --output "${DATA_DIR}/astra-export.json"
+
+if [[ "${MPTS_STRICT_PNR_SMOKE:-0}" == "1" ]]; then
+  STRICT_PNR_PORT="${MPTS_STRICT_PNR_PORT:-9057}"
+  PORT="$STRICT_PNR_PORT" contrib/ci/smoke_mpts_strict_pnr.sh
+fi

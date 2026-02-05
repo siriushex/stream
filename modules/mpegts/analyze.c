@@ -81,6 +81,10 @@ struct module_data_t
     mpegts_psi_t *cat;
     mpegts_psi_t *pmt;
     mpegts_psi_t *sdt;
+    mpegts_psi_t *nit;
+    mpegts_psi_t *tdt;
+
+    bool tdt_seen;
 
     int pmt_ready;
     int pmt_count;
@@ -102,10 +106,64 @@ static const char __pid[] = "pid";
 static const char __crc32[] = "crc32";
 static const char __pnr[] = "pnr";
 static const char __tsid[] = "tsid";
+static const char __network_id[] = "network_id";
+static const char __table_id[] = "table_id";
+static const char __onid[] = "onid";
+static const char __delivery[] = "delivery";
+static const char __frequency_khz[] = "frequency_khz";
+static const char __symbolrate_ksps[] = "symbolrate_ksps";
+static const char __modulation[] = "modulation";
+static const char __fec_inner[] = "fec_inner";
+static const char __network_name[] = "network_name";
+static const char __lcn_list[] = "lcn";
+static const char __free_ca[] = "free_ca";
+static const char __service_list[] = "service_list";
+static const char __ts_list[] = "ts_list";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
 static const char __callback[] = "callback";
+
+static uint32_t bcd_to_uint(const uint8_t *src, size_t digits)
+{
+    uint32_t value = 0;
+    for(size_t i = 0; i < digits; ++i)
+    {
+        const uint8_t byte = src[i / 2];
+        const uint8_t nibble = (i & 1) ? (byte & 0x0F) : (uint8_t)(byte >> 4);
+        if(nibble > 9)
+            break;
+        value = (value * 10) + nibble;
+    }
+    return value;
+}
+
+static const char *modulation_name(uint8_t code)
+{
+    switch(code)
+    {
+        case 0x01: return "16qam";
+        case 0x02: return "32qam";
+        case 0x03: return "64qam";
+        case 0x04: return "128qam";
+        case 0x05: return "256qam";
+        default: return "unknown";
+    }
+}
+
+static const char *fec_name(uint8_t code)
+{
+    switch(code)
+    {
+        case 0x01: return "1/2";
+        case 0x02: return "2/3";
+        case 0x03: return "3/4";
+        case 0x04: return "5/6";
+        case 0x05: return "7/8";
+        case 0x0F: return "auto";
+        default: return "unknown";
+    }
+}
 
 static void callback(module_data_t *mod)
 {
@@ -271,6 +329,226 @@ static void on_cat(void *arg, mpegts_psi_t *psi)
         CAT_DESC_NEXT(psi, desc_pointer);
     }
     lua_setfield(lua, -2, __descriptors);
+
+    callback(mod);
+}
+
+/*
+ * oooooo   oooooo ooooo ooooooooooo
+ *  888      888   888   88  888  88
+ *  888      888   888       888
+ *  888      888   888       888
+ *  888ooooo  888 o888o     o888o
+ *
+ */
+
+static void on_nit(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    const uint8_t *buf = psi->buffer;
+
+    const uint8_t table_id = buf[0];
+    if(table_id != 0x40 && table_id != 0x41)
+        return;
+
+    const uint32_t crc32 = PSI_GET_CRC32(psi);
+
+    // Проверяем CRC, чтобы не принимать поврежденные секции.
+    if(crc32 != PSI_CALC_CRC32(psi))
+    {
+        lua_newtable(lua);
+        lua_pushnumber(lua, psi->pid);
+        lua_setfield(lua, -2, __pid);
+        lua_pushstring(lua, "NIT checksum error");
+        lua_setfield(lua, -2, __err);
+        callback(mod);
+        return;
+    }
+
+    // Отсекаем повтор, если секция не менялась.
+    if(crc32 == psi->crc32)
+        return;
+    psi->crc32 = crc32;
+
+    const uint16_t network_id = (uint16_t)((buf[3] << 8) | buf[4]);
+
+    lua_newtable(lua);
+    lua_pushnumber(lua, psi->pid);
+    lua_setfield(lua, -2, __pid);
+    lua_pushstring(lua, "nit");
+    lua_setfield(lua, -2, __psi);
+    lua_pushnumber(lua, crc32);
+    lua_setfield(lua, -2, __crc32);
+    lua_pushnumber(lua, network_id);
+    lua_setfield(lua, -2, __network_id);
+    lua_pushnumber(lua, table_id);
+    lua_setfield(lua, -2, __table_id);
+
+    // Разбор NIT delivery (сейчас нужен DVB-C cable_delivery_system_descriptor).
+    const size_t section_length = (size_t)(((buf[1] & 0x0F) << 8) | buf[2]);
+    const size_t section_end = 3 + section_length;
+    if(section_end >= 12 && section_end <= psi->buffer_size)
+    {
+        bool lcn_initialized = false;
+        bool service_list_initialized = false;
+        bool ts_list_initialized = false;
+        int ts_list_count = 1;
+        size_t pos = 8;
+        if(pos + 2 <= section_end)
+        {
+            const uint16_t network_desc_len = (uint16_t)(((buf[pos] & 0x0F) << 8) | buf[pos + 1]);
+            pos += 2;
+            size_t network_desc_end = pos + network_desc_len;
+            if(network_desc_end > section_end)
+                network_desc_end = section_end;
+            while(pos + 2 <= network_desc_end)
+            {
+                const uint8_t tag = buf[pos];
+                const uint8_t len = buf[pos + 1];
+                pos += 2;
+                if(pos + len > network_desc_end)
+                    break;
+                if(tag == 0x40 && len > 0)
+                {
+                    char *name = iso8859_decode(&buf[pos], len);
+                    if(name)
+                    {
+                        lua_pushstring(lua, name);
+                        free(name);
+                    }
+                    else
+                    {
+                        lua_pushstring(lua, "");
+                    }
+                    lua_setfield(lua, -2, __network_name);
+                }
+                pos += len;
+            }
+            pos = network_desc_end;
+        }
+        if(pos + 2 <= section_end)
+        {
+            const uint16_t ts_loop_len = (uint16_t)(((buf[pos] & 0x0F) << 8) | buf[pos + 1]);
+            pos += 2;
+            size_t ts_loop_end = pos + ts_loop_len;
+            if(section_end >= 4 && ts_loop_end > section_end - 4)
+                ts_loop_end = section_end - 4;
+            while(pos + 6 <= ts_loop_end)
+            {
+                const uint16_t tsid = (uint16_t)((buf[pos] << 8) | buf[pos + 1]);
+                const uint16_t onid = (uint16_t)((buf[pos + 2] << 8) | buf[pos + 3]);
+                const uint16_t desc_len = (uint16_t)(((buf[pos + 4] & 0x0F) << 8) | buf[pos + 5]);
+                pos += 6;
+                // Список TS для проверки network_search.
+                if(!ts_list_initialized)
+                {
+                    lua_newtable(lua);
+                    lua_setfield(lua, -2, __ts_list);
+                    ts_list_initialized = true;
+                }
+                lua_getfield(lua, -1, __ts_list);
+                if(lua_type(lua, -1) == LUA_TTABLE)
+                {
+                    char ts_entry[32];
+                    snprintf(ts_entry, sizeof(ts_entry), "%u:%u", (unsigned)tsid, (unsigned)onid);
+                    lua_pushnumber(lua, ts_list_count++);
+                    lua_pushstring(lua, ts_entry);
+                    lua_settable(lua, -3);
+                }
+                lua_pop(lua, 1);
+                size_t desc_end = pos + desc_len;
+                if(desc_end > ts_loop_end)
+                    desc_end = ts_loop_end;
+                while(pos + 2 <= desc_end)
+                {
+                    const uint8_t tag = buf[pos];
+                    const uint8_t len = buf[pos + 1];
+                    pos += 2;
+                    if(pos + len > desc_end)
+                        break;
+                    if(tag == 0x44 && len >= 11)
+                    {
+                        const uint8_t *desc = &buf[pos];
+                        const uint32_t freq_digits = bcd_to_uint(desc, 8);
+                        const uint32_t sr_digits = bcd_to_uint(desc + 7, 7);
+                        const uint32_t frequency_khz = freq_digits / 10;
+                        const uint32_t symbolrate_ksps = sr_digits / 10;
+                        const uint8_t modulation = desc[6];
+                        const uint8_t fec = (uint8_t)(desc[10] & 0x0F);
+
+                        lua_pushstring(lua, "cable");
+                        lua_setfield(lua, -2, __delivery);
+                        lua_pushnumber(lua, tsid);
+                        lua_setfield(lua, -2, __tsid);
+                        lua_pushnumber(lua, onid);
+                        lua_setfield(lua, -2, __onid);
+                        lua_pushnumber(lua, frequency_khz);
+                        lua_setfield(lua, -2, __frequency_khz);
+                        lua_pushnumber(lua, symbolrate_ksps);
+                        lua_setfield(lua, -2, __symbolrate_ksps);
+                        lua_pushstring(lua, modulation_name(modulation));
+                        lua_setfield(lua, -2, __modulation);
+                        lua_pushstring(lua, fec_name(fec));
+                        lua_setfield(lua, -2, __fec_inner);
+                        pos = desc_end;
+                        break;
+                    }
+                    if(tag == 0x41 && len >= 3)
+                    {
+                        // service_list_descriptor: (service_id, service_type)
+                        if(!service_list_initialized)
+                        {
+                            lua_newtable(lua);
+                            lua_setfield(lua, -2, __service_list);
+                            service_list_initialized = true;
+                        }
+                        lua_getfield(lua, -1, __service_list);
+                        if(lua_type(lua, -1) == LUA_TTABLE)
+                        {
+                            size_t lpos = 0;
+                            while(lpos + 3 <= len)
+                            {
+                                const uint16_t service_id = (uint16_t)((buf[pos + lpos] << 8) | buf[pos + lpos + 1]);
+                                const uint8_t service_type = buf[pos + lpos + 2];
+                                lua_pushnumber(lua, service_id);
+                                lua_pushnumber(lua, service_type);
+                                lua_settable(lua, -3);
+                                lpos += 3;
+                            }
+                        }
+                        lua_pop(lua, 1);
+                    }
+                    if(tag == 0x83 && len >= 4)
+                    {
+                        // NorDig logical_channel_descriptor: service_id + visible + lcn
+                        if(!lcn_initialized)
+                        {
+                            lua_newtable(lua);
+                            lua_setfield(lua, -2, __lcn_list);
+                            lcn_initialized = true;
+                        }
+                        lua_getfield(lua, -1, __lcn_list);
+                        if(lua_type(lua, -1) == LUA_TTABLE)
+                        {
+                            size_t lpos = 0;
+                            while(lpos + 4 <= len)
+                            {
+                                const uint16_t service_id = (uint16_t)((buf[pos + lpos] << 8) | buf[pos + lpos + 1]);
+                                const uint16_t lcn = (uint16_t)(((buf[pos + lpos + 2] & 0x03) << 8) | buf[pos + lpos + 3]);
+                                lua_pushnumber(lua, service_id);
+                                lua_pushnumber(lua, lcn);
+                                lua_settable(lua, -3);
+                                lpos += 4;
+                            }
+                        }
+                        lua_pop(lua, 1);
+                    }
+                    pos += len;
+                }
+                pos = desc_end;
+            }
+        }
+    }
 
     callback(mod);
 }
@@ -518,6 +796,9 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
         lua_newtable(lua);
         lua_pushnumber(lua, sid);
         lua_setfield(lua, -2, "sid");
+        // В SDT free_CA_mode находится в старшем полубайте после running_status.
+        lua_pushboolean(lua, (pointer[3] & 0x10) != 0);
+        lua_setfield(lua, -2, __free_ca);
 
         descriptors_count = 1;
         lua_newtable(lua);
@@ -534,6 +815,68 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
     }
     lua_setfield(lua, -2, "services");
 
+    callback(mod);
+}
+
+/*
+ * oooooooo8 ooooooooooo ooooooooooo
+ * 888         888    88 88  888  88
+ *  888oooooo  888        888
+ *         888 888        888
+ * o88oooo888 o888o      o888o
+ *
+ */
+
+static void on_tdt(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+
+    const uint8_t table_id = psi->buffer[0];
+    if(table_id != 0x70 && table_id != 0x73)
+        return;
+
+    if(table_id == 0x73)
+    {
+        const uint32_t crc32 = PSI_GET_CRC32(psi);
+        if(crc32 != PSI_CALC_CRC32(psi))
+        {
+            lua_newtable(lua);
+            lua_pushnumber(lua, psi->pid);
+            lua_setfield(lua, -2, __pid);
+            lua_pushstring(lua, "TOT checksum error");
+            lua_setfield(lua, -2, __err);
+            callback(mod);
+            return;
+        }
+        if(crc32 == psi->crc32)
+            return;
+        psi->crc32 = crc32;
+
+        lua_newtable(lua);
+        lua_pushnumber(lua, psi->pid);
+        lua_setfield(lua, -2, __pid);
+        lua_pushstring(lua, "tot");
+        lua_setfield(lua, -2, __psi);
+        lua_pushnumber(lua, crc32);
+        lua_setfield(lua, -2, __crc32);
+        lua_pushnumber(lua, table_id);
+        lua_setfield(lua, -2, __table_id);
+        callback(mod);
+        return;
+    }
+
+    // TDT не имеет CRC, поэтому логируем единожды.
+    if(mod->tdt_seen)
+        return;
+    mod->tdt_seen = true;
+
+    lua_newtable(lua);
+    lua_pushnumber(lua, psi->pid);
+    lua_setfield(lua, -2, __pid);
+    lua_pushstring(lua, "tdt");
+    lua_setfield(lua, -2, __psi);
+    lua_pushnumber(lua, table_id);
+    lua_setfield(lua, -2, __table_id);
     callback(mod);
 }
 
@@ -624,6 +967,12 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
                 break;
             case MPEGTS_PACKET_SDT:
                 mpegts_psi_mux(mod->sdt, ts, on_sdt, mod);
+                break;
+            case MPEGTS_PACKET_NIT:
+                mpegts_psi_mux(mod->nit, ts, on_nit, mod);
+                break;
+            case MPEGTS_PACKET_TDT:
+                mpegts_psi_mux(mod->tdt, ts, on_tdt, mod);
                 break;
             default:
                 break;
@@ -795,8 +1144,10 @@ static void module_init(module_data_t *mod)
         module_stream_demux_set(mod, NULL, NULL);
         module_stream_demux_join_pid(mod, 0x00);
         module_stream_demux_join_pid(mod, 0x01);
+        module_stream_demux_join_pid(mod, 0x10);
         module_stream_demux_join_pid(mod, 0x11);
         module_stream_demux_join_pid(mod, 0x12);
+        module_stream_demux_join_pid(mod, 0x14);
     }
 
     // PAT
@@ -811,9 +1162,17 @@ static void module_init(module_data_t *mod)
     mod->stream[0x11] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
     mod->stream[0x11]->type = MPEGTS_PACKET_SDT;
     mod->sdt = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x11);
+    // NIT
+    mod->stream[0x10] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
+    mod->stream[0x10]->type = MPEGTS_PACKET_NIT;
+    mod->nit = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x10);
     // EIT
     mod->stream[0x12] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
     mod->stream[0x12]->type = MPEGTS_PACKET_EIT;
+    // TDT/TOT
+    mod->stream[0x14] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
+    mod->stream[0x14]->type = MPEGTS_PACKET_TDT;
+    mod->tdt = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x14);
     // PMT
     mod->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, MAX_PID);
     // NULL
@@ -843,6 +1202,8 @@ static void module_destroy(module_data_t *mod)
     mpegts_psi_destroy(mod->cat);
     mpegts_psi_destroy(mod->sdt);
     mpegts_psi_destroy(mod->pmt);
+    mpegts_psi_destroy(mod->nit);
+    mpegts_psi_destroy(mod->tdt);
 
     asc_timer_destroy(mod->check_stat);
 

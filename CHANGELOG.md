@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - MPTS/CI: обновлён verify_mpts (UTF-8 marker, Bitrate parsing, устойчивость к префиксам логов).
+  - MPTS: анализатор NIT декодирует network_name с учётом кодировки.
+  - CI: check_changelog учитывает shallow clone; check_branch_name допускает codex/<topic>.
+  - CI: smoke_mpts ослаблены проверки PID/PAT NIT для недетерминированного ремапа.
+- Tests:
+  - Not run (CI/doc updates; covered by CI).
+### 2026-02-05
+- Changes:
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
   - Release: корректное определение версии из version.h для имени bundle (без падения при отсутствии ASTRA_VERSION).
   - CI: check_changelog учитывает shallow clone и подтягивает merge-base.

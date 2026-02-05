@@ -713,15 +713,16 @@ const elements = {
   mptsCodepage: $('#mpts-codepage'),
   mptsTsid: $('#mpts-tsid'),
   mptsOnid: $('#mpts-onid'),
-  mptsLcnVersion: $('#mpts-lcn-version'),
   mptsDelivery: $('#mpts-delivery'),
   mptsFrequency: $('#mpts-frequency'),
   mptsSymbolrate: $('#mpts-symbolrate'),
   mptsFec: $('#mpts-fec'),
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
+  mptsDeliveryWarning: $('#mpts-delivery-warning'),
   mptsSiInterval: $('#mpts-si-interval'),
   mptsTargetBitrate: $('#mpts-target-bitrate'),
+  mptsPcrRestamp: $('#mpts-pcr-restamp'),
   mptsPatVersion: $('#mpts-pat-version'),
   mptsNitVersion: $('#mpts-nit-version'),
   mptsCatVersion: $('#mpts-cat-version'),
@@ -731,6 +732,12 @@ const elements = {
   mptsPassSdt: $('#mpts-pass-sdt'),
   mptsPassEit: $('#mpts-pass-eit'),
   mptsPassTdt: $('#mpts-pass-tdt'),
+  mptsStrictPnr: $('#mpts-strict-pnr'),
+  mptsPassWarning: $('#mpts-pass-warning'),
+  mptsAutoremapWarning: $('#mpts-autoremap-warning'),
+  mptsPnrWarning: $('#mpts-pnr-warning'),
+  mptsPnrMissing: $('#mpts-pnr-missing'),
+  mptsDupInputWarning: $('#mpts-dup-input-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4609,6 +4616,8 @@ function updateMptsFields() {
   if (elements.streamInputBlock) {
     elements.streamInputBlock.classList.toggle('is-hidden', enabled);
   }
+  updateMptsPassWarning();
+  updateMptsAutoremapWarning();
 }
 
 function truncateText(text, max) {
@@ -6791,6 +6800,7 @@ function normalizeMptsServices(list) {
       service_name: item.service_name || '',
       service_provider: item.service_provider || item.provider_name || '',
       service_type_id: item.service_type_id || '',
+      lcn: item.lcn || '',
       pnr: item.pnr || '',
       scrambled: item.scrambled === true,
       name: item.name || '',
@@ -6824,6 +6834,7 @@ function renderMptsServiceList() {
     input.value = service.input || '';
     input.addEventListener('input', () => {
       service.input = input.value;
+      updateMptsInputWarning();
     });
 
     const serviceName = document.createElement('input');
@@ -6853,14 +6864,27 @@ function renderMptsServiceList() {
     pnr.value = service.pnr || '';
     pnr.addEventListener('input', () => {
       service.pnr = pnr.value;
+      updateMptsPnrWarning();
+    });
+
+    const lcn = document.createElement('input');
+    lcn.className = 'list-input mpts-field mpts-service-input';
+    lcn.type = 'number';
+    lcn.placeholder = 'LCN';
+    lcn.min = '1';
+    lcn.max = '1023';
+    lcn.value = service.lcn || '';
+    lcn.addEventListener('input', () => {
+      service.lcn = lcn.value;
     });
 
     const serviceType = document.createElement('input');
     serviceType.className = 'list-input mpts-field mpts-service-input';
     serviceType.type = 'number';
-    serviceType.placeholder = 'Type';
-    serviceType.min = '0';
+    serviceType.placeholder = 'Service type (1..255)';
+    serviceType.min = '1';
     serviceType.max = '255';
+    serviceType.title = 'DVB service_type_id (1..255); пусто = 1';
     serviceType.value = service.service_type_id || '';
     serviceType.addEventListener('input', () => {
       service.service_type_id = serviceType.value;
@@ -6884,6 +6908,7 @@ function renderMptsServiceList() {
     grid.appendChild(serviceName);
     grid.appendChild(provider);
     grid.appendChild(pnr);
+    grid.appendChild(lcn);
     grid.appendChild(serviceType);
     grid.appendChild(scrambledLabel);
 
@@ -6920,6 +6945,139 @@ function renderMptsServiceList() {
 
     elements.mptsServiceList.appendChild(row);
   });
+
+  updateMptsPassWarning();
+  updateMptsAutoremapWarning();
+  updateMptsPnrWarning();
+  updateMptsInputWarning();
+  updateMptsDeliveryWarning();
+}
+
+function updateMptsPassWarning() {
+  if (!elements.mptsPassWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const passEnabled = (!!(elements.mptsPassNit && elements.mptsPassNit.checked))
+    || (!!(elements.mptsPassSdt && elements.mptsPassSdt.checked))
+    || (!!(elements.mptsPassEit && elements.mptsPassEit.checked))
+    || (!!(elements.mptsPassTdt && elements.mptsPassTdt.checked));
+  const serviceCount = (state.mptsServices || []).length;
+  const shouldShow = mptsEnabled && passEnabled && serviceCount > 1;
+  elements.mptsPassWarning.classList.toggle('is-hidden', !shouldShow);
+  if (shouldShow) {
+    elements.mptsPassWarning.textContent = 'Pass-* лучше использовать для одного сервиса (иначе возможны коллизии PSI).';
+  }
+}
+
+function updateMptsAutoremapWarning() {
+  if (!elements.mptsAutoremapWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const disableAuto = !!(elements.mptsDisableAutoremap && elements.mptsDisableAutoremap.checked);
+  elements.mptsAutoremapWarning.classList.toggle('is-hidden', !(mptsEnabled && disableAuto));
+}
+
+function updateMptsPnrWarning() {
+  if (!elements.mptsPnrWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const counts = new Map();
+  let missingCount = 0;
+  const strictPnr = !!(elements.mptsStrictPnr && elements.mptsStrictPnr.checked);
+  (state.mptsServices || []).forEach((service) => {
+    const value = Number(service.pnr);
+    if (!Number.isFinite(value) || value <= 0) {
+      missingCount += 1;
+      return;
+    }
+    counts.set(value, (counts.get(value) || 0) + 1);
+  });
+  const duplicates = Array.from(counts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0])
+    .sort((a, b) => a - b);
+  if (!mptsEnabled || duplicates.length === 0) {
+    elements.mptsPnrWarning.classList.add('is-hidden');
+    elements.mptsPnrWarning.textContent = '';
+  } else {
+    elements.mptsPnrWarning.textContent = `PNR duplicates: ${duplicates.join(', ')}`;
+    elements.mptsPnrWarning.classList.remove('is-hidden');
+  }
+  if (elements.mptsPnrMissing) {
+    if (!mptsEnabled || missingCount === 0) {
+      elements.mptsPnrMissing.classList.add('is-hidden');
+      elements.mptsPnrMissing.textContent = '';
+    } else {
+      const suffix = strictPnr
+        ? 'Strict PNR включён: такие сервисы будут отклонены.'
+        : 'Для MPTS лучше задавать PNR явно.';
+      elements.mptsPnrMissing.textContent = `PNR missing: ${missingCount}. ${suffix}`;
+      elements.mptsPnrMissing.classList.remove('is-hidden');
+    }
+  }
+}
+
+function updateMptsInputWarning() {
+  if (!elements.mptsDupInputWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const counts = new Map();
+  (state.mptsServices || []).forEach((service) => {
+    const raw = String(service.input || '').trim();
+    if (!raw) return;
+    const normalized = raw.toLowerCase();
+    counts.set(normalized, (counts.get(normalized) || 0) + 1);
+  });
+  const duplicates = Array.from(counts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0]);
+  if (!mptsEnabled || duplicates.length === 0) {
+    elements.mptsDupInputWarning.classList.add('is-hidden');
+    elements.mptsDupInputWarning.textContent = '';
+    return;
+  }
+  elements.mptsDupInputWarning.textContent = `Duplicate inputs: ${duplicates.join(', ')}`;
+  elements.mptsDupInputWarning.classList.remove('is-hidden');
+}
+
+function updateMptsDeliveryWarning() {
+  if (!elements.mptsDeliveryWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const delivery = String(elements.mptsDelivery && elements.mptsDelivery.value || '').toLowerCase();
+  if (!mptsEnabled || !delivery) {
+    elements.mptsDeliveryWarning.classList.add('is-hidden');
+    elements.mptsDeliveryWarning.textContent = '';
+    return;
+  }
+  const isCable = delivery === 'dvb-c' || delivery === 'cable' || delivery === 'dvb_c';
+  if (!isCable) {
+    elements.mptsDeliveryWarning.textContent = `Delivery ${delivery} не поддерживается: сейчас доступен только DVB-C.`;
+    elements.mptsDeliveryWarning.classList.remove('is-hidden');
+    return;
+  }
+  const freq = Number(elements.mptsFrequency && elements.mptsFrequency.value);
+  const sr = Number(elements.mptsSymbolrate && elements.mptsSymbolrate.value);
+  const mod = String(elements.mptsModulation && elements.mptsModulation.value || '').trim();
+  const missing = [];
+  if (!Number.isFinite(freq) || freq <= 0) missing.push('frequency');
+  if (!Number.isFinite(sr) || sr <= 0) missing.push('symbolrate');
+  if (!mod) missing.push('modulation');
+  if (missing.length === 0) {
+    elements.mptsDeliveryWarning.classList.add('is-hidden');
+    elements.mptsDeliveryWarning.textContent = '';
+    return;
+  }
+  elements.mptsDeliveryWarning.textContent = `DVB-C delivery requires: ${missing.join(', ')}`;
+  elements.mptsDeliveryWarning.classList.remove('is-hidden');
+}
+
+function bindMptsWarningHandlers() {
+  if (elements.mptsDisableAutoremap) {
+    elements.mptsDisableAutoremap.addEventListener('change', updateMptsAutoremapWarning);
+  }
+  if (elements.streamMpts) {
+    elements.streamMpts.addEventListener('change', updateMptsAutoremapWarning);
+    elements.streamMpts.addEventListener('change', updateMptsPnrWarning);
+  }
+  if (elements.mptsStrictPnr) {
+    elements.mptsStrictPnr.addEventListener('change', updateMptsPnrWarning);
+  }
 }
 
 function collectMptsServices() {
@@ -6930,6 +7088,7 @@ function collectMptsServices() {
       service_name: (service.service_name || '').trim(),
       service_provider: (service.service_provider || '').trim(),
       service_type_id: service.service_type_id,
+      lcn: service.lcn,
       pnr: service.pnr,
       scrambled: service.scrambled === true,
       name: (service.name || '').trim(),
@@ -10470,9 +10629,6 @@ function openEditor(stream, isNew) {
   if (elements.mptsOnid) {
     elements.mptsOnid.value = mptsGeneral.onid || '';
   }
-  if (elements.mptsLcnVersion) {
-    elements.mptsLcnVersion.value = mptsNit.lcn_version || '';
-  }
   if (elements.mptsDelivery) {
     elements.mptsDelivery.value = mptsNit.delivery || '';
   }
@@ -10496,6 +10652,9 @@ function openEditor(stream, isNew) {
   }
   if (elements.mptsTargetBitrate) {
     elements.mptsTargetBitrate.value = mptsAdv.target_bitrate || '';
+  }
+  if (elements.mptsPcrRestamp) {
+    elements.mptsPcrRestamp.checked = mptsAdv.pcr_restamp === true;
   }
   if (elements.mptsPatVersion) {
     elements.mptsPatVersion.value = mptsAdv.pat_version || '';
@@ -10524,6 +10683,13 @@ function openEditor(stream, isNew) {
   if (elements.mptsPassTdt) {
     elements.mptsPassTdt.checked = mptsAdv.pass_tdt === true;
   }
+  if (elements.mptsStrictPnr) {
+    elements.mptsStrictPnr.checked = mptsAdv.strict_pnr === true;
+  }
+  updateMptsAutoremapWarning();
+  updateMptsPnrWarning();
+  updateMptsInputWarning();
+  updateMptsDeliveryWarning();
   const epgConfig = config.epg || {};
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';
@@ -10930,8 +11096,6 @@ function readStreamForm() {
   const onid = toNumber(elements.mptsOnid && elements.mptsOnid.value);
   if (onid !== undefined) mptsGeneral.onid = onid;
 
-  const lcnVersion = toNumber(elements.mptsLcnVersion && elements.mptsLcnVersion.value);
-  if (lcnVersion !== undefined) mptsNit.lcn_version = lcnVersion;
   const delivery = (elements.mptsDelivery && elements.mptsDelivery.value || '').trim();
   if (delivery) mptsNit.delivery = delivery;
   const frequency = toNumber(elements.mptsFrequency && elements.mptsFrequency.value);
@@ -10949,6 +11113,9 @@ function readStreamForm() {
   if (siInterval !== undefined) mptsAdv.si_interval_ms = siInterval;
   const targetBitrate = toNumber(elements.mptsTargetBitrate && elements.mptsTargetBitrate.value);
   if (targetBitrate !== undefined) mptsAdv.target_bitrate = targetBitrate;
+  if (elements.mptsPcrRestamp && elements.mptsPcrRestamp.checked) {
+    mptsAdv.pcr_restamp = true;
+  }
   const patVersion = toNumber(elements.mptsPatVersion && elements.mptsPatVersion.value);
   if (patVersion !== undefined) mptsAdv.pat_version = patVersion;
   const nitVersion = toNumber(elements.mptsNitVersion && elements.mptsNitVersion.value);
@@ -10971,6 +11138,9 @@ function readStreamForm() {
   }
   if (elements.mptsPassTdt && elements.mptsPassTdt.checked) {
     mptsAdv.pass_tdt = true;
+  }
+  if (elements.mptsStrictPnr && elements.mptsStrictPnr.checked) {
+    mptsAdv.strict_pnr = true;
   }
 
   if (mptsEnabled || hasAnyValue(mptsConfig)) {
@@ -16752,6 +16922,18 @@ function bindEvents() {
       }
     });
   }
+
+  [elements.mptsPassNit, elements.mptsPassSdt, elements.mptsPassEit, elements.mptsPassTdt].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsPassWarning);
+  });
+  [elements.mptsDelivery, elements.mptsFrequency, elements.mptsSymbolrate, elements.mptsModulation].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsDeliveryWarning);
+    control.addEventListener('input', updateMptsDeliveryWarning);
+  });
+
+  bindMptsWarningHandlers();
 
   elements.btnAddOutput.addEventListener('click', () => {
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));

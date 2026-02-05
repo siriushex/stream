@@ -15,7 +15,7 @@ if [[ -z "$branch" ]]; then
   exit 0
 fi
 
-if [[ ! "$branch" =~ ^codex/[^/]+/.+ ]]; then
+if [[ ! "$branch" =~ ^codex/[^/]+/.+ && ! "$branch" =~ ^codex/[^/]+$ ]]; then
   echo "ERROR: Invalid branch name: $branch"
   echo "Expected pattern: codex/<agent>/<topic>"
   exit 1
