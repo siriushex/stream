@@ -244,17 +244,17 @@ local function build_context_options(payload, prompt)
     payload = payload or {}
     local include_logs = payload.include_logs
     if include_logs == nil then
-        if prompt ~= nil then
-            include_logs = derive_include_logs_from_prompt(prompt)
-        else
-            include_logs = true
-        end
+        include_logs = true
     else
         include_logs = include_logs == true
     end
     local include_cli = payload.include_cli
-    if include_cli == nil and prompt then
-        include_cli = derive_cli_from_prompt(prompt, payload)
+    if include_cli == nil then
+        if prompt then
+            include_cli = derive_cli_from_prompt(prompt, payload)
+        else
+            include_cli = { "stream" }
+        end
     end
     local include_metrics = payload.include_metrics
     if include_metrics == nil and prompt then
