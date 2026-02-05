@@ -14,6 +14,7 @@ EXPECT_PMT_PCR="${EXPECT_PMT_PCR:-}"
 EXPECT_PMT_PCR_IN_ES="${EXPECT_PMT_PCR_IN_ES:-}"
 EXPECT_PMT_PIDS="${EXPECT_PMT_PIDS:-}"
 EXPECT_PMT_ES_PIDS="${EXPECT_PMT_ES_PIDS:-}"
+EXPECT_NIT_SERVICE_LIST="${EXPECT_NIT_SERVICE_LIST:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
 EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
 EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
@@ -217,6 +218,13 @@ if [[ -n "$EXPECT_PMT_ES_PIDS" ]]; then
       exit 1
     fi
   done
+fi
+
+if [[ -n "$EXPECT_NIT_SERVICE_LIST" ]]; then
+  if ! grep -q "NIT: service_list: ${EXPECT_NIT_SERVICE_LIST}" "$LOG_FILE"; then
+    echo "NIT service_list mismatch (expected ${EXPECT_NIT_SERVICE_LIST})"
+    exit 1
+  fi
 fi
 
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then

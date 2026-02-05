@@ -158,6 +158,16 @@ dump_psi_info["nit"] = function(info)
         log.info(("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d symbolrate_ksps: %d modulation: %s fec: %s")
             :format(info.delivery, tsid, onid, freq, sr, modulation, fec))
     end
+    if info.service_list then
+        local entries = {}
+        for sid, stype in pairs(info.service_list) do
+            table.insert(entries, string.format("%d=%d", sid, stype))
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(("NIT: service_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
     if info.lcn then
         local entries = {}
         for sid, lcn in pairs(info.lcn) do
