@@ -13325,6 +13325,30 @@ function getPlaylistUrl(stream) {
   return joinPath(hls.base_url, playlist);
 }
 
+function getPlayBaseUrl() {
+  const port = getSettingNumber('http_play_port', getSettingNumber('http_port', window.location.port || 8000));
+  const noTls = getSettingBool('http_play_no_tls', false);
+  const protocol = noTls ? 'http:' : window.location.protocol;
+  const host = window.location.hostname || '127.0.0.1';
+  const base = new URL(`${protocol}//${host}`);
+  if (port) {
+    base.port = String(port);
+  }
+  return base.toString().replace(/\/$/, '');
+}
+
+function getPlayUrl(stream) {
+  if (!stream || !stream.id) return '';
+  const base = getPlayBaseUrl();
+  return `${base}/play/${encodeURIComponent(stream.id)}`;
+}
+
+function canPlayMpegTs() {
+  if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
+  const result = elements.playerVideo.canPlayType('video/mp2t');
+  return result === 'probably' || result === 'maybe';
+}
+
 async function apiFetch(path, options = {}) {
   const headers = options.headers ? { ...options.headers } : {};
   if (state.token) {
@@ -14757,16 +14781,17 @@ function getPlayerStream() {
 }
 
 function getPlayerLink() {
-  if (!state.playerUrl) return '';
+  const link = state.playerShareUrl || state.playerUrl;
+  if (!link) return '';
   try {
-    return new URL(state.playerUrl, window.location.origin).toString();
+    return new URL(link, window.location.origin).toString();
   } catch (err) {
-    return state.playerUrl;
+    return link;
   }
 }
 
 function updatePlayerActions() {
-  const hasUrl = !!state.playerUrl;
+  const hasUrl = !!(state.playerShareUrl || state.playerUrl);
   if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasUrl;
   if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasUrl;
 }
