@@ -274,7 +274,13 @@ local function copy_table(value)
 end
 
 local function sql_escape(value)
-    return tostring(value):gsub("'", "''")
+    -- Важно: sqlite exec принимает SQL как C-string. Нулевой байт в строке
+    -- обрывает запрос и приводит к ошибкам парсинга ("unrecognized token").
+    -- Поэтому для любых interpolated значений удаляем \0 и экранируем кавычки.
+    local s = tostring(value)
+    -- Удаляем NUL байт как обычный литерал, без паттернов, для совместимости.
+    s = s:gsub("\0", "")
+    return s:gsub("'", "''")
 end
 
 local function normalize_bool(value, fallback)
@@ -1910,11 +1916,16 @@ function config.add_ai_log_event(entry)
     if entry.tags ~= nil then
         tags_json = json_encode(entry.tags)
     end
-    db_exec(config.db,
+    local ok, err = db_exec_safe(config.db,
         "INSERT INTO ai_log_events(ts, level, stream_id, component, message, fingerprint, tags_json) VALUES(" ..
         ts .. ", '" .. sql_escape(level) .. "', '" .. sql_escape(stream_id) .. "', '" ..
         sql_escape(component) .. "', '" .. sql_escape(message) .. "', '" ..
         sql_escape(fingerprint) .. "', '" .. sql_escape(tags_json) .. "');")
+    if not ok then
+        -- Observability не должна валить весь процесс из-за проблем с БД/данными.
+        log.warning("[observability] failed to insert ai_log_event: " .. tostring(err))
+        return nil, err
+    end
     return true
 end
 
@@ -1979,10 +1990,15 @@ function config.upsert_ai_metric(entry)
     if entry.tags ~= nil then
         tags_json = json_encode(entry.tags)
     end
-    db_exec(config.db,
+    local ok, err = db_exec_safe(config.db,
         "INSERT OR REPLACE INTO ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, value, tags_json) VALUES(" ..
         ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
         sql_escape(metric_key) .. "', " .. value .. ", '" .. sql_escape(tags_json) .. "');")
+    if not ok then
+        -- Метрики не критичны; не прерываем работу процесса.
+        log.warning("[observability] failed to upsert ai_metric: " .. tostring(err))
+        return nil, err
+    end
     return true
 end
 
