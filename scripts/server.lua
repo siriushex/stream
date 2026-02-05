@@ -41,6 +41,7 @@ dofile(script_path("ai_prompt.lua"))
 dofile(script_path("ai_telegram.lua"))
 dofile(script_path("ai_observability.lua"))
 dofile(script_path("watchdog.lua"))
+dofile(script_path("preview.lua"))
 dofile(script_path("api.lua"))
 
 local opt = {
@@ -754,9 +755,40 @@ function main()
         end
     end
 
+    -- If global HLS storage is memfd, avoid creating/touching the disk HLS directory unless
+    -- at least one stream explicitly uses disk storage.
+    local function needs_hls_disk_dir(storage_mode)
+        if storage_mode ~= "memfd" then
+            return true
+        end
+        if not config or type(config.list_streams) ~= "function" then
+            return false
+        end
+        local rows = config.list_streams() or {}
+        for _, row in ipairs(rows) do
+            local cfg = row and row.config or {}
+            local outputs = cfg and cfg.output or nil
+            if type(outputs) == "table" then
+                for _, out in pairs(outputs) do
+                    if type(out) == "table" and out.format == "hls" then
+                        local s = out.storage
+                        if s ~= nil and tostring(s) == "disk" then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    local hls_storage = setting_string("hls_storage", "disk")
     local stored_hls_dir = config.get_setting("hls_dir")
     local hls_dir = opt.hls_dir or stored_hls_dir or (opt.data_dir .. "/hls")
-    ensure_dir(hls_dir)
+    local hls_needs_disk = needs_hls_disk_dir(hls_storage)
+    if hls_needs_disk then
+        ensure_dir(hls_dir)
+    end
 
     local stored_hls_base = config.get_setting("hls_base_url")
     if stored_hls_base and stored_hls_base ~= "" then
@@ -833,7 +865,6 @@ function main()
         hls_ts_extension = "ts"
     end
     local hls_ts_mime = setting_string("hls_ts_mime", "video/MP2T")
-    local hls_storage = setting_string("hls_storage", "disk")
     local hls_on_demand = setting_bool("hls_on_demand", hls_storage == "memfd")
     local hls_idle_timeout_sec = setting_number("hls_idle_timeout_sec", 30)
 
@@ -874,20 +905,39 @@ function main()
         mime.ts = hls_ts_mime
     end
 
-    local hls_static = http_static({
-        path = hls_dir,
-        skip = opt.hls_route,
-        expires = hls_expires,
-        m3u_headers = m3u_headers,
-        ts_headers = ts_headers,
-        ts_extension = hls_ts_extension,
-    })
+    local hls_static = nil
+    if hls_needs_disk then
+        hls_static = http_static({
+            path = hls_dir,
+            skip = opt.hls_route,
+            expires = hls_expires,
+            m3u_headers = m3u_headers,
+            ts_headers = ts_headers,
+            ts_extension = hls_ts_extension,
+        })
+    end
     local hls_memfd_handler = nil
     if hls_memfd then
         hls_memfd_handler = hls_memfd({
             skip = opt.hls_route,
             m3u_headers = m3u_headers,
             ts_headers = ts_headers,
+            ts_mime = hls_ts_mime,
+        })
+    end
+    -- Preview HLS (memfd): отдельный handler с no-store заголовками.
+    local preview_memfd_handler = nil
+    if hls_memfd then
+        preview_memfd_handler = hls_memfd({
+            skip = "/preview",
+            m3u_headers = {
+                "Cache-Control: no-store",
+                "Pragma: no-cache",
+            },
+            ts_headers = {
+                "Cache-Control: no-store",
+                "Pragma: no-cache",
+            },
             ts_mime = hls_ts_mime,
         })
     end
@@ -1188,7 +1238,11 @@ function main()
             return nil
         end
 
-        if not ensure_http_auth(server, client, request) then
+        -- В режиме http_upstream успешный ответ должен быть одним server:send() с upstream.
+        -- Для отказов используем server:abort(), иначе upstream-модуль вернёт 500.
+        local ok_http = http_auth_check(request)
+        if not ok_http then
+            server:abort(client, 401)
             return nil
         end
 
@@ -1203,12 +1257,8 @@ function main()
             server:abort(client, 404)
             return nil
         end
-        ensure_token_auth(server, client, request, {
-            stream_id = stream_id,
-            stream_name = entry.channel.config and entry.channel.config.name or stream_id,
-            stream_cfg = entry.channel.config,
-            proto = "http_ts",
-        }, function(session)
+
+        local function allow_stream(session)
             client_data.output_data = { channel_data = entry.channel }
             http_output_client(server, client, request, client_data.output_data)
 
@@ -1231,16 +1281,68 @@ function main()
             local buffer_size = math.max(128, http_play_buffer_kb)
             local buffer_fill = math.floor(buffer_size / 4)
             server:send(client, {
-                code = 200,
-                headers = {
-                    "Content-Type: video/MP2T",
-                    "Connection: close",
-                },
                 upstream = channel_data.tail:stream(),
                 buffer_size = buffer_size,
                 buffer_fill = buffer_fill,
-            })
-        end)
+            }, "video/MP2T")
+        end
+
+        if auth and auth.check_play then
+            local headers = request.headers or {}
+            auth.check_play({
+                stream_id = stream_id,
+                stream_name = entry.channel.config and entry.channel.config.name or stream_id,
+                stream_cfg = entry.channel.config,
+                proto = "http_ts",
+                request = request,
+                ip = request.addr,
+                token = auth.get_token and auth.get_token(request) or nil,
+                user_agent = header_value(headers, "user-agent") or "",
+                referer = header_value(headers, "referer") or "",
+                uri = build_request_uri(request),
+            }, function(allowed, session)
+                if not allowed then
+                    server:abort(client, 403)
+                    return
+                end
+                allow_stream(session)
+            end)
+            return nil
+        end
+
+        allow_stream(nil)
+    end
+
+    local function preview_route_handler(server, client, request)
+        local client_data = server:data(client)
+
+        if not request then
+            if client_data.preview_memfd and preview_memfd_handler then
+                preview_memfd_handler(server, client, request)
+                client_data.preview_memfd = nil
+            end
+            return nil
+        end
+
+        if not preview_memfd_handler or not preview or not preview.extract_token then
+            server:abort(client, 501)
+            return nil
+        end
+
+        local token = preview.extract_token(request.path or "")
+        if not token or not (preview.touch and preview.touch(token)) then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local handled = preview_memfd_handler(server, client, request)
+        if handled then
+            client_data.preview_memfd = true
+            return nil
+        end
+
+        server:abort(client, 404)
+        return nil
     end
 
     local function hls_route_handler(server, client, request)
@@ -1254,18 +1356,29 @@ function main()
                 client_data.hls_memfd = nil
                 return nil
             end
-            return hls_static(server, client, request)
+            if hls_static then
+                return hls_static(server, client, request)
+            end
+            return nil
         end
 
         local prefix = opt.hls_route .. "/"
         if request.path:sub(1, #prefix) ~= prefix then
-            return hls_static(server, client, request)
+            if hls_static then
+                return hls_static(server, client, request)
+            end
+            server:abort(client, 404)
+            return nil
         end
 
         local rest = request.path:sub(#prefix + 1)
         local stream_id = rest:match("^([^/]+)/")
         if not stream_id then
-            return hls_static(server, client, request)
+            if hls_static then
+                return hls_static(server, client, request)
+            end
+            server:abort(client, 404)
+            return nil
         end
 
         local entry = runtime.streams[stream_id]
@@ -1297,6 +1410,15 @@ function main()
                     payload = hls_memfd_handler:get_playlist(stream_id)
                 end
                 if not payload then
+                    if hls_memfd_handler then
+                        local handled = hls_memfd_handler(server, client, request)
+                        if handled then
+                            client_data.hls_memfd = true
+                            return
+                        end
+                    end
+                end
+                if not payload and hls_static then
                     local file_path = join_path(hls_dir, rel)
                     local fp = io.open(file_path, "rb")
                     if fp then
@@ -1305,14 +1427,11 @@ function main()
                     end
                 end
                 if not payload then
-                    if hls_memfd_handler then
-                        local handled = hls_memfd_handler(server, client, request)
-                        if handled then
-                            client_data.hls_memfd = true
-                            return
-                        end
+                    if hls_static then
+                        return hls_static(server, client, request)
                     end
-                    return hls_static(server, client, request)
+                    server:abort(client, 404)
+                    return
                 end
                 if can_rewrite then
                     payload = auth.rewrite_m3u8(payload, token, session and session.session_id or nil)
@@ -1344,7 +1463,11 @@ function main()
                 end
             end
 
-            return hls_static(server, client, request)
+            if hls_static then
+                return hls_static(server, client, request)
+            end
+            server:abort(client, 404)
+            return
         end)
     end
 
@@ -1359,8 +1482,9 @@ function main()
         table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
         table.insert(routes, { "/favicon.ico", http_favicon })
         if http_play_allow then
-            table.insert(routes, { "/stream/*", http_play_stream })
-            table.insert(routes, { "/play/*", http_play_stream })
+            local upstream = http_upstream({ callback = http_play_stream })
+            table.insert(routes, { "/stream/*", upstream })
+            table.insert(routes, { "/play/*", upstream })
         end
         if include_hls_route and http_play_hls then
             table.insert(routes, { opt.hls_route .. "/*", hls_route_handler })
@@ -1387,6 +1511,7 @@ function main()
         end
     end
 
+    table.insert(main_routes, { "/preview/*", preview_route_handler })
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
     table.insert(main_routes, { "/", web_index })
     table.insert(main_routes, { "/*", web_index })

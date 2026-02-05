@@ -125,9 +125,11 @@ struct module_data_t
     size_t segment_bucket_count;
     uint32_t stream_hash;
     struct module_data_t *stream_hash_next;
+#ifdef HLS_MEMFD_DEBUG
     int debug_hold_sec;
     uint64_t debug_hold_until;
     hls_memfd_segment_t *debug_hold_seg;
+#endif
 
     mpegts_psi_t *pat;
     mpegts_psi_t *pmt;
@@ -359,6 +361,7 @@ static void hls_memfd_stream_hash_rebuild(size_t new_bucket_count)
     }
 }
 
+#ifdef HLS_MEMFD_DEBUG
 static void hls_memfd_debug_hold_release(module_data_t *mod, uint64_t now_us)
 {
     if(!mod || mod->debug_hold_sec <= 0 || !mod->debug_hold_seg)
@@ -370,6 +373,13 @@ static void hls_memfd_debug_hold_release(module_data_t *mod, uint64_t now_us)
     mod->debug_hold_seg = NULL;
     mod->debug_hold_until = 0;
 }
+#else
+static void hls_memfd_debug_hold_release(module_data_t *mod, uint64_t now_us)
+{
+    __uarg(mod);
+    __uarg(now_us);
+}
+#endif
 
 static void hls_memfd_segment_hash_add(module_data_t *mod, hls_memfd_segment_t *seg)
 {
@@ -406,11 +416,13 @@ static void hls_memfd_segment_free(module_data_t *mod, hls_memfd_segment_t *seg)
 
     if(mod && mod->storage_mode == HLS_STORAGE_MEMFD)
     {
+#ifdef HLS_MEMFD_DEBUG
         if(mod->debug_hold_seg == seg)
         {
             mod->debug_hold_seg = NULL;
             mod->debug_hold_until = 0;
         }
+#endif
         hls_memfd_segment_hash_remove(mod, seg);
         if(mod->segments_bytes >= seg->size_bytes)
             mod->segments_bytes -= seg->size_bytes;
@@ -844,12 +856,14 @@ static void hls_finish_segment(module_data_t *mod)
     asc_list_insert_tail(mod->segments, seg);
     ++mod->segments_count;
     hls_memfd_segment_hash_add(mod, seg);
+#ifdef HLS_MEMFD_DEBUG
     if(mod->storage_mode == HLS_STORAGE_MEMFD && mod->debug_hold_sec > 0 && !mod->debug_hold_seg)
     {
         mod->debug_hold_seg = seg;
         ++seg->refcnt;
         mod->debug_hold_until = asc_utime() + ((uint64_t)mod->debug_hold_sec * 1000000ULL);
     }
+#endif
 
     hls_cleanup_segments(mod);
     hls_write_playlist(mod);
@@ -1397,10 +1411,12 @@ static void module_init(module_data_t *mod)
     else
         mod->max_bytes = DEFAULT_MAX_BYTES;
 
+#ifdef HLS_MEMFD_DEBUG
     mod->debug_hold_sec = 0;
     module_option_number("debug_hold_sec", &mod->debug_hold_sec);
     if(mod->debug_hold_sec < 0)
         mod->debug_hold_sec = 0;
+#endif
 
     mod->use_wall = true;
     module_option_boolean("use_wall", &mod->use_wall);
@@ -1432,8 +1448,10 @@ static void module_init(module_data_t *mod)
     mod->segments_bytes = 0;
     mod->segment_buckets = NULL;
     mod->segment_bucket_count = 0;
+#ifdef HLS_MEMFD_DEBUG
     mod->debug_hold_until = 0;
     mod->debug_hold_seg = NULL;
+#endif
     mod->seq = -1;
     mod->segment_fd = -1;
     mod->segment_buf = NULL;
