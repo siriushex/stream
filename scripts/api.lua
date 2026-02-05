@@ -2298,7 +2298,10 @@ local function set_settings(server, client, request)
                     or body.telegram_bot_token ~= nil or body.telegram_chat_id ~= nil
                     or body.telegram_backup_enabled ~= nil or body.telegram_backup_schedule ~= nil
                     or body.telegram_backup_time ~= nil or body.telegram_backup_weekday ~= nil
-                    or body.telegram_backup_monthday ~= nil or body.telegram_backup_include_secrets ~= nil)
+                    or body.telegram_backup_monthday ~= nil or body.telegram_backup_include_secrets ~= nil
+                    or body.telegram_summary_enabled ~= nil or body.telegram_summary_schedule ~= nil
+                    or body.telegram_summary_time ~= nil or body.telegram_summary_weekday ~= nil
+                    or body.telegram_summary_monthday ~= nil or body.telegram_summary_include_charts ~= nil)
             then
                 telegram.configure()
             end
@@ -2348,6 +2351,17 @@ local function telegram_backup(server, client)
         return error_response(server, client, 400, "telegram notifier unavailable")
     end
     local ok, err = telegram.send_backup_now()
+    if not ok then
+        return error_response(server, client, 400, err or "telegram disabled")
+    end
+    json_response(server, client, 200, { status = "queued" })
+end
+
+local function telegram_summary(server, client)
+    if not telegram or not telegram.send_summary_now then
+        return error_response(server, client, 400, "telegram notifier unavailable")
+    end
+    local ok, err = telegram.send_summary_now()
     if not ok then
         return error_response(server, client, 400, err or "telegram disabled")
     end
@@ -4323,6 +4337,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/backup" and method == "POST" then
         return telegram_backup(server, client)
+    end
+    if path == "/api/v1/notifications/telegram/summary" and method == "POST" then
+        return telegram_summary(server, client)
     end
     if path == "/api/v1/ai/logs" and method == "GET" then
         return ai_logs(server, client, request)

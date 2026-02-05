@@ -22,6 +22,13 @@ telegram = {
         backup_monthday = 1,
         backup_include_secrets = false,
         backup_last_ts = 0,
+        summary_enabled = false,
+        summary_schedule = "OFF",
+        summary_time = "08:00",
+        summary_weekday = 1,
+        summary_monthday = 1,
+        summary_include_charts = true,
+        summary_last_ts = 0,
     },
     queue = {},
     inflight = nil,
@@ -32,6 +39,7 @@ telegram = {
     curl_available = nil,
     last_error_ts = 0,
     backup_next_ts = nil,
+    summary_next_ts = nil,
 }
 
 local LEVEL_RANK = {
@@ -130,6 +138,13 @@ local function parse_time(value, fallback)
         return parse_time(fallback or "03:00")
     end
     return h, m
+end
+
+local function url_encode(value)
+    local text = tostring(value or "")
+    return text:gsub("([^%w%-%._~])", function(c)
+        return string.format("%%%02X", string.byte(c))
+    end)
 end
 
 local function days_in_month(year, month)
@@ -527,14 +542,14 @@ local function enqueue_document(path, caption, opts)
     return true
 end
 
-local function compute_next_backup_ts(now)
-    local cfg = telegram.config
-    if not cfg.backup_enabled or cfg.backup_schedule == "OFF" then
+local function compute_next_schedule_ts(now, schedule, time_value, weekday_value, monthday_value)
+    local normalized = normalize_schedule(schedule)
+    if normalized == "OFF" then
         return nil
     end
-    local hour, minute = parse_time(cfg.backup_time or "03:00")
+    local hour, minute = parse_time(time_value or "03:00")
     local t = os.date("*t", now)
-    if cfg.backup_schedule == "DAILY" then
+    if normalized == "DAILY" then
         local candidate = os.time({
             year = t.year, month = t.month, day = t.day,
             hour = hour, min = minute, sec = 0
@@ -543,8 +558,8 @@ local function compute_next_backup_ts(now)
             candidate = candidate + 86400
         end
         return candidate
-    elseif cfg.backup_schedule == "WEEKLY" then
-        local weekday = clamp_number(cfg.backup_weekday, 1, 7, 1)
+    elseif normalized == "WEEKLY" then
+        local weekday = clamp_number(weekday_value, 1, 7, 1)
         local target_wday = ((weekday % 7) + 1) -- 1=Mon -> 2, 7=Sun -> 1
         local today = t.wday
         local delta = (target_wday - today + 7) % 7
@@ -556,8 +571,8 @@ local function compute_next_backup_ts(now)
             candidate = candidate + 7 * 86400
         end
         return candidate
-    elseif cfg.backup_schedule == "MONTHLY" then
-        local day = clamp_number(cfg.backup_monthday, 1, 31, 1)
+    elseif normalized == "MONTHLY" then
+        local day = clamp_number(monthday_value, 1, 31, 1)
         local max_day = days_in_month(t.year, t.month)
         if day > max_day then
             day = max_day
@@ -581,6 +596,14 @@ local function compute_next_backup_ts(now)
         return candidate
     end
     return nil
+end
+
+local function compute_next_backup_ts(now)
+    local cfg = telegram.config
+    if not cfg.backup_enabled then
+        return nil
+    end
+    return compute_next_schedule_ts(now, cfg.backup_schedule, cfg.backup_time, cfg.backup_weekday, cfg.backup_monthday)
 end
 
 local function backup_due(now)
@@ -620,6 +643,196 @@ local function run_backup(now)
     return ok
 end
 
+local function format_kbps(value)
+    local num = tonumber(value) or 0
+    if num < 0 then num = 0 end
+    return tostring(math.floor(num + 0.5)) .. " kbps"
+end
+
+local function build_summary_snapshot(range_sec)
+    if not config or not config.list_ai_metrics then
+        return nil, nil, "observability unavailable"
+    end
+    local since_ts = os.time() - (range_sec or 86400)
+    local metrics = config.list_ai_metrics({
+        since = since_ts,
+        scope = "global",
+        limit = 20000,
+    })
+    if not metrics or #metrics == 0 then
+        return nil, nil, "no metrics"
+    end
+    local summary = {
+        total_bitrate_kbps = 0,
+        streams_on_air = 0,
+        streams_down = 0,
+        streams_total = 0,
+        input_switch = 0,
+        alerts_error = 0,
+    }
+    local last_bucket = 0
+    for _, row in ipairs(metrics) do
+        if row.ts_bucket and row.ts_bucket > last_bucket then
+            last_bucket = row.ts_bucket
+        end
+    end
+    if last_bucket > 0 then
+        for _, row in ipairs(metrics) do
+            if row.ts_bucket == last_bucket and summary[row.metric_key] ~= nil then
+                summary[row.metric_key] = row.value
+            end
+        end
+    end
+    return summary, metrics, nil
+end
+
+local function downsample_points(points, max_points)
+    if #points <= max_points then
+        return points
+    end
+    local step = math.ceil(#points / max_points)
+    local out = {}
+    for i = 1, #points, step do
+        table.insert(out, points[i])
+    end
+    return out
+end
+
+local function build_chart_url(metrics, metric_key, title)
+    if not metrics or #metrics == 0 then
+        return nil
+    end
+    local points = {}
+    for _, row in ipairs(metrics) do
+        if row.metric_key == metric_key and row.ts_bucket then
+            table.insert(points, { ts = row.ts_bucket, value = tonumber(row.value) or 0 })
+        end
+    end
+    table.sort(points, function(a, b) return a.ts < b.ts end)
+    if #points == 0 then
+        return nil
+    end
+    points = downsample_points(points, 120)
+    local labels = {}
+    local values = {}
+    for _, pt in ipairs(points) do
+        table.insert(labels, os.date("%H:%M", pt.ts))
+        table.insert(values, pt.value)
+    end
+    local chart = {
+        type = "line",
+        data = {
+            labels = labels,
+            datasets = {
+                {
+                    label = title or metric_key,
+                    data = values,
+                    borderColor = "rgb(90,170,229)",
+                    backgroundColor = "rgba(90,170,229,0.25)",
+                    fill = true,
+                    lineTension = 0.2,
+                    pointRadius = 0,
+                }
+            }
+        },
+        options = {
+            legend = { display = false },
+            scales = {
+                yAxes = { { ticks = { beginAtZero = true } } },
+                xAxes = { { ticks = { maxTicksLimit = 8 } } },
+            },
+        },
+    }
+    local base = os.getenv("TELEGRAM_CHART_BASE_URL") or "https://quickchart.io/chart"
+    local encoded = url_encode(json.encode(chart))
+    return base .. "?c=" .. encoded .. "&w=800&h=360&format=png"
+end
+
+local function enqueue_photo_url(url, caption, opts)
+    local cfg = telegram.config
+    if not cfg.available then
+        return false, "disabled"
+    end
+    if not ensure_curl_available() then
+        return false, "curl unavailable"
+    end
+    if not url or url == "" then
+        return false, "empty"
+    end
+    local now = os.time()
+    local bypass_throttle = opts and opts.bypass_throttle
+    if not bypass_throttle then
+        if not allow_throttle(now) then
+            return false, "throttled"
+        end
+    end
+    if #telegram.queue >= (cfg.queue_max or 200) then
+        return false, "queue full"
+    end
+    table.insert(telegram.queue, {
+        photo_url = url,
+        caption = caption,
+        attempts = 0,
+        next_try = now,
+        bypass_throttle = bypass_throttle,
+    })
+    return true
+end
+
+local function compute_next_summary_ts(now)
+    local cfg = telegram.config
+    if not cfg.summary_enabled then
+        return nil
+    end
+    return compute_next_schedule_ts(now, cfg.summary_schedule, cfg.summary_time, cfg.summary_weekday, cfg.summary_monthday)
+end
+
+local function summary_due(now)
+    local cfg = telegram.config
+    if not cfg.summary_enabled or cfg.summary_schedule == "OFF" then
+        return false
+    end
+    if not cfg.available then
+        return false
+    end
+    if not telegram.summary_next_ts then
+        telegram.summary_next_ts = compute_next_summary_ts(now)
+    end
+    return telegram.summary_next_ts and now >= telegram.summary_next_ts
+end
+
+local function run_summary(now)
+    local cfg = telegram.config
+    local summary, metrics, err = build_summary_snapshot(24 * 3600)
+    if not summary then
+        if (now - telegram.last_error_ts) > 60 then
+            telegram.last_error_ts = now
+            log.warning("[telegram] summary skipped: " .. tostring(err or "no data"))
+        end
+        return false
+    end
+    local lines = {
+        "📊 Summary (24h)",
+        "Bitrate: " .. format_kbps(summary.total_bitrate_kbps),
+        "Streams: " .. tostring(summary.streams_on_air or 0) .. " on / " .. tostring(summary.streams_down or 0) .. " down",
+        "Switches: " .. tostring(summary.input_switch or 0) .. ", Alerts: " .. tostring(summary.alerts_error or 0),
+    }
+    local message = table.concat(lines, "\n")
+    enqueue_text(message, { bypass_throttle = true })
+    if cfg.summary_include_charts then
+        local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)")
+        if chart_url then
+            enqueue_photo_url(chart_url, "📈 Total bitrate (24h)", { bypass_throttle = true })
+        end
+    end
+    cfg.summary_last_ts = now
+    if config and config.set_setting then
+        config.set_setting("telegram_summary_last_ts", now)
+    end
+    telegram.summary_next_ts = compute_next_summary_ts(now)
+    return true
+end
+
 local function spawn_send(item)
     local cfg = telegram.config
     local url = (cfg.api_base or "https://api.telegram.org")
@@ -633,7 +846,18 @@ local function spawn_send(item)
         "--connect-timeout",
         tostring(cfg.connect_timeout_sec or 5),
     }
-    if item.document_path then
+    if item.photo_url then
+        url = url .. "/bot" .. cfg.token .. "/sendPhoto"
+        table.insert(args, url)
+        table.insert(args, "-F")
+        table.insert(args, "chat_id=" .. cfg.chat_id)
+        table.insert(args, "-F")
+        table.insert(args, "photo=" .. item.photo_url)
+        if item.caption and item.caption ~= "" then
+            table.insert(args, "-F")
+            table.insert(args, "caption=" .. item.caption)
+        end
+    elseif item.document_path then
         url = url .. "/bot" .. cfg.token .. "/sendDocument"
         table.insert(args, url)
         table.insert(args, "-F")
@@ -674,6 +898,9 @@ function telegram.tick()
     local now = os.time()
     if backup_due(now) then
         run_backup(now)
+    end
+    if summary_due(now) then
+        run_summary(now)
     end
 
     if telegram.inflight then
@@ -748,6 +975,13 @@ function telegram.configure()
     local backup_monthday = clamp_number(get_setting("telegram_backup_monthday"), 1, 31, 1)
     local backup_include_secrets = setting_bool("telegram_backup_include_secrets", false)
     local backup_last_ts = tonumber(get_setting("telegram_backup_last_ts") or 0) or 0
+    local summary_enabled = setting_bool("telegram_summary_enabled", false)
+    local summary_schedule = normalize_schedule(setting_string("telegram_summary_schedule", "OFF"))
+    local summary_time = setting_string("telegram_summary_time", "08:00")
+    local summary_weekday = clamp_number(get_setting("telegram_summary_weekday"), 1, 7, 1)
+    local summary_monthday = clamp_number(get_setting("telegram_summary_monthday"), 1, 31, 1)
+    local summary_include_charts = setting_bool("telegram_summary_include_charts", true)
+    local summary_last_ts = tonumber(get_setting("telegram_summary_last_ts") or 0) or 0
 
     telegram.config.alerts_enabled = alerts_enabled
     telegram.config.available = token ~= "" and chat_id ~= ""
@@ -766,6 +1000,16 @@ function telegram.configure()
     telegram.config.backup_monthday = backup_monthday
     telegram.config.backup_include_secrets = backup_include_secrets
     telegram.config.backup_last_ts = backup_last_ts
+    telegram.config.summary_enabled = summary_enabled
+    if summary_enabled and summary_schedule == "OFF" then
+        summary_schedule = "DAILY"
+    end
+    telegram.config.summary_schedule = summary_schedule
+    telegram.config.summary_time = summary_time
+    telegram.config.summary_weekday = summary_weekday
+    telegram.config.summary_monthday = summary_monthday
+    telegram.config.summary_include_charts = summary_include_charts
+    telegram.config.summary_last_ts = summary_last_ts
 
     if telegram.config.available and not ensure_curl_available() then
         telegram.config.available = false
@@ -773,8 +1017,9 @@ function telegram.configure()
     end
 
     telegram.backup_next_ts = nil
+    telegram.summary_next_ts = nil
 
-    if telegram.config.available and (telegram.config.alerts_enabled or telegram.config.backup_enabled) then
+    if telegram.config.available and (telegram.config.alerts_enabled or telegram.config.backup_enabled or telegram.config.summary_enabled) then
         start_timer()
     end
 end
@@ -828,6 +1073,18 @@ function telegram.send_backup_now()
     local ok = run_backup(now)
     if not ok then
         return false, "backup failed"
+    end
+    return true
+end
+
+function telegram.send_summary_now()
+    if not telegram.config.available then
+        return false, "telegram disabled"
+    end
+    local now = os.time()
+    local ok = run_summary(now)
+    if not ok then
+        return false, "summary failed"
     end
     return true
 end

@@ -519,6 +519,15 @@ const elements = {
   settingsTelegramBackupWeekdayField: $('#settings-telegram-backup-weekday-field'),
   settingsTelegramBackupMonthdayField: $('#settings-telegram-backup-monthday-field'),
   settingsTelegramBackupNow: $('#settings-telegram-backup-now'),
+  settingsTelegramSummaryEnabled: $('#settings-telegram-summary-enabled'),
+  settingsTelegramSummarySchedule: $('#settings-telegram-summary-schedule'),
+  settingsTelegramSummaryTime: $('#settings-telegram-summary-time'),
+  settingsTelegramSummaryWeekday: $('#settings-telegram-summary-weekday'),
+  settingsTelegramSummaryMonthday: $('#settings-telegram-summary-monthday'),
+  settingsTelegramSummaryCharts: $('#settings-telegram-summary-charts'),
+  settingsTelegramSummaryWeekdayField: $('#settings-telegram-summary-weekday-field'),
+  settingsTelegramSummaryMonthdayField: $('#settings-telegram-summary-monthday-field'),
+  settingsTelegramSummaryNow: $('#settings-telegram-summary-now'),
   settingsAiEnabled: $('#settings-ai-enabled'),
   settingsAiModel: $('#settings-ai-model'),
   settingsAiMaxTokens: $('#settings-ai-max-tokens'),
@@ -1447,6 +1456,17 @@ function updateTelegramBackupScheduleFields() {
   }
   if (elements.settingsTelegramBackupMonthdayField) {
     elements.settingsTelegramBackupMonthdayField.hidden = schedule !== 'MONTHLY';
+  }
+}
+
+function updateTelegramSummaryScheduleFields() {
+  if (!elements.settingsTelegramSummarySchedule) return;
+  const schedule = elements.settingsTelegramSummarySchedule.value || 'DAILY';
+  if (elements.settingsTelegramSummaryWeekdayField) {
+    elements.settingsTelegramSummaryWeekdayField.hidden = schedule !== 'WEEKLY';
+  }
+  if (elements.settingsTelegramSummaryMonthdayField) {
+    elements.settingsTelegramSummaryMonthdayField.hidden = schedule !== 'MONTHLY';
   }
 }
 
@@ -10680,6 +10700,24 @@ function applySettingsToUI() {
   if (elements.settingsTelegramBackupSecrets) {
     elements.settingsTelegramBackupSecrets.checked = getSettingBool('telegram_backup_include_secrets', false);
   }
+  if (elements.settingsTelegramSummaryEnabled) {
+    elements.settingsTelegramSummaryEnabled.checked = getSettingBool('telegram_summary_enabled', false);
+  }
+  if (elements.settingsTelegramSummarySchedule) {
+    elements.settingsTelegramSummarySchedule.value = getSettingString('telegram_summary_schedule', 'DAILY');
+  }
+  if (elements.settingsTelegramSummaryTime) {
+    elements.settingsTelegramSummaryTime.value = getSettingString('telegram_summary_time', '08:00');
+  }
+  if (elements.settingsTelegramSummaryWeekday) {
+    elements.settingsTelegramSummaryWeekday.value = String(getSettingNumber('telegram_summary_weekday', 1));
+  }
+  if (elements.settingsTelegramSummaryMonthday) {
+    elements.settingsTelegramSummaryMonthday.value = getSettingNumber('telegram_summary_monthday', 1);
+  }
+  if (elements.settingsTelegramSummaryCharts) {
+    elements.settingsTelegramSummaryCharts.checked = getSettingBool('telegram_summary_include_charts', true);
+  }
   if (elements.settingsAiEnabled) {
     elements.settingsAiEnabled.checked = getSettingBool('ai_enabled', false);
   }
@@ -10999,6 +11037,7 @@ function applySettingsToUI() {
   }
 
   updateTelegramBackupScheduleFields();
+  updateTelegramSummaryScheduleFields();
   syncToggleTargets();
 
   renderGroups();
@@ -11059,6 +11098,12 @@ function collectGeneralSettings() {
   const telegramBackupWeekday = toNumber(elements.settingsTelegramBackupWeekday && elements.settingsTelegramBackupWeekday.value);
   const telegramBackupMonthday = toNumber(elements.settingsTelegramBackupMonthday && elements.settingsTelegramBackupMonthday.value);
   const telegramBackupSecrets = elements.settingsTelegramBackupSecrets && elements.settingsTelegramBackupSecrets.checked;
+  const telegramSummaryEnabled = elements.settingsTelegramSummaryEnabled && elements.settingsTelegramSummaryEnabled.checked;
+  const telegramSummarySchedule = elements.settingsTelegramSummarySchedule && elements.settingsTelegramSummarySchedule.value;
+  const telegramSummaryTime = elements.settingsTelegramSummaryTime && elements.settingsTelegramSummaryTime.value;
+  const telegramSummaryWeekday = toNumber(elements.settingsTelegramSummaryWeekday && elements.settingsTelegramSummaryWeekday.value);
+  const telegramSummaryMonthday = toNumber(elements.settingsTelegramSummaryMonthday && elements.settingsTelegramSummaryMonthday.value);
+  const telegramSummaryCharts = elements.settingsTelegramSummaryCharts && elements.settingsTelegramSummaryCharts.checked;
   if (telegramEnabled) {
     if (!telegramChatId) {
       throw new Error('Telegram chat ID is required when alerts are enabled');
@@ -11086,6 +11131,27 @@ function collectGeneralSettings() {
     }
     if (schedule === 'MONTHLY' && (telegramBackupMonthday === undefined || telegramBackupMonthday < 1 || telegramBackupMonthday > 31)) {
       throw new Error('Backup month day must be 1-31');
+    }
+  }
+  if (telegramSummaryEnabled) {
+    if (!telegramChatId) {
+      throw new Error('Telegram chat ID is required when summaries are enabled');
+    }
+    if (!telegramToken && !telegramTokenSet) {
+      throw new Error('Telegram bot token is required when summaries are enabled');
+    }
+    if (!telegramSummaryTime) {
+      throw new Error('Summary time is required');
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(telegramSummaryTime)) {
+      throw new Error('Summary time must be HH:MM');
+    }
+    const schedule = (telegramSummarySchedule || 'DAILY').toUpperCase();
+    if (schedule === 'WEEKLY' && (telegramSummaryWeekday === undefined || telegramSummaryWeekday < 1 || telegramSummaryWeekday > 7)) {
+      throw new Error('Summary weekday must be 1-7');
+    }
+    if (schedule === 'MONTHLY' && (telegramSummaryMonthday === undefined || telegramSummaryMonthday < 1 || telegramSummaryMonthday > 31)) {
+      throw new Error('Summary month day must be 1-31');
     }
   }
   const aiEnabled = elements.settingsAiEnabled && elements.settingsAiEnabled.checked;
@@ -11195,6 +11261,14 @@ function collectGeneralSettings() {
   if (telegramBackupWeekday !== undefined) payload.telegram_backup_weekday = telegramBackupWeekday;
   if (telegramBackupMonthday !== undefined) payload.telegram_backup_monthday = telegramBackupMonthday;
   if (elements.settingsTelegramBackupSecrets) payload.telegram_backup_include_secrets = telegramBackupSecrets;
+  if (elements.settingsTelegramSummaryEnabled) payload.telegram_summary_enabled = telegramSummaryEnabled;
+  if (elements.settingsTelegramSummarySchedule) {
+    payload.telegram_summary_schedule = telegramSummarySchedule || 'DAILY';
+  }
+  if (elements.settingsTelegramSummaryTime) payload.telegram_summary_time = telegramSummaryTime || '08:00';
+  if (telegramSummaryWeekday !== undefined) payload.telegram_summary_weekday = telegramSummaryWeekday;
+  if (telegramSummaryMonthday !== undefined) payload.telegram_summary_monthday = telegramSummaryMonthday;
+  if (elements.settingsTelegramSummaryCharts) payload.telegram_summary_include_charts = telegramSummaryCharts;
   if (elements.settingsAiEnabled) payload.ai_enabled = aiEnabled;
   if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
   if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
@@ -12600,12 +12674,31 @@ function bindEvents() {
       }
     });
   }
+  if (elements.settingsTelegramSummaryNow) {
+    elements.settingsTelegramSummaryNow.addEventListener('click', async () => {
+      try {
+        await apiJson('/api/v1/notifications/telegram/summary', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        setStatus('Telegram summary queued');
+      } catch (err) {
+        setStatus(err.message || 'Telegram summary failed');
+      }
+    });
+  }
 
   if (elements.settingsTelegramBackupSchedule) {
     elements.settingsTelegramBackupSchedule.addEventListener('change', updateTelegramBackupScheduleFields);
   }
   if (elements.settingsTelegramBackupEnabled) {
     elements.settingsTelegramBackupEnabled.addEventListener('change', updateTelegramBackupScheduleFields);
+  }
+  if (elements.settingsTelegramSummarySchedule) {
+    elements.settingsTelegramSummarySchedule.addEventListener('change', updateTelegramSummaryScheduleFields);
+  }
+  if (elements.settingsTelegramSummaryEnabled) {
+    elements.settingsTelegramSummaryEnabled.addEventListener('change', updateTelegramSummaryScheduleFields);
   }
 
   if (elements.btnApplyHttpPlay) {
