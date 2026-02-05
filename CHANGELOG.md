@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Updated MPTS docs: EXPECT_LOG example now checks analyzer output (NIT).
+- Tests:
+  - Not run (docs update).
+### 2026-02-05
+- Changes:
   - UI: add min/step hints for MPTS si_interval_ms and target_bitrate.
 - Tests:
   - Not run (UI hint).
@@ -19,6 +24,7 @@
 - Changes:
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
   - CI: исправлен парсинг логов verify_mpts (работает с префиксами логгера).
+  - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
