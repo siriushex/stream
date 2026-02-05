@@ -135,6 +135,19 @@ done
 [[ "${#SEGMENTS[@]}" -gt 0 ]] || die "playlist not ready (see $ASTRA_LOG)"
 echo "Playlist ok; segments: ${SEGMENTS[*]}" >&2
 
+echo "Checking playlist caching headers..." >&2
+hdr_code="$(curl -s -D "$WORKDIR/index.headers" -o /dev/null -w '%{http_code}' "$PLAYLIST_URL" || true)"
+[[ "$hdr_code" == "200" ]] || die "playlist headers request failed ($hdr_code): $PLAYLIST_URL"
+tr -d '\r' < "$WORKDIR/index.headers" > "$WORKDIR/index.headers.clean"
+grep -qi '^cache-control:.*no-store' "$WORKDIR/index.headers.clean" \
+  || die "missing Cache-Control: no-store in playlist response"
+grep -qi '^cache-control:.*must-revalidate' "$WORKDIR/index.headers.clean" \
+  || die "missing Cache-Control: must-revalidate in playlist response"
+grep -qi '^pragma: no-cache' "$WORKDIR/index.headers.clean" \
+  || die "missing Pragma: no-cache in playlist response"
+grep -qi '^expires: 0' "$WORKDIR/index.headers.clean" \
+  || die "missing Expires: 0 in playlist response"
+
 echo "Downloading segments..." >&2
 for seg in "${SEGMENTS[@]}"; do
   out_name="${seg##*/}"
