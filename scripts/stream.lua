@@ -3281,12 +3281,19 @@ local function make_mpts_channel(channel_config)
         end
 
         local svc = input_data.mpts_service or {}
+        local service_type_id = tonumber(svc.service_type_id)
+        if service_type_id ~= nil and (service_type_id < 1 or service_type_id > 255) then
+            -- service_type_id в DVB должен быть 1..255; неверные значения игнорируем.
+            log.warning("[" .. channel_config.name .. "] mpts service #" .. input_id ..
+                " service_type_id должен быть 1..255; игнорируем " .. tostring(svc.service_type_id))
+            service_type_id = nil
+        end
         local svc_opts = {
             name = svc.name or ("svc_" .. tostring(input_id)),
             pnr = tonumber(svc.pnr),
             service_name = svc.service_name or svc.name,
             service_provider = svc.service_provider or svc.provider_name,
-            service_type_id = tonumber(svc.service_type_id),
+            service_type_id = service_type_id,
             lcn = tonumber(svc.lcn),
             scrambled = svc.scrambled == true,
         }
