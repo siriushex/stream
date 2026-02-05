@@ -187,7 +187,7 @@ local function build_summary_prompt(payload)
     table.insert(parts, "Keep it short: summary + up to 3 issues + up to 3 suggestions.")
     if payload then
         table.insert(parts, "Observability snapshot:")
-        table.insert(parts, json.encode(payload))
+        table.insert(parts, json.encode(sanitize_value(payload)))
     end
     return table.concat(parts, "\n")
 end
@@ -477,6 +477,13 @@ local function sanitize_value(value, depth)
         return value
     end
     local t = type(value)
+    if t == "number" then
+        -- Avoid invalid JSON ("nan"/"inf") in prompts/context.
+        if value ~= value or value == math.huge or value == -math.huge then
+            return 0
+        end
+        return value
+    end
     if t == "string" then
         return sanitize_utf8(value)
     end
@@ -1280,3 +1287,7 @@ function ai_runtime.request_summary(payload, callback)
     end)
     return true
 end
+
+-- Test helpers (kept minimal; do not rely on these in production code).
+ai_runtime._test = ai_runtime._test or {}
+ai_runtime._test.sanitize_value = sanitize_value
