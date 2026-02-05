@@ -2301,11 +2301,11 @@
             <div class="form-grid">
               <label class="field">
                 <span>SI interval (ms)</span>
-                <input type="number" id="mpts-si-interval" class="mpts-field" placeholder="500" />
+                <input type="number" id="mpts-si-interval" class="mpts-field" placeholder="500" min="50" />
               </label>
               <label class="field">
                 <span>Target bitrate (bps)</span>
-                <input type="number" id="mpts-target-bitrate" class="mpts-field" placeholder="50000000" />
+                <input type="number" id="mpts-target-bitrate" class="mpts-field" placeholder="50000000" min="1" step="1000" />
               </label>
               <label class="checkline">
                 <input type="checkbox" id="mpts-pcr-restamp" class="mpts-field" />
@@ -2334,6 +2334,7 @@
               <input type="checkbox" id="mpts-disable-autoremap" class="mpts-field" />
               <span>Disable PID auto-remap</span>
             </label>
+            <div class="form-hint">SI interval &lt; 50ms и target bitrate ≤ 0 игнорируются.</div>
             <div class="form-hint is-hidden" id="mpts-autoremap-warning">
               Auto-remap выключен: следите за PID/PNR. Конфликты приведут к ошибкам сборки MPTS.
             </div>
