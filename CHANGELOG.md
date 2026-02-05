@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AstralAI: auto-include on-demand metrics in AI context when prompt asks for charts/metrics.
+  - AstralAI: clamp and downsample metrics in context to reduce load.
+- Tests:
+  - `scripts/tests/ai_metrics_autoselect_unit.lua`
+### 2026-02-05
+- Changes:
   - UI: Observability/Help/Access отображаются только при включении соответствующих опций в Settings → General.
 - Tests:
   - Not run (UI change only).
