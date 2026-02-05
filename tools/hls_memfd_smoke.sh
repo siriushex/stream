@@ -155,10 +155,14 @@ if [[ -d "$DATA_DIR/hls" ]]; then
 fi
 
 echo "Load sanity: 10 clients playlist..." >&2
+pids=()
 for _ in $(seq 1 10); do
   curl -s "$PLAYLIST_URL" >/dev/null &
+  pids+=("$!")
 done
-wait
+for pid in "${pids[@]}"; do
+  wait "$pid"
+done
 
 echo "Load sanity: 10 clients segment..." >&2
 if [[ "${SEGMENTS[0]#'/'}" != "${SEGMENTS[0]}" ]]; then
@@ -166,10 +170,14 @@ if [[ "${SEGMENTS[0]#'/'}" != "${SEGMENTS[0]}" ]]; then
 else
   SEG_URL="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/${SEGMENTS[0]}"
 fi
+pids=()
 for _ in $(seq 1 10); do
   curl -s "$SEG_URL" >/dev/null &
+  pids+=("$!")
 done
-wait
+for pid in "${pids[@]}"; do
+  wait "$pid"
+done
 
 echo "Waiting for idle deactivation (idle_timeout=${IDLE_TIMEOUT_SEC}s)..." >&2
 # Sweep interval is 2..5 seconds, so wait a bit longer than 2x idle.
