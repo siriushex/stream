@@ -18,6 +18,7 @@
   - Added Observability view with summary cards and charts.
   - Added Telegram summary scheduler with optional charts and manual send.
   - Added optional AI summary (OpenAI) for Telegram reports when AI is enabled.
+  - Extended Telegram summary charts (bitrate + streams down).
   - Reconfigured observability on settings updates.
 - Tests:
   - Not run (UI + API wiring only).
