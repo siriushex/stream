@@ -278,7 +278,8 @@ local function sql_escape(value)
     -- обрывает запрос и приводит к ошибкам парсинга ("unrecognized token").
     -- Поэтому для любых interpolated значений удаляем \0 и экранируем кавычки.
     local s = tostring(value)
-    s = s:gsub("%z", "")
+    -- Удаляем NUL байт как обычный литерал, без паттернов, для совместимости.
+    s = s:gsub("\0", "")
     return s:gsub("'", "''")
 end
 
