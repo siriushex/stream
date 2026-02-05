@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - Tools: HLS memfd smoke now validates playlist no-cache/no-store headers (regression guard).
+- Tests:
+  - `tools/hls_memfd_smoke.sh`
+### 2026-02-06
+- Changes:
   - HLS: use strict no-cache/no-store headers for playlists (m3u8), including memfd 503 responses.
 - Tests:
   - `tools/hls_memfd_smoke.sh`
