@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Avoid repeated warnings for missing PNR on multi-program PAT inputs.
+- Tests:
+  - Not run (log change).
+### 2026-02-05
+- Changes:
   - Added optional Strict PNR smoke hook in `contrib/ci/smoke.sh` (MPTS_STRICT_PNR_SMOKE=1).
 - Tests:
   - Not run (CI hook update).
