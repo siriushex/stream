@@ -695,6 +695,7 @@ const elements = {
   mptsPassSdt: $('#mpts-pass-sdt'),
   mptsPassEit: $('#mpts-pass-eit'),
   mptsPassTdt: $('#mpts-pass-tdt'),
+  mptsPassWarning: $('#mpts-pass-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -2726,6 +2727,7 @@ function updateMptsFields() {
   if (elements.streamInputBlock) {
     elements.streamInputBlock.classList.toggle('is-hidden', enabled);
   }
+  updateMptsPassWarning();
 }
 
 function truncateText(text, max) {
@@ -5037,6 +5039,20 @@ function renderMptsServiceList() {
 
     elements.mptsServiceList.appendChild(row);
   });
+
+  updateMptsPassWarning();
+}
+
+function updateMptsPassWarning() {
+  if (!elements.mptsPassWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const passEnabled = (!!(elements.mptsPassNit && elements.mptsPassNit.checked))
+    || (!!(elements.mptsPassSdt && elements.mptsPassSdt.checked))
+    || (!!(elements.mptsPassEit && elements.mptsPassEit.checked))
+    || (!!(elements.mptsPassTdt && elements.mptsPassTdt.checked));
+  const serviceCount = (state.mptsServices || []).length;
+  const shouldShow = mptsEnabled && passEnabled && serviceCount > 1;
+  elements.mptsPassWarning.classList.toggle('is-hidden', !shouldShow);
 }
 
 function collectMptsServices() {
