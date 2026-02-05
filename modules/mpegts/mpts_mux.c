@@ -36,6 +36,8 @@ struct mpts_service_t
     uint16_t pmt_pid_out;
     uint16_t pcr_pid_in;
     uint16_t pcr_pid_out;
+    bool pcr_missing_warned;
+    bool pcr_not_in_es_warned;
 
     char *service_name;
     char *service_provider;
@@ -255,8 +257,13 @@ static bool service_map_pids(mpts_service_t *svc)
     size_t pid_count = 0;
 
     uint16_t pcr_pid = PMT_GET_PCR(svc->pmt);
+    bool pcr_from_pmt = true;
+    bool pcr_auto = false;
     if(pcr_pid == 0 || pcr_pid >= NULL_TS_PID)
+    {
         pcr_pid = 0;
+        pcr_from_pmt = false;
+    }
 
     const uint8_t *ptr;
     PMT_ITEMS_FOREACH(svc->pmt, ptr)
@@ -275,7 +282,10 @@ static bool service_map_pids(mpts_service_t *svc)
         {
             pid_list[pid_count++] = pid;
             if(pcr_pid == 0)
+            {
                 pcr_pid = pid;
+                pcr_auto = true;
+            }
         }
     }
 
@@ -296,7 +306,20 @@ static bool service_map_pids(mpts_service_t *svc)
         }
     }
     if(!has_pcr && pid_count < ASC_ARRAY_SIZE(pid_list))
+    {
         pid_list[pid_count++] = pcr_pid;
+        if(!svc->pcr_not_in_es_warned)
+        {
+            asc_log_warning(SVC_MSG(svc, "PCR PID %d отсутствует в ES, добавлен в список"), pcr_pid);
+            svc->pcr_not_in_es_warned = true;
+        }
+    }
+
+    if(pcr_auto && !svc->pcr_missing_warned)
+    {
+        asc_log_warning(SVC_MSG(svc, "PCR PID не задан в PMT, выбран первый ES PID=%d"), pcr_pid);
+        svc->pcr_missing_warned = true;
+    }
 
     bool ok = true;
 
@@ -1012,6 +1035,8 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
         return;
 
     svc->pmt_crc = crc32;
+    svc->pcr_missing_warned = false;
+    svc->pcr_not_in_es_warned = false;
 
     if(!service_map_pids(svc))
     {
