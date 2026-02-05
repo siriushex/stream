@@ -70,3 +70,6 @@ fi
 if [[ "${MPTS_SPTS_ONLY_SMOKE:-0}" == "1" ]]; then
   PORT="${MPTS_SPTS_ONLY_PORT:-9062}" contrib/ci/smoke_mpts_spts_only.sh
 fi
+if [[ "${MPTS_AUTO_PROBE_SMOKE:-0}" == "1" ]]; then
+  PORT="${MPTS_AUTO_PROBE_PORT:-9063}" contrib/ci/smoke_mpts_auto_probe.sh
+fi

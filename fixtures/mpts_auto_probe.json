@@ -1,0 +1,44 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_auto_probe",
+      "name": "MPTS AutoProbe",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12405",
+        "udp://127.0.0.1:12407"
+      ],
+      "output": [
+        "udp://127.0.0.1:12406"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "codepage": "utf-8",
+          "provider_name": "ProbeProvider",
+          "tsid": 1,
+          "onid": 1,
+          "network_id": 1,
+          "network_name": "ProbeNet",
+          "country": "RUS",
+          "utc_offset": 3
+        },
+        "nit": {
+          "delivery": "cable",
+          "frequency": 650000,
+          "symbolrate": 6875,
+          "modulation": "256qam",
+          "fec": "auto"
+        },
+        "advanced": {
+          "si_interval_ms": 500,
+          "target_bitrate": 50000000,
+          "auto_probe": true,
+          "auto_probe_duration_sec": 3
+        }
+      }
+    }
+  ]
+}
