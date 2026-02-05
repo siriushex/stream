@@ -140,11 +140,11 @@ fi
 VERSION="$VERSION_OVERRIDE"
 if [[ -z "$VERSION" ]]; then
   if [[ -f "$ROOT_DIR/version.h" ]]; then
-    VERSION="$(grep -E '^#define ASTRA_VERSION "' "$ROOT_DIR/version.h" | sed -E 's/.*"([^"]+)".*/\1/')"
+    VERSION="$(grep -E '^#define ASTRA_VERSION "' "$ROOT_DIR/version.h" | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1 || true)"
     if [[ -z "$VERSION" ]]; then
-      ver_major="$(grep -E '^#define ASTRA_VERSION_MAJOR ' "$ROOT_DIR/version.h" | awk '{print $3}')"
-      ver_minor="$(grep -E '^#define ASTRA_VERSION_MINOR ' "$ROOT_DIR/version.h" | awk '{print $3}')"
-      ver_patch="$(grep -E '^#define ASTRA_VERSION_PATCH ' "$ROOT_DIR/version.h" | awk '{print $3}')"
+      ver_major="$(grep -E '^#define ASTRA_VERSION_MAJOR ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
+      ver_minor="$(grep -E '^#define ASTRA_VERSION_MINOR ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
+      ver_patch="$(grep -E '^#define ASTRA_VERSION_PATCH ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
       if [[ -n "$ver_major" && -n "$ver_minor" && -n "$ver_patch" ]]; then
         VERSION="${ver_major}.${ver_minor}.${ver_patch}"
       fi
