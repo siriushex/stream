@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Updated MPTS docs with network_search example and verify hints.
+- Tests:
+  - Not run (docs update).
+### 2026-02-05
+- Changes:
   - Added NIT TS list parsing (network_search) and CI assertions.
 - Tests:
   - Not run (CI script update).

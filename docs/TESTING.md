@@ -54,6 +54,13 @@ Environment:
 contrib/ci/smoke_mpts.sh
 ```
 
+Дополнительно можно прогнать verify напрямую:
+```sh
+./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+EXPECT_TOT=1 EXPECT_PNRS="101,102" EXPECT_PMT_PNRS="101,102" ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+EXPECT_TOT=1 EXPECT_NIT_TS_LIST="1:1,2:1,3:1" EXPECT_PMT_ES_PIDS="101=256;102=256" ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+```
+
 ## Server Verification (required for release)
 All final verification must run on the target server in `/home/hex`.
 See `AGENT.md` for the full checklist and constraints (no DVB tests).

@@ -39,7 +39,7 @@
       "symbolrate": 6875,
       "modulation": "256QAM",
       "fec": "auto",
-      "network_search": "mux_a,mux_b"
+      "network_search": "2:1,3:1"
     },
     "advanced": {
       "si_interval_ms": 500,
@@ -104,6 +104,7 @@
 ## Быстрая проверка
 ```bash
 ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
-EXPECT_TOT=1 ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+EXPECT_TOT=1 EXPECT_PNRS="101,102" EXPECT_PMT_PNRS="101,102" ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+EXPECT_TOT=1 EXPECT_NIT_TS_LIST="1:1,2:1,3:1" EXPECT_PMT_ES_PIDS="101=256;102=256" ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
 ```
 `EXPECT_TOT=1` нужен, если указан `country` и ожидается TOT.
