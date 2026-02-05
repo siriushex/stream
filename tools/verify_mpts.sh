@@ -15,6 +15,8 @@ EXPECT_PMT_PCR_IN_ES="${EXPECT_PMT_PCR_IN_ES:-}"
 EXPECT_PMT_PIDS="${EXPECT_PMT_PIDS:-}"
 EXPECT_PMT_ES_PIDS="${EXPECT_PMT_ES_PIDS:-}"
 EXPECT_NIT_SERVICE_LIST="${EXPECT_NIT_SERVICE_LIST:-}"
+EXPECT_SDT_SERVICE_NAMES="${EXPECT_SDT_SERVICE_NAMES:-}"
+EXPECT_SDT_PROVIDER_NAMES="${EXPECT_SDT_PROVIDER_NAMES:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
 EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
 EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
@@ -225,6 +227,38 @@ if [[ -n "$EXPECT_NIT_SERVICE_LIST" ]]; then
     echo "NIT service_list mismatch (expected ${EXPECT_NIT_SERVICE_LIST})"
     exit 1
   fi
+fi
+
+if [[ -n "$EXPECT_SDT_SERVICE_NAMES" ]]; then
+  IFS=',' read -r -a SDT_NAME_LIST <<< "$EXPECT_SDT_SERVICE_NAMES"
+  for entry in "${SDT_NAME_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -Fq "SDT: service_name: sid=${sid} value=${value}" "$LOG_FILE"; then
+      echo "SDT service_name mismatch for sid ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_SDT_PROVIDER_NAMES" ]]; then
+  IFS=',' read -r -a SDT_PROVIDER_LIST <<< "$EXPECT_SDT_PROVIDER_NAMES"
+  for entry in "${SDT_PROVIDER_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -Fq "SDT: service_provider: sid=${sid} value=${value}" "$LOG_FILE"; then
+      echo "SDT service_provider mismatch for sid ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
 fi
 
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then
