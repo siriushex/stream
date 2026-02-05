@@ -6655,6 +6655,17 @@ function formatTranscodeOutputMonitorMeta(output, status) {
   const enabled = status ? status.monitor_enabled : isOutputMonitorEnabled(watchdog);
   const engine = status ? status.monitor_engine : (watchdog && watchdog.monitor_engine) || 'auto';
   const bits = [`Monitor: ${enabled ? 'ON' : 'OFF'} (${engine})`];
+  const now = Math.floor(Date.now() / 1000);
+  const formatPsiState = (label, ts, timeout) => {
+    if (!ts) return '';
+    const age = Math.max(0, now - ts);
+    if (timeout && timeout > 0) {
+      return age > timeout
+        ? `${label}:late ${formatShortDuration(age)}`
+        : `${label}:ok`;
+    }
+    return `${label}:${formatShortDuration(age)} ago`;
+  };
   if (status) {
     if (status.current_bitrate_kbps !== null && status.current_bitrate_kbps !== undefined) {
       bits.push(`Rate: ${formatMaybeBitrate(status.current_bitrate_kbps)}`);
@@ -6662,6 +6673,21 @@ function formatTranscodeOutputMonitorMeta(output, status) {
     if (status.last_probe_ts) {
       bits.push(`Last: ${status.last_probe_ok ? 'OK' : 'FAIL'}`);
     }
+    if (status.cc_errors !== null && status.cc_errors !== undefined) {
+      bits.push(`CC:${status.cc_errors}`);
+    }
+    if (status.pes_errors !== null && status.pes_errors !== undefined) {
+      bits.push(`PES:${status.pes_errors}`);
+    }
+    if (status.scrambled_active) {
+      bits.push('Scr:ON');
+    } else if (status.scrambled_errors !== null && status.scrambled_errors !== undefined) {
+      bits.push(`Scr:${status.scrambled_errors}`);
+    }
+    const patState = formatPsiState('PAT', status.psi_pat_ts, status.pat_timeout_sec);
+    if (patState) bits.push(patState);
+    const pmtState = formatPsiState('PMT', status.psi_pmt_ts, status.pmt_timeout_sec);
+    if (pmtState) bits.push(pmtState);
     if (status.restart_cooldown_remaining_sec && status.restart_cooldown_remaining_sec > 0) {
       bits.push(`Cooldown: ${formatShortDuration(status.restart_cooldown_remaining_sec)}`);
     }
