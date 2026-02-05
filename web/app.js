@@ -5075,6 +5075,9 @@ function updateMptsPassWarning() {
   const serviceCount = (state.mptsServices || []).length;
   const shouldShow = mptsEnabled && passEnabled && serviceCount > 1;
   elements.mptsPassWarning.classList.toggle('is-hidden', !shouldShow);
+  if (shouldShow) {
+    elements.mptsPassWarning.textContent = 'Pass-* лучше использовать для одного сервиса (иначе возможны коллизии PSI).';
+  }
 }
 
 function updateMptsAutoremapWarning() {

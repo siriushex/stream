@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Clarified MPTS pass_* warning text in UI.
+- Tests:
+  - Not run (UI text update).
+### 2026-02-05
+- Changes:
   - Added MPTS lint warnings for missing services, duplicate inputs/PNR, and pass_* with multi-service.
 - Tests:
   - Not run (lint-only).
