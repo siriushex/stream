@@ -306,7 +306,8 @@ static bool service_map_pids(mpts_service_t *svc)
             const uint16_t pid_in = pid_list[i];
             if(pid_in >= NULL_TS_PID || mod->pid_in_use[pid_in])
             {
-                asc_log_error(SVC_MSG(svc, "PID конфликт при disable_auto_remap (PID=%d)"), pid_in);
+                asc_log_error(SVC_MSG(svc, "PID конфликт при disable_auto_remap (PID=%d, PMT=%d)"),
+                              pid_in, svc->pmt_pid_in);
                 ok = false;
                 break;
             }
@@ -318,7 +319,8 @@ static bool service_map_pids(mpts_service_t *svc)
         {
             if(svc->pmt_pid_in >= NULL_TS_PID || mod->pid_in_use[svc->pmt_pid_in])
             {
-                asc_log_error(SVC_MSG(svc, "PMT PID конфликт при disable_auto_remap (PID=%d)"), svc->pmt_pid_in);
+                asc_log_error(SVC_MSG(svc, "PMT PID конфликт при disable_auto_remap (PID=%d, PNR=%d)"),
+                              svc->pmt_pid_in, svc->pnr_in);
                 ok = false;
             }
             else
