@@ -503,6 +503,13 @@ const elements = {
   settingsTelegramBackupWeekdayField: $('#settings-telegram-backup-weekday-field'),
   settingsTelegramBackupMonthdayField: $('#settings-telegram-backup-monthday-field'),
   settingsTelegramBackupNow: $('#settings-telegram-backup-now'),
+  settingsAiEnabled: $('#settings-ai-enabled'),
+  settingsAiModel: $('#settings-ai-model'),
+  settingsAiMaxTokens: $('#settings-ai-max-tokens'),
+  settingsAiTemperature: $('#settings-ai-temperature'),
+  settingsAiAllowedChats: $('#settings-ai-allowed-chats'),
+  settingsAiStore: $('#settings-ai-store'),
+  settingsAiAllowApply: $('#settings-ai-allow-apply'),
   settingsWatchdogEnabled: $('#settings-watchdog-enabled'),
   settingsWatchdogCpu: $('#settings-watchdog-cpu'),
   settingsWatchdogRssMb: $('#settings-watchdog-rss-mb'),
@@ -10351,6 +10358,27 @@ function applySettingsToUI() {
   if (elements.settingsTelegramBackupSecrets) {
     elements.settingsTelegramBackupSecrets.checked = getSettingBool('telegram_backup_include_secrets', false);
   }
+  if (elements.settingsAiEnabled) {
+    elements.settingsAiEnabled.checked = getSettingBool('ai_enabled', false);
+  }
+  if (elements.settingsAiModel) {
+    elements.settingsAiModel.value = getSettingString('ai_model', '');
+  }
+  if (elements.settingsAiMaxTokens) {
+    elements.settingsAiMaxTokens.value = getSettingNumber('ai_max_tokens', 512);
+  }
+  if (elements.settingsAiTemperature) {
+    elements.settingsAiTemperature.value = getSettingNumber('ai_temperature', 0.2);
+  }
+  if (elements.settingsAiAllowedChats) {
+    elements.settingsAiAllowedChats.value = getSettingString('ai_telegram_allowed_chat_ids', '');
+  }
+  if (elements.settingsAiStore) {
+    elements.settingsAiStore.checked = getSettingBool('ai_store', false);
+  }
+  if (elements.settingsAiAllowApply) {
+    elements.settingsAiAllowApply.checked = getSettingBool('ai_allow_apply', false);
+  }
   if (elements.settingsWatchdogEnabled) {
     elements.settingsWatchdogEnabled.checked = getSettingBool('resource_watchdog_enabled', true);
   }
@@ -10723,6 +10751,15 @@ function collectGeneralSettings() {
       throw new Error('Backup month day must be 1-31');
     }
   }
+  const aiEnabled = elements.settingsAiEnabled && elements.settingsAiEnabled.checked;
+  const aiMaxTokens = toNumber(elements.settingsAiMaxTokens && elements.settingsAiMaxTokens.value);
+  if (aiMaxTokens !== undefined && aiMaxTokens < 32) {
+    throw new Error('AI max tokens must be >= 32');
+  }
+  const aiTemperature = toNumber(elements.settingsAiTemperature && elements.settingsAiTemperature.value);
+  if (aiTemperature !== undefined && (aiTemperature < 0 || aiTemperature > 2)) {
+    throw new Error('AI temperature must be between 0 and 2');
+  }
   const influxEnabled = elements.settingsInfluxEnabled && elements.settingsInfluxEnabled.checked;
   const influxInterval = toNumber(elements.settingsInfluxInterval && elements.settingsInfluxInterval.value);
   if (influxInterval !== undefined && influxInterval < 5) {
@@ -10821,6 +10858,15 @@ function collectGeneralSettings() {
   if (telegramBackupWeekday !== undefined) payload.telegram_backup_weekday = telegramBackupWeekday;
   if (telegramBackupMonthday !== undefined) payload.telegram_backup_monthday = telegramBackupMonthday;
   if (elements.settingsTelegramBackupSecrets) payload.telegram_backup_include_secrets = telegramBackupSecrets;
+  if (elements.settingsAiEnabled) payload.ai_enabled = aiEnabled;
+  if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
+  if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
+  if (aiTemperature !== undefined) payload.ai_temperature = aiTemperature;
+  if (elements.settingsAiAllowedChats) {
+    payload.ai_telegram_allowed_chat_ids = elements.settingsAiAllowedChats.value.trim();
+  }
+  if (elements.settingsAiStore) payload.ai_store = elements.settingsAiStore.checked;
+  if (elements.settingsAiAllowApply) payload.ai_allow_apply = elements.settingsAiAllowApply.checked;
   if (monitorMax !== undefined) payload.monitor_analyze_max_concurrency = monitorMax;
   if (logMax !== undefined) payload.log_max_entries = logMax;
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
