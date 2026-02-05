@@ -7315,8 +7315,17 @@ function applyMptsBulkActions() {
 
 async function probeMptsServices() {
   if (!elements.btnMptsProbe) return;
-  const input = prompt('Enter UDP input (udp://host:port) to scan services:');
+  const existingInput = (state.mptsServices || [])
+    .map((service) => (service && service.input ? String(service.input) : ''))
+    .find((value) => value && value.trim());
+  const input = prompt('Enter UDP/RTP input (udp://host:port) to scan services:', existingInput || '');
   if (!input) return;
+  const trimmed = input.trim();
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith('udp://') && !lower.startsWith('rtp://')) {
+    setStatus('Probe supports UDP/RTP inputs only');
+    return;
+  }
   const durationRaw = prompt('Scan duration (seconds)', '3');
   let duration = Number(durationRaw);
   if (!Number.isFinite(duration) || duration <= 0) duration = 3;
@@ -7326,7 +7335,7 @@ async function probeMptsServices() {
   try {
     const payload = await apiJson('/api/v1/mpts/scan', {
       method: 'POST',
-      body: JSON.stringify({ input, duration }),
+      body: JSON.stringify({ input: trimmed, duration }),
     });
     const services = Array.isArray(payload.services) ? payload.services : [];
     if (!services.length) {

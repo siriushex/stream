@@ -2162,6 +2162,7 @@
   - Added `smoke_mpts_spts_only.sh` to validate SPTS-only rejection of multi-PAT inputs.
   - Added `/api/v1/mpts/scan` + UI probe button to auto-fill services from UDP inputs.
   - Reused shared input sockets when multiple MPTS services point to the same input URL.
+  - Improved MPTS probe UX (prefill from existing input + UDP/RTP validation).
   - Extended CI smoke coverage (PID collision + pass tables) and added TS PID scanner.
   - Extended SPTS generator to emit SDT/EIT/CAT for pass-through tests.
 - Tests:
