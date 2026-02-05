@@ -1,6 +1,6 @@
 # Astral Parity Matrix
 
-Last updated: 2026-02-04
+Last updated: 2026-02-05
 
 Legend: DONE, PARTIAL, TODO
 
@@ -54,6 +54,7 @@ Legend: DONE, PARTIAL, TODO
 | Advanced input options parity | DONE | DONE | DONE | DONE | manual | |
 | Output modal parity (HLS/SRT/SCTP/NP/BISS) | DONE | DONE | DONE | DONE | manual | |
 | Stream groups tab | DONE | DONE | DONE | DONE | manual | |
+| Analyze details (PSI/PID/codec) | DONE | DONE | DONE | DONE | manual | On-demand analyze API + UI modal |
 
 ## Users / Auth
 | Feature | Status | UI | API | Runtime | Tests | Notes |

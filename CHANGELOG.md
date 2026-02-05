@@ -12,105 +12,52 @@
 ## Entries
 ### 2026-02-05
 - Changes:
-  - Added MPTS summary doc (docs/mpts_summary.md).
+  - MPTS/CI: обновлён verify_mpts (UTF-8 marker, Bitrate parsing, устойчивость к префиксам логов).
+  - MPTS: анализатор NIT декодирует network_name с учётом кодировки.
+  - CI: check_changelog учитывает shallow clone; check_branch_name допускает codex/<topic>.
+  - CI: smoke_mpts ослаблены проверки PID/PAT NIT для недетерминированного ремапа.
 - Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - Updated MPTS docs: EXPECT_LOG example now checks analyzer output (NIT) in quick check.
-- Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - UI: add min/step hints for MPTS si_interval_ms and target_bitrate.
-- Tests:
-  - Not run (UI hint).
+  - Not run (CI/doc updates; covered by CI).
 ### 2026-02-05
 - Changes:
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
-  - CI: исправлен парсинг логов verify_mpts (работает с префиксами логгера).
-  - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
   - Release: корректное определение версии из version.h для имени bundle (без падения при отсутствии ASTRA_VERSION).
-  - CI: check_branch_name допускает формат codex/<topic>.
-  - CI: smoke_mpts больше не фиксирует PID-значения (не зависит от порядка ремапа).
-  - MPTS: iso8859 decode поддерживает UTF-8 маркер (0x15) в SDT/descriptor.
-  - CI: smoke_mpts не требует PAT NIT PID (PAT не содержит NIT по умолчанию).
-  - MPTS: NIT network_name теперь декодируется с учётом кодировки (UTF-8 marker).
-  - CI: исправлен парсинг Bitrate в verify_mpts (sed regexp).
+  - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
 - Changes:
-  - Warn when MPTS si_interval_ms < 50 or target_bitrate <= 0 (ignored).
-  - Documented MPTS advanced limits for si_interval_ms/target_bitrate.
+  - Export: принудительно синхронизирует `enable` для streams/adapters с текущим состоянием БД.
 - Tests:
-  - Not run (config validation).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
-  - Added MPTS acceptance checklist to design doc.
+  - UI: hide/remove Observability AI summary block from the page (AI uses it internally).
+  - UI: AstralAI chat now shows attachment previews (image thumbnails + filenames).
+  - UI: AstralAI chat shows inline image thumbnails and enhanced waiting animation.
+  - UI: AstralAI chat `/help` returns local hints without calling AI.
+  - AstralAI: normalize ai_api_base so trailing `/v1` is handled correctly.
 - Tests:
-  - Not run (docs update).
+  - `./astra scripts/tests/ai_openai_url_unit.lua`
 ### 2026-02-05
 - Changes:
-  - UI: added hint that only DVB-C delivery is supported for MPTS.
+  - AstralAI: auto-include on-demand metrics in AI context when prompt asks for charts/metrics.
+  - AstralAI: clamp and downsample metrics in context to reduce load.
 - Tests:
-  - Not run (UI hint).
+  - `scripts/tests/ai_metrics_autoselect_unit.lua`
 ### 2026-02-05
 - Changes:
-  - UI: warn when MPTS delivery type is not DVB-C (unsupported).
+  - UI: Observability/Help/Access отображаются только при включении соответствующих опций в Settings → General.
 - Tests:
-  - Not run (UI warning).
-### 2026-02-05
-- Changes:
-  - Added CI smoke notes to MPTS design doc.
-- Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - Documented EXPECT_LOG usage in MPTS design notes.
-  - Added `contrib/ci/README.md` for smoke scripts.
-- Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - Avoid repeated warnings for missing PNR on multi-program PAT inputs.
-- Tests:
-  - Not run (log change).
-### 2026-02-05
-- Changes:
-  - Added optional Strict PNR smoke hook in `contrib/ci/smoke.sh` (MPTS_STRICT_PNR_SMOKE=1).
-- Tests:
-  - Not run (CI hook update).
-### 2026-02-05
-- Changes:
-  - Added strict PNR smoke test and fixture (multi-program PAT generator).
-- Tests:
-  - Not run (new CI script).
-### 2026-02-05
-- Changes:
-  - tools/gen_spts.py: added optional extra program fields to generate multi-program PAT for tests.
-- Tests:
-  - Not run (test utility update).
-### 2026-02-05
-- Changes:
-  - MPTS strict_pnr error is now logged once per service to avoid spam.
-- Tests:
-  - Not run (log change).
-### 2026-02-05
-- Changes:
-  - Added optional `EXPECT_LOG` check to `tools/verify_mpts.sh`.
-- Tests:
-  - Not run (script update).
-### 2026-02-05
-- Changes:
-  - UI: clarify missing PNR warning when Strict PNR is enabled.
-- Tests:
-  - Not run (UI-only warning).
-### 2026-02-05
-- Changes:
-  - UI: added hint explaining Strict PNR behavior.
-- Tests:
-  - Not run (UI hint).
+  - Not run (UI change only).
 ### 2026-02-05
 - Changes:
   - AstralAI: default model `gpt-5.2` with fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
@@ -120,283 +67,95 @@
   - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
   - UI: AI chat no longer forces log inclusion; status shows effective model.
 - Tests:
-  - Not run (AI behavior update).
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+  - `./astra scripts/tests/ai_logs_autoselect_unit.lua`
+  - `./astra scripts/tests/ai_cli_autoselect_unit.lua`
 ### 2026-02-05
 - Changes:
-  - Added `strict_pnr` (advanced) to reject multi-program inputs without explicit PNR.
-  - UI: toggle for Strict PNR in MPTS Advanced section.
+  - Analyze: модалка показывает подробные PSI/PMT/PID/codec данные через on-demand analyze API.
 - Tests:
-  - Not run (behavior toggle).
+  - Not run (UI/API change only).
 ### 2026-02-05
 - Changes:
-  - Warn when MPTS input PAT contains multiple programs and PNR is not set.
+  - AstralAI: default model set to `gpt-5.2` with automatic fallback to `gpt-5-mini` and `gpt-4.1` on `model_not_found`.
+  - AstralAI: auto-select logs/CLI context by prompt to reduce load (logs/CLI only when needed).
+  - Observability: when `ai_metrics_on_demand=true`, metrics retention is forced to `0` (no background rollups).
+  - UI: AI chat no longer forces log inclusion; status uses default model when field is empty.
 - Tests:
-  - Not run (log change).
+  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
 ### 2026-02-05
 - Changes:
-  - UI: show warning when MPTS services are missing PNR values.
+  - Streams/Adapters: при сохранении синхронизируется `enable` в config_json, чтобы disable не терялся в JSON и после рестарта.
 - Tests:
-  - Not run (UI-only warning).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
-  - Validate MPTS service_type_id (1..255) and warn on invalid values.
-  - UI: clarify service_type_id range in MPTS service list.
-  - Documented service_type_id limits in MPTS design notes.
+  - UI Player: ссылка и кнопки Open/Copy используют `/play/<stream_id>`; для `<video>` выбирается прямой HTTP Play при поддержке MPEG-TS.
 - Tests:
-  - Not run (UI/config validation).
+  - Not run (UI change only).
 ### 2026-02-05
 - Changes:
-  - Removed unsupported MPTS LCN version field from UI and config serialization.
-  - Documented that `mpts_config.nit.lcn_version` is ignored.
+  - Config: экспортирует основной JSON-конфиг при изменениях (streams/adapters/settings) при запуске с `--config *.json`.
+  - Config: при ошибке apply откатывает основной JSON-конфиг к LKG-снимку.
 - Tests:
-  - Not run (UI/docs update).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
-  - Added UTF-8 text encoding support for MPTS SDT/NIT strings (codepage marker 0x15).
-  - Warn when unsupported MPTS codepage is set.
-  - Documented codepage limitation in MPTS design notes.
+  - Transcode failover: improved warmup/pending switch handling and return-to-primary logic.
 - Tests:
-  - Not run (text encoding change).
+  - Not run (transcode logic changes).
 ### 2026-02-05
 - Changes:
-  - Warn when `mpts_config.nit.lcn_version` is set (ignored).
+  - Added ffmpeg warmup before failover switches (configurable via `backup_switch_warmup_sec`/`switch_warmup_sec`).
+  - Exposed warmup status in transcode state and Analyze UI.
 - Tests:
-  - Not run (log change).
+  - Not run (transcode logic/UI changes).
 ### 2026-02-05
 - Changes:
-  - Wire MPTS `cat_version` from config into mux options.
+  - UI: добавлена автоподсветка активного раздела Settings → General при прокрутке.
+  - UI: убран блок Observability AI Summary, чтобы AI‑сводка запускалась только по запросу (API/Telegram).
 - Tests:
-  - Not run (config wiring).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
-  - Log when MPTS PCR restamp is enabled.
+  - UI: перестроена вкладка Settings → General на разделы и карточки с поиском, переключателем базовых/расширенных, sticky-панелью действий и едиными switch-контролами.
+  - UI: добавлено подтверждение для Allow apply в AstraAI и переключатель отображения лимитов в разделе безопасности.
 - Tests:
-  - Not run (log change).
-### 2026-02-05
-- Changes:
-  - Updated MPTS docs with network_search example and verify hints.
-- Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - Documented auto-remap PID start (0x0020) in MPTS design notes.
-- Tests:
-  - Not run (docs update).
-### 2026-02-05
-- Changes:
-  - Updated MPTS CI expectations to match auto-remapped PMT/ES/PCR PIDs.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added warnings when PCR PID is missing or not part of ES list in PMT.
-- Tests:
-  - Not run (runtime log change).
-### 2026-02-05
-- Changes:
-  - Warn at runtime when DVB-C delivery is missing frequency/symbolrate/modulation.
-- Tests:
-  - Not run (log change).
-### 2026-02-05
-- Changes:
-  - Warn when unsupported delivery type is set (only DVB-C is generated).
-- Tests:
-  - Not run (log change).
-### 2026-02-05
-- Changes:
-  - Clarified MPTS pass_* warning text in UI.
-- Tests:
-  - Not run (UI text update).
-### 2026-02-05
-- Changes:
-  - Added UI validation hint for missing DVB-C delivery fields in MPTS.
-- Tests:
-  - Not run (UI change).
-### 2026-02-05
-- Changes:
-  - Added MPTS lint warnings for unsupported delivery types and missing DVB-C fields.
-- Tests:
-  - Not run (lint-only).
-### 2026-02-05
-- Changes:
-  - Added MPTS lint warnings for missing services, duplicate inputs/PNR, and pass_* with multi-service.
-- Tests:
-  - Not run (lint-only).
-### 2026-02-05
-- Changes:
-  - Added UI hint about target bitrate lower than input.
-- Tests:
-  - Not run (UI hint).
-### 2026-02-05
-- Changes:
-  - Added PCR restamp option for MPTS (advanced.pcr_restamp).
-- Tests:
-  - Not run (runtime + UI + docs change).
-### 2026-02-05
-- Changes:
-  - Warn when target_bitrate is lower than input bitrate (CBR cannot be maintained).
-- Tests:
-  - Not run (runtime log change).
-### 2026-02-05
-- Changes:
-  - Added UI warning for duplicate MPTS input URLs.
-- Tests:
-  - Not run (UI change).
-### 2026-02-05
-- Changes:
-  - Added UI warning for duplicate PNR values in MPTS service list.
-- Tests:
-  - Not run (UI change).
-### 2026-02-05
-- Changes:
-  - Added UI note about auto-remap PID start (0x0020).
-- Tests:
-  - Not run (UI hint).
-### 2026-02-05
-- Changes:
-  - Added UI warning for disable auto-remap in MPTS settings.
-- Tests:
-  - Not run (UI change).
-### 2026-02-05
-- Changes:
-  - Improved disable_auto_remap PID conflict logs with PMT/PNR context.
-- Tests:
-  - Not run (log detail change).
-### 2026-02-05
-- Changes:
-  - Warn when PAT has multiple programs and PNR is not specified (first program selected).
-- Tests:
-  - Not run (runtime log change).
-### 2026-02-05
-- Changes:
-  - Warn when requested PNR is not present in input PAT (fallback to first program).
-- Tests:
-  - Not run (runtime log change).
-### 2026-02-05
-- Changes:
-  - Added warnings when requested PNR conflicts or is out of range (auto-assigned instead).
-- Tests:
-  - Not run (runtime log change).
-### 2026-02-05
-- Changes:
-  - Fixed NIT service_list parsing to read from TS loop descriptors.
-- Tests:
-  - Not run (analyzer fix).
-### 2026-02-05
-- Changes:
-  - Added NIT TS list parsing (network_search) and CI assertions.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added PAT NIT PID assertion to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added SDT service/provider name assertions to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added NIT service_list parsing and CI assertions.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added PMT ES PID list logging and CI assertions.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added PAT PMT PID assertions to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added PMT PCR-in-ES summary logging and CI assertions.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added optional PMT PCR checks to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added PMT stream-type summary logging and CI assertions for stream counts.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added SDT service count assertion to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added optional PES/scrambled checks to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added optional continuity counter check to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added optional PMT PNR assertions to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added optional bitrate assertion to MPTS verify and CI.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added SDT free_CA/service_type logging and CI assertions for SDT flags.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added NIT LCN parsing and CI assertions for logical channel numbers.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added NIT network_name parsing and CI assertion for it.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added NIT delivery parsing in analyzer and CI assertions for DVB-C parameters.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Logged CAT presence in analyzer and added CI assertion for CAT.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added MPTS verify assertions for NIT network_id and PAT/SDT TSID.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Extended MPTS verify script to assert expected SDT service/provider names.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Extended MPTS verify script to assert expected PNRs and updated CI to use it.
-- Tests:
-  - Not run (CI script update).
-### 2026-02-05
-- Changes:
-  - Added minimal SPTS generator and wired MPTS smoke test to verify PAT/PMT/SDT/NIT/TDT/TOT on CI.
-- Tests:
-  - Not run (CI script update).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
 ### 2026-02-05
 - Changes:
   - Added automatic contrib ffmpeg build fallback for mixaudio module when system libs are missing.

@@ -839,6 +839,7 @@ local function update_failover_connections(job, now)
                 warm = is_active_backup_mode(fo.mode) and idx ~= active_id,
             })
             if ok then
+                ensure_failover_compat_probe(job, idx, now)
                 input_data.warm = (is_active_backup_mode(fo.mode) and idx ~= active_id)
             else
                 input_data.warm = nil
@@ -859,7 +860,7 @@ local function schedule_failover_restart(job, reason, meta)
         return false
     end
     if job.proc then
-        schedule_restart(job, nil, "TRANSCODE_INPUT_FAILOVER", reason or "input failover", meta)
+        schedule_restart(job, nil, "INPUT_NO_DATA", reason or "input failover", meta)
         return true
     end
     if job.state == "STARTING" or job.state == "RESTARTING" then
@@ -1019,8 +1020,38 @@ local function transcode_failover_tick(job, now)
         if not active_ok and allow_switch then
             local delay = fo.start_delay
             if down_for >= delay then
-                activate_next_available_input(job, active_id, "no_data_timeout")
+                local next_id = pick_next_input(fo.inputs, active_id, true)
+                if not next_id then
+                    next_id = pick_next_input(fo.inputs, active_id, false)
+                end
+                if next_id then
+                    if warmup_enabled(fo) then
+                        ensure_switch_warmup(job, next_id, now)
+                        local warm_state = warmup_status(fo, next_id)
+                        if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
+                            activate_failover_input(job, next_id, "no_data_timeout")
+                            fo.switch_pending = nil
+                        else
+                            if not fo.switch_pending or fo.switch_pending.target ~= next_id then
+                                local target = fo.inputs[next_id]
+                                fo.switch_pending = {
+                                    target = next_id,
+                                    ready_at = now,
+                                    created_at = now,
+                                    reason = "no_data_timeout",
+                                    target_url = target and target.source_url or nil,
+                                }
+                            end
+                        end
+                    else
+                        activate_failover_input(job, next_id, "no_data_timeout")
+                        fo.switch_pending = nil
+                    end
+                end
             end
+        end
+        if active_ok then
+            fo.switch_pending = nil
         end
     end
 
@@ -1033,18 +1064,46 @@ local function transcode_failover_tick(job, now)
                     target = 1,
                     ready_at = now + fo.return_delay,
                     reason = "return_primary",
+                    target_url = primary and primary.source_url or nil,
                 }
             end
         else
             fo.return_pending = nil
         end
 
+        if fo.return_pending then
+            ensure_switch_warmup(job, fo.return_pending.target, now)
+        end
         if fo.return_pending and now >= fo.return_pending.ready_at then
-            activate_failover_input(job, fo.return_pending.target, fo.return_pending.reason)
-            fo.return_pending = nil
+            local warm_state = warmup_status(fo, fo.return_pending.target)
+            if warm_state == "ok" or warm_state == "disabled" then
+                activate_failover_input(job, fo.return_pending.target, fo.return_pending.reason)
+                fo.return_pending = nil
+            elseif warm_state == "failed" then
+                fo.return_pending = nil
+            end
         end
     else
         fo.return_pending = nil
+    end
+
+    if fo.switch_pending then
+        local pending = fo.switch_pending
+        local pending_timeout = tonumber(fo.switch_pending_timeout_sec) or 0
+        if pending_timeout > 0 and pending.created_at and (now - pending.created_at) >= pending_timeout then
+            fo.switch_pending = nil
+        else
+            ensure_switch_warmup(job, pending.target, now)
+            local warm_state = warmup_status(fo, pending.target)
+            if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
+                activate_failover_input(job, pending.target, pending.reason or "switch_pending")
+                fo.switch_pending = nil
+            end
+        end
+    end
+
+    if fo.switch_warmup and fo.switch_warmup.proc and not fo.switch_pending and not fo.return_pending then
+        stop_switch_warmup(job, "warmup no longer needed")
     end
 
     update_failover_connections(job, now)
@@ -1660,7 +1719,7 @@ local function evaluate_probe(job, output_state, watchdog, payload)
     if diff_ms > watchdog.desync_threshold_ms then
         output_state.desync_strikes = (output_state.desync_strikes or 0) + 1
         if output_state.desync_strikes >= watchdog.desync_fail_count then
-            schedule_restart(job, output_state, "TRANSCODE_AV_DESYNC", "A/V desync detected", {
+            schedule_restart(job, output_state, "AV_DESYNC", "A/V desync detected", {
                 desync_ms = diff_ms,
             })
         end
@@ -1703,7 +1762,7 @@ local function update_output_bitrate(job, output_state, bitrate, now)
                 local last_trigger = output_state.low_bitrate_trigger_ts or 0
                 if now - last_trigger >= hold then
                     output_state.low_bitrate_trigger_ts = now
-                    schedule_restart(job, output_state, "TRANSCODE_LOW_BITRATE", "low bitrate detected", {
+                    schedule_restart(job, output_state, "LOW_BITRATE", "low bitrate detected", {
                         bitrate_kbps = bitrate,
                         threshold_kbps = threshold,
                         hold_sec = hold,
@@ -1748,7 +1807,7 @@ local function handle_output_probe_failure(job, output_state, err)
         job.output_last_error = err
     end
     if output_state.probe_failures >= output_state.watchdog.probe_fail_count then
-        schedule_restart(job, output_state, "TRANSCODE_PROBE_FAILED", err or "probe failed", nil)
+        schedule_restart(job, output_state, "OUTPUT_PROBE_FAIL", err or "probe failed", nil)
         output_state.probe_failures = 0
     end
 end
@@ -2008,7 +2067,9 @@ local function tick_job(job)
         if status then
             finalize_process_exit(job, status)
             if job.state == "RUNNING" then
-                schedule_restart(job, nil, "TRANSCODE_EXIT", "ffmpeg exited unexpectedly", status)
+                schedule_restart(job, nil, "EXIT_UNEXPECTED", "ffmpeg exited unexpectedly", {
+                    exit = status,
+                })
             end
         elseif job.term_sent_ts and now >= (job.kill_due_ts or 0) then
             job.proc:kill()
@@ -2026,14 +2087,14 @@ local function tick_job(job)
                 if wd.no_progress_timeout_sec > 0 then
                     local last_ts = job.last_out_time_ts or job.last_progress_ts or job.start_ts
                     if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
-                        schedule_restart(job, output_state, "TRANSCODE_STALL", "no progress detected", {
+                        schedule_restart(job, output_state, "NO_PROGRESS", "no progress detected", {
                             timeout_sec = wd.no_progress_timeout_sec,
                         })
                     end
                 end
 
                 if wd.max_error_lines_per_min > 0 and #job.error_events >= wd.max_error_lines_per_min then
-                    schedule_restart(job, output_state, "TRANSCODE_ERRORS_RATE", "ffmpeg errors rate exceeded", {
+                    schedule_restart(job, output_state, "ERROR_RATE", "ffmpeg errors rate exceeded", {
                         count = #job.error_events,
                     })
                 end

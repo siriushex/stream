@@ -428,6 +428,19 @@ local function apply_config_change(server, client, request, opts)
         end
     end
 
+    local primary_exported = false
+    local function rollback_primary_config()
+        if not primary_exported then
+            return
+        end
+        if config and config.restore_primary_config_from_snapshot and lkg_path then
+            local ok, err = config.restore_primary_config_from_snapshot(lkg_path)
+            if not ok then
+                log.error("[api] primary config rollback failed: " .. tostring(err))
+            end
+        end
+    end
+
     local apply_result = nil
     if type(opts.apply) == "function" then
         local ok, res = pcall(opts.apply)
@@ -446,6 +459,26 @@ local function apply_config_change(server, client, request, opts)
         apply_result = res
     end
 
+    if config and config.primary_config_is_json and config.primary_config_is_json()
+        and config.export_primary_config then
+        local ok, err = config.export_primary_config()
+        if not ok then
+            if revision_id > 0 then
+                config.update_revision(revision_id, {
+                    status = "BAD",
+                    error_text = "config export failed: " .. tostring(err),
+                })
+            end
+            if lkg_path then
+                config.restore_snapshot(lkg_path)
+                rollback_primary_config()
+                reload_runtime(true)
+            end
+            return error_response(server, client, 500, "config export failed: " .. tostring(err))
+        end
+        primary_exported = true
+    end
+
     local snapshot_path = nil
     if revision_id > 0 and config and config.build_snapshot_path then
         snapshot_path = config.build_snapshot_path(revision_id)
@@ -458,6 +491,7 @@ local function apply_config_change(server, client, request, opts)
             })
             if lkg_path then
                 config.restore_snapshot(lkg_path)
+                rollback_primary_config()
                 reload_runtime(true)
             end
             return error_response(server, client, 500, "snapshot failed: " .. tostring(snap_err))
@@ -496,6 +530,7 @@ local function apply_config_change(server, client, request, opts)
         end
         if lkg_path then
             config.restore_snapshot(lkg_path)
+            rollback_primary_config()
             reload_runtime(true)
         end
         return json_response(server, client, 409, {
@@ -1560,7 +1595,31 @@ local function resolve_stream_input_url(stream_id)
     return nil, "no input url"
 end
 
-local function start_stream_analyze(server, client, request)
+local function stream_analyze_payload(job)
+    if not job then
+        return nil
+    end
+    return {
+        id = job.id,
+        status = job.status,
+        stream_id = job.stream_id,
+        stream_name = job.stream_name,
+        input_url = job.input_url,
+        duration_sec = job.duration_sec,
+        started_at = job.started_at,
+        finished_at = job.finished_at,
+        error = job.error,
+        totals = job.totals,
+        summary = job.summary,
+        pids = job.pids,
+        programs = job.programs,
+        program_list = job.program_list,
+        channels = job.channels,
+        last_update = job.last_update,
+    }
+end
+
+local function start_stream_analyze(server, client, request, stream_id_override)
     if not require_auth(request) then
         return error_response(server, client, 401, "unauthorized")
     end
@@ -1568,7 +1627,7 @@ local function start_stream_analyze(server, client, request)
         return error_response(server, client, 501, "analyze module is not found")
     end
     local body = parse_json_body(request) or {}
-    local stream_id = body.stream_id or body.id
+    local stream_id = stream_id_override or body.stream_id or body.id
     if not stream_id or stream_id == "" then
         return error_response(server, client, 400, "stream_id is required")
     end
@@ -1580,9 +1639,21 @@ local function start_stream_analyze(server, client, request)
     if duration < 2 then duration = 2 end
     if duration > 10 then duration = 10 end
 
+    for _, job in pairs(stream_analyze.jobs) do
+        if job and job.status == "running" and job.stream_id == tostring(stream_id) then
+            return json_response(server, client, 200, { id = job.id, status = job.status, stream_id = job.stream_id })
+        end
+    end
+
     local input_url, err = resolve_stream_input_url(stream_id)
     if not input_url then
         return error_response(server, client, 400, err or "input url not found")
+    end
+
+    local stream_name = tostring(stream_id)
+    local row = config and config.get_stream and config.get_stream(stream_id)
+    if row and row.config and row.config.name and row.config.name ~= "" then
+        stream_name = row.config.name
     end
 
     stream_analyze.seq = stream_analyze.seq + 1
@@ -1590,13 +1661,16 @@ local function start_stream_analyze(server, client, request)
     local job = {
         id = id,
         stream_id = tostring(stream_id),
+        stream_name = stream_name,
         input_url = tostring(input_url),
         status = "running",
         started_at = os.time(),
+        duration_sec = duration,
         programs = {},
         services = {},
         channels = {},
         totals = {},
+        pids = {},
     }
 
     local conf = parse_url(input_url)
@@ -1631,6 +1705,28 @@ local function start_stream_analyze(server, client, request)
                 dvb_scan_add_sdt(job, data)
             elseif data.analyze and data.total then
                 job.totals = data.total
+                job.last_update = os.time()
+                if type(data.analyze) == "table" then
+                    local list = {}
+                    for _, item in ipairs(data.analyze) do
+                        if type(item) == "table" then
+                            local pid = tonumber(item.pid)
+                            if pid then
+                                table.insert(list, {
+                                    pid = pid,
+                                    bitrate = tonumber(item.bitrate),
+                                    cc_error = tonumber(item.cc_error) or 0,
+                                    pes_error = tonumber(item.pes_error) or 0,
+                                    sc_error = tonumber(item.sc_error) or 0,
+                                })
+                            end
+                        end
+                    end
+                    table.sort(list, function(a, b)
+                        return (a.pid or 0) < (b.pid or 0)
+                    end)
+                    job.pids = list
+                end
             end
         end,
     })
@@ -1655,7 +1751,10 @@ local function get_stream_analyze(server, client, request, id)
     if not job then
         return error_response(server, client, 404, "analyze job not found")
     end
-    json_response(server, client, 200, job)
+    if job.status ~= "running" and not job.program_list then
+        dvb_scan_build_channels(job)
+    end
+    json_response(server, client, 200, stream_analyze_payload(job))
 end
 
 local function dvb_scan_config_from_adapter(adapter_id)
@@ -4297,6 +4396,18 @@ function api.handle_request(server, client, request)
     end
     if stream_id and method == "DELETE" then
         return delete_stream(server, client, stream_id, request)
+    end
+
+    local stream_analyze_id = path:match("^/api/v1/streams/analyze/([%w%-%_]+)$")
+    if stream_analyze_id and method == "GET" then
+        return get_stream_analyze(server, client, request, stream_analyze_id)
+    end
+    if path == "/api/v1/streams/analyze" and method == "POST" then
+        return start_stream_analyze(server, client, request)
+    end
+    local stream_analyze_stream = path:match("^/api/v1/streams/([%w%-%_]+)/analyze$")
+    if stream_analyze_stream and method == "POST" then
+        return start_stream_analyze(server, client, request, stream_analyze_stream)
     end
 
     if path == "/api/v1/adapters" and method == "GET" then
