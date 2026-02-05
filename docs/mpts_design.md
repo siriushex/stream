@@ -123,7 +123,8 @@
 - EIT/CAT pass‑through берётся из одного источника (`eit_source`/`cat_source`).
 - `nit.network_search` принимает список `tsid` или `tsid:onid` через запятую и добавляет их в NIT.
 - `mpts_services[].lcn` допускает значения 1..1023 (0 игнорируется).
-- `mpts_config.nit.lcn_version` не поддерживается и игнорируется.
+- `mpts_config.nit.lcn_version` поддерживается как совместимый alias для `advanced.nit_version`
+  (используется только если `advanced.nit_version` не задан).
 - `mpts_config.nit.lcn_descriptor_tag` задаёт tag LCN (0x83/0x87/custom).
 - `general.codepage` поддерживает только UTF-8 (маркер 0x15 в дескрипторах).
 - `mpts_services[].service_type_id` допускает значения 1..255 (пусто = 1).

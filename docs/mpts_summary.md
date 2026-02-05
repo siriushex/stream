@@ -17,7 +17,7 @@
 - Delivery поддерживается только DVB‑C.
 - `advanced.si_interval_ms` < 50 игнорируется.
 - `advanced.target_bitrate <= 0` отключает CBR (игнорируется).
-- `mpts_config.nit.lcn_version` не поддерживается.
+- `mpts_config.nit.lcn_version` действует как alias для `advanced.nit_version` (если он не задан).
 
 ## Быстрая проверка
 ```bash

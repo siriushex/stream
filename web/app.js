@@ -720,6 +720,8 @@ const elements = {
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
   mptsLcnTag: $('#mpts-lcn-tag'),
+  mptsLcnVersion: $('#mpts-lcn-version'),
+  mptsLcnVersionWarning: $('#mpts-lcn-version-warning'),
   mptsDeliveryWarning: $('#mpts-delivery-warning'),
   mptsSiInterval: $('#mpts-si-interval'),
   mptsTargetBitrate: $('#mpts-target-bitrate'),
@@ -4695,6 +4697,7 @@ function updateMptsFields() {
   updateMptsPnrWarning();
   updateMptsInputWarning();
   updateMptsDeliveryWarning();
+  updateMptsLcnVersionWarning();
   updateEditorMptsStatus();
 }
 
@@ -7170,6 +7173,25 @@ function updateMptsDeliveryWarning() {
   elements.mptsDeliveryWarning.classList.remove('is-hidden');
 }
 
+function updateMptsLcnVersionWarning() {
+  if (!elements.mptsLcnVersionWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const lcnVersionRaw = String(elements.mptsLcnVersion && elements.mptsLcnVersion.value || '').trim();
+  const nitVersionRaw = String(elements.mptsNitVersion && elements.mptsNitVersion.value || '').trim();
+  if (!mptsEnabled || !lcnVersionRaw) {
+    elements.mptsLcnVersionWarning.classList.add('is-hidden');
+    elements.mptsLcnVersionWarning.textContent = '';
+    return;
+  }
+  if (nitVersionRaw) {
+    elements.mptsLcnVersionWarning.textContent = 'LCN version игнорируется, когда задан NIT version.';
+    elements.mptsLcnVersionWarning.classList.remove('is-hidden');
+    return;
+  }
+  elements.mptsLcnVersionWarning.classList.add('is-hidden');
+  elements.mptsLcnVersionWarning.textContent = '';
+}
+
 function bindMptsWarningHandlers() {
   if (elements.mptsDisableAutoremap) {
     elements.mptsDisableAutoremap.addEventListener('change', updateMptsAutoremapWarning);
@@ -7177,6 +7199,7 @@ function bindMptsWarningHandlers() {
   if (elements.streamMpts) {
     elements.streamMpts.addEventListener('change', updateMptsAutoremapWarning);
     elements.streamMpts.addEventListener('change', updateMptsPnrWarning);
+    elements.streamMpts.addEventListener('change', updateMptsLcnVersionWarning);
   }
   if (elements.mptsStrictPnr) {
     elements.mptsStrictPnr.addEventListener('change', updateMptsPnrWarning);
@@ -10800,6 +10823,11 @@ function openEditor(stream, isNew) {
   if (elements.mptsLcnTag) {
     elements.mptsLcnTag.value = mptsNit.lcn_descriptor_tag || '';
   }
+  if (elements.mptsLcnVersion) {
+    elements.mptsLcnVersion.value = (mptsNit.lcn_version !== undefined && mptsNit.lcn_version !== null)
+      ? mptsNit.lcn_version
+      : '';
+  }
   if (elements.mptsSiInterval) {
     elements.mptsSiInterval.value = mptsAdv.si_interval_ms || '';
   }
@@ -11293,6 +11321,13 @@ function readStreamForm() {
       throw new Error('LCN descriptor tag must be between 1 and 255 (MPTS tab)');
     }
     mptsNit.lcn_descriptor_tag = lcnTag;
+  }
+  const lcnVersion = toNumber(elements.mptsLcnVersion && elements.mptsLcnVersion.value);
+  if (lcnVersion !== undefined) {
+    if (lcnVersion < 0 || lcnVersion > 31) {
+      throw new Error('LCN version must be between 0 and 31 (MPTS tab)');
+    }
+    mptsNit.lcn_version = lcnVersion;
   }
 
   const siInterval = toNumber(elements.mptsSiInterval && elements.mptsSiInterval.value);
@@ -17418,6 +17453,11 @@ function bindEvents() {
     if (!control) return;
     control.addEventListener('change', updateMptsDeliveryWarning);
     control.addEventListener('input', updateMptsDeliveryWarning);
+  });
+  [elements.mptsLcnVersion, elements.mptsNitVersion].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsLcnVersionWarning);
+    control.addEventListener('input', updateMptsLcnVersionWarning);
   });
 
   bindMptsWarningHandlers();

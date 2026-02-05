@@ -2440,6 +2440,7 @@ local function lint_stream_list(list, label, warnings)
                 local nit = type(mpts.nit) == "table" and mpts.nit or {}
                 local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
                 local delivery = tostring(nit.delivery or ""):lower()
+                local lcn_version = nit.lcn_version
                 if delivery ~= "" then
                     if delivery == "cable" or delivery == "dvb-c" or delivery == "dvb_c" then
                         if nit.frequency == nil then
@@ -2453,6 +2454,15 @@ local function lint_stream_list(list, label, warnings)
                         end
                     else
                         warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.delivery is not supported (only DVB-C is generated)"
+                    end
+                end
+                if lcn_version ~= nil then
+                    local value = tonumber(lcn_version)
+                    if value == nil or value < 0 or value > 31 then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_version must be 0..31"
+                    end
+                    if adv.nit_version ~= nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_version ignored because advanced.nit_version is set"
                     end
                 end
                 local pass_enabled = adv.pass_nit == true or adv.pass_sdt == true or adv.pass_eit == true or adv.pass_tdt == true
