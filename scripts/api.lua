@@ -2424,7 +2424,7 @@ local function ai_logs(server, client, request)
     local limit = tonumber(query.limit) or 500
     local rows = config.list_ai_log_events({
         since = since_ts,
-        until = until_ts,
+        ["until"] = until_ts,
         level = level,
         stream_id = stream_id,
         limit = limit,

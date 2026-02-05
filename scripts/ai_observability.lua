@@ -178,7 +178,7 @@ local function rollup_metrics()
         if config.count_alerts then
             local errors = config.count_alerts({
                 since = bucket,
-                until = bucket + interval,
+                ["until"] = bucket + interval,
                 levels = { "ERROR", "CRITICAL" },
             })
             config.upsert_ai_metric({
