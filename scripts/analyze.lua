@@ -176,6 +176,16 @@ dump_psi_info["nit"] = function(info)
             log.info(("NIT: service_list: %s"):format(table.concat(entries, ",")))
         end
     end
+    if info.ts_list then
+        local entries = {}
+        for _, value in pairs(info.ts_list) do
+            table.insert(entries, value)
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(("NIT: ts_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
     if info.lcn then
         local entries = {}
         for sid, lcn in pairs(info.lcn) do

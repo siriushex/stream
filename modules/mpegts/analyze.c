@@ -118,6 +118,7 @@ static const char __network_name[] = "network_name";
 static const char __lcn_list[] = "lcn";
 static const char __free_ca[] = "free_ca";
 static const char __service_list[] = "service_list";
+static const char __ts_list[] = "ts_list";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -390,6 +391,8 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
     {
         bool lcn_initialized = false;
         bool service_list_initialized = false;
+        bool ts_list_initialized = false;
+        int ts_list_count = 1;
         size_t pos = 8;
         if(pos + 2 <= section_end)
         {
@@ -456,6 +459,23 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
                 const uint16_t onid = (uint16_t)((buf[pos + 2] << 8) | buf[pos + 3]);
                 const uint16_t desc_len = (uint16_t)(((buf[pos + 4] & 0x0F) << 8) | buf[pos + 5]);
                 pos += 6;
+                // Список TS для проверки network_search.
+                if(!ts_list_initialized)
+                {
+                    lua_newtable(lua);
+                    lua_setfield(lua, -2, __ts_list);
+                    ts_list_initialized = true;
+                }
+                lua_getfield(lua, -1, __ts_list);
+                if(lua_type(lua, -1) == LUA_TTABLE)
+                {
+                    char ts_entry[32];
+                    snprintf(ts_entry, sizeof(ts_entry), "%u:%u", (unsigned)tsid, (unsigned)onid);
+                    lua_pushnumber(lua, ts_list_count++);
+                    lua_pushstring(lua, ts_entry);
+                    lua_settable(lua, -3);
+                }
+                lua_pop(lua, 1);
                 size_t desc_end = pos + desc_len;
                 if(desc_end > ts_loop_end)
                     desc_end = ts_loop_end;
