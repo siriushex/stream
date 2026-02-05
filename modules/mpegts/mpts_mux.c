@@ -1285,6 +1285,8 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
     module_option_boolean("pcr_restamp", &mod->pcr_restamp);
+    if(mod->pcr_restamp)
+        asc_log_info(MSG("PCR restamp включён"));
 
     if(module_option_number("pat_version", &tmp))
     {
