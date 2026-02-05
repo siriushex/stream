@@ -1231,6 +1231,9 @@ static void module_init(module_data_t *mod)
     if(module_option_number("target_bitrate", &tmp))
         mod->target_bitrate = tmp;
 
+    if(mod->delivery && mod->delivery[0] != '\0' && !is_delivery_cable(mod->delivery))
+        asc_log_warning(MSG("delivery %s не поддерживается; генерируется только DVB-C"), mod->delivery);
+
     module_option_boolean("disable_auto_remap", &mod->disable_auto_remap);
     module_option_boolean("pass_nit", &mod->pass_nit);
     module_option_boolean("pass_sdt", &mod->pass_sdt);
