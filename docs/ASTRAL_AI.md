@@ -66,6 +66,21 @@
 - Команды через Telegram.
 - Политики доступа и guardrails.
 
+## Observability (logs + metrics rollup)
+Встроенный сбор лог‑событий и агрегированных метрик для отчётов и AI‑summary.
+
+### Настройки
+- `ai_logs_retention_days` — хранение лог‑событий (дни, 0 = выключено).
+- `ai_metrics_retention_days` — хранение метрик (дни, 0 = выключено).
+- `ai_rollup_interval_sec` — период агрегации (сек, минимум 30).
+
+### API
+- `GET /api/v1/ai/logs?range=24h&level=ERROR&stream_id=...&limit=500`
+- `GET /api/v1/ai/metrics?range=24h&scope=global|stream&id=<stream_id>&metric=bitrate_kbps`
+- `GET /api/v1/ai/summary?range=24h` — возвращает последнюю агрегированную “сводку” (без AI).
+
+Примечание: AI‑summary пока не подключён, эндпоинт отдаёт последний rollup snapshot.
+
 ## Настройки (через Settings API)
 - `ai_enabled` — включить AI слой (bool).
 - `ai_model` — модель (string).

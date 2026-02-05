@@ -914,6 +914,48 @@
               <div class="settings-group span-2">
                 <div class="settings-group-header">
                   <div>
+                    <div class="settings-group-title">Observability</div>
+                    <div class="settings-group-sub">Logs and metrics rollup</div>
+                  </div>
+                  <label class="checkline">
+                    <input type="checkbox" id="settings-observability-enabled" data-toggle-target="settings-observability-fields" />
+                    <span>Enable</span>
+                  </label>
+                </div>
+                <div class="settings-group-body" id="settings-observability-fields">
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Log retention (days)</span>
+                      <select id="settings-observability-logs-days">
+                        <option value="1">1</option>
+                        <option value="7">7</option>
+                        <option value="30">30</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Metrics retention (days)</span>
+                      <select id="settings-observability-metrics-days">
+                        <option value="7">7</option>
+                        <option value="30">30</option>
+                        <option value="90">90</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Rollup interval (sec)</span>
+                      <select id="settings-observability-rollup">
+                        <option value="60">60</option>
+                        <option value="300">300</option>
+                        <option value="3600">3600</option>
+                      </select>
+                    </label>
+                  </div>
+                  <small class="form-hint">Uncheck to disable data collection.</small>
+                </div>
+              </div>
+
+              <div class="settings-group span-2">
+                <div class="settings-group-header">
+                  <div>
                     <div class="settings-group-title">Process Watchdog</div>
                     <div class="settings-group-sub">Auto-restart on high CPU/RAM</div>
                   </div>

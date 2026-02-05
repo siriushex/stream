@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added observability data tables and rollup timers for AI logs/metrics.
+  - Added AI observability API endpoints: `/api/v1/ai/logs`, `/api/v1/ai/metrics`, `/api/v1/ai/summary`.
+  - Added Settings → General controls for observability retention + rollup interval.
+  - Reconfigured observability on settings updates.
+- Tests:
+  - Not run (UI + API wiring only).
+### 2026-02-05
+- Changes:
   - Added AstralAI scaffolding (AI runtime/tools stubs + API endpoints).
   - Implemented local AI plan diff (validate + snapshot + diff summary).
   - Added AI plan prompt mode (Responses API structured outputs).
