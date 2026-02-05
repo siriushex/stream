@@ -6,6 +6,7 @@
 
 #include <astra.h>
 #include <time.h>
+#include <stdlib.h>
 
 #define PID_DROP 0xFFFF
 #define MPTS_MAX_PIDS 8192
@@ -40,6 +41,10 @@ struct mpts_service_t
     uint16_t pcr_pid_out;
     bool pcr_missing_warned;
     bool pcr_not_in_es_warned;
+    bool spts_only_warned;
+
+    double pcr_smooth_offset;
+    bool pcr_smooth_ready;
 
     char *service_name;
     char *service_provider;
@@ -94,8 +99,18 @@ struct module_data_t
     bool pass_sdt;
     bool pass_eit;
     bool pass_tdt;
+    bool pass_cat;
     bool pcr_restamp;
+    bool pcr_smoothing;
     bool strict_pnr;
+    bool spts_only;
+
+    int eit_source_index;
+    int cat_source_index;
+    uint8_t lcn_descriptor_tag;
+
+    double pcr_smooth_alpha;
+    uint64_t pcr_smooth_max_offset_ticks;
 
     uint8_t pat_version;
     uint8_t cat_version;
@@ -110,6 +125,8 @@ struct module_data_t
     bool psi_built;
 
     bool pass_warned;
+    bool eit_source_warned;
+    bool cat_source_warned;
 
     uint8_t cc[MPTS_MAX_PIDS];
     bool pid_in_use[MPTS_MAX_PIDS];
@@ -129,8 +146,16 @@ struct module_data_t
     asc_timer_t *cbr_timer;
     uint64_t cbr_start_us;
     uint64_t sent_packets;
+    uint64_t null_packets;
     uint64_t cbr_last_warn_us;
     uint64_t pcr_restamp_start_us;
+    uint64_t start_us;
+    uint64_t last_si_us;
+    uint32_t psi_interval_actual_ms;
+
+    mpegts_psi_t *eit_in;
+    mpts_service_t *eit_source;
+    mpts_service_t *cat_source;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -177,6 +202,30 @@ static void write_utc_time(uint8_t *dst)
     dst[4] = to_bcd((uint8_t)(tm ? tm->tm_sec : 0));
 }
 
+static int64_t pcr_diff(uint64_t a, uint64_t b)
+{
+    int64_t diff = (int64_t)(a - b);
+    const int64_t half = (int64_t)(PCR_MAX_TICKS / 2);
+    if(diff > half)
+        diff -= (int64_t)PCR_MAX_TICKS;
+    else if(diff < -half)
+        diff += (int64_t)PCR_MAX_TICKS;
+    return diff;
+}
+
+static mpts_service_t *find_service_by_pnr_in(module_data_t *mod, uint16_t pnr)
+{
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(svc->pnr_in == pnr)
+            return svc;
+        if(svc->has_pnr && svc->pnr_cfg == pnr)
+            return svc;
+    }
+    return NULL;
+}
+
 static void reserve_pid(module_data_t *mod, uint16_t pid)
 {
     if(pid < MPTS_MAX_PIDS)
@@ -217,6 +266,10 @@ static void mpts_send_ts(module_data_t *mod, const uint8_t *ts)
     mod->cc[pid] = (uint8_t)((cc + 1) & 0x0F);
     module_stream_send(mod, out);
     mod->sent_packets++;
+    if(pid == NULL_TS_PID)
+        mod->null_packets++;
+    if(mod->start_us == 0)
+        mod->start_us = asc_utime();
 }
 
 static void mpts_send_psi(void *arg, const uint8_t *ts)
@@ -692,7 +745,7 @@ static void build_nit(module_data_t *mod)
         }
     }
 
-    // logical_channel_descriptor (LCN) - NorDig (0x83)
+    // logical_channel_descriptor (LCN) - NorDig (0x83) или совместимые варианты.
     {
         uint8_t tmp[1024];
         uint16_t tmp_len = 0;
@@ -714,7 +767,8 @@ static void build_nit(module_data_t *mod)
         {
             if(tmp_len > 255)
                 tmp_len = (uint16_t)((255 / 4) * 4);
-            pos = append_descriptor(buf, pos, 0x83, tmp, (uint8_t)tmp_len);
+            const uint8_t tag = mod->lcn_descriptor_tag ? mod->lcn_descriptor_tag : 0x83;
+            pos = append_descriptor(buf, pos, tag, tmp, (uint8_t)tmp_len);
         }
     }
 
@@ -943,11 +997,30 @@ static void rebuild_tables(module_data_t *mod)
 static void on_si_timer(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
+    const uint64_t now = asc_utime();
+    if(mod->last_si_us != 0)
+    {
+        const uint64_t delta = now - mod->last_si_us;
+        mod->psi_interval_actual_ms = (uint32_t)((delta + 500) / 1000);
+    }
+    mod->last_si_us = now;
+
+    if(mod->pass_eit && !mod->eit_source && !mod->eit_source_warned)
+    {
+        asc_log_warning(MSG("pass_eit включён, но eit_source не найден"));
+        mod->eit_source_warned = true;
+    }
+    if(mod->pass_cat && !mod->cat_source && !mod->cat_source_warned)
+    {
+        asc_log_warning(MSG("pass_cat включён, но cat_source не найден"));
+        mod->cat_source_warned = true;
+    }
+
     rebuild_tables(mod);
 
     if(mod->pat_out)
         mpegts_psi_demux(mod->pat_out, mpts_send_psi, mod);
-    if(mod->cat_out)
+    if(mod->cat_out && !mod->pass_cat)
         mpegts_psi_demux(mod->cat_out, mpts_send_psi, mod);
 
     asc_list_for(mod->services)
@@ -1012,6 +1085,36 @@ static void on_cbr_timer(void *arg)
     }
 }
 
+static void on_eit(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    if(!psi || psi->buffer_size < 16)
+        return;
+
+    const uint8_t table_id = psi->buffer[0];
+    if(table_id < 0x4E || table_id > 0x6F)
+        return;
+    if(table_id == 0x4F || table_id >= 0x60)
+        return; // только EIT Actual
+
+    const uint16_t pnr_in = EIT_GET_PNR(psi);
+    mpts_service_t *svc = find_service_by_pnr_in(mod, pnr_in);
+    if(!svc || !svc->ready || !svc->mapping_ready || svc->pnr_out == 0)
+        return;
+
+    // Переписываем идентификаторы под выходной MPTS.
+    EIT_SET_PNR(psi, svc->pnr_out);
+    psi->buffer[8] = (uint8_t)(mod->tsid >> 8);
+    psi->buffer[9] = (uint8_t)(mod->tsid & 0xFF);
+    psi->buffer[10] = (uint8_t)(mod->onid >> 8);
+    psi->buffer[11] = (uint8_t)(mod->onid & 0xFF);
+
+    PSI_SET_CRC32(psi);
+    psi->crc32 = PSI_GET_CRC32(psi);
+
+    mpegts_psi_demux(psi, mpts_send_psi, mod);
+}
+
 static void on_pat(void *arg, mpegts_psi_t *psi)
 {
     mpts_service_t *svc = (mpts_service_t *)arg;
@@ -1033,6 +1136,7 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
     uint16_t selected_pnr = 0;
     uint16_t selected_pid = 0;
     uint16_t program_count = 0;
+    bool selected_found = false;
 
     PAT_ITEMS_FOREACH(psi, pointer)
     {
@@ -1045,19 +1149,30 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
 
         if(svc->has_pnr)
         {
-            if(pnr == svc->pnr_cfg)
+            if(pnr == svc->pnr_cfg && !selected_found)
             {
                 selected_pnr = pnr;
                 selected_pid = pid;
-                break;
+                selected_found = true;
             }
         }
-        else
+        else if(!selected_found)
         {
             selected_pnr = pnr;
             selected_pid = pid;
-            break;
+            selected_found = true;
         }
+    }
+
+    if(program_count > 1 && mod->spts_only)
+    {
+        if(!svc->spts_only_warned)
+        {
+            asc_log_error(SVC_MSG(svc, "PAT содержит %d программ, но spts_only=true; "
+                "вход отклонён"), program_count);
+            svc->spts_only_warned = true;
+        }
+        return;
     }
 
     if(selected_pid == 0)
@@ -1163,14 +1278,21 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
         mpts_send_ts(mod, ts);
         return;
     }
-    if(pid == 0x0012 && mod->pass_eit && allow_pass)
+    if(pid == 0x0012)
     {
-        mpts_send_ts(mod, ts);
+        if(mod->pass_eit && mod->eit_source == svc && mod->eit_in)
+            mpegts_psi_mux(mod->eit_in, ts, on_eit, mod);
         return;
     }
     if(pid == 0x0014 && mod->pass_tdt && allow_pass)
     {
         mpts_send_ts(mod, ts);
+        return;
+    }
+    if(pid == 0x0001)
+    {
+        if(mod->pass_cat && mod->cat_source == svc)
+            mpts_send_ts(mod, ts);
         return;
     }
 
@@ -1194,8 +1316,39 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
         if(mod->pcr_restamp_start_us == 0)
             mod->pcr_restamp_start_us = now;
         const uint64_t elapsed = now - mod->pcr_restamp_start_us;
-        const uint64_t pcr = (elapsed * 27ULL) % PCR_MAX_TICKS;
-        TS_SET_PCR(out, pcr);
+        const uint64_t target = (elapsed * 27ULL) % PCR_MAX_TICKS;
+        if(mod->pcr_smoothing)
+        {
+            const uint64_t in_pcr = TS_GET_PCR(out);
+            const int64_t diff = pcr_diff(target, in_pcr);
+            if(!svc->pcr_smooth_ready)
+            {
+                svc->pcr_smooth_offset = (double)diff;
+                svc->pcr_smooth_ready = true;
+            }
+            else
+            {
+                svc->pcr_smooth_offset += mod->pcr_smooth_alpha * ((double)diff - svc->pcr_smooth_offset);
+            }
+            if(mod->pcr_smooth_max_offset_ticks > 0)
+            {
+                const double limit = (double)mod->pcr_smooth_max_offset_ticks;
+                if(svc->pcr_smooth_offset > limit)
+                    svc->pcr_smooth_offset = limit;
+                else if(svc->pcr_smooth_offset < -limit)
+                    svc->pcr_smooth_offset = -limit;
+            }
+            int64_t out_pcr = (int64_t)in_pcr + (int64_t)svc->pcr_smooth_offset;
+            if(out_pcr < 0)
+                out_pcr += (int64_t)PCR_MAX_TICKS;
+            else if(out_pcr >= (int64_t)PCR_MAX_TICKS)
+                out_pcr %= (int64_t)PCR_MAX_TICKS;
+            TS_SET_PCR(out, (uint64_t)out_pcr);
+        }
+        else
+        {
+            TS_SET_PCR(out, target);
+        }
     }
     mpts_send_ts(mod, out);
 }
@@ -1288,11 +1441,16 @@ static int method_add_input(module_data_t *mod)
 
     asc_list_insert_tail(mod->services, svc);
 
+    if(mod->pass_eit && mod->eit_source == NULL && mod->eit_source_index == svc->index)
+        mod->eit_source = svc;
+    if(mod->pass_cat && mod->cat_source == NULL && mod->cat_source_index == svc->index)
+        mod->cat_source = svc;
+
     mod->psi_dirty = true;
     if(!mod->pass_warned && mod->service_count > 1 &&
-        (mod->pass_nit || mod->pass_sdt || mod->pass_eit || mod->pass_tdt))
+        (mod->pass_nit || mod->pass_sdt || mod->pass_tdt))
     {
-        asc_log_warning(MSG("pass_* режимы корректны только для одного сервиса; используем генерацию"));
+        asc_log_warning(MSG("pass_nit/pass_sdt/pass_tdt корректны только для одного сервиса; используем генерацию"));
         mod->pass_warned = true;
     }
 
@@ -1306,6 +1464,12 @@ static void module_init(module_data_t *mod)
     mod->services = asc_list_init();
     mod->service_count = 0;
     mod->next_pid = 0x0020;
+    mod->lcn_descriptor_tag = 0x83;
+    mod->spts_only = true;
+    mod->eit_source_index = 1;
+    mod->cat_source_index = 1;
+    mod->pcr_smooth_alpha = 0.1;
+    mod->pcr_smooth_max_offset_ticks = 500ULL * 27000ULL;
 
     reserve_pid(mod, 0x0000); // PAT
     reserve_pid(mod, 0x0001); // CAT
@@ -1363,10 +1527,50 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_sdt", &mod->pass_sdt);
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
+    module_option_boolean("pass_cat", &mod->pass_cat);
     module_option_boolean("pcr_restamp", &mod->pcr_restamp);
+    module_option_boolean("pcr_smoothing", &mod->pcr_smoothing);
     module_option_boolean("strict_pnr", &mod->strict_pnr);
+    module_option_boolean("spts_only", &mod->spts_only);
     if(mod->pcr_restamp)
         asc_log_info(MSG("PCR restamp включён"));
+    if(mod->pcr_smoothing && !mod->pcr_restamp)
+    {
+        asc_log_warning(MSG("pcr_smoothing работает только с pcr_restamp; отключаем сглаживание"));
+        mod->pcr_smoothing = false;
+    }
+
+    if(module_option_number("eit_source", &tmp) && tmp > 0)
+        mod->eit_source_index = tmp;
+    if(module_option_number("cat_source", &tmp) && tmp > 0)
+        mod->cat_source_index = tmp;
+    if(module_option_number("lcn_descriptor_tag", &tmp))
+    {
+        if(tmp > 0 && tmp < 256)
+            mod->lcn_descriptor_tag = (uint8_t)tmp;
+        else
+            asc_log_warning(MSG("lcn_descriptor_tag вне диапазона 1..255, игнорируем"));
+    }
+
+    const char *alpha_str = NULL;
+    if(module_option_string("pcr_smooth_alpha", &alpha_str, NULL) && alpha_str && alpha_str[0] != '\0')
+    {
+        double value = strtod(alpha_str, NULL);
+        if(value > 0.0 && value < 1.0)
+            mod->pcr_smooth_alpha = value;
+        else if(value >= 1.0 && value <= 100.0)
+            mod->pcr_smooth_alpha = value / 100.0;
+        else
+            asc_log_warning(MSG("pcr_smooth_alpha вне диапазона (0..1 или 1..100), игнорируем"));
+    }
+    if(module_option_number("pcr_smooth_max_offset_ms", &tmp) && tmp > 0)
+        mod->pcr_smooth_max_offset_ticks = (uint64_t)tmp * 27000ULL;
+    if(mod->pcr_smoothing)
+    {
+        asc_log_info(MSG("PCR smoothing включён (alpha=%.3f, max_offset_ms=%llu)"),
+            mod->pcr_smooth_alpha,
+            (unsigned long long)(mod->pcr_smooth_max_offset_ticks / 27000ULL));
+    }
 
     if(module_option_number("pat_version", &tmp))
     {
@@ -1395,10 +1599,44 @@ static void module_init(module_data_t *mod)
     mod->nit_out = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x0010);
     mod->tdt_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
     mod->tot_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
+    if(mod->pass_eit)
+        mod->eit_in = mpegts_psi_init(MPEGTS_PACKET_EIT, 0x0012);
 
     mod->si_timer = asc_timer_init(mod->si_interval_ms, on_si_timer, mod);
     if(mod->target_bitrate > 0)
         mod->cbr_timer = asc_timer_init(10, on_cbr_timer, mod);
+}
+
+static int method_stats(module_data_t *mod)
+{
+    lua_newtable(lua);
+
+    const uint64_t now = asc_utime();
+    uint64_t bitrate = 0;
+    if(mod->start_us > 0 && now > mod->start_us)
+    {
+        const uint64_t elapsed = now - mod->start_us;
+        bitrate = mod->sent_packets * (uint64_t)TS_PACKET_SIZE * 8ULL * 1000000ULL / elapsed;
+    }
+    const double null_pct = (mod->sent_packets > 0)
+        ? (double)mod->null_packets * 100.0 / (double)mod->sent_packets
+        : 0.0;
+    const uint32_t psi_ms = mod->psi_interval_actual_ms > 0
+        ? mod->psi_interval_actual_ms
+        : (uint32_t)mod->si_interval_ms;
+
+    lua_pushinteger(lua, (lua_Integer)bitrate);
+    lua_setfield(lua, -2, "bitrate_bps");
+    lua_pushnumber(lua, null_pct);
+    lua_setfield(lua, -2, "null_percent");
+    lua_pushinteger(lua, (lua_Integer)psi_ms);
+    lua_setfield(lua, -2, "psi_interval_ms");
+    lua_pushinteger(lua, (lua_Integer)mod->sent_packets);
+    lua_setfield(lua, -2, "packets_sent");
+    lua_pushinteger(lua, (lua_Integer)mod->null_packets);
+    lua_setfield(lua, -2, "packets_null");
+
+    return 1;
 }
 
 static void module_destroy(module_data_t *mod)
@@ -1416,6 +1654,7 @@ static void module_destroy(module_data_t *mod)
     if(mod->nit_out) mpegts_psi_destroy(mod->nit_out);
     if(mod->tdt_out) mpegts_psi_destroy(mod->tdt_out);
     if(mod->tot_out) mpegts_psi_destroy(mod->tot_out);
+    if(mod->eit_in) mpegts_psi_destroy(mod->eit_in);
 
     if(mod->services)
     {
@@ -1444,6 +1683,7 @@ MODULE_STREAM_METHODS()
 MODULE_LUA_METHODS()
 {
     { "add_input", method_add_input },
+    { "stats", method_stats },
     MODULE_STREAM_METHODS_REF()
 };
 
