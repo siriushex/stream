@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI Player: восстановлены ссылки `/play/<id>` и работа кнопок Open/Copy; добавлена поддержка MP2TS источника.
+- Tests:
+  - Not run (UI change only).
+### 2026-02-05
+- Changes:
   - MPTS/CI: обновлён verify_mpts (UTF-8 marker, Bitrate parsing, устойчивость к префиксам логов).
   - MPTS: анализатор NIT декодирует network_name с учётом кодировки.
   - CI: check_changelog учитывает shallow clone; check_branch_name допускает codex/<topic>.
