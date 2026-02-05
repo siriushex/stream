@@ -36,7 +36,9 @@
   - `git pull --rebase`
   - `git checkout -b codex/<agent>/<topic>`
 - Work steps:
+  - Перед началом работы всегда делай `git pull --rebase`, чтобы синхронизироваться с репозиторием.
   - Commit frequently.
+  - После изменений обязательно делай commit и push.
   - Push often: `git push -u origin codex/<agent>/<topic>` to prevent loss.
 - Integration steps (PR required):
   - Open a PR from `codex/<agent>/<topic>` to `main`.
@@ -45,7 +47,7 @@
   - Merge using fast-forward or linear history (no merge commits).
 - Direct merge without PR is запрещён.
 - Conflict policy:
-  - Resolve conflicts only on the feature branch.
+  - Resolve conflicts only on the feature branch, вручную.
   - Never force-push to `main`.
 - Merge lock rule:
   - Only one agent merges to `main` at a time.
