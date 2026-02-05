@@ -530,6 +530,9 @@ local function normalize_failover_config(cfg, enabled)
     local compat_probe_sec = read_number_opt(cfg, "backup_compat_probe_sec") or 2
     local compat_probe_timeout = read_number_opt(cfg, "backup_compat_probe_timeout_sec") or 8
     local switch_warmup_min_ms = read_number_opt(cfg, "backup_switch_warmup_min_ms") or 500
+    local switch_warmup_require_idr = normalize_bool(cfg.backup_switch_warmup_require_idr, false)
+    local switch_warmup_probe_sec = read_number_opt(cfg, "backup_switch_warmup_probe_sec") or 2
+    local switch_warmup_probe_timeout = read_number_opt(cfg, "backup_switch_warmup_probe_timeout_sec") or 6
     local stop_if_all_inactive_sec = read_number_opt(cfg,
         "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec") or 20
     local warm_max = tonumber(cfg.backup_active_warm_max)
@@ -549,6 +552,8 @@ local function normalize_failover_config(cfg, enabled)
     if compat_probe_sec < 0 then compat_probe_sec = 0 end
     if compat_probe_timeout < 0 then compat_probe_timeout = 0 end
     if switch_warmup_min_ms < 0 then switch_warmup_min_ms = 0 end
+    if switch_warmup_probe_sec < 0 then switch_warmup_probe_sec = 0 end
+    if switch_warmup_probe_timeout < 0 then switch_warmup_probe_timeout = 0 end
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
 
     return {
@@ -561,6 +566,9 @@ local function normalize_failover_config(cfg, enabled)
         switch_pending_timeout_sec = switch_pending_timeout,
         switch_warmup_sec = switch_warmup,
         switch_warmup_min_ms = switch_warmup_min_ms,
+        switch_warmup_require_idr = switch_warmup_require_idr,
+        switch_warmup_probe_sec = switch_warmup_probe_sec,
+        switch_warmup_probe_timeout_sec = switch_warmup_probe_timeout,
         no_data_timeout = no_data_timeout,
         probe_interval = probe_interval,
         stable_ok = stable_ok,
@@ -663,6 +671,11 @@ local function stop_switch_warmup(job, reason)
         return
     end
     local warm = fo.switch_warmup
+    if warm.keyframe_probe and warm.keyframe_probe.proc then
+        warm.keyframe_probe.proc:kill()
+        warm.keyframe_probe.proc:close()
+    end
+    warm.keyframe_probe = nil
     if warm.proc then
         warm.proc:kill()
         warm.proc:close()
@@ -718,6 +731,129 @@ local function build_switch_warmup_args(job, input_entry, warmup_sec)
     return argv, nil, url
 end
 
+local function build_keyframe_probe_args(url, duration_sec, ffprobe_bin)
+    local bin = ffprobe_bin or "ffprobe"
+    local seconds = tonumber(duration_sec) or 2
+    if seconds < 1 then
+        seconds = 1
+    end
+    return {
+        bin,
+        "-v", "error",
+        "-print_format", "json",
+        "-select_streams", "v:0",
+        "-show_frames",
+        "-show_entries", "frame=key_frame,pict_type",
+        "-read_intervals", "%+" .. tostring(seconds),
+        "-i", tostring(url),
+    }
+end
+
+local function parse_keyframe_probe(payload)
+    if type(payload) ~= "table" then
+        return false
+    end
+    for _, frame in ipairs(payload.frames or {}) do
+        local key = frame.key_frame
+        if key == 1 or key == "1" or frame.pict_type == "I" then
+            return true
+        end
+    end
+    return false
+end
+
+local function ensure_warmup_keyframe_probe(job, warm, input_entry, now)
+    if not warm or warm.require_idr ~= true then
+        return
+    end
+    if warm.idr_seen then
+        return
+    end
+    if warm.keyframe_probe then
+        return
+    end
+    if warm.keyframe_retry_ts and now and now < warm.keyframe_retry_ts then
+        return
+    end
+    if not process or type(process.spawn) ~= "function" then
+        warm.keyframe_error = "ffprobe unavailable"
+        return
+    end
+    local url = get_input_url(input_entry)
+    if not url or url == "" then
+        warm.keyframe_error = "input url missing"
+        return
+    end
+    local fo = job and job.failover or nil
+    local probe_sec = fo and tonumber(fo.switch_warmup_probe_sec) or 2
+    local probe_timeout = fo and tonumber(fo.switch_warmup_probe_timeout_sec) or 6
+    if probe_sec < 1 then
+        probe_sec = 1
+    end
+    if probe_timeout < 1 then
+        probe_timeout = 1
+    end
+    local ffprobe_bin = resolve_ffprobe_path(job.config.transcode)
+    local args = build_keyframe_probe_args(url, probe_sec, ffprobe_bin)
+    local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        warm.keyframe_error = "ffprobe spawn failed"
+        return
+    end
+    warm.keyframe_probe = {
+        proc = proc,
+        stdout_buf = "",
+        stderr_buf = "",
+        start_ts = now or os.time(),
+        deadline_ts = (now or os.time()) + probe_timeout,
+    }
+end
+
+local function tick_warmup_keyframe_probe(warm, now)
+    if not warm or not warm.keyframe_probe or not warm.keyframe_probe.proc then
+        return
+    end
+    local probe = warm.keyframe_probe
+    local out_chunk = probe.proc:read_stdout()
+    if out_chunk then
+        probe.stdout_buf = (probe.stdout_buf or "") .. out_chunk
+    end
+    local err_chunk = probe.proc:read_stderr()
+    if err_chunk then
+        probe.stderr_buf = (probe.stderr_buf or "") .. err_chunk
+    end
+    local status = probe.proc:poll()
+    if status then
+        probe.proc:close()
+        warm.keyframe_probe = nil
+        local payload = nil
+        local ok, parsed = pcall(parse_probe_json, probe.stdout_buf or "")
+        if ok then
+            payload = parsed
+        end
+        if payload then
+            warm.idr_seen = parse_keyframe_probe(payload)
+            if warm.idr_seen then
+                warm.keyframe_error = nil
+            else
+                warm.keyframe_error = "keyframe not found"
+                warm.keyframe_retry_ts = (now or os.time()) + 5
+            end
+        else
+            warm.keyframe_error = "keyframe probe failed"
+            warm.keyframe_retry_ts = (now or os.time()) + 5
+        end
+        return
+    end
+    if probe.deadline_ts and now >= probe.deadline_ts then
+        probe.proc:kill()
+        probe.proc:close()
+        warm.keyframe_probe = nil
+        warm.keyframe_error = "keyframe probe timeout"
+        warm.keyframe_retry_ts = now + 5
+    end
+end
+
 local function ensure_switch_warmup(job, target_id, now)
     local fo = job and job.failover or nil
     if not warmup_enabled(fo) then
@@ -732,6 +868,7 @@ local function ensure_switch_warmup(job, target_id, now)
     local warm = fo.switch_warmup
     local warmup_sec = tonumber(fo.switch_warmup_sec) or 0
     local warmup_min_ms = tonumber(fo.switch_warmup_min_ms) or 500
+    local require_idr = fo.switch_warmup_require_idr == true
     if warm and warm.target == target_id then
         if not warm.done then
             return
@@ -778,10 +915,12 @@ local function ensure_switch_warmup(job, target_id, now)
         deadline_ts = started_at + warmup_sec + WARMUP_TIMEOUT_EXTRA,
         duration_sec = warmup_sec,
         min_out_time_ms = warmup_min_ms,
+        require_idr = require_idr,
         proc = proc,
         stdout_buf = "",
         stderr_buf = "",
     }
+    ensure_warmup_keyframe_probe(job, fo.switch_warmup, entry, started_at)
 end
 
 local function warmup_status(fo, target_id)
@@ -792,7 +931,7 @@ local function warmup_status(fo, target_id)
     if not warm or warm.target ~= target_id then
         return "idle"
     end
-    if warm.ready then
+    if warm.ready and (not warm.require_idr or warm.idr_seen) then
         return "ok"
     end
     if warm.done then
@@ -840,6 +979,11 @@ local function tick_switch_warmup(job, now)
             update_warmup_progress(warm, _line)
         end)
     end
+    tick_warmup_keyframe_probe(warm, now)
+    if warm.require_idr and not warm.idr_seen and not warm.keyframe_probe then
+        local entry = pick_input_entry(job.config, warm.target, true)
+        ensure_warmup_keyframe_probe(job, warm, entry, now)
+    end
     local err_chunk = warm.proc:read_stderr()
     if err_chunk then
         consume_warmup_lines(warm, "stderr_buf", err_chunk, function(line)
@@ -851,11 +995,20 @@ local function tick_switch_warmup(job, now)
         warm.proc:close()
         warm.proc = nil
         warm.done = true
+        if warm.keyframe_probe and warm.keyframe_probe.proc then
+            warm.keyframe_probe.proc:kill()
+            warm.keyframe_probe.proc:close()
+            warm.keyframe_probe = nil
+        end
         local exit_code, exit_signal = extract_exit_info(status)
         warm.exit_code = exit_code
         warm.exit_signal = exit_signal
         if exit_code == 0 or exit_code == nil then
             warm.ok = true
+            if warm.require_idr and not warm.idr_seen then
+                warm.ok = false
+                warm.error = warm.error or warm.keyframe_error or "keyframe not found"
+            end
         else
             warm.ok = false
             warm.error = warm.error or "warmup failed"
@@ -870,6 +1023,11 @@ local function tick_switch_warmup(job, now)
         warm.done = true
         warm.ok = false
         warm.error = "warmup timeout"
+        if warm.keyframe_probe and warm.keyframe_probe.proc then
+            warm.keyframe_probe.proc:kill()
+            warm.keyframe_probe.proc:close()
+            warm.keyframe_probe = nil
+        end
         warm.next_retry_ts = now + math.max(5, warm.duration_sec or 0)
     end
 end
@@ -3102,6 +3260,12 @@ function transcode.get_status(id)
             ok = warm.ok,
             done = warm.done,
             error = warm.error,
+            require_idr = warm.require_idr,
+            idr_seen = warm.idr_seen,
+            keyframe_error = warm.keyframe_error,
+            ready = warm.ready,
+            last_out_time_ms = warm.last_out_time_ms,
+            min_out_time_ms = warm.min_out_time_ms,
             start_ts = warm.start_ts,
             duration_sec = warm.duration_sec,
             exit_code = warm.exit_code,
