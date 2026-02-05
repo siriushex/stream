@@ -2373,7 +2373,12 @@ local function ai_plan(server, client, request)
     if not body then
         return error_response(server, client, 400, "invalid json")
     end
-    local job = ai_runtime.plan(body, { user = request and request.user or "" })
+    local user = get_request_user(request)
+    local job = ai_runtime.plan(body, {
+        user = user and user.username or (request and request.user or ""),
+        user_id = user and user.id or 0,
+        ip = request and request.addr or "",
+    })
     if not job then
         return error_response(server, client, 500, "ai plan failed")
     end

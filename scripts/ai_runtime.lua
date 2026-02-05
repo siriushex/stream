@@ -152,6 +152,64 @@ local function extract_output_json(response)
     return nil, "output text missing"
 end
 
+local function normalize_headers(headers)
+    if type(headers) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for k, v in pairs(headers) do
+        if type(k) == "string" then
+            out[string.lower(k)] = v
+        end
+    end
+    return out
+end
+
+local function parse_rate_limits(headers)
+    if type(headers) ~= "table" then
+        return {}
+    end
+    local out = {}
+    local keys = {
+        "x-ratelimit-limit-requests",
+        "x-ratelimit-remaining-requests",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-limit-tokens",
+        "x-ratelimit-remaining-tokens",
+        "x-ratelimit-reset-tokens",
+    }
+    for _, key in ipairs(keys) do
+        if headers[key] then
+            out[key] = headers[key]
+        end
+    end
+    return out
+end
+
+local function should_retry(code)
+    if not code then
+        return false
+    end
+    if code == 429 or code == 408 or code == 409 then
+        return true
+    end
+    if code >= 500 and code < 600 then
+        return true
+    end
+    return false
+end
+
+local function schedule_retry(job, prompt, delay_sec)
+    job.next_try_ts = os.time() + delay_sec
+    timer({
+        interval = delay_sec,
+        callback = function(self)
+            self:close()
+            schedule_openai_plan(job, prompt)
+        end,
+    })
+end
+
 local function schedule_openai_plan(job, prompt)
     if not http_request then
         job.status = "error"
@@ -197,6 +255,8 @@ local function schedule_openai_plan(job, prompt)
     local req_id = ai_runtime.request_seq
     job.status = "running"
     job.request_id = req_id
+    job.attempts = (job.attempts or 0) + 1
+    job.max_attempts = job.max_attempts or 3
     http_request({
         host = parsed.host,
         port = parsed.port or 443,
@@ -214,34 +274,48 @@ local function schedule_openai_plan(job, prompt)
             if not response or not response.code then
                 job.status = "error"
                 job.error = "no response"
+                log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
+            local headers = normalize_headers(response.headers)
+            job.rate_limits = parse_rate_limits(headers)
             if response.code < 200 or response.code >= 300 then
+                if should_retry(response.code) and job.attempts < job.max_attempts then
+                    job.status = "retry"
+                    job.error = "http " .. tostring(response.code)
+                    schedule_retry(job, prompt, (job.attempts == 1) and 1 or (job.attempts == 2) and 5 or 15)
+                    return
+                end
                 job.status = "error"
                 job.error = "http " .. tostring(response.code)
+                log_audit(job, false, job.error, { mode = "prompt", code = response.code })
                 return
             end
             if not response.content then
                 job.status = "error"
                 job.error = "empty response"
+                log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
             local decoded = json.decode(response.content)
             if type(decoded) ~= "table" then
                 job.status = "error"
                 job.error = "invalid json"
+                log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
             local text, err = extract_output_json(decoded)
             if not text then
                 job.status = "error"
                 job.error = err or "missing output"
+                log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
             local plan = json.decode(text)
             if type(plan) ~= "table" then
                 job.status = "error"
                 job.error = "invalid plan json"
+                log_audit(job, false, job.error, { mode = "prompt" })
                 return
             end
             job.status = "done"
@@ -249,6 +323,7 @@ local function schedule_openai_plan(job, prompt)
                 plan = plan,
                 summary = plan.summary or "",
             }
+            log_audit(job, true, "plan ready", { mode = "prompt" })
         end,
     })
 end
@@ -333,38 +408,61 @@ local function create_job(kind, payload)
     return job
 end
 
+local function log_audit(job, ok, message, meta)
+    if not config or not config.add_audit_event then
+        return
+    end
+    config.add_audit_event("ai_" .. tostring(job.kind or "job"), {
+        actor_user_id = job.actor_user_id or 0,
+        actor_username = job.actor_username or "",
+        ip = job.actor_ip or "",
+        ok = ok ~= false,
+        message = message or "",
+        meta = meta,
+    })
+end
+
 function ai_runtime.plan(payload, ctx)
     local job = create_job("plan", {
         requested_by = ctx and ctx.user or "",
         source = ctx and ctx.source or "api",
     })
+    job.actor_user_id = ctx and ctx.user_id or 0
+    job.actor_username = ctx and ctx.user or ""
+    job.actor_ip = ctx and ctx.ip or ""
     if type(payload) ~= "table" then
         job.status = "error"
         job.error = "invalid payload"
+        log_audit(job, false, job.error)
         return job
     end
     if not ai_runtime.is_enabled() then
         job.status = "error"
         job.error = "ai disabled"
+        log_audit(job, false, job.error)
         return job
     end
     if payload.proposed_config ~= nil and type(payload.proposed_config) == "table" then
+        log_audit(job, true, "plan requested", { mode = "diff" })
         local ok, err = ai_tools.config_validate(payload.proposed_config)
         if not ok then
             job.status = "error"
             job.error = err or "validation failed"
+            log_audit(job, false, job.error, { mode = "diff" })
             return job
         end
         local current, snap_err = ai_tools.config_snapshot()
         if not current then
             job.status = "error"
             job.error = snap_err or "snapshot failed"
+            log_audit(job, false, job.error, { mode = "diff" })
             return job
         end
         local diff, diff_err = ai_tools.config_diff(current, payload.proposed_config)
         if not diff then
             job.status = "error"
             job.error = diff_err or "diff failed"
+            log_audit(job, false, job.error, { mode = "diff" })
             return job
         end
         job.status = "done"
@@ -373,12 +471,15 @@ function ai_runtime.plan(payload, ctx)
             diff = diff,
             summary = diff.summary or {},
         }
+        log_audit(job, true, "plan ready", { mode = "diff", summary = diff.summary })
         return job
     end
     if payload.prompt and payload.prompt ~= "" then
+        log_audit(job, true, "plan requested", { mode = "prompt", prompt_len = #(tostring(payload.prompt)) })
         if not ai_runtime.is_ready() then
             job.status = "error"
             job.error = "ai not configured"
+            log_audit(job, false, job.error, { mode = "prompt" })
             return job
         end
         schedule_openai_plan(job, tostring(payload.prompt))
@@ -386,6 +487,7 @@ function ai_runtime.plan(payload, ctx)
     end
     job.status = "error"
     job.error = "prompt or proposed_config required"
+    log_audit(job, false, job.error)
     return job
 end
 
