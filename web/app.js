@@ -698,6 +698,7 @@ const elements = {
   mptsPassWarning: $('#mpts-pass-warning'),
   mptsAutoremapWarning: $('#mpts-autoremap-warning'),
   mptsPnrWarning: $('#mpts-pnr-warning'),
+  mptsDupInputWarning: $('#mpts-dup-input-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4947,6 +4948,7 @@ function renderMptsServiceList() {
     input.value = service.input || '';
     input.addEventListener('input', () => {
       service.input = input.value;
+      updateMptsInputWarning();
     });
 
     const serviceName = document.createElement('input');
@@ -5060,6 +5062,7 @@ function renderMptsServiceList() {
   updateMptsPassWarning();
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
+  updateMptsInputWarning();
 }
 
 function updateMptsPassWarning() {
@@ -5101,6 +5104,28 @@ function updateMptsPnrWarning() {
   }
   elements.mptsPnrWarning.textContent = `PNR duplicates: ${duplicates.join(', ')}`;
   elements.mptsPnrWarning.classList.remove('is-hidden');
+}
+
+function updateMptsInputWarning() {
+  if (!elements.mptsDupInputWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const counts = new Map();
+  (state.mptsServices || []).forEach((service) => {
+    const raw = String(service.input || '').trim();
+    if (!raw) return;
+    const normalized = raw.toLowerCase();
+    counts.set(normalized, (counts.get(normalized) || 0) + 1);
+  });
+  const duplicates = Array.from(counts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0]);
+  if (!mptsEnabled || duplicates.length === 0) {
+    elements.mptsDupInputWarning.classList.add('is-hidden');
+    elements.mptsDupInputWarning.textContent = '';
+    return;
+  }
+  elements.mptsDupInputWarning.textContent = `Duplicate inputs: ${duplicates.join(', ')}`;
+  elements.mptsDupInputWarning.classList.remove('is-hidden');
 }
 
 function bindMptsWarningHandlers() {
@@ -8717,6 +8742,7 @@ function openEditor(stream, isNew) {
   }
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
+  updateMptsInputWarning();
   const epgConfig = config.epg || {};
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';
