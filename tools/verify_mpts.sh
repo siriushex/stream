@@ -23,4 +23,19 @@ if ! grep -q "SDT:" "$LOG_FILE"; then
   exit 1
 fi
 
+if ! grep -q "NIT:" "$LOG_FILE"; then
+  echo "NIT not found"
+  exit 1
+fi
+
+if ! grep -q "TDT:" "$LOG_FILE"; then
+  echo "TDT not found"
+  exit 1
+fi
+
+if ! grep -q "TOT:" "$LOG_FILE"; then
+  echo "TOT not found"
+  exit 1
+fi
+
 echo "OK"

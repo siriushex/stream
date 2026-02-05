@@ -37,7 +37,9 @@
           "tsid": 1,
           "onid": 1,
           "network_id": 1,
-          "network_name": "Astral"
+          "network_name": "Astral",
+          "country": "RUS",
+          "utc_offset": 3
         },
         "nit": {
           "delivery": "cable",

@@ -99,6 +99,27 @@ dump_psi_info["sdt"] = function(info)
     log.info(("SDT: crc32: 0x%X"):format(info.crc32))
 end
 
+-- NIT/TDT/TOT используются для проверки MPTS.
+dump_psi_info["nit"] = function(info)
+    local network_id = info.network_id or 0
+    local table_id = info.table_id or 0
+    log.info(("NIT: network_id: %d table_id: 0x%02X"):format(network_id, table_id))
+    if info.crc32 then
+        log.info(("NIT: crc32: 0x%X"):format(info.crc32))
+    end
+end
+
+dump_psi_info["tdt"] = function(info)
+    log.info("TDT: present")
+end
+
+dump_psi_info["tot"] = function(info)
+    log.info("TOT: present")
+    if info.crc32 then
+        log.info(("TOT: crc32: 0x%X"):format(info.crc32))
+    end
+end
+
 function on_analyze(instance, data)
     if data.error then
         log.error(data.error)

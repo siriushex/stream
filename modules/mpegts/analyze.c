@@ -81,6 +81,10 @@ struct module_data_t
     mpegts_psi_t *cat;
     mpegts_psi_t *pmt;
     mpegts_psi_t *sdt;
+    mpegts_psi_t *nit;
+    mpegts_psi_t *tdt;
+
+    bool tdt_seen;
 
     int pmt_ready;
     int pmt_count;
@@ -102,6 +106,8 @@ static const char __pid[] = "pid";
 static const char __crc32[] = "crc32";
 static const char __pnr[] = "pnr";
 static const char __tsid[] = "tsid";
+static const char __network_id[] = "network_id";
+static const char __table_id[] = "table_id";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -271,6 +277,59 @@ static void on_cat(void *arg, mpegts_psi_t *psi)
         CAT_DESC_NEXT(psi, desc_pointer);
     }
     lua_setfield(lua, -2, __descriptors);
+
+    callback(mod);
+}
+
+/*
+ * oooooo   oooooo ooooo ooooooooooo
+ *  888      888   888   88  888  88
+ *  888      888   888       888
+ *  888      888   888       888
+ *  888ooooo  888 o888o     o888o
+ *
+ */
+
+static void on_nit(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+
+    const uint8_t table_id = psi->buffer[0];
+    if(table_id != 0x40 && table_id != 0x41)
+        return;
+
+    const uint32_t crc32 = PSI_GET_CRC32(psi);
+
+    // Проверяем CRC, чтобы не принимать поврежденные секции.
+    if(crc32 != PSI_CALC_CRC32(psi))
+    {
+        lua_newtable(lua);
+        lua_pushnumber(lua, psi->pid);
+        lua_setfield(lua, -2, __pid);
+        lua_pushstring(lua, "NIT checksum error");
+        lua_setfield(lua, -2, __err);
+        callback(mod);
+        return;
+    }
+
+    // Отсекаем повтор, если секция не менялась.
+    if(crc32 == psi->crc32)
+        return;
+    psi->crc32 = crc32;
+
+    const uint16_t network_id = (uint16_t)((psi->buffer[3] << 8) | psi->buffer[4]);
+
+    lua_newtable(lua);
+    lua_pushnumber(lua, psi->pid);
+    lua_setfield(lua, -2, __pid);
+    lua_pushstring(lua, "nit");
+    lua_setfield(lua, -2, __psi);
+    lua_pushnumber(lua, crc32);
+    lua_setfield(lua, -2, __crc32);
+    lua_pushnumber(lua, network_id);
+    lua_setfield(lua, -2, __network_id);
+    lua_pushnumber(lua, table_id);
+    lua_setfield(lua, -2, __table_id);
 
     callback(mod);
 }
@@ -538,6 +597,68 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
 }
 
 /*
+ * oooooooo8 ooooooooooo ooooooooooo
+ * 888         888    88 88  888  88
+ *  888oooooo  888        888
+ *         888 888        888
+ * o88oooo888 o888o      o888o
+ *
+ */
+
+static void on_tdt(void *arg, mpegts_psi_t *psi)
+{
+    module_data_t *mod = (module_data_t *)arg;
+
+    const uint8_t table_id = psi->buffer[0];
+    if(table_id != 0x70 && table_id != 0x73)
+        return;
+
+    if(table_id == 0x73)
+    {
+        const uint32_t crc32 = PSI_GET_CRC32(psi);
+        if(crc32 != PSI_CALC_CRC32(psi))
+        {
+            lua_newtable(lua);
+            lua_pushnumber(lua, psi->pid);
+            lua_setfield(lua, -2, __pid);
+            lua_pushstring(lua, "TOT checksum error");
+            lua_setfield(lua, -2, __err);
+            callback(mod);
+            return;
+        }
+        if(crc32 == psi->crc32)
+            return;
+        psi->crc32 = crc32;
+
+        lua_newtable(lua);
+        lua_pushnumber(lua, psi->pid);
+        lua_setfield(lua, -2, __pid);
+        lua_pushstring(lua, "tot");
+        lua_setfield(lua, -2, __psi);
+        lua_pushnumber(lua, crc32);
+        lua_setfield(lua, -2, __crc32);
+        lua_pushnumber(lua, table_id);
+        lua_setfield(lua, -2, __table_id);
+        callback(mod);
+        return;
+    }
+
+    // TDT не имеет CRC, поэтому логируем единожды.
+    if(mod->tdt_seen)
+        return;
+    mod->tdt_seen = true;
+
+    lua_newtable(lua);
+    lua_pushnumber(lua, psi->pid);
+    lua_setfield(lua, -2, __pid);
+    lua_pushstring(lua, "tdt");
+    lua_setfield(lua, -2, __psi);
+    lua_pushnumber(lua, table_id);
+    lua_setfield(lua, -2, __table_id);
+    callback(mod);
+}
+
+/*
  * ooooooooooo  oooooooo8
  * 88  888  88 888
  *     888      888oooooo
@@ -624,6 +745,12 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
                 break;
             case MPEGTS_PACKET_SDT:
                 mpegts_psi_mux(mod->sdt, ts, on_sdt, mod);
+                break;
+            case MPEGTS_PACKET_NIT:
+                mpegts_psi_mux(mod->nit, ts, on_nit, mod);
+                break;
+            case MPEGTS_PACKET_TDT:
+                mpegts_psi_mux(mod->tdt, ts, on_tdt, mod);
                 break;
             default:
                 break;
@@ -795,8 +922,10 @@ static void module_init(module_data_t *mod)
         module_stream_demux_set(mod, NULL, NULL);
         module_stream_demux_join_pid(mod, 0x00);
         module_stream_demux_join_pid(mod, 0x01);
+        module_stream_demux_join_pid(mod, 0x10);
         module_stream_demux_join_pid(mod, 0x11);
         module_stream_demux_join_pid(mod, 0x12);
+        module_stream_demux_join_pid(mod, 0x14);
     }
 
     // PAT
@@ -811,9 +940,17 @@ static void module_init(module_data_t *mod)
     mod->stream[0x11] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
     mod->stream[0x11]->type = MPEGTS_PACKET_SDT;
     mod->sdt = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x11);
+    // NIT
+    mod->stream[0x10] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
+    mod->stream[0x10]->type = MPEGTS_PACKET_NIT;
+    mod->nit = mpegts_psi_init(MPEGTS_PACKET_NIT, 0x10);
     // EIT
     mod->stream[0x12] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
     mod->stream[0x12]->type = MPEGTS_PACKET_EIT;
+    // TDT/TOT
+    mod->stream[0x14] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
+    mod->stream[0x14]->type = MPEGTS_PACKET_TDT;
+    mod->tdt = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x14);
     // PMT
     mod->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, MAX_PID);
     // NULL
@@ -843,6 +980,8 @@ static void module_destroy(module_data_t *mod)
     mpegts_psi_destroy(mod->cat);
     mpegts_psi_destroy(mod->sdt);
     mpegts_psi_destroy(mod->pmt);
+    mpegts_psi_destroy(mod->nit);
+    mpegts_psi_destroy(mod->tdt);
 
     asc_timer_destroy(mod->check_stat);
 
