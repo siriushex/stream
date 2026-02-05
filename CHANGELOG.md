@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI: show warning when MPTS services are missing PNR values.
+- Tests:
+  - Not run (UI-only warning).
+### 2026-02-05
+- Changes:
   - Validate MPTS service_type_id (1..255) and warn on invalid values.
   - UI: clarify service_type_id range in MPTS service list.
   - Documented service_type_id limits in MPTS design notes.

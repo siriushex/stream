@@ -699,6 +699,7 @@ const elements = {
   mptsPassWarning: $('#mpts-pass-warning'),
   mptsAutoremapWarning: $('#mpts-autoremap-warning'),
   mptsPnrWarning: $('#mpts-pnr-warning'),
+  mptsPnrMissing: $('#mpts-pnr-missing'),
   mptsDupInputWarning: $('#mpts-dup-input-warning'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
@@ -5094,9 +5095,13 @@ function updateMptsPnrWarning() {
   if (!elements.mptsPnrWarning) return;
   const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
   const counts = new Map();
+  let missingCount = 0;
   (state.mptsServices || []).forEach((service) => {
     const value = Number(service.pnr);
-    if (!Number.isFinite(value) || value <= 0) return;
+    if (!Number.isFinite(value) || value <= 0) {
+      missingCount += 1;
+      return;
+    }
     counts.set(value, (counts.get(value) || 0) + 1);
   });
   const duplicates = Array.from(counts.entries())
@@ -5106,10 +5111,19 @@ function updateMptsPnrWarning() {
   if (!mptsEnabled || duplicates.length === 0) {
     elements.mptsPnrWarning.classList.add('is-hidden');
     elements.mptsPnrWarning.textContent = '';
-    return;
+  } else {
+    elements.mptsPnrWarning.textContent = `PNR duplicates: ${duplicates.join(', ')}`;
+    elements.mptsPnrWarning.classList.remove('is-hidden');
   }
-  elements.mptsPnrWarning.textContent = `PNR duplicates: ${duplicates.join(', ')}`;
-  elements.mptsPnrWarning.classList.remove('is-hidden');
+  if (elements.mptsPnrMissing) {
+    if (!mptsEnabled || missingCount === 0) {
+      elements.mptsPnrMissing.classList.add('is-hidden');
+      elements.mptsPnrMissing.textContent = '';
+    } else {
+      elements.mptsPnrMissing.textContent = `PNR missing: ${missingCount}. Для MPTS лучше задавать PNR явно.`;
+      elements.mptsPnrMissing.classList.remove('is-hidden');
+    }
+  }
 }
 
 function updateMptsInputWarning() {
