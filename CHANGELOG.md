@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Warn when MPTS input PAT contains multiple programs and PNR is not set.
+- Tests:
+  - Not run (log change).
+### 2026-02-05
+- Changes:
   - UI: show warning when MPTS services are missing PNR values.
 - Tests:
   - Not run (UI-only warning).

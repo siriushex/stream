@@ -1066,8 +1066,8 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
 
     if(!svc->has_pnr && program_count > 1)
     {
-        asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d)"),
-                        program_count, selected_pnr);
+        asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "
+            "Рекомендуется явно задать pnr"), program_count, selected_pnr);
     }
 
     if(svc->has_pnr && selected_pnr != svc->pnr_cfg)
