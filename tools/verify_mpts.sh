@@ -6,6 +6,10 @@ DURATION_SEC="${2:-5}"
 EXPECT_PNRS="${EXPECT_PNRS:-}"
 EXPECT_PMT_PNRS="${EXPECT_PMT_PNRS:-}"
 EXPECT_SERVICE_COUNT="${EXPECT_SERVICE_COUNT:-}"
+EXPECT_PMT_STREAMS="${EXPECT_PMT_STREAMS:-}"
+EXPECT_PMT_VIDEO="${EXPECT_PMT_VIDEO:-}"
+EXPECT_PMT_AUDIO="${EXPECT_PMT_AUDIO:-}"
+EXPECT_PMT_DATA="${EXPECT_PMT_DATA:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
 EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
 EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
@@ -81,6 +85,70 @@ if [[ -n "$EXPECT_SERVICE_COUNT" ]]; then
     echo "SDT service count mismatch (expected ${EXPECT_SERVICE_COUNT}, got ${sdt_count})"
     exit 1
   fi
+fi
+
+if [[ -n "$EXPECT_PMT_STREAMS" ]]; then
+  IFS=',' read -r -a PMT_STREAM_LIST <<< "$EXPECT_PMT_STREAMS"
+  for entry in "${PMT_STREAM_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "PMT: summary: pnr=${sid} .* streams=${value}" "$LOG_FILE"; then
+      echo "PMT streams mismatch for pnr ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_VIDEO" ]]; then
+  IFS=',' read -r -a PMT_VIDEO_LIST <<< "$EXPECT_PMT_VIDEO"
+  for entry in "${PMT_VIDEO_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "PMT: summary: pnr=${sid} .* video=${value}" "$LOG_FILE"; then
+      echo "PMT video mismatch for pnr ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_AUDIO" ]]; then
+  IFS=',' read -r -a PMT_AUDIO_LIST <<< "$EXPECT_PMT_AUDIO"
+  for entry in "${PMT_AUDIO_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "PMT: summary: pnr=${sid} .* audio=${value}" "$LOG_FILE"; then
+      echo "PMT audio mismatch for pnr ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_DATA" ]]; then
+  IFS=',' read -r -a PMT_DATA_LIST <<< "$EXPECT_PMT_DATA"
+  for entry in "${PMT_DATA_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "PMT: summary: pnr=${sid} .* data=${value}" "$LOG_FILE"; then
+      echo "PMT data mismatch for pnr ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
 fi
 
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then
