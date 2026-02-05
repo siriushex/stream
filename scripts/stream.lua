@@ -2170,7 +2170,8 @@ function validate_stream_config(cfg, opts)
         end
     end
 
-    local backup_type = normalize_backup_type(cfg.backup_type, #inputs > 1)
+    local input_count = (type(inputs) == "table") and #inputs or 0
+    local backup_type = normalize_backup_type(cfg.backup_type, input_count > 1)
     local function check_nonneg(value, label)
         if value ~= nil and value < 0 then
             return nil, label .. " must be >= 0"

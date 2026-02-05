@@ -1077,6 +1077,20 @@ static void on_si_timer(void *arg)
 
     rebuild_tables(mod);
 
+    int ready_services = 0;
+    asc_list_for(mod->services)
+    {
+        mpts_service_t *svc = (mpts_service_t *)asc_list_data(mod->services);
+        if(svc->ready && svc->mapping_ready && svc->pnr_out != 0 && svc->pmt_pid_out != 0)
+            ready_services++;
+    }
+    if(ready_services == 0)
+    {
+        // Если все сервисы отклонены (например, spts_only/strict_pnr), не шлём пустые PSI.
+        // Это предотвращает появление "пустого" PAT и делает ошибку очевидной.
+        return;
+    }
+
     if(mod->pat_out)
         mpegts_psi_demux(mod->pat_out, mpts_send_psi, mod);
     if(mod->cat_out && !mod->pass_cat)
