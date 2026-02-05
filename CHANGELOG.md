@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Improved disable_auto_remap PID conflict logs with PMT/PNR context.
+- Tests:
+  - Not run (log detail change).
+### 2026-02-05
+- Changes:
   - Warn when PAT has multiple programs and PNR is not specified (first program selected).
 - Tests:
   - Not run (runtime log change).
