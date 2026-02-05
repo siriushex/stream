@@ -16180,6 +16180,16 @@ function buildTypingNode() {
   return wrap;
 }
 
+function buildAiErrorNode(message, detail) {
+  const wrap = createEl('div');
+  wrap.appendChild(createEl('div', '', message || 'AI error'));
+  const extra = (detail || '').trim();
+  if (extra) {
+    wrap.appendChild(createEl('div', 'form-note', extra));
+  }
+  return wrap;
+}
+
 function getAiHelpHints() {
   const root = document.getElementById('help-bubbles');
   if (root) {
@@ -16451,12 +16461,14 @@ function startAiChatPolling(jobId) {
           state.aiChatPendingEl.remove();
           state.aiChatPendingEl = null;
         }
-        appendAiChatMessage('system', `AI error: ${job.error || 'unknown'}`);
+        const detail = job.error_detail && job.error_detail !== job.error ? job.error_detail : '';
+        appendAiChatMessage('system', buildAiErrorNode(`AI error: ${job.error || 'unknown'}`, detail));
         setAiChatStatus('');
       }
       clearAiChatPolling();
     } catch (err) {
-      appendAiChatMessage('system', `AI polling error: ${formatNetworkError(err) || err.message}`);
+      const msg = `AI polling error: ${formatNetworkError(err) || err.message}`;
+      appendAiChatMessage('system', buildAiErrorNode(msg));
       clearAiChatPolling();
     }
   }, 1500);
@@ -16503,7 +16515,8 @@ async function sendAiChatMessage() {
       state.aiChatPendingEl.remove();
       state.aiChatPendingEl = null;
     }
-    appendAiChatMessage('system', `AI request failed: ${formatNetworkError(err) || err.message}`);
+    const msg = `AI request failed: ${formatNetworkError(err) || err.message}`;
+    appendAiChatMessage('system', buildAiErrorNode(msg));
     setAiChatStatus('');
     clearAiChatPolling();
   }
