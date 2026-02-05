@@ -428,6 +428,19 @@ local function apply_config_change(server, client, request, opts)
         end
     end
 
+    local primary_exported = false
+    local function rollback_primary_config()
+        if not primary_exported then
+            return
+        end
+        if config and config.restore_primary_config_from_snapshot and lkg_path then
+            local ok, err = config.restore_primary_config_from_snapshot(lkg_path)
+            if not ok then
+                log.error("[api] primary config rollback failed: " .. tostring(err))
+            end
+        end
+    end
+
     local apply_result = nil
     if type(opts.apply) == "function" then
         local ok, res = pcall(opts.apply)
@@ -446,6 +459,26 @@ local function apply_config_change(server, client, request, opts)
         apply_result = res
     end
 
+    if config and config.primary_config_is_json and config.primary_config_is_json()
+        and config.export_primary_config then
+        local ok, err = config.export_primary_config()
+        if not ok then
+            if revision_id > 0 then
+                config.update_revision(revision_id, {
+                    status = "BAD",
+                    error_text = "config export failed: " .. tostring(err),
+                })
+            end
+            if lkg_path then
+                config.restore_snapshot(lkg_path)
+                rollback_primary_config()
+                reload_runtime(true)
+            end
+            return error_response(server, client, 500, "config export failed: " .. tostring(err))
+        end
+        primary_exported = true
+    end
+
     local snapshot_path = nil
     if revision_id > 0 and config and config.build_snapshot_path then
         snapshot_path = config.build_snapshot_path(revision_id)
@@ -458,6 +491,7 @@ local function apply_config_change(server, client, request, opts)
             })
             if lkg_path then
                 config.restore_snapshot(lkg_path)
+                rollback_primary_config()
                 reload_runtime(true)
             end
             return error_response(server, client, 500, "snapshot failed: " .. tostring(snap_err))
@@ -496,6 +530,7 @@ local function apply_config_change(server, client, request, opts)
         end
         if lkg_path then
             config.restore_snapshot(lkg_path)
+            rollback_primary_config()
             reload_runtime(true)
         end
         return json_response(server, client, 409, {
