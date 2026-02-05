@@ -2820,9 +2820,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(streams, cfg)
         end
         payload.make_stream = streams
@@ -2834,9 +2832,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(adapters, cfg)
         end
         payload.dvb_tune = adapters

@@ -12,6 +12,19 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Export: принудительно синхронизирует `enable` для streams/adapters с текущим состоянием БД.
+- Tests:
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
+  - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
+  - Auth (port 9060): `POST /api/v1/auth/login`
+  - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
+  - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
+  - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
+  - Export (port 9060): `GET /api/v1/export?include_users=0`
+  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+### 2026-02-05
+- Changes:
   - Streams/Adapters: при сохранении синхронизируется `enable` в config_json, чтобы disable не терялся в JSON и после рестарта.
 - Tests:
   - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
