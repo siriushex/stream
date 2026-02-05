@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added PAT PMT PID assertions to MPTS verify and CI.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Added PMT PCR-in-ES summary logging and CI assertions.
 - Tests:
   - Not run (CI script update).
