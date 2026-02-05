@@ -706,9 +706,11 @@ function main()
     local ffprobe_path = tool_info and tool_info.ffprobe_path_resolved or "ffprobe"
     local ffprobe_source = tool_info and tool_info.ffprobe_source or "path"
     local ffprobe_version = tool_info and tool_info.ffprobe_version or "unknown"
+    local ssl_flag = (astra and astra.features and astra.features.ssl) and "on" or "off"
     log.info(string.format(
-        "[startup] edition=%s tools: ffmpeg=%s (%s, %s) ffprobe=%s (%s, %s)",
+        "[startup] edition=%s ssl=%s tools: ffmpeg=%s (%s, %s) ffprobe=%s (%s, %s)",
         tostring(edition),
+        tostring(ssl_flag),
         tostring(ffmpeg_path),
         tostring(ffmpeg_source),
         tostring(ffmpeg_version),
