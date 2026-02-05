@@ -11437,7 +11437,18 @@ function updateTiles() {
             ? `Restarting: ${alertMessage}`
             : 'Transcode: RESTARTING';
         } else {
-          metaEl.textContent = `Transcode: ${transcodeState}`;
+          let suffix = '';
+          if (transcode.switch_warmup) {
+            const warm = transcode.switch_warmup;
+            if (warm.done && !warm.ok) {
+              suffix = ' (warmup failed)';
+            } else if (warm.ready) {
+              suffix = ' (warmup ready)';
+            } else {
+              suffix = ' (warmup running)';
+            }
+          }
+          metaEl.textContent = `Transcode: ${transcodeState}${suffix}`;
         }
       } else {
         metaEl.textContent = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
