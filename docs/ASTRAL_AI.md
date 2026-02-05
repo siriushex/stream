@@ -153,6 +153,7 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
 - `GET /api/v1/ai/logs?range=24h&level=ERROR&stream_id=...&limit=500`
 - `GET /api/v1/ai/metrics?range=24h&scope=global|stream&id=<stream_id>&metric=bitrate_kbps`
 - `GET /api/v1/ai/summary?range=24h` — возвращает последнюю агрегированную “сводку” (без AI).
+Примечание: AI‑summary доступен через `/api/v1/ai/summary?ai=1` или чат/Telegram; UI его не показывает (минимальная нагрузка).
 
 ### Telegram summary
 - Планировщик отправляет ежедневную/еженедельную/ежемесячную сводку.
