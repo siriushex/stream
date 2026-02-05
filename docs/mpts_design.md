@@ -92,7 +92,7 @@
 - PAT: все program_number → PMT PID
 - PMT: корректные PCR_PID и ES PID после ремапа
 - SDT (Actual): service_descriptor (service_type/provider/name), free_CA_mode
-- NIT (Actual): network_name + service_list + delivery descriptor (DVB‑C; другие delivery пока не применяются)
+- NIT (Actual): network_name + service_list + delivery descriptor (DVB‑C/DVB‑T/DVB‑S)
 - LCN: если задан `mpts_services[].lcn`, добавляется logical_channel_descriptor (0x83) в NIT
 - TDT/TOT: UTC время; TOT с local_time_offset_descriptor при задании country/utc_offset
 - CAT: генерируется пустой (без CA descriptors) либо pass‑through при `pass_cat`
@@ -177,7 +177,7 @@ python3 tools/mpts_pat_scan.py --addr 239.1.1.1 --port 1234 --duration 3 \\
 - [x] MPTS мультиплексирует 2+ сервиса в один TS (PAT/PMT/SDT/NIT/TDT/TOT).
 - [x] PID/PNR уникальны, auto-remap по умолчанию.
 - [x] Настройки network_id/network_name/tsid/onid/service/provider применяются.
-- [x] DVB-C delivery (frequency/symbolrate/modulation/fec) в NIT.
+- [x] Delivery descriptor в NIT: DVB-C/DVB-T/DVB-S (минимально валидные поля).
 - [x] CBR с null stuffing (target_bitrate).
 - [x] UI отражает доступные параметры и предупреждает о конфликтных режимах.
 - [x] Polling/обновления статусов не сбрасывают состояние MPTS.

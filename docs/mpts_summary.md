@@ -15,7 +15,7 @@
 - Auto-probe сервисов из UDP/RTP входа при пустом `mpts_services` (`advanced.auto_probe`).
 
 ## Ограничения
-- Delivery поддерживается только DVB‑C.
+- Delivery поддерживается для DVB‑C/DVB‑T/DVB‑S (NIT delivery descriptor).
 - `advanced.si_interval_ms` < 50 игнорируется.
 - `advanced.target_bitrate <= 0` отключает CBR (игнорируется).
 - `mpts_config.nit.lcn_version` действует как alias для `advanced.nit_version` (если он не задан).

@@ -10,6 +10,15 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-06
+- Changes:
+  - MPTS: NIT delivery descriptor support for DVB-T (0x5A) and DVB-S/S2 (0x43).
+  - Analyzer: decode DVB-T/S delivery descriptors in NIT (for logs/CI checks).
+  - CI: add smoke coverage for DVB-T and DVB-S NIT delivery.
+  - Docs: update MPTS design/summary for delivery support.
+- Tests:
+  - `contrib/ci/smoke_mpts_dvbt.sh`
+  - `contrib/ci/smoke_mpts_dvbs.sh`
 ### 2026-02-05
 - Changes:
   - AI: scrub ASCII control bytes and sanitize UTF-8 in OpenAI request bodies (prevents OpenAI "Invalid body: failed to parse JSON value" 400s).

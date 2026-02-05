@@ -1,0 +1,65 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_test",
+      "name": "MPTS DVB-S Test",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12345",
+        "udp://127.0.0.1:12347"
+      ],
+      "mpts_services": [
+        {
+          "input": "udp://127.0.0.1:12345",
+          "pnr": 101,
+          "service_name": "MPTS Test 1",
+          "service_provider": "Astral",
+          "service_type_id": 1,
+          "lcn": 101
+        },
+        {
+          "input": "udp://127.0.0.1:12347",
+          "pnr": 102,
+          "service_name": "MPTS Test 2",
+          "service_provider": "Astral",
+          "service_type_id": 1,
+          "lcn": 102
+        }
+      ],
+      "output": [
+        "udp://127.0.0.1:12346"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "codepage": "utf-8",
+          "provider_name": "Astral",
+          "tsid": 1,
+          "onid": 1,
+          "network_id": 1,
+          "network_name": "Astral",
+          "country": "RUS",
+          "utc_offset": 3
+        },
+        "nit": {
+          "delivery": "dvb-s",
+          "frequency": 11449000,
+          "symbolrate": 27500,
+          "modulation": "8psk",
+          "fec": "3/4",
+          "orbital_position": "19.2E",
+          "polarization": "H",
+          "rolloff": "0.35",
+          "network_search": "2:1,3:1"
+        },
+        "advanced": {
+          "si_interval_ms": 500,
+          "target_bitrate": 50000000
+        }
+      }
+    }
+  ]
+}
+

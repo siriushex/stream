@@ -151,6 +151,31 @@ static const char *modulation_name(uint8_t code)
     }
 }
 
+static const char *sat_modulation_name(uint8_t code)
+{
+    // satellite_delivery_system_descriptor modulation_type (2 bits)
+    switch(code & 0x03)
+    {
+        case 0x00: return "auto";
+        case 0x01: return "qpsk";
+        case 0x02: return "8psk";
+        case 0x03: return "16qam";
+        default: return "unknown";
+    }
+}
+
+static const char *terr_constellation_name(uint8_t code)
+{
+    // terrestrial_delivery_system_descriptor constellation (2 bits)
+    switch(code & 0x03)
+    {
+        case 0x00: return "qpsk";
+        case 0x01: return "16qam";
+        case 0x02: return "64qam";
+        default: return "unknown";
+    }
+}
+
 static const char *fec_name(uint8_t code)
 {
     switch(code)
@@ -492,6 +517,55 @@ static void on_nit(void *arg, mpegts_psi_t *psi)
                         lua_setfield(lua, -2, __fec_inner);
                         pos = desc_end;
                         break;
+                    }
+                    if(tag == 0x43 && len >= 11)
+                    {
+                        // satellite_delivery_system_descriptor
+                        const uint8_t *desc = &buf[pos];
+                        const uint32_t freq_digits = bcd_to_uint(desc, 8);
+                        const uint32_t sr_digits = bcd_to_uint(desc + 7, 7);
+                        const uint32_t frequency_khz = freq_digits * 10;
+                        const uint32_t symbolrate_ksps = sr_digits / 10;
+                        const uint8_t modulation = (uint8_t)(desc[6] & 0x03);
+                        const uint8_t fec = (uint8_t)(desc[10] & 0x0F);
+
+                        lua_pushstring(lua, "satellite");
+                        lua_setfield(lua, -2, __delivery);
+                        lua_pushnumber(lua, tsid);
+                        lua_setfield(lua, -2, __tsid);
+                        lua_pushnumber(lua, onid);
+                        lua_setfield(lua, -2, __onid);
+                        lua_pushnumber(lua, frequency_khz);
+                        lua_setfield(lua, -2, __frequency_khz);
+                        lua_pushnumber(lua, symbolrate_ksps);
+                        lua_setfield(lua, -2, __symbolrate_ksps);
+                        lua_pushstring(lua, sat_modulation_name(modulation));
+                        lua_setfield(lua, -2, __modulation);
+                        lua_pushstring(lua, fec_name(fec));
+                        lua_setfield(lua, -2, __fec_inner);
+                    }
+                    if(tag == 0x5A && len >= 11)
+                    {
+                        // terrestrial_delivery_system_descriptor
+                        const uint8_t *desc = &buf[pos];
+                        const uint32_t freq_10hz =
+                            ((uint32_t)desc[0] << 24) |
+                            ((uint32_t)desc[1] << 16) |
+                            ((uint32_t)desc[2] << 8) |
+                            (uint32_t)desc[3];
+                        const uint32_t frequency_khz = freq_10hz / 100;
+                        const uint8_t constellation = (uint8_t)((desc[5] >> 6) & 0x03);
+
+                        lua_pushstring(lua, "terrestrial");
+                        lua_setfield(lua, -2, __delivery);
+                        lua_pushnumber(lua, tsid);
+                        lua_setfield(lua, -2, __tsid);
+                        lua_pushnumber(lua, onid);
+                        lua_setfield(lua, -2, __onid);
+                        lua_pushnumber(lua, frequency_khz);
+                        lua_setfield(lua, -2, __frequency_khz);
+                        lua_pushstring(lua, terr_constellation_name(constellation));
+                        lua_setfield(lua, -2, __modulation);
                     }
                     if(tag == 0x41 && len >= 3)
                     {
