@@ -63,6 +63,52 @@ local function normalize_proxy(value)
     return value
 end
 
+local function normalize_api_base(value)
+    if type(value) ~= "string" then
+        return value
+    end
+    local out = value:gsub("^%s+", ""):gsub("%s+$", "")
+    if out:sub(-1) == "/" then
+        out = out:sub(1, -2)
+    end
+    if out:match("/v1$") then
+        out = out:sub(1, -4)
+    end
+    return out
+end
+
+local function extract_error_message(body)
+    if type(body) ~= "string" or body == "" then
+        return nil
+    end
+    local ok, decoded = pcall(json.decode, body)
+    if not ok or type(decoded) ~= "table" then
+        return nil
+    end
+    local err = decoded.error
+    if type(err) ~= "table" then
+        return nil
+    end
+    if err.message and err.message ~= "" then
+        return tostring(err.message)
+    end
+    if err.code and err.code ~= "" then
+        return tostring(err.code)
+    end
+    if err.type and err.type ~= "" then
+        return tostring(err.type)
+    end
+    return nil
+end
+
+local function detect_image_error(body)
+    local msg = ""
+    if type(body) == "string" then
+        msg = body:lower()
+    end
+    return (msg:find("image") or msg:find("input_image") or msg:find("vision") or msg:find("data url") or msg:find("data_url")) ~= nil
+end
+
 local function resolve_proxy_list()
     local proxies = {}
     local primary = normalize_proxy(os.getenv("LLM_PROXY_PRIMARY")) or normalize_proxy(os.getenv("ASTRAL_LLM_PROXY_PRIMARY"))
@@ -149,6 +195,39 @@ local function detect_model_not_found(code, body)
     end
     return false
 end
+
+local function strip_input_images(input)
+    if type(input) ~= "table" then
+        return nil
+    end
+    local changed = false
+    local out = {}
+    for _, msg in ipairs(input) do
+        if type(msg) == "table" and type(msg.content) == "table" then
+            local content = {}
+            for _, chunk in ipairs(msg.content) do
+                if type(chunk) == "table" and chunk.type == "input_image" then
+                    changed = true
+                else
+                    table.insert(content, chunk)
+                end
+            end
+            local new_msg = {}
+            for k, v in pairs(msg) do
+                new_msg[k] = v
+            end
+            new_msg.content = content
+            table.insert(out, new_msg)
+        else
+            table.insert(out, msg)
+        end
+    end
+    if not changed then
+        return nil
+    end
+    return out
+end
+
 local function extract_output_json(response)
     if type(response) ~= "table" then
         return nil, "invalid response"
@@ -186,13 +265,13 @@ end
 function ai_openai_client.resolve_api_base()
     local base = setting_string("ai_api_base", "")
     if base ~= "" then
-        return base
+        return normalize_api_base(base)
     end
     base = os.getenv("ASTRAL_OPENAI_API_BASE")
     if base == nil or base == "" then
         base = "https://api.openai.com"
     end
-    return base
+    return normalize_api_base(base)
 end
 
 function ai_openai_client.has_api_key()
@@ -251,6 +330,7 @@ function ai_openai_client.request_json_schema(opts, callback)
         return nil, "api key missing"
     end
     local api_base = opts.api_base or ai_openai_client.resolve_api_base()
+    api_base = normalize_api_base(api_base)
     local url, url_err = build_url(api_base)
     if not url then
         return nil, url_err
@@ -277,12 +357,18 @@ function ai_openai_client.request_json_schema(opts, callback)
         end
     end
     local model_index = 1
+    local input_no_images = strip_input_images(input)
+    local stripped_images = false
 
     local function perform_request()
         attempts = attempts + 1
+        local payload_input = input
+        if stripped_images and input_no_images then
+            payload_input = input_no_images
+        end
         local payload = {
             model = models[model_index],
-            input = input,
+            input = payload_input,
             max_output_tokens = opts.max_output_tokens or 512,
             temperature = opts.temperature or 0,
             store = opts.store == true,
@@ -306,8 +392,13 @@ function ai_openai_client.request_json_schema(opts, callback)
                     code = response_code,
                     rate_limits = {},
                 }
+                local err_detail = extract_error_message(response_body or "")
                 if detect_model_not_found(response_code, response_body) and model_index < #models then
                     model_index = model_index + 1
+                    return perform_request()
+                end
+                if response_code == 400 and not stripped_images and input_no_images and detect_image_error(err_detail or response_body or "") then
+                    stripped_images = true
                     return perform_request()
                 end
                 if not ok then
@@ -319,7 +410,11 @@ function ai_openai_client.request_json_schema(opts, callback)
                         schedule_retry(delay)
                         return
                     end
-                    return callback(false, err_text or "request failed", meta)
+                    local msg = err_text or "request failed"
+                    if err_detail and err_detail ~= "" then
+                        msg = msg .. ": " .. err_detail
+                    end
+                    return callback(false, msg, meta)
                 end
                 local decoded = json.decode(response_body or "")
                 if type(decoded) ~= "table" then
@@ -437,12 +532,18 @@ function ai_openai_client.request_json_schema(opts, callback)
                     code = response and response.code or nil,
                     rate_limits = parse_rate_limits(normalize_headers(response and response.headers or {})),
                 }
+                local err_detail = extract_error_message(response and response.content or "")
                 if not response or not response.code then
                     return callback(false, "no response", meta)
                 end
                 if response.code < 200 or response.code >= 300 then
                     if detect_model_not_found(response.code, response.content or "") and model_index < #models then
                         model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
+                    if response.code == 400 and not stripped_images and input_no_images and detect_image_error(err_detail or response.content or "") then
+                        stripped_images = true
                         perform_request()
                         return
                     end
@@ -454,7 +555,11 @@ function ai_openai_client.request_json_schema(opts, callback)
                         schedule_retry(delay)
                         return
                     end
-                    return callback(false, "http " .. tostring(response.code), meta)
+                    local msg = "http " .. tostring(response.code)
+                    if err_detail and err_detail ~= "" then
+                        msg = msg .. ": " .. err_detail
+                    end
+                    return callback(false, msg, meta)
                 end
                 if not response.content then
                     return callback(false, "empty response", meta)
