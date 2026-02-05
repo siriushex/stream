@@ -874,8 +874,10 @@ function main()
     local m3u_headers = nil
     if hls_m3u_headers then
         m3u_headers = {
-            "Cache-Control: no-cache",
+            -- HLS playlists should not be cached by proxies/browsers.
+            "Cache-Control: no-cache, no-store, must-revalidate",
             "Pragma: no-cache",
+            "Expires: 0",
         }
     end
 
