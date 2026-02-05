@@ -133,6 +133,11 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
   2. `gpt-4.1`
 - Для UI это означает, что можно оставить поле модели пустым, и система выберет безопасный дефолт.
 
+## Диаграммы и графики (AI)
+- Если запрос требует графики/диаграммы, AI может вернуть поле `charts` (line/bar + series).
+- Рендеринг **детерминированный**: UI рисует графики локально (spec), либо делает PNG (image).
+- Используется та же модель, что в `ai_model` (отдельной модели не требуется).
+
 ### API
 - `GET /api/v1/ai/logs?range=24h&level=ERROR&stream_id=...&limit=500`
 - `GET /api/v1/ai/metrics?range=24h&scope=global|stream&id=<stream_id>&metric=bitrate_kbps`

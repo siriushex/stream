@@ -96,6 +96,33 @@ local function build_json_schema()
                         },
                     },
                 },
+                charts = {
+                    type = "array",
+                    items = {
+                        type = "object",
+                        additionalProperties = false,
+                        required = { "series" },
+                        properties = {
+                            title = { type = { "string", "null" } },
+                            type = { type = { "string", "null" } },
+                            series = {
+                                type = "array",
+                                items = {
+                                    type = "object",
+                                    additionalProperties = false,
+                                    required = { "values" },
+                                    properties = {
+                                        name = { type = { "string", "null" } },
+                                        values = {
+                                            type = "array",
+                                            items = { type = "number" },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
             },
         },
     }
@@ -118,6 +145,33 @@ local function build_summary_schema()
                 suggestions = {
                     type = "array",
                     items = { type = "string" },
+                },
+                charts = {
+                    type = "array",
+                    items = {
+                        type = "object",
+                        additionalProperties = false,
+                        required = { "series" },
+                        properties = {
+                            title = { type = { "string", "null" } },
+                            type = { type = { "string", "null" } },
+                            series = {
+                                type = "array",
+                                items = {
+                                    type = "object",
+                                    additionalProperties = false,
+                                    required = { "values" },
+                                    properties = {
+                                        name = { type = { "string", "null" } },
+                                        values = {
+                                            type = "array",
+                                            items = { type = "number" },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -323,6 +377,7 @@ build_prompt_text = function(prompt, context)
     table.insert(parts, "Do not include markdown or extra text.")
     table.insert(parts, "Allowed ops: set_setting, set_stream_field, set_adapter_field, enable_stream, disable_stream, enable_adapter, disable_adapter, rename_stream, rename_adapter.")
     table.insert(parts, "Never use destructive ops (delete/remove/replace-all).")
+    table.insert(parts, "If asked for charts, include a 'charts' array with line/bar series values.")
     if context then
         table.insert(parts, "Context:")
         table.insert(parts, json.encode(context))
@@ -346,6 +401,24 @@ local function validate_plan_output(plan)
     end
     if type(plan.warnings) ~= "table" then
         return nil, "plan.warnings must be array"
+    end
+    if plan.charts ~= nil then
+        if type(plan.charts) ~= "table" then
+            return nil, "plan.charts must be array"
+        end
+        for cidx, chart in ipairs(plan.charts) do
+            if type(chart) ~= "table" then
+                return nil, "plan.charts[" .. cidx .. "] must be object"
+            end
+            if chart.series == nil or type(chart.series) ~= "table" then
+                return nil, "plan.charts[" .. cidx .. "].series required"
+            end
+            for sidx, series in ipairs(chart.series) do
+                if type(series) ~= "table" or type(series.values) ~= "table" then
+                    return nil, "plan.charts[" .. cidx .. "].series[" .. sidx .. "] values required"
+                end
+            end
+        end
     end
     for idx, item in ipairs(plan.ops) do
         if type(item) ~= "table" then
@@ -390,6 +463,24 @@ local function validate_summary_output(summary)
     end
     if type(summary.suggestions) ~= "table" then
         return nil, "summary.suggestions must be array"
+    end
+    if summary.charts ~= nil then
+        if type(summary.charts) ~= "table" then
+            return nil, "summary.charts must be array"
+        end
+        for cidx, chart in ipairs(summary.charts) do
+            if type(chart) ~= "table" then
+                return nil, "summary.charts[" .. cidx .. "] must be object"
+            end
+            if chart.series == nil or type(chart.series) ~= "table" then
+                return nil, "summary.charts[" .. cidx .. "].series required"
+            end
+            for sidx, series in ipairs(chart.series) do
+                if type(series) ~= "table" or type(series.values) ~= "table" then
+                    return nil, "summary.charts[" .. cidx .. "].series[" .. sidx .. "] values required"
+                end
+            end
+        end
     end
     for idx, item in ipairs(summary.top_issues) do
         if type(item) ~= "string" then
