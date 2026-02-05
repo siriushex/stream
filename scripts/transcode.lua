@@ -264,6 +264,121 @@ local function check_nvidia_support()
     return false, "nvidia device not found"
 end
 
+local function parse_nvidia_smi_output(raw)
+    if not raw or raw == "" then
+        return nil
+    end
+    local metrics = {}
+    for line in tostring(raw):gmatch("[^\r\n]+") do
+        local idx, util, mem_used, mem_total = line:match("^%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*,%s*(%d+)%s*$")
+        if idx then
+            table.insert(metrics, {
+                index = tonumber(idx),
+                util = tonumber(util) or 0,
+                mem_used = tonumber(mem_used) or 0,
+                mem_total = tonumber(mem_total) or 0,
+            })
+        end
+    end
+    if #metrics == 0 then
+        return nil
+    end
+    return metrics
+end
+
+local function query_nvidia_gpus()
+    local cmd = "nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total " ..
+        "--format=csv,noheader,nounits 2>/dev/null"
+    local ok, handle = pcall(io.popen, cmd)
+    if not ok or not handle then
+        return nil, "nvidia-smi not available"
+    end
+    local output = handle:read("*a")
+    handle:close()
+    local metrics = parse_nvidia_smi_output(output)
+    if not metrics then
+        return nil, "no gpu metrics"
+    end
+    return metrics, nil
+end
+
+local function select_gpu_device(tc, metrics)
+    if not tc then
+        return nil
+    end
+    local raw = tc.gpu_device or tc.device_id or tc.nvidia_device
+    if raw ~= nil and tostring(raw) ~= "" then
+        local text = tostring(raw)
+        if text == "auto" or text == "AUTO" then
+            -- auto select below
+        else
+            local id = tonumber(text)
+            if id ~= nil then
+                return id
+            end
+        end
+    end
+    if tc.gpu_auto ~= true and tc.device_id ~= "auto" and tc.gpu_device ~= "auto" and tc.nvidia_device ~= "auto" then
+        return nil
+    end
+    if not metrics then
+        return nil
+    end
+    local best = nil
+    local best_score = nil
+    for _, gpu in ipairs(metrics) do
+        local score = (tonumber(gpu.util) or 0) * 100000 + (tonumber(gpu.mem_used) or 0)
+        if best_score == nil or score < best_score then
+            best_score = score
+            best = gpu
+        end
+    end
+    return best and best.index or nil
+end
+
+local function check_gpu_overload(tc, metrics, gpu_id)
+    if not tc or not metrics then
+        return nil
+    end
+    local util_limit = tonumber(tc.gpu_util_limit or tc.nvidia_util_limit)
+    local mem_limit = tonumber(tc.gpu_mem_limit_mb or tc.nvidia_mem_limit_mb)
+    if (not util_limit or util_limit <= 0) and (not mem_limit or mem_limit <= 0) then
+        return nil
+    end
+    local selected = nil
+    if gpu_id ~= nil then
+        for _, gpu in ipairs(metrics) do
+            if gpu.index == gpu_id then
+                selected = gpu
+                break
+            end
+        end
+    end
+    if not selected then
+        selected = metrics[1]
+    end
+    if not selected then
+        return nil
+    end
+    local over = false
+    local reason = {}
+    if util_limit and util_limit > 0 and (selected.util or 0) >= util_limit then
+        over = true
+        reason.util = selected.util
+        reason.util_limit = util_limit
+    end
+    if mem_limit and mem_limit > 0 and (selected.mem_used or 0) >= mem_limit then
+        over = true
+        reason.mem_used = selected.mem_used
+        reason.mem_limit = mem_limit
+    end
+    if over then
+        reason.gpu = selected.index
+        return reason
+    end
+    return nil
+end
+
 local function build_ffmpeg_args(cfg, opts)
     local tc = cfg.transcode or {}
     local inputs = ensure_list(cfg.input)
@@ -322,6 +437,7 @@ local function build_ffmpeg_args(cfg, opts)
 
     local common_output_args = tc.common_output_args or tc.common_input_args
 
+    local gpu_device = opts and opts.gpu_device or nil
     for _, output in ipairs(outputs) do
         if type(output) ~= "table" or not output.url then
             return nil, "each transcode output requires url", nil
@@ -334,6 +450,10 @@ local function build_ffmpeg_args(cfg, opts)
         local vcodec = output.vcodec or default_vcodec
         local acodec = output.acodec or default_acodec
         if vcodec then
+            if engine == "nvidia" and gpu_device ~= nil and tostring(vcodec):find("nvenc") then
+                table.insert(argv, "-gpu")
+                table.insert(argv, tostring(gpu_device))
+            end
             table.insert(argv, "-c:v")
             table.insert(argv, tostring(vcodec))
         end
@@ -3069,6 +3189,24 @@ function transcode.start(job, opts)
             job.state = "ERROR"
             return false
         end
+        local metrics, metrics_err = query_nvidia_gpus()
+        local selected_gpu = select_gpu_device(tc, metrics)
+        job.gpu_metrics = metrics
+        job.gpu_device = selected_gpu
+        if metrics_err then
+            job.gpu_metrics_error = metrics_err
+        else
+            job.gpu_metrics_error = nil
+        end
+        local overload = check_gpu_overload(tc, metrics, selected_gpu)
+        if overload then
+            local action = tostring(tc.gpu_overload_action or "warn"):lower()
+            record_alert(job, "TRANSCODE_GPU_OVERLOAD", "gpu resource overload", overload)
+            if action == "block" then
+                job.state = "ERROR"
+                return false
+            end
+        end
     end
     if not opts.skip_preprobe and should_preprobe_udp(job) then
         start_input_probe(job)
@@ -3085,6 +3223,7 @@ function transcode.start(job, opts)
 
     local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
         active_input_id = job.active_input_id,
+        gpu_device = job.gpu_device,
     })
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", nil)
@@ -3405,6 +3544,9 @@ function transcode.get_status(id)
         ffmpeg_path_resolved = job.ffmpeg_path_resolved,
         ffmpeg_path_source = job.ffmpeg_path_source,
         ffmpeg_bundled = job.ffmpeg_bundled,
+        gpu_device = job.gpu_device,
+        gpu_metrics = job.gpu_metrics,
+        gpu_metrics_error = job.gpu_metrics_error,
         backup_type = fo and fo.mode or nil,
         global_state = fo and fo.global_state or "RUNNING",
         last_switch = fo and fo.last_switch or nil,
