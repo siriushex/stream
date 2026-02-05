@@ -17,6 +17,11 @@
   - Not run (docs update).
 ### 2026-02-05
 - Changes:
+  - Documented auto-remap PID start (0x0020) in MPTS design notes.
+- Tests:
+  - Not run (docs update).
+### 2026-02-05
+- Changes:
   - Updated MPTS CI expectations to match auto-remapped PMT/ES/PCR PIDs.
 - Tests:
   - Not run (CI script update).
