@@ -8,6 +8,7 @@ EXPECT_SERVICES="${EXPECT_SERVICES:-}"
 EXPECT_PROVIDERS="${EXPECT_PROVIDERS:-}"
 EXPECT_NETWORK_ID="${EXPECT_NETWORK_ID:-}"
 EXPECT_TSID="${EXPECT_TSID:-}"
+EXPECT_CAT="${EXPECT_CAT:-0}"
 
 LOG_FILE="$(mktemp)"
 
@@ -21,6 +22,13 @@ fi
 if ! grep -q "PMT:" "$LOG_FILE"; then
   echo "PMT not found"
   exit 1
+fi
+
+if [[ "${EXPECT_CAT}" == "1" ]]; then
+  if ! grep -q "CAT: present" "$LOG_FILE"; then
+    echo "CAT not found"
+    exit 1
+  fi
 fi
 
 if [[ -n "$EXPECT_PNRS" ]]; then

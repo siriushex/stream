@@ -63,6 +63,8 @@ function dump_descriptor(prefix, descriptor_info)
 end
 
 dump_psi_info["cat"] = function(info)
+    -- Даже пустой CAT должен быть заметен в логе.
+    log.info("CAT: present")
     for _, descriptor_info in pairs(info.descriptors) do
         dump_descriptor("CAT: ", descriptor_info)
     end
