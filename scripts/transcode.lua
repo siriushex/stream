@@ -2153,6 +2153,20 @@ local function parse_analyze_bitrate_kbps(line)
     return tonumber(value)
 end
 
+local function parse_analyze_error_count(line, prefix)
+    if not line or line == "" or not prefix then
+        return nil
+    end
+    if not line:find(prefix, 1, true) then
+        return nil
+    end
+    local total = 0
+    for value in line:gmatch("=%s*(%d+)") do
+        total = total + (tonumber(value) or 0)
+    end
+    return total
+end
+
 local function is_output_monitor_enabled(wd)
     if not wd then
         return false
@@ -2608,6 +2622,22 @@ local function tick_output_probe(job, output_state, now)
                     probe.last_bitrate = bitrate
                     update_output_bitrate(job, output_state, bitrate, now)
                 end
+                local cc_errors = parse_analyze_error_count(line, "CC:")
+                if cc_errors ~= nil then
+                    output_state.cc_errors = cc_errors
+                    output_state.cc_errors_ts = now
+                end
+                local pes_errors = parse_analyze_error_count(line, "PES:")
+                if pes_errors ~= nil then
+                    output_state.pes_errors = pes_errors
+                    output_state.pes_errors_ts = now
+                end
+                local scrambled = parse_analyze_error_count(line, "Scrambled:")
+                if scrambled ~= nil then
+                    output_state.scrambled_errors = scrambled
+                    output_state.scrambled_errors_ts = now
+                    output_state.scrambled_active = scrambled > 0
+                end
             end)
         else
             probe.stdout_buf = (probe.stdout_buf or "") .. out_chunk
@@ -2935,6 +2965,13 @@ local function reset_output_monitor_state(output_state, now)
     output_state.low_bitrate_trigger_ts = nil
     output_state.desync_strikes = 0
     output_state.last_desync_ms = nil
+    output_state.cc_errors = nil
+    output_state.cc_errors_ts = nil
+    output_state.pes_errors = nil
+    output_state.pes_errors_ts = nil
+    output_state.scrambled_errors = nil
+    output_state.scrambled_errors_ts = nil
+    output_state.scrambled_active = nil
     output_state.next_probe_ts = nil
     output_state.analyze_pending = false
     if output_state.watchdog and output_state.watchdog.probe_interval_sec > 0 then
@@ -3238,6 +3275,13 @@ function transcode.get_status(id)
                 last_probe_ok = output_state.last_probe_ok,
                 last_probe_error = output_state.last_probe_error,
                 current_bitrate_kbps = output_state.current_bitrate_kbps,
+                cc_errors = output_state.cc_errors,
+                cc_errors_ts = output_state.cc_errors_ts,
+                pes_errors = output_state.pes_errors,
+                pes_errors_ts = output_state.pes_errors_ts,
+                scrambled_errors = output_state.scrambled_errors,
+                scrambled_errors_ts = output_state.scrambled_errors_ts,
+                scrambled_active = output_state.scrambled_active or false,
                 low_bitrate_active = output_state.low_bitrate_active or false,
                 low_bitrate_seconds_accum = output_state.low_bitrate_active and output_state.low_bitrate_seconds or 0,
                 last_restart_ts = output_state.last_restart_ts,
