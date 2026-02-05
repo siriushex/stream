@@ -529,6 +529,7 @@ local function normalize_failover_config(cfg, enabled)
     local compat_refresh = read_number_opt(cfg, "backup_compat_refresh_sec") or 300
     local compat_probe_sec = read_number_opt(cfg, "backup_compat_probe_sec") or 2
     local compat_probe_timeout = read_number_opt(cfg, "backup_compat_probe_timeout_sec") or 8
+    local switch_warmup_min_ms = read_number_opt(cfg, "backup_switch_warmup_min_ms") or 500
     local stop_if_all_inactive_sec = read_number_opt(cfg,
         "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec") or 20
     local warm_max = tonumber(cfg.backup_active_warm_max)
@@ -547,6 +548,7 @@ local function normalize_failover_config(cfg, enabled)
     if compat_refresh < 0 then compat_refresh = 0 end
     if compat_probe_sec < 0 then compat_probe_sec = 0 end
     if compat_probe_timeout < 0 then compat_probe_timeout = 0 end
+    if switch_warmup_min_ms < 0 then switch_warmup_min_ms = 0 end
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
 
     return {
@@ -558,6 +560,7 @@ local function normalize_failover_config(cfg, enabled)
         return_delay = return_delay,
         switch_pending_timeout_sec = switch_pending_timeout,
         switch_warmup_sec = switch_warmup,
+        switch_warmup_min_ms = switch_warmup_min_ms,
         no_data_timeout = no_data_timeout,
         probe_interval = probe_interval,
         stable_ok = stable_ok,
@@ -690,6 +693,8 @@ local function build_switch_warmup_args(job, input_entry, warmup_sec)
     table.insert(argv, "-hide_banner")
     table.insert(argv, "-nostats")
     table.insert(argv, "-nostdin")
+    table.insert(argv, "-progress")
+    table.insert(argv, "pipe:1")
     table.insert(argv, "-loglevel")
     table.insert(argv, "warning")
     append_args(argv, tc.ffmpeg_global_args)
@@ -726,6 +731,7 @@ local function ensure_switch_warmup(job, target_id, now)
     end
     local warm = fo.switch_warmup
     local warmup_sec = tonumber(fo.switch_warmup_sec) or 0
+    local warmup_min_ms = tonumber(fo.switch_warmup_min_ms) or 500
     if warm and warm.target == target_id then
         if not warm.done then
             return
@@ -771,6 +777,7 @@ local function ensure_switch_warmup(job, target_id, now)
         start_ts = started_at,
         deadline_ts = started_at + warmup_sec + WARMUP_TIMEOUT_EXTRA,
         duration_sec = warmup_sec,
+        min_out_time_ms = warmup_min_ms,
         proc = proc,
         stdout_buf = "",
         stderr_buf = "",
@@ -785,10 +792,37 @@ local function warmup_status(fo, target_id)
     if not warm or warm.target ~= target_id then
         return "idle"
     end
+    if warm.ready then
+        return "ok"
+    end
     if warm.done then
         return warm.ok and "ok" or "failed"
     end
     return "running"
+end
+
+local function update_warmup_progress(warm, line)
+    if not line or line == "" then
+        return
+    end
+    local key, value = line:match("^([%w_]+)=(.*)$")
+    if not key then
+        return
+    end
+    if key == "out_time_ms" then
+        local ms = tonumber(value)
+        if ms then
+            warm.last_out_time_ms = ms
+            local min_ms = tonumber(warm.min_out_time_ms) or 0
+            if min_ms <= 0 then
+                min_ms = 1
+            end
+            if ms >= min_ms then
+                warm.ready = true
+                warm.ready_ts = warm.ready_ts or os.time()
+            end
+        end
+    end
 end
 
 local function tick_switch_warmup(job, now)
@@ -803,6 +837,7 @@ local function tick_switch_warmup(job, now)
     local out_chunk = warm.proc:read_stdout()
     if out_chunk then
         consume_warmup_lines(warm, "stdout_buf", out_chunk, function(_line)
+            update_warmup_progress(warm, _line)
         end)
     end
     local err_chunk = warm.proc:read_stderr()
