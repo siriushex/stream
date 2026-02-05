@@ -137,7 +137,7 @@
 - `advanced.target_bitrate <= 0` отключает CBR (значение игнорируется).
 - Повторяющиеся `mpts_services[].input` используют общий сокет (один UDP вход на несколько сервисов).
 - `advanced.auto_probe=true` работает только когда `mpts_services` пустой и input — UDP/RTP.
-- `advanced.auto_probe` требует `timeout` в системе (если нет — выводится предупреждение).
+- `timeout` в системе желателен, но auto-probe может работать и без него.
 
 ## Быстрая проверка
 ```bash

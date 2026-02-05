@@ -390,12 +390,8 @@ end
 -- Запуск команды с ограничением по времени (если timeout доступен).
 local function run_command(cmd, timeout_sec)
     local timeout_cmd = ""
-    if timeout_sec and timeout_sec > 0 then
-        if has_timeout() then
-            timeout_cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " "
-        else
-            return nil, "timeout tool missing"
-        end
+    if timeout_sec and timeout_sec > 0 and has_timeout() then
+        timeout_cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " "
     end
     local ok, handle = pcall(io.popen, timeout_cmd .. cmd .. " 2>&1")
     if not ok or not handle then
@@ -407,6 +403,8 @@ local function run_command(cmd, timeout_sec)
 end
 
 -- Автоматический скан PAT/SDT для заполнения списка сервисов MPTS.
+local auto_probe_timeout_warned = false
+
 local function probe_mpts_services(input_url, duration_sec)
     local cfg = parse_url(input_url)
     if not cfg or not cfg.format then
@@ -443,6 +441,10 @@ local function probe_mpts_services(input_url, duration_sec)
         "--input",
         shell_escape(input_url),
     }, " ")
+    if not has_timeout() and not auto_probe_timeout_warned then
+        log.warning("[mpts] auto_probe: 'timeout' not found, running scan without wrapper")
+        auto_probe_timeout_warned = true
+    end
     local output, err = run_command(cmd, duration + 2)
     if not output or output == "" then
         return nil, err or "empty output"

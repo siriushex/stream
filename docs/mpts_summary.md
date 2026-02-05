@@ -20,7 +20,7 @@
 - `advanced.target_bitrate <= 0` отключает CBR (игнорируется).
 - `mpts_config.nit.lcn_version` действует как alias для `advanced.nit_version` (если он не задан).
 - Повторяющиеся `mpts_services[].input` используют общий сокет.
-- `advanced.auto_probe` работает только для UDP/RTP и требует `timeout`.
+- `advanced.auto_probe` работает только для UDP/RTP; `timeout` желателен, но не обязателен.
 
 ## Быстрая проверка
 ```bash

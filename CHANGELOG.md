@@ -2164,6 +2164,7 @@
   - Reused shared input sockets when multiple MPTS services point to the same input URL.
   - Improved MPTS probe UX (prefill from existing input + UDP/RTP validation).
   - Added optional runtime auto-probe (`advanced.auto_probe`) to populate services from UDP/RTP inputs.
+  - Auto-probe no longer requires `timeout` binary; it falls back to direct scan.
   - Extended CI smoke coverage (PID collision + pass tables) and added TS PID scanner.
   - Extended SPTS generator to emit SDT/EIT/CAT for pass-through tests.
 - Tests:
