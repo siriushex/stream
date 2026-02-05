@@ -14517,7 +14517,7 @@ function formatVideoError(err) {
   return 'Ошибка воспроизведения.';
 }
 
-function attachPlayerSource(url) {
+function attachPlayerSource(url, opts = {}) {
   resetPlayerMedia();
   if (!url) {
     setPlayerError('Не удалось получить ссылку на предпросмотр.');
@@ -14528,6 +14528,11 @@ function attachPlayerSource(url) {
   state.playerStartTimer = setTimeout(() => {
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
   }, 8000);
+
+  if (opts.mode === 'mpegts') {
+    elements.playerVideo.src = url;
+    return;
+  }
 
   if (window.Hls && window.Hls.isSupported()) {
     const hls = new window.Hls({ lowLatencyMode: true });
@@ -14562,9 +14567,18 @@ async function startPlayer(stream, opts = {}) {
   setPlayerLoading(true, 'Подключение...');
   clearPlayerError();
 
-  let url = getPlaylistUrl(stream);
+  const shareUrl = getPlayUrl(stream) || '';
+  let url = null;
   let mode = 'direct';
+  let sourceMode = 'hls';
   let token = null;
+
+  if (shareUrl && canPlayMpegTs()) {
+    url = shareUrl;
+    sourceMode = 'mpegts';
+  } else {
+    url = getPlaylistUrl(stream);
+  }
 
   if (!url) {
     try {
@@ -14582,12 +14596,13 @@ async function startPlayer(stream, opts = {}) {
   state.playerMode = mode;
   state.playerToken = token;
   state.playerUrl = url || '';
+  state.playerShareUrl = shareUrl || url || '';
   if (elements.playerUrl) {
-    elements.playerUrl.textContent = url || '-';
-    elements.playerUrl.title = url || '';
+    elements.playerUrl.textContent = state.playerShareUrl || '-';
+    elements.playerUrl.title = state.playerShareUrl || '';
   }
   updatePlayerActions();
-  attachPlayerSource(url);
+  attachPlayerSource(url, { mode: sourceMode });
   state.playerStarting = false;
 
   if (opts.openTab) {
@@ -14604,10 +14619,11 @@ function openPlayer(stream) {
   state.playerStreamId = stream.id;
   state.playerMode = null;
   state.playerUrl = '';
+  state.playerShareUrl = getPlayUrl(stream) || '';
   state.playerToken = null;
   if (elements.playerUrl) {
-    elements.playerUrl.textContent = '-';
-    elements.playerUrl.title = '';
+    elements.playerUrl.textContent = state.playerShareUrl || '-';
+    elements.playerUrl.title = state.playerShareUrl || '';
   }
   updatePlayerMeta(stream);
   updatePlayerActions();
@@ -14622,6 +14638,7 @@ async function closePlayer() {
   state.playerStreamId = null;
   state.playerMode = null;
   state.playerUrl = '';
+  state.playerShareUrl = '';
   state.playerToken = null;
   updatePlayerActions();
 }
