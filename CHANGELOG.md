@@ -25,6 +25,7 @@
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
   - CI: исправлен парсинг логов verify_mpts (работает с префиксами логгера).
   - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
+  - Release: корректное определение версии из version.h для имени bundle.
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
