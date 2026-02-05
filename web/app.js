@@ -13992,6 +13992,11 @@ function bindEvents() {
     });
   }
 
+  [elements.mptsPassNit, elements.mptsPassSdt, elements.mptsPassEit, elements.mptsPassTdt].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsPassWarning);
+  });
+
   elements.btnAddOutput.addEventListener('click', () => {
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));
     renderOutputList();
