@@ -196,6 +196,8 @@ const state = {
   generalCards: [],
   generalSectionEls: {},
   generalSearchEls: [],
+  generalObserver: null,
+  generalActiveSection: '',
   aiApplyConfirmTarget: null,
   aiApplyConfirmPending: false,
   player: null,
@@ -2663,6 +2665,7 @@ function renderGeneralSettings() {
   if (SETTINGS_GENERAL_SECTIONS.length) {
     setActiveGeneralNav(SETTINGS_GENERAL_SECTIONS[0].id);
   }
+  observeGeneralSections();
 }
 
 function setGeneralMode(mode, options = {}) {
@@ -2680,6 +2683,7 @@ function setGeneralMode(mode, options = {}) {
 }
 
 function setActiveGeneralNav(sectionId) {
+  state.generalActiveSection = sectionId;
   if (elements.settingsGeneralNav) {
     $$('#settings-general-nav button').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.section === sectionId);
@@ -2695,6 +2699,40 @@ function scrollToGeneralSection(sectionId) {
   if (!sectionEl) return;
   sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
   setActiveGeneralNav(sectionId);
+}
+
+function updateActiveGeneralNavFromVisibility() {
+  const nextSection = SETTINGS_GENERAL_SECTIONS.find((section) => {
+    const el = state.generalSectionEls[section.id];
+    return el && !el.classList.contains('hidden');
+  });
+  if (nextSection) {
+    setActiveGeneralNav(nextSection.id);
+  }
+}
+
+function observeGeneralSections() {
+  if (!('IntersectionObserver' in window)) return;
+  if (state.generalObserver) {
+    state.generalObserver.disconnect();
+  }
+  state.generalObserver = new IntersectionObserver((entries) => {
+    const visible = entries
+      .filter((entry) => entry.isIntersecting && !entry.target.classList.contains('hidden'))
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    if (!visible.length) return;
+    const nextId = visible[0].target.dataset.section;
+    if (nextId && nextId !== state.generalActiveSection) {
+      setActiveGeneralNav(nextId);
+    }
+  }, {
+    root: null,
+    rootMargin: '-20% 0px -70% 0px',
+    threshold: [0, 0.1, 0.5],
+  });
+  Object.values(state.generalSectionEls).forEach((sectionEl) => {
+    if (sectionEl) state.generalObserver.observe(sectionEl);
+  });
 }
 
 function evaluateFieldDependency(dep) {
@@ -2855,6 +2893,12 @@ function applySearchFilter(query) {
     );
     sectionEl.classList.toggle('hidden', !hasVisible);
   });
+
+  if (tokens.length) {
+    updateActiveGeneralNavFromVisibility();
+  } else if (!state.generalActiveSection) {
+    updateActiveGeneralNavFromVisibility();
+  }
 }
 
 function syncGeneralSettingsUi(options = {}) {
@@ -12611,8 +12655,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
     renderObservabilityLogs([]);
-    renderObservabilityAiSummary(null, 'Observability disabled.');
-    state.observabilityAiCache = null;
     return;
   }
 
@@ -12623,7 +12665,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
-    renderObservabilityAiPlaceholder(range, scope);
     return;
   }
   if (showStatus) {
@@ -12679,7 +12720,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
-    renderObservabilityAiPlaceholder(range, scope);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
@@ -15339,13 +15379,6 @@ function bindEvents() {
       loadObservability(true);
     });
   }
-  if (elements.observabilityAiRefresh) {
-    elements.observabilityAiRefresh.addEventListener('click', () => {
-      const range = elements.observabilityRange ? elements.observabilityRange.value : '24h';
-      const scope = elements.observabilityScope ? elements.observabilityScope.value : 'global';
-      loadObservabilityAiSummary(range, scope);
-    });
-  }
   if (elements.observabilityRange) {
     elements.observabilityRange.addEventListener('change', () => {
       loadObservability(true);
@@ -15360,30 +15393,6 @@ function bindEvents() {
   if (elements.observabilityStream) {
     elements.observabilityStream.addEventListener('change', () => {
       loadObservability(true);
-    });
-  }
-  if (elements.observabilityAi) {
-    const persistAiPrefs = () => saveObservabilityAiPreferences();
-    [
-      elements.observabilityAiIncludeLogs,
-      elements.observabilityAiIncludeCli,
-      elements.observabilityAiCliStream,
-      elements.observabilityAiCliDvbls,
-      elements.observabilityAiCliAnalyze,
-      elements.observabilityAiCliFemon,
-    ].forEach((el) => {
-      if (el) {
-        el.addEventListener('change', persistAiPrefs);
-      }
-    });
-    [
-      elements.observabilityAiAnalyzeUrl,
-      elements.observabilityAiFemonUrl,
-      elements.observabilityAiStreamId,
-    ].forEach((el) => {
-      if (el) {
-        el.addEventListener('input', persistAiPrefs);
-      }
     });
   }
   if (elements.settingsObservabilityOnDemand) {
@@ -17048,7 +17057,6 @@ function bindEvents() {
     }
   });
 
-  loadObservabilityAiPreferences();
   bindToggleTargets();
 }
 
