@@ -93,7 +93,19 @@ dump_psi_info["sdt"] = function(info)
     log.info(("SDT: tsid: %d"):format(info.tsid))
 
     for _, service in pairs(info.services) do
-        log.info(("SDT: sid: %d"):format(service.sid))
+        local free_ca = service.free_ca and 1 or 0
+        local service_type_id = nil
+        for _, descriptor_info in pairs(service.descriptors) do
+            if descriptor_info.type_name == "service" and descriptor_info.service_type_id then
+                service_type_id = descriptor_info.service_type_id
+                break
+            end
+        end
+        if service_type_id then
+            log.info(("SDT: sid: %d free_ca: %d service_type: %d"):format(service.sid, free_ca, service_type_id))
+        else
+            log.info(("SDT: sid: %d free_ca: %d"):format(service.sid, free_ca))
+        end
         for _, descriptor_info in pairs(service.descriptors) do
             dump_descriptor("SDT:     ", descriptor_info)
         end
