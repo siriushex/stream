@@ -687,6 +687,7 @@ const elements = {
   mptsDeliveryWarning: $('#mpts-delivery-warning'),
   mptsSiInterval: $('#mpts-si-interval'),
   mptsTargetBitrate: $('#mpts-target-bitrate'),
+  mptsPcrRestamp: $('#mpts-pcr-restamp'),
   mptsPatVersion: $('#mpts-pat-version'),
   mptsNitVersion: $('#mpts-nit-version'),
   mptsCatVersion: $('#mpts-cat-version'),
@@ -8743,6 +8744,9 @@ function openEditor(stream, isNew) {
   if (elements.mptsTargetBitrate) {
     elements.mptsTargetBitrate.value = mptsAdv.target_bitrate || '';
   }
+  if (elements.mptsPcrRestamp) {
+    elements.mptsPcrRestamp.checked = mptsAdv.pcr_restamp === true;
+  }
   if (elements.mptsPatVersion) {
     elements.mptsPatVersion.value = mptsAdv.pat_version || '';
   }
@@ -9199,6 +9203,9 @@ function readStreamForm() {
   if (siInterval !== undefined) mptsAdv.si_interval_ms = siInterval;
   const targetBitrate = toNumber(elements.mptsTargetBitrate && elements.mptsTargetBitrate.value);
   if (targetBitrate !== undefined) mptsAdv.target_bitrate = targetBitrate;
+  if (elements.mptsPcrRestamp && elements.mptsPcrRestamp.checked) {
+    mptsAdv.pcr_restamp = true;
+  }
   const patVersion = toNumber(elements.mptsPatVersion && elements.mptsPatVersion.value);
   if (patVersion !== undefined) mptsAdv.pat_version = patVersion;
   const nitVersion = toNumber(elements.mptsNitVersion && elements.mptsNitVersion.value);

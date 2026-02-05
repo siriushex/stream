@@ -403,6 +403,7 @@ local function build_mpts_mux_options(channel_config)
     if adv.pass_sdt then opts.pass_sdt = true end
     if adv.pass_eit then opts.pass_eit = true end
     if adv.pass_tdt then opts.pass_tdt = true end
+    if adv.pcr_restamp then opts.pcr_restamp = true end
     if adv.target_bitrate ~= nil then opts.target_bitrate = tonumber(adv.target_bitrate) end
 
     return opts

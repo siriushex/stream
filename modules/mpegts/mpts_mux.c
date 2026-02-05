@@ -9,6 +9,7 @@
 
 #define PID_DROP 0xFFFF
 #define MPTS_MAX_PIDS 8192
+#define PCR_MAX_TICKS ((1ULL << 33) * 300ULL)
 #define MPTS_PNR_MAX 65535
 
 typedef struct mpts_service_t mpts_service_t;
@@ -92,6 +93,7 @@ struct module_data_t
     bool pass_sdt;
     bool pass_eit;
     bool pass_tdt;
+    bool pcr_restamp;
 
     uint8_t pat_version;
     uint8_t cat_version;
@@ -126,6 +128,7 @@ struct module_data_t
     uint64_t cbr_start_us;
     uint64_t sent_packets;
     uint64_t cbr_last_warn_us;
+    uint64_t pcr_restamp_start_us;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -1107,6 +1110,16 @@ static void input_on_ts(module_data_t *arg, const uint8_t *ts)
     uint8_t out[TS_PACKET_SIZE];
     memcpy(out, ts, TS_PACKET_SIZE);
     TS_SET_PID(out, mapped);
+    if(mod->pcr_restamp && pid == svc->pcr_pid_in && TS_IS_PCR(out))
+    {
+        // PCR restamp: выравниваем по локальному времени выхода.
+        const uint64_t now = asc_utime();
+        if(mod->pcr_restamp_start_us == 0)
+            mod->pcr_restamp_start_us = now;
+        const uint64_t elapsed = now - mod->pcr_restamp_start_us;
+        const uint64_t pcr = (elapsed * 27ULL) % PCR_MAX_TICKS;
+        TS_SET_PCR(out, pcr);
+    }
     mpts_send_ts(mod, out);
 }
 
@@ -1271,6 +1284,7 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_sdt", &mod->pass_sdt);
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
+    module_option_boolean("pcr_restamp", &mod->pcr_restamp);
 
     if(module_option_number("pat_version", &tmp))
     {
