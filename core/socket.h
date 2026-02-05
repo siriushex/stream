@@ -60,6 +60,8 @@ ssize_t asc_socket_sendto(asc_socket_t *sock, const void *buffer, size_t size) _
 int asc_socket_fd(asc_socket_t *sock) __wur;
 const char * asc_socket_addr(asc_socket_t *sock) __wur;
 int asc_socket_port(asc_socket_t *sock) __wur;
+const char * asc_socket_recv_addr(asc_socket_t *sock) __wur;
+int asc_socket_recv_port(asc_socket_t *sock) __wur;
 
 void asc_socket_set_nonblock(asc_socket_t *sock, bool is_nonblock);
 void asc_socket_set_sockaddr(asc_socket_t *sock, const char *addr, int port);
