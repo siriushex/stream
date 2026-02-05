@@ -16,6 +16,7 @@ end
 local called = false
 local saw_host = false
 local saw_ua = false
+local saw_len = false
 
 http_request = function(req)
   local headers = req and req.headers or {}
@@ -26,9 +27,15 @@ http_request = function(req)
     if type(h) == "string" and h:lower():find("^user%-agent:") then
       saw_ua = true
     end
+    if type(h) == "string" and h:lower():find("^content%-length:") then
+      local n = tonumber(h:match(":%s*(%d+)%s*$") or "")
+      assert_true(n and n > 0, "invalid Content-Length header")
+      saw_len = true
+    end
   end
   assert_true(saw_host, "missing Host header for OpenAI request")
   assert_true(saw_ua, "missing User-Agent header for OpenAI request")
+  assert_true(saw_len, "missing Content-Length header for OpenAI request")
   -- Return a deterministic 400 so client completes synchronously.
   req.callback(nil, {
     code = 400,
@@ -57,4 +64,3 @@ assert_true(called, "callback must be called")
 
 print("ai_openai_host_header_unit: ok")
 astra.exit()
-

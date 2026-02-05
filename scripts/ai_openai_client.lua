@@ -711,6 +711,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                 "Host: " .. url.host,
                 "User-Agent: astral-ai",
                 "Content-Type: application/json",
+                "Content-Length: " .. tostring(#body),
                 "Authorization: Bearer " .. api_key,
                 "Connection: close",
             },
