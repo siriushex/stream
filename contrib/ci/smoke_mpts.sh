@@ -77,4 +77,4 @@ fi
 
 curl -fsS "http://127.0.0.1:${PORT}/api/v1/streams" "${AUTH_ARGS[@]}" | head -n 1
 
-EXPECT_TOT=1 tools/verify_mpts.sh "udp://127.0.0.1:12346" 5
+EXPECT_TOT=1 EXPECT_PNRS="101,102" tools/verify_mpts.sh "udp://127.0.0.1:12346" 5
