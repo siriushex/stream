@@ -727,6 +727,8 @@ const elements = {
   mptsDeliveryWarning: $('#mpts-delivery-warning'),
   mptsSiInterval: $('#mpts-si-interval'),
   mptsTargetBitrate: $('#mpts-target-bitrate'),
+  mptsAutoProbe: $('#mpts-auto-probe'),
+  mptsAutoProbeDuration: $('#mpts-auto-probe-duration'),
   mptsPcrRestamp: $('#mpts-pcr-restamp'),
   mptsPcrSmoothing: $('#mpts-pcr-smoothing'),
   mptsPcrSmoothAlpha: $('#mpts-pcr-smooth-alpha'),
@@ -4685,6 +4687,10 @@ function updateMptsFields() {
   $$('.mpts-section').forEach((section) => {
     section.classList.toggle('is-disabled', !enabled);
   });
+  // Длительность автосканирования доступна только при включённом auto-probe.
+  if (elements.mptsAutoProbeDuration && elements.mptsAutoProbe) {
+    elements.mptsAutoProbeDuration.disabled = !enabled || !elements.mptsAutoProbe.checked;
+  }
   if (elements.streamInputBlock) {
     elements.streamInputBlock.classList.toggle('is-hidden', enabled);
   }
@@ -10927,6 +10933,14 @@ function openEditor(stream, isNew) {
   if (elements.mptsTargetBitrate) {
     elements.mptsTargetBitrate.value = mptsAdv.target_bitrate || '';
   }
+  // Auto-probe: восстановить настройки автосканирования сервисов.
+  if (elements.mptsAutoProbe) {
+    elements.mptsAutoProbe.checked = mptsAdv.auto_probe === true;
+  }
+  if (elements.mptsAutoProbeDuration) {
+    const duration = mptsAdv.auto_probe_duration_sec || mptsAdv.auto_probe_duration;
+    elements.mptsAutoProbeDuration.value = (duration !== undefined && duration !== null) ? duration : '';
+  }
   if (elements.mptsPcrRestamp) {
     elements.mptsPcrRestamp.checked = mptsAdv.pcr_restamp === true;
   }
@@ -11437,6 +11451,17 @@ function readStreamForm() {
   if (siInterval !== undefined) mptsAdv.si_interval_ms = siInterval;
   const targetBitrate = toNumber(elements.mptsTargetBitrate && elements.mptsTargetBitrate.value);
   if (targetBitrate !== undefined) mptsAdv.target_bitrate = targetBitrate;
+  // Auto-probe: сохранить параметры автосканирования сервисов.
+  if (elements.mptsAutoProbe && elements.mptsAutoProbe.checked) {
+    mptsAdv.auto_probe = true;
+  }
+  const autoProbeDuration = toNumber(elements.mptsAutoProbeDuration && elements.mptsAutoProbeDuration.value);
+  if (autoProbeDuration !== undefined) {
+    if (autoProbeDuration < 1 || autoProbeDuration > 10) {
+      throw new Error('Auto-probe duration must be between 1 and 10 sec (MPTS tab)');
+    }
+    mptsAdv.auto_probe_duration_sec = autoProbeDuration;
+  }
   if (elements.mptsPcrRestamp && elements.mptsPcrRestamp.checked) {
     mptsAdv.pcr_restamp = true;
   }
@@ -17595,6 +17620,9 @@ function bindEvents() {
     control.addEventListener('change', updateMptsLcnVersionWarning);
     control.addEventListener('input', updateMptsLcnVersionWarning);
   });
+  if (elements.mptsAutoProbe) {
+    elements.mptsAutoProbe.addEventListener('change', updateMptsFields);
+  }
 
   bindMptsWarningHandlers();
 

@@ -375,6 +375,89 @@ local function resolve_stream_ref(ref)
     return channel
 end
 
+-- Экранирование аргументов для shell-команд (безопасный запуск).
+local function shell_escape(value)
+    local text = tostring(value or "")
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+-- Проверка наличия timeout для ограничения длительности скана.
+local function has_timeout()
+    local ok = os.execute("command -v timeout >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+-- Запуск команды с ограничением по времени (если timeout доступен).
+local function run_command(cmd, timeout_sec)
+    local timeout_cmd = ""
+    if timeout_sec and timeout_sec > 0 then
+        if has_timeout() then
+            timeout_cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " "
+        else
+            return nil, "timeout tool missing"
+        end
+    end
+    local ok, handle = pcall(io.popen, timeout_cmd .. cmd .. " 2>&1")
+    if not ok or not handle then
+        return nil, "exec failed"
+    end
+    local output = handle:read("*a") or ""
+    handle:close()
+    return output
+end
+
+-- Автоматический скан PAT/SDT для заполнения списка сервисов MPTS.
+local function probe_mpts_services(input_url, duration_sec)
+    local cfg = parse_url(input_url)
+    if not cfg or not cfg.format then
+        return nil, "invalid input"
+    end
+    local format = tostring(cfg.format or ""):lower()
+    if format ~= "udp" and format ~= "rtp" then
+        return nil, "unsupported input"
+    end
+    if not cfg.addr or not cfg.port then
+        return nil, "invalid input addr/port"
+    end
+
+    local duration = tonumber(duration_sec) or 3
+    if duration < 1 then duration = 1 end
+    if duration > 10 then duration = 10 end
+
+    local script_path = "tools/mpts_pat_scan.py"
+    local handle = io.open(script_path, "r")
+    if not handle then
+        return nil, "mpts_pat_scan.py not found"
+    end
+    handle:close()
+
+    local cmd = table.concat({
+        "python3",
+        shell_escape(script_path),
+        "--addr",
+        shell_escape(cfg.addr),
+        "--port",
+        shell_escape(cfg.port),
+        "--duration",
+        shell_escape(duration),
+        "--input",
+        shell_escape(input_url),
+    }, " ")
+    local output, err = run_command(cmd, duration + 2)
+    if not output or output == "" then
+        return nil, err or "empty output"
+    end
+    local ok, parsed = pcall(json.decode, output)
+    if not ok or type(parsed) ~= "table" then
+        return nil, "invalid output"
+    end
+    local services = parsed.services or {}
+    if type(services) ~= "table" then
+        services = {}
+    end
+    return services
+end
+
 local function build_mpts_mux_options(channel_config)
     local mpts = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
     local general = type(mpts.general) == "table" and mpts.general or {}
@@ -3208,9 +3291,55 @@ local function make_mpts_channel(channel_config)
     end
 
     local services = normalize_mpts_services(channel_config.mpts_services)
+    local mpts_cfg = type(channel_config.mpts_config) == "table" and channel_config.mpts_config or {}
+    local adv_cfg = type(mpts_cfg.advanced) == "table" and mpts_cfg.advanced or {}
+    local auto_probe = adv_cfg.auto_probe == true
+    local auto_probe_duration = tonumber(adv_cfg.auto_probe_duration_sec or adv_cfg.auto_probe_duration) or 3
+
+    local function extract_input_url(entry)
+        if type(entry) == "string" then
+            return entry
+        end
+        if type(entry) == "table" then
+            if entry.url then
+                return entry.url
+            end
+            return format_input_url(entry)
+        end
+        return nil
+    end
+
     if #services == 0 and channel_config.input then
-        for _, entry in ipairs(normalize_stream_list(channel_config.input)) do
-            table.insert(services, { input = entry })
+        local inputs = normalize_stream_list(channel_config.input)
+        -- Если список сервисов пустой, можно попробовать авто-скан входов.
+        if auto_probe then
+            local seen = {}
+            for _, entry in ipairs(inputs) do
+                local input_url = extract_input_url(entry)
+                if input_url and not seen[input_url] then
+                    seen[input_url] = true
+                    local scanned, err = probe_mpts_services(input_url, auto_probe_duration)
+                    if scanned and #scanned > 0 then
+                        for _, svc in ipairs(scanned) do
+                            if not svc.input or svc.input == "" then
+                                svc.input = input_url
+                            end
+                            table.insert(services, svc)
+                        end
+                    else
+                        log.warning("[" .. channel_config.name .. "] auto_probe failed for " ..
+                            tostring(input_url) .. ": " .. tostring(err))
+                    end
+                end
+            end
+        end
+        if #services == 0 then
+            for _, entry in ipairs(inputs) do
+                local input_url = extract_input_url(entry)
+                if input_url then
+                    table.insert(services, { input = input_url })
+                end
+            end
         end
     end
     if #services == 0 then

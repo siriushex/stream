@@ -1873,6 +1873,14 @@
                 <input type="number" id="mpts-target-bitrate" class="mpts-field" placeholder="50000000" min="1" step="1000" />
               </label>
               <label class="checkline">
+                <input type="checkbox" id="mpts-auto-probe" class="mpts-field" />
+                <span>Auto-probe services from input</span>
+              </label>
+              <label class="field">
+                <span>Auto-probe duration (sec)</span>
+                <input type="number" id="mpts-auto-probe-duration" class="mpts-field" placeholder="3" min="1" max="10" />
+              </label>
+              <label class="checkline">
                 <input type="checkbox" id="mpts-pcr-restamp" class="mpts-field" />
                 <span>PCR restamp</span>
               </label>
@@ -1965,6 +1973,7 @@
             Pass NIT/SDT/EIT/TDT корректен только для одного сервиса.
           </div>
           <div class="form-hint">MPTS settings are applied only when MPTS is enabled.</div>
+          <div class="form-hint">Auto-probe работает только при пустом списке сервисов и для UDP/RTP inputs.</div>
           <div class="form-hint">Use stream inputs like <code>stream://stream_id</code> to build a multiplex.</div>
         </div>
         <div class="tab-content" data-tab-content="backup" data-tab-scope="stream-editor">

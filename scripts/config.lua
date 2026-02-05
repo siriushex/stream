@@ -2500,6 +2500,19 @@ local function lint_stream_list(list, label, warnings)
                 if pass_enabled and type(entry.mpts_services) == "table" and #entry.mpts_services > 1 then
                     warnings[#warnings + 1] = label .. "[" .. idx .. "] pass_* is intended for single-service MPTS"
                 end
+                -- Валидация auto-probe: нужен input и допустимая длительность.
+                if adv.auto_probe == true then
+                    if type(entry.mpts_services) == "table" and #entry.mpts_services > 0 then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe ignored when mpts_services is set"
+                    end
+                    local duration = tonumber(adv.auto_probe_duration_sec or adv.auto_probe_duration)
+                    if duration and (duration < 1 or duration > 10) then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe_duration_sec must be 1..10"
+                    end
+                    if entry.input == nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe requires input list"
+                    end
+                end
             end
         end
     end
