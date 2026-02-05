@@ -175,6 +175,7 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
 - `ai_temperature` — температура.
 - `ai_store` — хранение на стороне провайдера (по умолчанию false).
 - `ai_allow_apply` — разрешить apply (по умолчанию false).
+- `ai_max_ops` — лимит операций в плане без `allow_destructive` (по умолчанию 20).
 - `ai_telegram_allowed_chat_ids` — белый список чатов (список или строка).
 - `ai_api_key` / `ai_api_key_masked` / `ai_api_key_set` — ключ (маска + флаг).
 - `ai_api_base` — базовый URL API.
@@ -208,3 +209,4 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
 
 ## Важно
 Apply доступен только при `ai_allow_apply=true` и использует backup + rollback.
+Большие планы (ops > `ai_max_ops`) требуют `allow_destructive=true` в apply‑запросе.

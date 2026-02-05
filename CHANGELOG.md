@@ -2154,5 +2154,6 @@
   - AI context now includes logs by default and always provides a stream runtime snapshot; dvb/analyze/femon remain on‑demand.
   - Updated `docs/ASTRAL_AI.md` to reflect minimal‑load defaults and chat behavior.
   - Adjusted AI autoselect unit test for new log‑default behavior.
+  - Added AI apply guardrail: large plans require `allow_destructive` (configurable via `ai_max_ops`).
 - Tests:
   - Not run (server deploy only).

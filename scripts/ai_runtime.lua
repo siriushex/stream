@@ -387,6 +387,21 @@ local function reload_runtime(force)
     return true
 end
 
+local function get_op_limit()
+    local limit = setting_number("ai_max_ops", 20)
+    if not limit or limit < 1 then
+        limit = 20
+    end
+    return math.floor(limit)
+end
+
+local function op_count(plan)
+    if not plan or type(plan.ops) ~= "table" then
+        return 0
+    end
+    return #plan.ops
+end
+
 build_prompt_text = function(prompt, context)
     local parts = {}
     table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
@@ -948,6 +963,14 @@ function ai_runtime.apply(payload, ctx)
     end
 
     local allow_destructive = payload.allow_destructive == true or payload.force == true
+    local ops_total = op_count(plan)
+    local max_ops = get_op_limit()
+    if ops_total > max_ops and not allow_destructive then
+        job.status = "error"
+        job.error = "too many ops (" .. tostring(ops_total) .. "), allow_destructive required"
+        log_audit(job, false, job.error, { mode = mode, op_count = ops_total })
+        return nil, job.error
+    end
     if mode == "replace" and not allow_destructive then
         job.status = "error"
         job.error = "destructive replace requires allow_destructive"
