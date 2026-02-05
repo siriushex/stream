@@ -893,7 +893,6 @@
           <div class="observability-empty muted" id="obs-empty">Observability disabled or no data yet.</div>
           <div class="observability-hint muted" id="obs-hint"></div>
 
-          <div class="observability-summary" id="obs-summary"></div>
 
           <div class="observability-charts">
             <div class="chart-card">
@@ -914,553 +913,14 @@
             <div class="chart-title">Recent errors</div>
             <div class="observability-log-list" id="obs-logs"></div>
           </div>
+
         </div>
       </section>
 
       <section class="view" id="view-settings">
         <div class="settings-shell">
           <div class="settings-section active" data-section="general">
-            <div class="form-stack settings-general compact-grid">
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Features</div>
-                    <div class="settings-group-sub">Show or hide main tools</div>
-                  </div>
-                </div>
-                <div class="settings-group-body">
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-splitter" />
-                    <span>Show HLSSplitter tools</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-buffer" />
-                    <span>Show Buffer tools</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-epg" data-toggle-target="settings-epg-fields" />
-                    <span>Show EPG export settings</span>
-                  </label>
-                  <div class="form-grid" id="settings-epg-fields">
-                    <label class="field">
-                      <span>EPG export interval (sec)</span>
-                      <input type="number" id="settings-epg-interval" placeholder="0 (disabled)" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <label class="checkline settings-advanced-toggle">
-                <input type="checkbox" id="settings-show-advanced" data-toggle-target="settings-advanced-groups" />
-                <span>Show advanced settings</span>
-              </label>
-
-              <div class="settings-advanced-groups" id="settings-advanced-groups">
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Monitoring &amp; Logs</div>
-                    <div class="settings-group-sub">Events, limits, diagnostics</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-monitoring" data-toggle-target="settings-monitoring-fields" />
-                    <span>Show options</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-monitoring-fields">
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-webhook" data-toggle-target="settings-webhook-fields" />
-                    <span>Show event webhook settings</span>
-                  </label>
-                  <div class="form-grid" id="settings-webhook-fields">
-                    <label class="field">
-                      <span>Event webhook URL</span>
-                      <input type="text" id="settings-event-request" placeholder="http://127.0.0.1:9005/event" />
-                    </label>
-                  </div>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Analyze concurrency limit</span>
-                      <input type="number" id="settings-monitor-analyze-max" placeholder="4" />
-                    </label>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-log-limits" data-toggle-target="settings-log-limit-fields" />
-                    <span>Show log limits</span>
-                  </label>
-                  <div class="form-grid" id="settings-log-limit-fields">
-                    <label class="field">
-                      <span>Log max entries</span>
-                      <input type="number" id="settings-log-max-entries" placeholder="0 (unlimited)" />
-                    </label>
-                    <label class="field">
-                      <span>Log retention (sec)</span>
-                      <input type="number" id="settings-log-retention-sec" placeholder="0 (unlimited)" />
-                    </label>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-access-log-limits" data-toggle-target="settings-access-log-limit-fields" />
-                    <span>Show access log limits</span>
-                  </label>
-                  <div class="form-grid" id="settings-access-log-limit-fields">
-                    <label class="field">
-                      <span>Access log max entries</span>
-                      <input type="number" id="settings-access-log-max-entries" placeholder="0 (unlimited)" />
-                    </label>
-                    <label class="field">
-                      <span>Access log retention (sec)</span>
-                      <input type="number" id="settings-access-log-retention-sec" placeholder="0 (unlimited)" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Observability</div>
-                    <div class="settings-group-sub">Logs and metrics rollup</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-observability-enabled" data-toggle-target="settings-observability-fields" />
-                    <span>Enable</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-observability-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Log retention (days)</span>
-                      <select id="settings-observability-logs-days">
-                        <option value="1">1</option>
-                        <option value="7">7</option>
-                        <option value="30">30</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Metrics retention (days)</span>
-                      <select id="settings-observability-metrics-days">
-                        <option value="7">7</option>
-                        <option value="30">30</option>
-                        <option value="90">90</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Rollup interval (sec)</span>
-                      <select id="settings-observability-rollup">
-                        <option value="60">60</option>
-                        <option value="300">300</option>
-                        <option value="3600">3600</option>
-                      </select>
-                    </label>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-observability-on-demand" />
-                    <span>On-demand metrics (no background rollup)</span>
-                  </label>
-                  <small class="form-hint">Uncheck to disable data collection.</small>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Process Watchdog</div>
-                    <div class="settings-group-sub">Auto-restart on high CPU/RAM</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-watchdog-enabled" data-toggle-target="settings-watchdog-fields" />
-                    <span>Enable</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-watchdog-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>CPU limit (%)</span>
-                      <input type="number" id="settings-watchdog-cpu" placeholder="95" />
-                    </label>
-                    <label class="field">
-                      <span>RSS limit (MB)</span>
-                      <input type="number" id="settings-watchdog-rss-mb" placeholder="0 (use %)" />
-                    </label>
-                    <label class="field">
-                      <span>RSS limit (%)</span>
-                      <input type="number" id="settings-watchdog-rss-pct" placeholder="80" />
-                    </label>
-                    <label class="field">
-                      <span>Interval (sec)</span>
-                      <input type="number" id="settings-watchdog-interval" placeholder="10" />
-                    </label>
-                    <label class="field">
-                      <span>Max strikes</span>
-                      <input type="number" id="settings-watchdog-strikes" placeholder="6" />
-                    </label>
-                    <label class="field">
-                      <span>Min uptime (sec)</span>
-                      <input type="number" id="settings-watchdog-uptime" placeholder="180" />
-                    </label>
-                  </div>
-                  <small class="form-hint">When limits are exceeded for several checks, the process exits (use systemd Restart=always).</small>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Telegram Alerts</div>
-                    <div class="settings-group-sub">Short notifications in Telegram</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-telegram-enabled" data-toggle-target="settings-telegram-fields" />
-                    <span>Enable</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-telegram-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Level</span>
-                      <select id="settings-telegram-level">
-                        <option value="OFF">OFF</option>
-                        <option value="CRITICAL">CRITICAL</option>
-                        <option value="ERROR">ERROR</option>
-                        <option value="WARNING">WARNING</option>
-                        <option value="INFO">INFO</option>
-                        <option value="DEBUG">DEBUG</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Bot Token</span>
-                      <input type="password" id="settings-telegram-token" placeholder="123456:ABCDEF" />
-                      <small class="form-hint" id="settings-telegram-token-hint"></small>
-                    </label>
-                    <label class="field">
-                      <span>Chat ID / Channel</span>
-                      <input type="text" id="settings-telegram-chat-id" placeholder="-1001234567890 or @channel" />
-                    </label>
-                    <div class="field">
-                      <span>&nbsp;</span>
-                      <button class="btn" type="button" id="settings-telegram-test">Send test message</button>
-                    </div>
-                  </div>
-                    <label class="checkline">
-                      <input type="checkbox" id="settings-telegram-backup-enabled" data-toggle-target="settings-telegram-backup-fields" />
-                      <span>Send config backups</span>
-                    </label>
-                  <div class="form-grid" id="settings-telegram-backup-fields">
-                    <label class="field">
-                      <span>Schedule</span>
-                      <select id="settings-telegram-backup-schedule">
-                        <option value="DAILY">Daily</option>
-                        <option value="WEEKLY">Weekly</option>
-                        <option value="MONTHLY">Monthly</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Time</span>
-                      <input type="time" id="settings-telegram-backup-time" />
-                    </label>
-                    <label class="field" id="settings-telegram-backup-weekday-field">
-                      <span>Weekday</span>
-                      <select id="settings-telegram-backup-weekday">
-                        <option value="1">Monday</option>
-                        <option value="2">Tuesday</option>
-                        <option value="3">Wednesday</option>
-                        <option value="4">Thursday</option>
-                        <option value="5">Friday</option>
-                        <option value="6">Saturday</option>
-                        <option value="7">Sunday</option>
-                      </select>
-                    </label>
-                    <label class="field" id="settings-telegram-backup-monthday-field">
-                      <span>Month day</span>
-                      <input type="number" id="settings-telegram-backup-monthday" min="1" max="31" />
-                    </label>
-                    <label class="checkline">
-                      <input type="checkbox" id="settings-telegram-backup-secrets" />
-                      <span>Include secrets in backup</span>
-                    </label>
-                    <div class="field">
-                      <span>&nbsp;</span>
-                      <button class="btn ghost" type="button" id="settings-telegram-backup-now">Send backup now</button>
-                    </div>
-                    <small class="form-hint">Backups are sent as a JSON file to the same chat.</small>
-                  </div>
-                    <label class="checkline">
-                      <input type="checkbox" id="settings-telegram-summary-enabled" data-toggle-target="settings-telegram-summary-fields" />
-                      <span>Send AI summary</span>
-                    </label>
-                    <div class="form-grid" id="settings-telegram-summary-fields">
-                    <label class="field">
-                      <span>Schedule</span>
-                      <select id="settings-telegram-summary-schedule">
-                        <option value="DAILY">Daily</option>
-                        <option value="WEEKLY">Weekly</option>
-                        <option value="MONTHLY">Monthly</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Time</span>
-                      <input type="time" id="settings-telegram-summary-time" />
-                    </label>
-                    <label class="field" id="settings-telegram-summary-weekday-field">
-                      <span>Weekday</span>
-                      <select id="settings-telegram-summary-weekday">
-                        <option value="1">Monday</option>
-                        <option value="2">Tuesday</option>
-                        <option value="3">Wednesday</option>
-                        <option value="4">Thursday</option>
-                        <option value="5">Friday</option>
-                        <option value="6">Saturday</option>
-                        <option value="7">Sunday</option>
-                      </select>
-                    </label>
-                    <label class="field" id="settings-telegram-summary-monthday-field">
-                      <span>Month day</span>
-                      <input type="number" id="settings-telegram-summary-monthday" min="1" max="31" />
-                    </label>
-                    <label class="checkline">
-                      <input type="checkbox" id="settings-telegram-summary-charts" />
-                      <span>Include charts</span>
-                    </label>
-                    <div class="field">
-                      <span>&nbsp;</span>
-                      <button class="btn ghost" type="button" id="settings-telegram-summary-now">Send summary now</button>
-                    </div>
-                    <small class="form-hint">Uses observability rollups (24h snapshot).</small>
-                  </div>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">AstralAI</div>
-                    <div class="settings-group-sub">Experimental AI planning &amp; apply</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-ai-enabled" data-toggle-target="settings-ai-fields" />
-                    <span>Enable</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-ai-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>API Key</span>
-                      <input type="password" id="settings-ai-api-key" placeholder="sk-..." />
-                      <small class="form-hint" id="settings-ai-api-key-hint"></small>
-                    </label>
-                    <label class="field">
-                      <span>API Base</span>
-                      <input type="text" id="settings-ai-api-base" placeholder="https://api.openai.com" />
-                    </label>
-                    <label class="field">
-                      <span>Model</span>
-                      <input type="text" id="settings-ai-model" placeholder="gpt-4.1-mini" />
-                    </label>
-                    <label class="field">
-                      <span>Max tokens</span>
-                      <input type="number" id="settings-ai-max-tokens" placeholder="512" />
-                    </label>
-                    <label class="field">
-                      <span>Temperature</span>
-                      <input type="number" id="settings-ai-temperature" placeholder="0.2" step="0.1" min="0" max="2" />
-                    </label>
-                    <label class="field">
-                      <span>Allowed chat IDs</span>
-                      <input type="text" id="settings-ai-allowed-chats" placeholder="-1001234567890, @channel" />
-                    </label>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-ai-store" />
-                    <span>Allow provider storage</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-ai-allow-apply" />
-                    <span>Allow apply (write changes)</span>
-                  </label>
-                  <div class="form-hint">Apply uses backup → validate → diff → reload. Keep disabled unless you trust prompts.</div>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">InfluxDB export</div>
-                    <div class="settings-group-sub">Metrics export (HTTP)</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-influx-enabled" data-toggle-target="settings-influx-fields" />
-                    <span>Enable</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-influx-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Influx URL</span>
-                      <input type="text" id="settings-influx-url" placeholder="http://127.0.0.1:8086" />
-                    </label>
-                    <label class="field">
-                      <span>Org</span>
-                      <input type="text" id="settings-influx-org" placeholder="my-org" />
-                    </label>
-                    <label class="field">
-                      <span>Bucket</span>
-                      <input type="text" id="settings-influx-bucket" placeholder="astra" />
-                    </label>
-                    <label class="field">
-                      <span>Token</span>
-                      <input type="password" id="settings-influx-token" placeholder="optional" />
-                    </label>
-                    <label class="field">
-                      <span>Instance name</span>
-                      <input type="text" id="settings-influx-instance" placeholder="astra-1" />
-                    </label>
-                    <label class="field">
-                      <span>Measurement</span>
-                      <input type="text" id="settings-influx-measurement" placeholder="astra_metrics" />
-                    </label>
-                    <label class="field">
-                      <span>Interval (sec)</span>
-                      <input type="number" id="settings-influx-interval" placeholder="30" />
-                    </label>
-                  </div>
-                  <div class="form-hint">Uses HTTP (no TLS) with line protocol.</div>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Transcode tools</div>
-                    <div class="settings-group-sub">Override bundled binaries</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-tools" data-toggle-target="settings-tools-fields" />
-                    <span>Show paths</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-tools-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>FFmpeg path</span>
-                      <input type="text" id="settings-ffmpeg-path" placeholder="(auto)" />
-                    </label>
-                    <label class="field">
-                      <span>FFprobe path</span>
-                      <input type="text" id="settings-ffprobe-path" placeholder="(auto)" />
-                    </label>
-                  </div>
-                  <div class="form-hint">Leave empty to auto-detect bundled tools or PATH.</div>
-                </div>
-              </div>
-
-              <div class="settings-group">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">HTTP inputs</div>
-                    <div class="settings-group-sub">HTTPS handling</div>
-                  </div>
-                </div>
-                <div class="settings-group-body">
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-https-bridge-enabled" />
-                    <span>Enable HTTPS inputs via FFmpeg bridge</span>
-                  </label>
-                  <div class="form-hint">Disabled by default. When off, HTTPS inputs are rejected unless overridden per-input.</div>
-                </div>
-              </div>
-
-              <div class="settings-group span-2">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Security &amp; Sessions</div>
-                    <div class="settings-group-sub">Session controls and limits</div>
-                  </div>
-                </div>
-                <div class="settings-group-body">
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-http-csrf" />
-                    <span>Enable CSRF protection for cookie sessions</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-security-limits" data-toggle-target="settings-security-fields" />
-                    <span>Show session &amp; rate limits</span>
-                  </label>
-                  <div class="form-grid" id="settings-security-fields">
-                    <label class="field">
-                      <span>Session TTL (sec)</span>
-                      <input type="number" id="settings-auth-session-ttl" placeholder="3600" />
-                    </label>
-                    <label class="field">
-                      <span>Login rate limit (per min)</span>
-                      <input type="number" id="settings-login-rate-limit" placeholder="30" />
-                    </label>
-                    <label class="field">
-                      <span>Login rate limit window (sec)</span>
-                      <input type="number" id="settings-login-rate-window" placeholder="60" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              <div class="settings-group">
-                <div class="settings-group-header">
-                  <div>
-                    <div class="settings-group-title">Stream defaults</div>
-                    <div class="settings-group-sub">Fallbacks for new streams</div>
-                  </div>
-                  <label class="checkline">
-                    <input type="checkbox" id="settings-show-stream-defaults" data-toggle-target="settings-stream-defaults-fields" />
-                    <span>Show defaults</span>
-                  </label>
-                </div>
-                <div class="settings-group-body" id="settings-stream-defaults-fields">
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>No data timeout (sec)</span>
-                      <input type="number" id="settings-default-no-data-timeout" placeholder="3" />
-                    </label>
-                    <label class="field">
-                      <span>Probe interval (sec)</span>
-                      <input type="number" id="settings-default-probe-interval" placeholder="3" />
-                    </label>
-                    <label class="field">
-                      <span>Stable OK window (sec)</span>
-                      <input type="number" id="settings-default-stable-ok" placeholder="5" />
-                    </label>
-                    <label class="field">
-                      <span>Backup initial delay (sec)</span>
-                      <input type="number" id="settings-default-backup-initial" placeholder="0" />
-                    </label>
-                    <label class="field">
-                      <span>Backup start delay (sec)</span>
-                      <input type="number" id="settings-default-backup-start" placeholder="5" />
-                    </label>
-                    <label class="field">
-                      <span>Backup return delay (sec)</span>
-                      <input type="number" id="settings-default-backup-return" placeholder="10" />
-                    </label>
-                    <label class="field">
-                      <span>Stop if all inactive (sec)</span>
-                      <input type="number" id="settings-default-backup-stop" placeholder="20" />
-                    </label>
-                    <label class="field">
-                      <span>Active warm inputs max</span>
-                      <input type="number" id="settings-default-backup-warm-max" placeholder="2" />
-                    </label>
-                    <label class="field">
-                      <span>HTTP keep active (sec, -1=always)</span>
-                      <input type="number" id="settings-default-http-keep-active" placeholder="0" />
-                    </label>
-                  </div>
-                </div>
-              </div>
-
-              </div>
-
-              <div class="apply-row">
-                <button class="btn" type="button" id="btn-apply-general">Apply</button>
-              </div>
-            </div>
+            <div class="settings-general" id="settings-general-root"></div>
           </div>
 
           <div class="settings-section" data-section="users">
@@ -1843,7 +1303,21 @@
 
           <div class="settings-section" data-section="edit-config">
             <div class="panel">
-              <pre class="code-block" id="config-preview">{}</pre>
+              <div class="panel-title-row">
+                <div class="panel-title">Edit Config</div>
+                <div class="panel-actions">
+                  <select id="config-edit-mode" title="Import mode">
+                    <option value="replace" selected>Replace</option>
+                    <option value="merge">Merge</option>
+                  </select>
+                  <button class="btn ghost" type="button" id="btn-config-load">Refresh</button>
+                  <button class="btn" type="button" id="btn-config-save">Save &amp; Apply</button>
+                </div>
+              </div>
+              <textarea class="code-editor" id="config-editor" spellcheck="false" wrap="off"></textarea>
+              <div class="form-hint" id="config-edit-hint">
+                Full config (users, settings, streams, adapters, softcam, splitters). Save applies immediately.
+              </div>
             </div>
           </div>
 
@@ -1962,6 +1436,7 @@
                 </label>
                 <div class="ai-chat-files" id="ai-chat-files-label">No attachments</div>
               </div>
+              <div class="ai-chat-file-previews" id="ai-chat-file-previews"></div>
               <div class="ai-chat-actions">
                 <button class="btn" type="button" id="ai-chat-send">Send</button>
                 <button class="btn ghost" type="button" id="ai-chat-stop">Stop</button>
@@ -3650,6 +3125,31 @@
     </div>
   </div>
 
+  <div class="overlay" id="ai-apply-confirm-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Разрешить изменения от AstraAI?</div>
+          <div class="modal-sub">AI сможет записывать изменения в конфиг и применять их.</div>
+        </div>
+        <button class="icon-btn" id="ai-apply-confirm-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-hint">
+          Рекомендуется включать только при полном доверии к подсказкам. Все изменения логируются.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="footer-actions">
+          <button class="btn ghost" type="button" id="ai-apply-confirm-cancel">Отмена</button>
+          <button class="btn" type="button" id="ai-apply-confirm-ok">Разрешить</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="analyze-overlay" aria-hidden="true">
     <div class="modal analyze">
       <div class="analyze-header">
@@ -3667,20 +3167,38 @@
   </div>
 
   <div class="overlay" id="player-overlay" aria-hidden="true">
-    <div class="modal wide">
+    <div class="modal wide player-modal">
       <div class="modal-head">
         <div>
-          <div class="modal-title">HLS preview</div>
+          <div class="modal-title">Player</div>
           <p class="modal-sub" id="player-sub">Stream preview</p>
         </div>
         <button class="icon-btn" id="player-close" aria-label="Close">
           <span class="icon-x"></span>
         </button>
       </div>
+      <div class="player-header">
+        <div class="player-badges">
+          <span class="pill player-status" id="player-status">OFFLINE</span>
+          <span class="pill player-input" id="player-input">Active input: -</span>
+        </div>
+        <div class="player-actions">
+          <button class="btn ghost" type="button" id="player-open-tab">Open in new tab</button>
+          <button class="btn ghost" type="button" id="player-copy-link">Copy link</button>
+        </div>
+      </div>
       <div class="player">
-        <video id="player-video" controls playsinline></video>
+        <div class="player-frame">
+          <video id="player-video" controls autoplay muted playsinline></video>
+          <div class="player-loading" id="player-loading" aria-hidden="true">
+            <div class="spinner"></div>
+            <div class="player-loading-text">Подключение...</div>
+          </div>
+          <div class="player-error" id="player-error" aria-hidden="true"></div>
+        </div>
         <div class="player-meta">
           <div class="pill" id="player-url">-</div>
+          <button class="btn ghost" type="button" id="player-retry">Retry</button>
         </div>
       </div>
     </div>

@@ -4,7 +4,6 @@ const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
-const OBS_AI_PREF_KEY = 'astral.obs.ai.prefs';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 
 function getStoredBool(key, fallback) {
@@ -186,7 +185,32 @@ const state = {
   settingsSection: 'general',
   licenseLoaded: false,
   configRevisions: [],
+  configEditorDirty: false,
+  configEditorLoaded: false,
+  generalMode: getStoredBool(SETTINGS_ADVANCED_KEY, false) ? 'advanced' : 'basic',
+  generalDirty: false,
+  generalSnapshot: '',
+  generalCardOpen: {},
+  generalSearchQuery: '',
+  generalRendered: false,
+  generalCards: [],
+  generalSectionEls: {},
+  generalSearchEls: [],
+  generalObserver: null,
+  generalActiveSection: '',
+  aiApplyConfirmTarget: null,
+  aiApplyConfirmPending: false,
   player: null,
+  playerStreamId: null,
+  playerMode: null,
+  playerUrl: '',
+  playerShareUrl: '',
+  playerToken: null,
+  playerStartTimer: null,
+  playerStarting: false,
+  analyzeJobId: null,
+  analyzePoll: null,
+  analyzeStreamId: null,
   statusTimer: null,
   adapterTimer: null,
   dvbTimer: null,
@@ -238,6 +262,7 @@ const state = {
   aiChatPoll: null,
   aiChatPendingEl: null,
   aiChatBusy: false,
+  aiChatPreviewUrls: [],
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
@@ -278,20 +303,6 @@ const elements = {
   observabilityStreamField: $('#obs-stream-field'),
   observabilityRefresh: $('#obs-refresh'),
   observabilitySummary: $('#obs-summary'),
-  observabilityAi: $('#obs-ai'),
-  observabilityAiStatus: $('#obs-ai-status'),
-  observabilityAiBody: $('#obs-ai-body'),
-  observabilityAiRefresh: $('#obs-ai-refresh'),
-  observabilityAiIncludeLogs: $('#obs-ai-include-logs'),
-  observabilityAiIncludeCli: $('#obs-ai-include-cli'),
-  observabilityAiCliFields: $('#obs-ai-cli-fields'),
-  observabilityAiCliStream: $('#obs-ai-cli-stream'),
-  observabilityAiCliDvbls: $('#obs-ai-cli-dvbls'),
-  observabilityAiCliAnalyze: $('#obs-ai-cli-analyze'),
-  observabilityAiCliFemon: $('#obs-ai-cli-femon'),
-  observabilityAiAnalyzeUrl: $('#obs-ai-analyze-url'),
-  observabilityAiFemonUrl: $('#obs-ai-femon-url'),
-  observabilityAiStreamId: $('#obs-ai-stream-id'),
   observabilityEmpty: $('#obs-empty'),
   observabilityHint: $('#obs-hint'),
   observabilityChartBitrate: $('#obs-chart-bitrate'),
@@ -306,6 +317,7 @@ const elements = {
   aiChatStatus: $('#ai-chat-status'),
   aiChatFiles: $('#ai-chat-files'),
   aiChatFilesLabel: $('#ai-chat-files-label'),
+  aiChatFilePreviews: $('#ai-chat-file-previews'),
   aiChatIncludeLogs: $('#ai-chat-logs'),
   aiChatCliStream: $('#ai-chat-cli-stream'),
   aiChatCliDvbls: $('#ai-chat-cli-dvbls'),
@@ -314,8 +326,20 @@ const elements = {
   aiChatStreamId: $('#ai-chat-stream-id'),
   aiChatAnalyzeUrl: $('#ai-chat-analyze-url'),
   aiChatFemonUrl: $('#ai-chat-femon-url'),
+  settingsGeneralRoot: $('#settings-general-root'),
+  settingsGeneralSearch: $('#settings-general-search'),
+  settingsGeneralMode: $('#settings-general-mode'),
+  settingsGeneralDirty: $('#settings-general-dirty'),
+  settingsGeneralNav: $('#settings-general-nav'),
+  settingsGeneralNavSelect: $('#settings-general-nav-select'),
+  settingsActionBar: $('#settings-action-bar'),
+  settingsActionSave: $('#settings-action-save'),
+  settingsActionCancel: $('#settings-action-cancel'),
+  settingsActionReset: $('#settings-action-reset'),
+  settingsActionStatus: $('#settings-action-status'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
+  settingsShowAccess: $('#settings-show-access'),
   settingsShowEpg: $('#settings-show-epg'),
   settingsShowWebhook: $('#settings-show-webhook'),
   settingsShowLogLimits: $('#settings-show-log-limits'),
@@ -328,7 +352,10 @@ const elements = {
   btnApplyCas: $('#btn-apply-cas'),
   licenseMeta: $('#license-meta'),
   licenseText: $('#license-text'),
-  btnApplyGeneral: $('#btn-apply-general'),
+  aiApplyConfirmOverlay: $('#ai-apply-confirm-overlay'),
+  aiApplyConfirmClose: $('#ai-apply-confirm-close'),
+  aiApplyConfirmCancel: $('#ai-apply-confirm-cancel'),
+  aiApplyConfirmOk: $('#ai-apply-confirm-ok'),
   viewMenu: $('#view-menu'),
   viewOptions: $$('#view-menu .view-option'),
   searchInput: $('#search-input'),
@@ -457,7 +484,11 @@ const elements = {
   userFieldAdmin: $('#user-field-admin'),
   userFieldEnabled: $('#user-field-enabled'),
   userFieldComment: $('#user-field-comment'),
-  configPreview: $('#config-preview'),
+  configEditor: $('#config-editor'),
+  configEditMode: $('#config-edit-mode'),
+  btnConfigLoad: $('#btn-config-load'),
+  btnConfigSave: $('#btn-config-save'),
+  configEditHint: $('#config-edit-hint'),
   configHistoryTable: $('#config-history-table'),
   configActiveRevision: $('#config-active-revision'),
   configLkgRevision: $('#config-lkg-revision'),
@@ -551,6 +582,9 @@ const elements = {
   settingsEpgInterval: $('#settings-epg-interval'),
   settingsEventRequest: $('#settings-event-request'),
   settingsMonitorAnalyzeMax: $('#settings-monitor-analyze-max'),
+  settingsPreviewMaxSessions: $('#settings-preview-max-sessions'),
+  settingsPreviewIdleTimeout: $('#settings-preview-idle-timeout'),
+  settingsPreviewTokenTtl: $('#settings-preview-token-ttl'),
   settingsLogMaxEntries: $('#settings-log-max-entries'),
   settingsLogRetentionSec: $('#settings-log-retention-sec'),
   settingsAccessLogMaxEntries: $('#settings-access-log-max-entries'),
@@ -589,6 +623,8 @@ const elements = {
   settingsAiApiKeyHint: $('#settings-ai-api-key-hint'),
   settingsAiApiBase: $('#settings-ai-api-base'),
   settingsAiModel: $('#settings-ai-model'),
+  settingsAiModelHint: $('#settings-ai-model-hint'),
+  settingsAiChartMode: $('#settings-ai-chart-mode'),
   settingsAiMaxTokens: $('#settings-ai-max-tokens'),
   settingsAiTemperature: $('#settings-ai-temperature'),
   settingsAiAllowedChats: $('#settings-ai-allowed-chats'),
@@ -1000,6 +1036,13 @@ const elements = {
   playerClose: $('#player-close'),
   playerSub: $('#player-sub'),
   playerUrl: $('#player-url'),
+  playerStatus: $('#player-status'),
+  playerInput: $('#player-input'),
+  playerOpenTab: $('#player-open-tab'),
+  playerCopyLink: $('#player-copy-link'),
+  playerRetry: $('#player-retry'),
+  playerError: $('#player-error'),
+  playerLoading: $('#player-loading'),
   btnNewStream: $('#btn-new-stream'),
   btnNewAdapter: $('#btn-new-adapter'),
   btnView: $('#btn-view'),
@@ -1076,6 +1119,1855 @@ const OUTPUT_AUDIO_FIX_DEFAULTS = {
 
 let searchTerm = '';
 
+// Настройки: схема и вспомогательные функции для вкладки Settings → General.
+function readInputValue(id) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  if (el.type === 'checkbox') return !!el.checked;
+  if (el.tagName === 'SELECT') return el.value;
+  return el.value;
+}
+
+function readBoolValue(id, fallback) {
+  const value = readInputValue(id);
+  if (value === null || value === undefined) return fallback;
+  return value === true || value === 'true' || value === '1';
+}
+
+function readNumberValue(id, fallback) {
+  const value = readInputValue(id);
+  const num = Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return num;
+}
+
+function readStringValue(id, fallback) {
+  const value = readInputValue(id);
+  if (value === null || value === undefined) return fallback;
+  return String(value);
+}
+
+function formatOnOff(value) {
+  return value ? 'вкл' : 'выкл';
+}
+
+function formatDays(value) {
+  return `${value}д`;
+}
+
+function formatSeconds(value) {
+  return `${value}с`;
+}
+
+function formatOptionalNumber(value, suffix, emptyLabel) {
+  if (!Number.isFinite(value) || value === 0) return emptyLabel || '—';
+  return `${value}${suffix || ''}`;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const SETTINGS_GENERAL_SECTIONS = [
+  {
+    id: 'interface',
+    title: 'Интерфейс',
+    description: 'Видимость инструментов и настройки EPG.',
+    cards: [
+      {
+        id: 'ui-tools',
+        title: 'Интерфейс',
+        description: 'Показывать или скрывать основные инструменты.',
+        level: 'basic',
+        collapsible: false,
+        fields: [
+          {
+            id: 'settings-show-splitter',
+            label: 'Показывать HLSSplitter',
+            type: 'switch',
+            key: 'ui_splitter_enabled',
+            level: 'basic',
+          },
+          {
+            id: 'settings-show-buffer',
+            label: 'Показывать Buffer',
+            type: 'switch',
+            key: 'ui_buffer_enabled',
+            level: 'basic',
+          },
+          {
+            id: 'settings-show-access',
+            label: 'Показывать Access',
+            type: 'switch',
+            key: 'ui_access_enabled',
+            level: 'basic',
+          },
+          {
+            id: 'settings-show-epg',
+            label: 'Показывать настройки EPG‑экспорта',
+            type: 'switch',
+            key: 'epg_export_interval_sec',
+            level: 'basic',
+            uiOnly: true,
+          },
+          {
+            id: 'settings-epg-interval',
+            label: 'EPG export interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'epg_export_interval_sec',
+            level: 'basic',
+            placeholder: '0 (disabled)',
+            dependsOn: { id: 'settings-show-epg', value: true },
+          },
+        ],
+        summary: () => {
+          const splitter = readBoolValue('settings-show-splitter', false);
+          const buffer = readBoolValue('settings-show-buffer', false);
+          const access = readBoolValue('settings-show-access', true);
+          const epgOn = readBoolValue('settings-show-epg', false);
+          const epgInterval = readNumberValue('settings-epg-interval', 0);
+          const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'preview',
+    title: 'Preview',
+    description: 'Лимиты предпросмотра и авто-остановка.',
+    cards: [
+      {
+        id: 'preview-core',
+        title: 'Stream preview',
+        description: 'Ограничения и таймауты для on-demand просмотра.',
+        level: 'basic',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-preview-max-sessions',
+            label: 'Max preview sessions (global)',
+            type: 'input',
+            inputType: 'number',
+            key: 'preview_max_sessions',
+            level: 'basic',
+            placeholder: '2',
+          },
+          {
+            id: 'settings-preview-idle-timeout',
+            label: 'Idle timeout (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'preview_idle_timeout_sec',
+            level: 'basic',
+            placeholder: '45',
+          },
+          {
+            id: 'settings-preview-token-ttl',
+            label: 'Token TTL (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'preview_token_ttl_sec',
+            level: 'basic',
+            placeholder: '180',
+          },
+        ],
+        summary: () => {
+          const max = readNumberValue('settings-preview-max-sessions', 2);
+          const idle = readNumberValue('settings-preview-idle-timeout', 45);
+          const ttl = readNumberValue('settings-preview-token-ttl', 180);
+          return `Max: ${max} · Idle: ${formatSeconds(idle)} · TTL: ${formatSeconds(ttl)}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'observability',
+    title: 'Наблюдаемость',
+    description: 'Сбор логов, метрик и автоматический контроль процесса.',
+    cards: [
+      {
+        id: 'observability-core',
+        title: 'Observability',
+        description: 'Логи, метрики и rollup.',
+        level: 'basic',
+        toggle: { id: 'settings-observability-enabled', label: 'Включено' },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-observability-logs-days',
+            label: 'Log retention (days)',
+            type: 'select',
+            key: 'ai_logs_retention_days',
+            level: 'basic',
+            options: [
+              { value: '1', label: '1' },
+              { value: '7', label: '7' },
+              { value: '30', label: '30' },
+            ],
+          },
+          {
+            id: 'settings-observability-metrics-days',
+            label: 'Metrics retention (days)',
+            type: 'select',
+            key: 'ai_metrics_retention_days',
+            level: 'advanced',
+            options: [
+              { value: '7', label: '7' },
+              { value: '30', label: '30' },
+              { value: '90', label: '90' },
+            ],
+            dependsOn: () => !readBoolValue('settings-observability-on-demand', false),
+          },
+          {
+            id: 'settings-observability-rollup',
+            label: 'Rollup interval (sec)',
+            type: 'select',
+            key: 'ai_rollup_interval_sec',
+            level: 'advanced',
+            options: [
+              { value: '60', label: '60' },
+              { value: '300', label: '300' },
+              { value: '3600', label: '3600' },
+            ],
+            dependsOn: () => !readBoolValue('settings-observability-on-demand', false),
+          },
+          {
+            id: 'settings-observability-on-demand',
+            label: 'On‑demand metrics (без фонового rollup)',
+            type: 'switch',
+            key: 'ai_metrics_on_demand',
+            level: 'advanced',
+          },
+          {
+            type: 'note',
+            text: 'Отключение фонового rollup снижает нагрузку, но агрегаты строятся по запросу.',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-observability-enabled', false);
+          if (!enabled) return 'Выключено';
+          const logs = readNumberValue('settings-observability-logs-days', 7);
+          const onDemand = readBoolValue('settings-observability-on-demand', false);
+          const metrics = onDemand
+            ? 'по запросу'
+            : formatDays(readNumberValue('settings-observability-metrics-days', 30));
+          const rollup = onDemand
+            ? '—'
+            : formatSeconds(readNumberValue('settings-observability-rollup', 60));
+          return `Включено · Logs: ${formatDays(logs)} · Metrics: ${metrics} · Rollup: ${rollup}`;
+        },
+      },
+      {
+        id: 'monitoring-logs',
+        title: 'Monitoring & Logs',
+        description: 'Вебхуки, лимиты и диагностика.',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-event-request',
+            label: 'Event webhook URL',
+            type: 'input',
+            inputType: 'text',
+            key: 'event_request',
+            level: 'advanced',
+            placeholder: 'http://127.0.0.1:9005/event',
+          },
+          {
+            id: 'settings-monitor-analyze-max',
+            label: 'Analyze concurrency limit',
+            type: 'input',
+            inputType: 'number',
+            key: 'monitor_analyze_max_concurrency',
+            level: 'advanced',
+            placeholder: '4',
+          },
+          {
+            id: 'settings-log-max-entries',
+            label: 'Log max entries',
+            type: 'input',
+            inputType: 'number',
+            key: 'log_max_entries',
+            level: 'advanced',
+            placeholder: '0 (unlimited)',
+          },
+          {
+            id: 'settings-log-retention-sec',
+            label: 'Log retention (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'log_retention_sec',
+            level: 'advanced',
+            placeholder: '0 (unlimited)',
+          },
+          {
+            id: 'settings-access-log-max-entries',
+            label: 'Access log max entries',
+            type: 'input',
+            inputType: 'number',
+            key: 'access_log_max_entries',
+            level: 'advanced',
+            placeholder: '0 (unlimited)',
+          },
+          {
+            id: 'settings-access-log-retention-sec',
+            label: 'Access log retention (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'access_log_retention_sec',
+            level: 'advanced',
+            placeholder: '0 (unlimited)',
+          },
+        ],
+        summary: () => {
+          const webhook = readStringValue('settings-event-request', '');
+          const logMax = readNumberValue('settings-log-max-entries', 0);
+          const accessMax = readNumberValue('settings-access-log-max-entries', 0);
+          const webhookText = webhook ? 'Webhook: задан' : 'Webhook: нет';
+          const logsText = `Logs: ${formatOptionalNumber(logMax, '', '∞')}`;
+          const accessText = `Access: ${formatOptionalNumber(accessMax, '', '∞')}`;
+          return `${webhookText} · ${logsText} · ${accessText}`;
+        },
+      },
+      {
+        id: 'process-watchdog',
+        title: 'Process Watchdog',
+        description: 'Авто‑рестарт при превышении CPU/RAM.',
+        level: 'advanced',
+        toggle: { id: 'settings-watchdog-enabled', label: 'Включено' },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-watchdog-cpu',
+            label: 'CPU limit (%)',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_cpu_pct',
+            level: 'advanced',
+            placeholder: '95',
+          },
+          {
+            id: 'settings-watchdog-rss-mb',
+            label: 'RSS limit (MB)',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_rss_mb',
+            level: 'advanced',
+            placeholder: '0 (use %)',
+          },
+          {
+            id: 'settings-watchdog-rss-pct',
+            label: 'RSS limit (%)',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_rss_pct',
+            level: 'advanced',
+            placeholder: '80',
+          },
+          {
+            id: 'settings-watchdog-interval',
+            label: 'Interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_interval_sec',
+            level: 'advanced',
+            placeholder: '10',
+          },
+          {
+            id: 'settings-watchdog-strikes',
+            label: 'Max strikes',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_max_strikes',
+            level: 'advanced',
+            placeholder: '6',
+          },
+          {
+            id: 'settings-watchdog-uptime',
+            label: 'Min uptime (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'resource_watchdog_min_uptime_sec',
+            level: 'advanced',
+            placeholder: '180',
+          },
+          {
+            type: 'note',
+            text: 'При превышении лимитов процесс завершается (используйте systemd Restart=always).',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-watchdog-enabled', false);
+          if (!enabled) return 'Выключено';
+          const cpu = readNumberValue('settings-watchdog-cpu', 95);
+          const rss = readNumberValue('settings-watchdog-rss-pct', 80);
+          return `Включено · CPU: ${cpu}% · RSS: ${rss}%`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'alerts',
+    title: 'Оповещения',
+    description: 'Уведомления о событиях.',
+    cards: [
+      {
+        id: 'telegram-alerts',
+        title: 'Telegram Alerts',
+        description: 'Короткие уведомления в Telegram.',
+        level: 'basic',
+        toggle: { id: 'settings-telegram-enabled', label: 'Включено', disableCard: false },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-telegram-level',
+            label: 'Level',
+            type: 'select',
+            key: 'telegram_level',
+            level: 'basic',
+            options: [
+              { value: 'OFF', label: 'OFF' },
+              { value: 'CRITICAL', label: 'CRITICAL' },
+              { value: 'ERROR', label: 'ERROR' },
+              { value: 'WARNING', label: 'WARNING' },
+              { value: 'INFO', label: 'INFO' },
+              { value: 'DEBUG', label: 'DEBUG' },
+            ],
+          },
+          {
+            id: 'settings-telegram-token',
+            label: 'Bot Token',
+            type: 'input',
+            inputType: 'password',
+            key: 'telegram_bot_token',
+            level: 'basic',
+            placeholder: '123456:ABCDEF',
+            hintId: 'settings-telegram-token-hint',
+          },
+          {
+            id: 'settings-telegram-chat-id',
+            label: 'Chat ID / Channel',
+            type: 'input',
+            inputType: 'text',
+            key: 'telegram_chat_id',
+            level: 'basic',
+            placeholder: '-1001234567890 or @channel',
+          },
+          {
+            id: 'settings-telegram-test',
+            type: 'button',
+            buttonText: 'Отправить тест',
+            level: 'basic',
+          },
+          {
+            type: 'heading',
+            text: 'Бэкапы конфигурации',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-backup-enabled',
+            label: 'Отправлять бэкапы',
+            type: 'switch',
+            key: 'telegram_backup_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-backup-schedule',
+            label: 'Schedule',
+            type: 'select',
+            key: 'telegram_backup_schedule',
+            level: 'advanced',
+            options: [
+              { value: 'DAILY', label: 'Daily' },
+              { value: 'WEEKLY', label: 'Weekly' },
+              { value: 'MONTHLY', label: 'Monthly' },
+            ],
+            dependsOn: { id: 'settings-telegram-backup-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-backup-time',
+            label: 'Time',
+            type: 'input',
+            inputType: 'time',
+            key: 'telegram_backup_time',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-backup-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-backup-weekday',
+            label: 'Weekday',
+            type: 'select',
+            key: 'telegram_backup_weekday',
+            level: 'advanced',
+            wrapperId: 'settings-telegram-backup-weekday-field',
+            options: [
+              { value: '1', label: 'Monday' },
+              { value: '2', label: 'Tuesday' },
+              { value: '3', label: 'Wednesday' },
+              { value: '4', label: 'Thursday' },
+              { value: '5', label: 'Friday' },
+              { value: '6', label: 'Saturday' },
+              { value: '7', label: 'Sunday' },
+            ],
+            dependsOn: () => {
+              const enabled = readBoolValue('settings-telegram-backup-enabled', false);
+              const schedule = readStringValue('settings-telegram-backup-schedule', 'DAILY');
+              return enabled && schedule === 'WEEKLY';
+            },
+          },
+          {
+            id: 'settings-telegram-backup-monthday',
+            label: 'Month day',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_backup_monthday',
+            level: 'advanced',
+            wrapperId: 'settings-telegram-backup-monthday-field',
+            min: 1,
+            max: 31,
+            dependsOn: () => {
+              const enabled = readBoolValue('settings-telegram-backup-enabled', false);
+              const schedule = readStringValue('settings-telegram-backup-schedule', 'DAILY');
+              return enabled && schedule === 'MONTHLY';
+            },
+          },
+          {
+            id: 'settings-telegram-backup-secrets',
+            label: 'Include secrets in backup',
+            type: 'switch',
+            key: 'telegram_backup_include_secrets',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-backup-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-backup-now',
+            type: 'button',
+            buttonText: 'Отправить бэкап сейчас',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-backup-enabled', value: true },
+          },
+          {
+            type: 'note',
+            text: 'Бэкапы приходят JSON‑файлом в тот же чат.',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-backup-enabled', value: true },
+          },
+          {
+            type: 'heading',
+            text: 'AI‑summary',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-summary-enabled',
+            label: 'Отправлять AI‑summary',
+            type: 'switch',
+            key: 'telegram_summary_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-summary-schedule',
+            label: 'Schedule',
+            type: 'select',
+            key: 'telegram_summary_schedule',
+            level: 'advanced',
+            options: [
+              { value: 'DAILY', label: 'Daily' },
+              { value: 'WEEKLY', label: 'Weekly' },
+              { value: 'MONTHLY', label: 'Monthly' },
+            ],
+            dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-summary-time',
+            label: 'Time',
+            type: 'input',
+            inputType: 'time',
+            key: 'telegram_summary_time',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-summary-weekday',
+            label: 'Weekday',
+            type: 'select',
+            key: 'telegram_summary_weekday',
+            level: 'advanced',
+            wrapperId: 'settings-telegram-summary-weekday-field',
+            options: [
+              { value: '1', label: 'Monday' },
+              { value: '2', label: 'Tuesday' },
+              { value: '3', label: 'Wednesday' },
+              { value: '4', label: 'Thursday' },
+              { value: '5', label: 'Friday' },
+              { value: '6', label: 'Saturday' },
+              { value: '7', label: 'Sunday' },
+            ],
+            dependsOn: () => {
+              const enabled = readBoolValue('settings-telegram-summary-enabled', false);
+              const schedule = readStringValue('settings-telegram-summary-schedule', 'DAILY');
+              return enabled && schedule === 'WEEKLY';
+            },
+          },
+          {
+            id: 'settings-telegram-summary-monthday',
+            label: 'Month day',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_summary_monthday',
+            level: 'advanced',
+            wrapperId: 'settings-telegram-summary-monthday-field',
+            min: 1,
+            max: 31,
+            dependsOn: () => {
+              const enabled = readBoolValue('settings-telegram-summary-enabled', false);
+              const schedule = readStringValue('settings-telegram-summary-schedule', 'DAILY');
+              return enabled && schedule === 'MONTHLY';
+            },
+          },
+          {
+            id: 'settings-telegram-summary-charts',
+            label: 'Include charts',
+            type: 'switch',
+            key: 'telegram_summary_include_charts',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-summary-now',
+            type: 'button',
+            buttonText: 'Отправить summary сейчас',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
+          },
+          {
+            type: 'note',
+            text: 'Используются rollup‑метрики за последние 24 часа.',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-telegram-enabled', false);
+          if (!enabled) return 'Выключено';
+          const level = readStringValue('settings-telegram-level', 'OFF');
+          const chat = readStringValue('settings-telegram-chat-id', '');
+          const chatText = chat ? truncateText(chat, 16) : 'чат не задан';
+          return `Включено · ${level} · ${chatText}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'integrations',
+    title: 'Интеграции',
+    description: 'Экспорт метрик и внешние сервисы.',
+    cards: [
+      {
+        id: 'influx',
+        title: 'InfluxDB export',
+        description: 'Экспорт метрик по HTTP.',
+        level: 'advanced',
+        toggle: { id: 'settings-influx-enabled', label: 'Включено' },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-influx-url',
+            label: 'Influx URL',
+            type: 'input',
+            inputType: 'text',
+            key: 'influx_url',
+            level: 'advanced',
+            placeholder: 'http://127.0.0.1:8086',
+          },
+          {
+            id: 'settings-influx-org',
+            label: 'Org',
+            type: 'input',
+            inputType: 'text',
+            key: 'influx_org',
+            level: 'advanced',
+            placeholder: 'my-org',
+          },
+          {
+            id: 'settings-influx-bucket',
+            label: 'Bucket',
+            type: 'input',
+            inputType: 'text',
+            key: 'influx_bucket',
+            level: 'advanced',
+            placeholder: 'astra',
+          },
+          {
+            id: 'settings-influx-token',
+            label: 'Token',
+            type: 'input',
+            inputType: 'password',
+            key: 'influx_token',
+            level: 'advanced',
+            placeholder: 'optional',
+          },
+          {
+            id: 'settings-influx-instance',
+            label: 'Instance name',
+            type: 'input',
+            inputType: 'text',
+            key: 'influx_instance',
+            level: 'advanced',
+            placeholder: 'astra-1',
+          },
+          {
+            id: 'settings-influx-measurement',
+            label: 'Measurement',
+            type: 'input',
+            inputType: 'text',
+            key: 'influx_measurement',
+            level: 'advanced',
+            placeholder: 'astra_metrics',
+          },
+          {
+            id: 'settings-influx-interval',
+            label: 'Interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'influx_interval_sec',
+            level: 'advanced',
+            placeholder: '30',
+          },
+          {
+            type: 'note',
+            text: 'Используется line protocol через HTTP (без TLS).',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-influx-enabled', false);
+          if (!enabled) return 'Выключено';
+          const url = readStringValue('settings-influx-url', '');
+          const interval = readNumberValue('settings-influx-interval', 30);
+          return `Включено · ${url || 'URL не задан'} · ${formatSeconds(interval)}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'transcoding',
+    title: 'Транскодинг',
+    description: 'Инструменты и HTTPS‑входы.',
+    cards: [
+      {
+        id: 'transcode-tools',
+        title: 'Transcode tools',
+        description: 'Переопределение путей к FFmpeg/FFprobe.',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-ffmpeg-path',
+            label: 'FFmpeg path',
+            type: 'input',
+            inputType: 'text',
+            key: 'ffmpeg_path',
+            level: 'advanced',
+            placeholder: '(auto)',
+          },
+          {
+            id: 'settings-ffprobe-path',
+            label: 'FFprobe path',
+            type: 'input',
+            inputType: 'text',
+            key: 'ffprobe_path',
+            level: 'advanced',
+            placeholder: '(auto)',
+          },
+          {
+            type: 'note',
+            text: 'Оставьте пустым, чтобы использовать bundled‑binary или PATH.',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const ffmpeg = readStringValue('settings-ffmpeg-path', '');
+          const ffprobe = readStringValue('settings-ffprobe-path', '');
+          const ffmpegText = ffmpeg ? 'FFmpeg: задан' : 'FFmpeg: auto';
+          const ffprobeText = ffprobe ? 'FFprobe: задан' : 'FFprobe: auto';
+          return `${ffmpegText} · ${ffprobeText}`;
+        },
+      },
+      {
+        id: 'https-inputs',
+        title: 'HTTP inputs',
+        description: 'HTTPS‑входы через FFmpeg‑мост.',
+        level: 'basic',
+        toggle: { id: 'settings-https-bridge-enabled', label: 'Включено' },
+        collapsible: true,
+        fields: [
+          {
+            type: 'note',
+            text: 'Когда выключено, HTTPS‑входы отклоняются, если не переопределены в input.',
+            level: 'basic',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-https-bridge-enabled', false);
+          return `HTTPS bridge: ${formatOnOff(enabled)}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'security',
+    title: 'Безопасность',
+    description: 'Сессии и защита доступа.',
+    cards: [
+      {
+        id: 'security-sessions',
+        title: 'Security & Sessions',
+        description: 'CSRF и лимиты входа.',
+        level: 'basic',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-http-csrf',
+            label: 'Включить CSRF‑защиту для cookie‑сессий',
+            type: 'switch',
+            key: 'http_csrf_enabled',
+            level: 'basic',
+          },
+          {
+            id: 'settings-show-security-limits',
+            label: 'Показать лимиты сессий и rate limit',
+            type: 'switch',
+            level: 'basic',
+            uiOnly: true,
+          },
+          {
+            id: 'settings-auth-session-ttl',
+            label: 'Session TTL (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'auth_session_ttl_sec',
+            level: 'advanced',
+            placeholder: '3600',
+            dependsOn: { id: 'settings-show-security-limits', value: true },
+          },
+          {
+            id: 'settings-login-rate-limit',
+            label: 'Login rate limit (per min)',
+            type: 'input',
+            inputType: 'number',
+            key: 'rate_limit_login_per_min',
+            level: 'advanced',
+            placeholder: '30',
+            dependsOn: { id: 'settings-show-security-limits', value: true },
+          },
+          {
+            id: 'settings-login-rate-window',
+            label: 'Login rate limit window (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'rate_limit_login_window_sec',
+            level: 'advanced',
+            placeholder: '60',
+            dependsOn: { id: 'settings-show-security-limits', value: true },
+          },
+        ],
+        summary: () => {
+          const csrf = readBoolValue('settings-http-csrf', true);
+          const ttl = readNumberValue('settings-auth-session-ttl', 3600);
+          const rate = readNumberValue('settings-login-rate-limit', 30);
+          return `CSRF: ${formatOnOff(csrf)} · TTL: ${formatSeconds(ttl)} · ${rate}/min`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'experimental',
+    title: 'Экспериментальное',
+    description: 'AI‑возможности и небезопасные опции.',
+    cards: [
+      {
+        id: 'astra-ai',
+        title: 'AstraAI',
+        description: 'Планирование и применение изменений.',
+        level: 'advanced',
+        toggle: { id: 'settings-ai-enabled', label: 'Включено' },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-ai-api-key',
+            label: 'API Key',
+            type: 'input',
+            inputType: 'password',
+            key: 'ai_api_key',
+            level: 'advanced',
+            placeholder: 'sk-...',
+            hintId: 'settings-ai-api-key-hint',
+          },
+          {
+            id: 'settings-ai-api-base',
+            label: 'API Base',
+            type: 'input',
+            inputType: 'text',
+            key: 'ai_api_base',
+            level: 'advanced',
+            placeholder: 'https://api.openai.com',
+          },
+          {
+            id: 'settings-ai-model',
+            label: 'Model',
+            type: 'input',
+            inputType: 'text',
+            key: 'ai_model',
+            level: 'advanced',
+            placeholder: 'gpt-5.2',
+            hintId: 'settings-ai-model-hint',
+          },
+          {
+            id: 'settings-ai-chart-mode',
+            label: 'Charts mode',
+            type: 'select',
+            key: 'ai_chart_mode',
+            level: 'advanced',
+            options: [
+              { value: 'spec', label: 'Spec (default, fast)' },
+              { value: 'image', label: 'Image (render PNG)' },
+            ],
+          },
+          {
+            id: 'settings-ai-max-tokens',
+            label: 'Max tokens',
+            type: 'input',
+            inputType: 'number',
+            key: 'ai_max_tokens',
+            level: 'advanced',
+            placeholder: '512',
+          },
+          {
+            id: 'settings-ai-temperature',
+            label: 'Temperature',
+            type: 'input',
+            inputType: 'number',
+            key: 'ai_temperature',
+            level: 'advanced',
+            placeholder: '0.2',
+            step: 0.1,
+            min: 0,
+            max: 2,
+          },
+          {
+            id: 'settings-ai-allowed-chats',
+            label: 'Allowed chat IDs',
+            type: 'input',
+            inputType: 'text',
+            key: 'ai_telegram_allowed_chat_ids',
+            level: 'advanced',
+            placeholder: '-1001234567890, @channel',
+          },
+          {
+            id: 'settings-ai-store',
+            label: 'Allow provider storage',
+            type: 'switch',
+            key: 'ai_store',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-ai-allow-apply',
+            label: 'Allow apply (write changes)',
+            type: 'switch',
+            key: 'ai_allow_apply',
+            level: 'advanced',
+          },
+          {
+            type: 'note',
+            text: 'Apply использует backup → validate → diff → reload. Включайте только при полном доверии.',
+            level: 'advanced',
+            tone: 'warning',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-ai-enabled', false);
+          if (!enabled) return 'Выключено';
+          const model = readStringValue('settings-ai-model', '');
+          return `Включено · ${model || 'модель не задана'}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'defaults',
+    title: 'Значения по умолчанию',
+    description: 'Шаблоны для новых стримов.',
+    cards: [
+      {
+        id: 'stream-defaults',
+        title: 'Stream defaults',
+        description: 'Параметры для новых стримов.',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-show-stream-defaults',
+            label: 'Показывать значения по умолчанию',
+            type: 'switch',
+            level: 'advanced',
+            uiOnly: true,
+          },
+          {
+            id: 'settings-default-no-data-timeout',
+            label: 'No data timeout (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'no_data_timeout_sec',
+            level: 'advanced',
+            placeholder: '3',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-probe-interval',
+            label: 'Probe interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'probe_interval_sec',
+            level: 'advanced',
+            placeholder: '3',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-stable-ok',
+            label: 'Stable OK window (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'stable_ok_sec',
+            level: 'advanced',
+            placeholder: '5',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-backup-initial',
+            label: 'Backup initial delay (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'backup_initial_delay_sec',
+            level: 'advanced',
+            placeholder: '0',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-backup-start',
+            label: 'Backup start delay (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'backup_start_delay_sec',
+            level: 'advanced',
+            placeholder: '5',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-backup-return',
+            label: 'Backup return delay (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'backup_return_delay_sec',
+            level: 'advanced',
+            placeholder: '10',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-backup-stop',
+            label: 'Stop if all inactive (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'backup_stop_if_all_inactive_sec',
+            level: 'advanced',
+            placeholder: '20',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-backup-warm-max',
+            label: 'Active warm inputs max',
+            type: 'input',
+            inputType: 'number',
+            key: 'backup_active_warm_max',
+            level: 'advanced',
+            placeholder: '2',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+          {
+            id: 'settings-default-http-keep-active',
+            label: 'HTTP keep active (sec, -1=always)',
+            type: 'input',
+            inputType: 'number',
+            key: 'http_keep_active',
+            level: 'advanced',
+            placeholder: '0',
+            dependsOn: { id: 'settings-show-stream-defaults', value: true },
+          },
+        ],
+        summary: () => {
+          const show = readBoolValue('settings-show-stream-defaults', false);
+          if (!show) return 'Скрыто';
+          const anyValue = [
+            readNumberValue('settings-default-no-data-timeout', 0),
+            readNumberValue('settings-default-probe-interval', 0),
+            readNumberValue('settings-default-stable-ok', 0),
+            readNumberValue('settings-default-backup-initial', 0),
+            readNumberValue('settings-default-backup-start', 0),
+            readNumberValue('settings-default-backup-return', 0),
+            readNumberValue('settings-default-backup-stop', 0),
+            readNumberValue('settings-default-backup-warm-max', 0),
+            readNumberValue('settings-default-http-keep-active', 0),
+          ].some((val) => Number.isFinite(val) && val !== 0);
+          return anyValue ? 'Переопределены' : 'По умолчанию';
+        },
+      },
+    ],
+  },
+];
+
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildSearchTokens(query) {
+  return String(query || '')
+    .toLowerCase()
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function highlightText(text, tokens) {
+  if (!tokens.length) return escapeHtml(text);
+  const pattern = tokens.map(escapeRegExp).join('|');
+  const re = new RegExp(pattern, 'gi');
+  let result = '';
+  let lastIndex = 0;
+  let match = null;
+  while ((match = re.exec(text)) !== null) {
+    result += escapeHtml(text.slice(lastIndex, match.index));
+    result += `<span class="settings-highlight">${escapeHtml(match[0])}</span>`;
+    lastIndex = match.index + match[0].length;
+  }
+  result += escapeHtml(text.slice(lastIndex));
+  return result;
+}
+
+function registerSearchHighlight(el, text) {
+  if (!el) return;
+  const value = String(text || '');
+  el.dataset.originalText = value;
+  state.generalSearchEls.push({ el, text: value });
+}
+
+function matchesSearch(text, tokens) {
+  if (!tokens.length) return true;
+  const source = String(text || '').toLowerCase();
+  return tokens.every((token) => source.includes(token));
+}
+
+function buildFieldSearchText(field) {
+  const parts = [];
+  if (field.label) parts.push(field.label);
+  if (field.text) parts.push(field.text);
+  if (field.buttonText) parts.push(field.buttonText);
+  if (field.key) parts.push(field.key);
+  if (field.id) parts.push(field.id);
+  if (Array.isArray(field.options)) {
+    field.options.forEach((option) => {
+      if (option && option.label) parts.push(option.label);
+      if (option && option.value) parts.push(option.value);
+    });
+  }
+  return parts.join(' ').toLowerCase();
+}
+
+function renderSwitchControl(id) {
+  const wrapper = createEl('label', 'switch');
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.id = id;
+  const slider = createEl('span', 'switch-slider');
+  wrapper.append(input, slider);
+  return { wrapper, input };
+}
+
+function renderSettingsHeader() {
+  const header = createEl('div', 'settings-general-header');
+
+  const searchWrap = createEl('div', 'settings-search');
+  const searchInput = document.createElement('input');
+  searchInput.type = 'search';
+  searchInput.id = 'settings-general-search';
+  searchInput.placeholder = 'Найти настройку…';
+  searchInput.autocomplete = 'off';
+  searchWrap.appendChild(searchInput);
+
+  const controls = createEl('div', 'settings-general-controls');
+  const modeToggle = createEl('div', 'settings-mode-toggle');
+  modeToggle.id = 'settings-general-mode';
+  const basicBtn = createEl('button', '', 'Базовые');
+  basicBtn.type = 'button';
+  basicBtn.dataset.mode = 'basic';
+  const advancedBtn = createEl('button', '', 'Расширенные');
+  advancedBtn.type = 'button';
+  advancedBtn.dataset.mode = 'advanced';
+  modeToggle.append(basicBtn, advancedBtn);
+
+  const dirty = createEl('div', 'settings-dirty-indicator hidden', 'Есть несохранённые изменения');
+  dirty.id = 'settings-general-dirty';
+
+  controls.append(modeToggle, dirty);
+  header.append(searchWrap, controls);
+  return header;
+}
+
+function renderSidebarNav(sections) {
+  const nav = createEl('nav', 'settings-sidebar');
+  nav.id = 'settings-general-nav';
+  sections.forEach((section) => {
+    const btn = createEl('button', '', section.title);
+    btn.type = 'button';
+    btn.dataset.section = section.id;
+    nav.appendChild(btn);
+  });
+  return nav;
+}
+
+function renderSidebarSelect(sections) {
+  const wrap = createEl('div', 'settings-sidebar-select');
+  const select = document.createElement('select');
+  select.id = 'settings-general-nav-select';
+  sections.forEach((section) => {
+    const option = document.createElement('option');
+    option.value = section.id;
+    option.textContent = section.title;
+    select.appendChild(option);
+  });
+  wrap.appendChild(select);
+  return wrap;
+}
+
+function renderField(field) {
+  let wrapper = null;
+  let input = null;
+
+  if (field.type === 'heading') {
+    wrapper = createEl('div', 'settings-subheading settings-field-full', field.text || '');
+    registerSearchHighlight(wrapper, field.text || '');
+  } else if (field.type === 'note') {
+    const toneClass = field.tone === 'warning' ? ' settings-note is-warning' : ' settings-note';
+    wrapper = createEl('div', `settings-field-full${toneClass}`, field.text || '');
+    registerSearchHighlight(wrapper, field.text || '');
+  } else if (field.type === 'button') {
+    wrapper = createEl('div', 'field settings-field settings-field-full');
+    const button = createEl('button', 'btn ghost', field.buttonText || 'Действие');
+    button.type = 'button';
+    button.id = field.id;
+    wrapper.appendChild(button);
+    input = button;
+    registerSearchHighlight(button, field.buttonText || '');
+  } else if (field.type === 'switch') {
+    wrapper = createEl('div', 'settings-switch-line field settings-field');
+    const label = createEl('label', 'settings-switch-label', field.label || '');
+    label.setAttribute('for', field.id);
+    const control = renderSwitchControl(field.id);
+    wrapper.append(label, control.wrapper);
+    input = control.input;
+    registerSearchHighlight(label, field.label || '');
+  } else {
+    wrapper = createEl('div', 'field settings-field');
+    const label = createEl('label', '', field.label || '');
+    label.setAttribute('for', field.id);
+    wrapper.appendChild(label);
+
+    if (field.type === 'select') {
+      const select = document.createElement('select');
+      select.id = field.id;
+      (field.options || []).forEach((option) => {
+        const opt = document.createElement('option');
+        opt.value = option.value;
+        opt.textContent = option.label;
+        select.appendChild(opt);
+      });
+      wrapper.appendChild(select);
+      input = select;
+    } else {
+      const inputEl = document.createElement('input');
+      inputEl.id = field.id;
+      inputEl.type = field.inputType || 'text';
+      if (field.placeholder !== undefined) inputEl.placeholder = field.placeholder;
+      if (field.min !== undefined) inputEl.min = field.min;
+      if (field.max !== undefined) inputEl.max = field.max;
+      if (field.step !== undefined) inputEl.step = field.step;
+      wrapper.appendChild(inputEl);
+      input = inputEl;
+    }
+
+    if (field.hintId) {
+      const hint = createEl('div', 'settings-note', '');
+      hint.id = field.hintId;
+      wrapper.appendChild(hint);
+    }
+
+    registerSearchHighlight(label, field.label || '');
+  }
+
+  if (wrapper && field.wrapperId) {
+    wrapper.id = field.wrapperId;
+  }
+
+  const searchText = buildFieldSearchText(field);
+  return {
+    def: field,
+    el: wrapper,
+    input,
+    level: field.level || 'basic',
+    searchText,
+  };
+}
+
+function renderCard(sectionId, card) {
+  const cardEl = createEl('div', 'settings-card');
+  cardEl.dataset.cardId = card.id;
+  cardEl.dataset.section = sectionId;
+  cardEl.dataset.level = card.level || 'basic';
+
+  const header = createEl('div', 'settings-card-header');
+  const meta = createEl('div', '');
+  const title = createEl('div', 'settings-card-title', card.title || '');
+  const desc = createEl('div', 'settings-card-desc', card.description || '');
+  meta.append(title, desc);
+
+  const actions = createEl('div', 'settings-card-actions');
+  let toggleInput = null;
+  if (card.toggle) {
+    const toggleWrap = createEl('div', 'settings-switch-inline');
+    const toggleLabel = createEl('span', 'settings-switch-label', card.toggle.label || 'Включено');
+    const toggleControl = renderSwitchControl(card.toggle.id);
+    toggleWrap.append(toggleLabel, toggleControl.wrapper);
+    actions.appendChild(toggleWrap);
+    toggleInput = toggleControl.input;
+    registerSearchHighlight(toggleLabel, card.toggle.label || '');
+  }
+  if (card.collapsible) {
+    const btn = createEl('button', 'btn ghost', 'Настроить');
+    btn.type = 'button';
+    btn.dataset.action = 'card-toggle';
+    btn.dataset.cardId = card.id;
+    actions.appendChild(btn);
+  }
+
+  header.append(meta, actions);
+
+  const summary = createEl('div', 'settings-card-summary', '');
+  const body = createEl('div', 'settings-card-body');
+  body.hidden = !!card.collapsible;
+  const grid = createEl('div', 'settings-card-grid');
+
+  const fieldStates = [];
+  (card.fields || []).forEach((field) => {
+    const fieldState = renderField(field);
+    if (fieldState && fieldState.el) {
+      grid.appendChild(fieldState.el);
+      fieldStates.push(fieldState);
+    }
+  });
+
+  body.appendChild(grid);
+  cardEl.append(header, summary, body);
+
+  registerSearchHighlight(title, card.title || '');
+  registerSearchHighlight(desc, card.description || '');
+
+  const cardSearchSelf = `${card.title || ''} ${card.description || ''}`.toLowerCase();
+
+  const cardState = {
+    id: card.id,
+    level: card.level || 'basic',
+    sectionId,
+    card,
+    cardEl,
+    bodyEl: body,
+    summaryEl: summary,
+    toggleInput,
+    fields: fieldStates,
+    searchSelf: cardSearchSelf,
+  };
+
+  state.generalCards.push(cardState);
+  return cardEl;
+}
+
+function renderSection(section) {
+  const block = createEl('section', 'settings-section-block');
+  block.id = `settings-section-${section.id}`;
+  block.dataset.section = section.id;
+  const title = createEl('div', 'settings-section-title', section.title || '');
+  const desc = createEl('div', 'settings-section-desc', section.description || '');
+  block.append(title, desc);
+  (section.cards || []).forEach((card) => {
+    block.appendChild(renderCard(section.id, card));
+  });
+  registerSearchHighlight(title, section.title || '');
+  registerSearchHighlight(desc, section.description || '');
+  return block;
+}
+
+function renderSettingsActionBar() {
+  const bar = createEl('div', 'settings-action-bar is-disabled');
+  bar.id = 'settings-action-bar';
+  const status = createEl('div', 'settings-action-status', 'Нет несохранённых изменений');
+  status.id = 'settings-action-status';
+  const buttons = createEl('div', 'settings-action-buttons');
+  const save = createEl('button', 'btn', 'Сохранить');
+  save.id = 'settings-action-save';
+  save.type = 'button';
+  const cancel = createEl('button', 'btn ghost', 'Отмена');
+  cancel.id = 'settings-action-cancel';
+  cancel.type = 'button';
+  const reset = createEl('button', 'btn ghost danger', 'Сбросить изменения');
+  reset.id = 'settings-action-reset';
+  reset.type = 'button';
+  buttons.append(save, cancel, reset);
+  bar.append(status, buttons);
+  return bar;
+}
+
+function bindGeneralElements() {
+  const map = {
+    settingsGeneralSearch: 'settings-general-search',
+    settingsGeneralMode: 'settings-general-mode',
+    settingsGeneralDirty: 'settings-general-dirty',
+    settingsGeneralNav: 'settings-general-nav',
+    settingsGeneralNavSelect: 'settings-general-nav-select',
+    settingsActionBar: 'settings-action-bar',
+    settingsActionSave: 'settings-action-save',
+    settingsActionCancel: 'settings-action-cancel',
+    settingsActionReset: 'settings-action-reset',
+    settingsActionStatus: 'settings-action-status',
+    settingsShowSplitter: 'settings-show-splitter',
+    settingsShowBuffer: 'settings-show-buffer',
+    settingsShowAccess: 'settings-show-access',
+    settingsShowEpg: 'settings-show-epg',
+    settingsEpgInterval: 'settings-epg-interval',
+    settingsEventRequest: 'settings-event-request',
+    settingsMonitorAnalyzeMax: 'settings-monitor-analyze-max',
+    settingsPreviewMaxSessions: 'settings-preview-max-sessions',
+    settingsPreviewIdleTimeout: 'settings-preview-idle-timeout',
+    settingsPreviewTokenTtl: 'settings-preview-token-ttl',
+    settingsLogMaxEntries: 'settings-log-max-entries',
+    settingsLogRetentionSec: 'settings-log-retention-sec',
+    settingsAccessLogMaxEntries: 'settings-access-log-max-entries',
+    settingsAccessLogRetentionSec: 'settings-access-log-retention-sec',
+    settingsObservabilityEnabled: 'settings-observability-enabled',
+    settingsObservabilityLogsDays: 'settings-observability-logs-days',
+    settingsObservabilityMetricsDays: 'settings-observability-metrics-days',
+    settingsObservabilityRollup: 'settings-observability-rollup',
+    settingsObservabilityOnDemand: 'settings-observability-on-demand',
+    settingsWatchdogEnabled: 'settings-watchdog-enabled',
+    settingsWatchdogCpu: 'settings-watchdog-cpu',
+    settingsWatchdogRssMb: 'settings-watchdog-rss-mb',
+    settingsWatchdogRssPct: 'settings-watchdog-rss-pct',
+    settingsWatchdogInterval: 'settings-watchdog-interval',
+    settingsWatchdogStrikes: 'settings-watchdog-strikes',
+    settingsWatchdogUptime: 'settings-watchdog-uptime',
+    settingsTelegramEnabled: 'settings-telegram-enabled',
+    settingsTelegramLevel: 'settings-telegram-level',
+    settingsTelegramToken: 'settings-telegram-token',
+    settingsTelegramTokenHint: 'settings-telegram-token-hint',
+    settingsTelegramChatId: 'settings-telegram-chat-id',
+    settingsTelegramTest: 'settings-telegram-test',
+    settingsTelegramBackupEnabled: 'settings-telegram-backup-enabled',
+    settingsTelegramBackupSchedule: 'settings-telegram-backup-schedule',
+    settingsTelegramBackupTime: 'settings-telegram-backup-time',
+    settingsTelegramBackupWeekday: 'settings-telegram-backup-weekday',
+    settingsTelegramBackupMonthday: 'settings-telegram-backup-monthday',
+    settingsTelegramBackupSecrets: 'settings-telegram-backup-secrets',
+    settingsTelegramBackupWeekdayField: 'settings-telegram-backup-weekday-field',
+    settingsTelegramBackupMonthdayField: 'settings-telegram-backup-monthday-field',
+    settingsTelegramBackupNow: 'settings-telegram-backup-now',
+    settingsTelegramSummaryEnabled: 'settings-telegram-summary-enabled',
+    settingsTelegramSummarySchedule: 'settings-telegram-summary-schedule',
+    settingsTelegramSummaryTime: 'settings-telegram-summary-time',
+    settingsTelegramSummaryWeekday: 'settings-telegram-summary-weekday',
+    settingsTelegramSummaryMonthday: 'settings-telegram-summary-monthday',
+    settingsTelegramSummaryCharts: 'settings-telegram-summary-charts',
+    settingsTelegramSummaryWeekdayField: 'settings-telegram-summary-weekday-field',
+    settingsTelegramSummaryMonthdayField: 'settings-telegram-summary-monthday-field',
+    settingsTelegramSummaryNow: 'settings-telegram-summary-now',
+    settingsAiEnabled: 'settings-ai-enabled',
+    settingsAiApiKey: 'settings-ai-api-key',
+    settingsAiApiKeyHint: 'settings-ai-api-key-hint',
+    settingsAiApiBase: 'settings-ai-api-base',
+    settingsAiModel: 'settings-ai-model',
+    settingsAiModelHint: 'settings-ai-model-hint',
+    settingsAiChartMode: 'settings-ai-chart-mode',
+    settingsAiMaxTokens: 'settings-ai-max-tokens',
+    settingsAiTemperature: 'settings-ai-temperature',
+    settingsAiAllowedChats: 'settings-ai-allowed-chats',
+    settingsAiStore: 'settings-ai-store',
+    settingsAiAllowApply: 'settings-ai-allow-apply',
+    settingsInfluxEnabled: 'settings-influx-enabled',
+    settingsInfluxUrl: 'settings-influx-url',
+    settingsInfluxOrg: 'settings-influx-org',
+    settingsInfluxBucket: 'settings-influx-bucket',
+    settingsInfluxToken: 'settings-influx-token',
+    settingsInfluxInstance: 'settings-influx-instance',
+    settingsInfluxMeasurement: 'settings-influx-measurement',
+    settingsInfluxInterval: 'settings-influx-interval',
+    settingsFfmpegPath: 'settings-ffmpeg-path',
+    settingsFfprobePath: 'settings-ffprobe-path',
+    settingsHttpsBridgeEnabled: 'settings-https-bridge-enabled',
+    settingsHttpCsrf: 'settings-http-csrf',
+    settingsShowSecurityLimits: 'settings-show-security-limits',
+    settingsAuthSessionTtl: 'settings-auth-session-ttl',
+    settingsLoginRateLimit: 'settings-login-rate-limit',
+    settingsLoginRateWindow: 'settings-login-rate-window',
+    settingsShowStreamDefaults: 'settings-show-stream-defaults',
+    settingsDefaultNoDataTimeout: 'settings-default-no-data-timeout',
+    settingsDefaultProbeInterval: 'settings-default-probe-interval',
+    settingsDefaultStableOk: 'settings-default-stable-ok',
+    settingsDefaultBackupInitial: 'settings-default-backup-initial',
+    settingsDefaultBackupStart: 'settings-default-backup-start',
+    settingsDefaultBackupReturn: 'settings-default-backup-return',
+    settingsDefaultBackupStop: 'settings-default-backup-stop',
+    settingsDefaultBackupWarmMax: 'settings-default-backup-warm-max',
+    settingsDefaultHttpKeepActive: 'settings-default-http-keep-active',
+  };
+  Object.entries(map).forEach(([key, id]) => {
+    elements[key] = document.getElementById(id);
+  });
+}
+
+function renderGeneralSettings() {
+  if (!elements.settingsGeneralRoot) return;
+  const root = elements.settingsGeneralRoot;
+  root.innerHTML = '';
+
+  state.generalSearchEls = [];
+  state.generalCards = [];
+  state.generalSectionEls = {};
+
+  const header = renderSettingsHeader();
+  const body = createEl('div', 'settings-general-body');
+  const sidebarColumn = createEl('div', 'settings-sidebar-column');
+  const sidebarSelect = renderSidebarSelect(SETTINGS_GENERAL_SECTIONS);
+  const sidebar = renderSidebarNav(SETTINGS_GENERAL_SECTIONS);
+  sidebarColumn.append(sidebarSelect, sidebar);
+
+  const content = createEl('div', 'settings-general-content');
+  SETTINGS_GENERAL_SECTIONS.forEach((section) => {
+    const sectionEl = renderSection(section);
+    content.appendChild(sectionEl);
+    state.generalSectionEls[section.id] = sectionEl;
+  });
+
+  body.append(sidebarColumn, content);
+  const actionBar = renderSettingsActionBar();
+
+  root.append(header, body, actionBar);
+  bindGeneralElements();
+  state.generalRendered = true;
+
+  if (elements.settingsGeneralSearch) {
+    elements.settingsGeneralSearch.value = state.generalSearchQuery;
+  }
+  setGeneralMode(state.generalMode, { persist: false });
+  updateGeneralCardSummaries();
+  updateGeneralCardStates();
+  applySearchFilter(state.generalSearchQuery);
+  if (SETTINGS_GENERAL_SECTIONS.length) {
+    setActiveGeneralNav(SETTINGS_GENERAL_SECTIONS[0].id);
+  }
+  observeGeneralSections();
+}
+
+function setGeneralMode(mode, options = {}) {
+  const next = mode === 'advanced' ? 'advanced' : 'basic';
+  state.generalMode = next;
+  if (options.persist !== false) {
+    localStorage.setItem(SETTINGS_ADVANCED_KEY, next === 'advanced' ? '1' : '0');
+  }
+  if (elements.settingsGeneralMode) {
+    $$('#settings-general-mode button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.mode === next);
+    });
+  }
+  applySearchFilter(state.generalSearchQuery);
+}
+
+function setActiveGeneralNav(sectionId) {
+  state.generalActiveSection = sectionId;
+  if (elements.settingsGeneralNav) {
+    $$('#settings-general-nav button').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.section === sectionId);
+    });
+  }
+  if (elements.settingsGeneralNavSelect) {
+    elements.settingsGeneralNavSelect.value = sectionId;
+  }
+}
+
+function scrollToGeneralSection(sectionId) {
+  const sectionEl = state.generalSectionEls[sectionId];
+  if (!sectionEl) return;
+  sectionEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  setActiveGeneralNav(sectionId);
+}
+
+function updateActiveGeneralNavFromVisibility() {
+  const nextSection = SETTINGS_GENERAL_SECTIONS.find((section) => {
+    const el = state.generalSectionEls[section.id];
+    return el && !el.classList.contains('hidden');
+  });
+  if (nextSection) {
+    setActiveGeneralNav(nextSection.id);
+  }
+}
+
+function observeGeneralSections() {
+  if (!('IntersectionObserver' in window)) return;
+  if (state.generalObserver) {
+    state.generalObserver.disconnect();
+  }
+  state.generalObserver = new IntersectionObserver((entries) => {
+    const visible = entries
+      .filter((entry) => entry.isIntersecting && !entry.target.classList.contains('hidden'))
+      .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+    if (!visible.length) return;
+    const nextId = visible[0].target.dataset.section;
+    if (nextId && nextId !== state.generalActiveSection) {
+      setActiveGeneralNav(nextId);
+    }
+  }, {
+    root: null,
+    rootMargin: '-20% 0px -70% 0px',
+    threshold: [0, 0.1, 0.5],
+  });
+  Object.values(state.generalSectionEls).forEach((sectionEl) => {
+    if (sectionEl) state.generalObserver.observe(sectionEl);
+  });
+}
+
+function evaluateFieldDependency(dep) {
+  if (!dep) return true;
+  if (typeof dep === 'function') return !!dep();
+  if (typeof dep === 'object' && dep.id) {
+    const el = document.getElementById(dep.id);
+    if (!el) return true;
+    const current = el.type === 'checkbox' ? el.checked : el.value;
+    if (Array.isArray(dep.value)) {
+      return dep.value.map(String).includes(String(current));
+    }
+    return current === dep.value;
+  }
+  return true;
+}
+
+function setCardOpen(cardState, open, options = {}) {
+  const shouldOpen = !!open;
+  cardState.bodyEl.hidden = !shouldOpen;
+  const toggleBtn = cardState.cardEl.querySelector('[data-action="card-toggle"]');
+  if (toggleBtn) {
+    toggleBtn.textContent = shouldOpen ? 'Свернуть' : 'Настроить';
+    toggleBtn.setAttribute('aria-expanded', shouldOpen ? 'true' : 'false');
+  }
+  if (!options.force) {
+    state.generalCardOpen[cardState.id] = shouldOpen;
+  }
+}
+
+function updateGeneralCardStates() {
+  if (!state.generalRendered) return;
+  state.generalCards.forEach((card) => {
+    const disableCard = card.card.toggle && card.card.toggle.disableCard !== false;
+    const enabled = !disableCard || !card.toggleInput || card.toggleInput.checked;
+    card.cardEl.classList.toggle('is-disabled', disableCard && !enabled);
+    if (disableCard) {
+      const inputs = card.bodyEl.querySelectorAll('input, select, textarea, button');
+      inputs.forEach((input) => {
+        input.disabled = !enabled;
+      });
+    }
+  });
+}
+
+function updateGeneralCardSummaries() {
+  if (!state.generalRendered) return;
+  state.generalCards.forEach((card) => {
+    if (!card.summaryEl) return;
+    if (typeof card.card.summary === 'function') {
+      card.summaryEl.textContent = card.card.summary();
+    } else {
+      card.summaryEl.textContent = '';
+    }
+  });
+}
+
+function serializeGeneralSettings(payload) {
+  const keys = Object.keys(payload || {}).sort();
+  const normalized = {};
+  keys.forEach((key) => {
+    normalized[key] = payload[key];
+  });
+  return JSON.stringify(normalized);
+}
+
+function computeDirtyState(options = {}) {
+  if (!state.generalRendered) return { dirty: false, error: '' };
+  let payload = null;
+  let error = '';
+  try {
+    payload = collectGeneralSettings();
+  } catch (err) {
+    error = err.message || 'Ошибка в настройках';
+  }
+  if (options.resetSnapshot && payload) {
+    state.generalSnapshot = serializeGeneralSettings(payload);
+  }
+  const snapshot = state.generalSnapshot || '';
+  const current = payload ? serializeGeneralSettings(payload) : snapshot;
+  const dirty = payload ? current !== snapshot : true;
+  state.generalDirty = dirty;
+
+  if (elements.settingsGeneralDirty) {
+    elements.settingsGeneralDirty.classList.toggle('hidden', !dirty);
+  }
+  if (elements.settingsActionBar) {
+    elements.settingsActionBar.classList.toggle('is-disabled', !dirty);
+  }
+  if (elements.settingsActionSave) {
+    elements.settingsActionSave.disabled = !dirty || !!error;
+  }
+  if (elements.settingsActionCancel) {
+    elements.settingsActionCancel.disabled = !dirty;
+  }
+  if (elements.settingsActionReset) {
+    elements.settingsActionReset.disabled = !dirty;
+  }
+  if (elements.settingsActionStatus) {
+    if (error) {
+      elements.settingsActionStatus.textContent = `Исправьте ошибки: ${error}`;
+    } else if (dirty) {
+      elements.settingsActionStatus.textContent = 'Есть несохранённые изменения';
+    } else {
+      elements.settingsActionStatus.textContent = 'Нет несохранённых изменений';
+    }
+  }
+  return { dirty, error };
+}
+
+function applySearchFilter(query) {
+  if (!state.generalRendered) return;
+  state.generalSearchQuery = String(query || '');
+  const tokens = buildSearchTokens(state.generalSearchQuery);
+
+  state.generalSearchEls.forEach((entry) => {
+    entry.el.innerHTML = highlightText(entry.text, tokens);
+  });
+
+  state.generalCards.forEach((card) => {
+    const cardModeVisible = state.generalMode === 'advanced' || card.level !== 'advanced';
+    const cardMatchesSelf = matchesSearch(card.searchSelf, tokens);
+
+    let anyFieldMatches = false;
+    card.fields.forEach((field) => {
+      field.matchesSearch = matchesSearch(field.searchText, tokens);
+      if (field.matchesSearch) anyFieldMatches = true;
+    });
+
+    card.fields.forEach((field) => {
+      const depVisible = evaluateFieldDependency(field.def.dependsOn);
+      const modeVisible = state.generalMode === 'advanced' || field.level !== 'advanced';
+      let searchVisible = true;
+      if (tokens.length) {
+        if (anyFieldMatches) {
+          searchVisible = field.matchesSearch;
+        } else {
+          searchVisible = cardMatchesSelf;
+        }
+      }
+      const visible = depVisible && modeVisible && searchVisible;
+      field.el.hidden = !visible;
+    });
+
+    const anyVisibleField = card.fields.some((field) => !field.el.hidden);
+    const searchMatch = tokens.length ? (cardMatchesSelf || anyFieldMatches) : true;
+    const cardVisible = cardModeVisible && searchMatch && anyVisibleField;
+    card.cardEl.classList.toggle('hidden', !cardVisible);
+
+    const forceOpen = tokens.length ? cardVisible : false;
+    const openState = forceOpen || !card.card.collapsible || !!state.generalCardOpen[card.id];
+    setCardOpen(card, openState, { force: forceOpen });
+  });
+
+  Object.entries(state.generalSectionEls).forEach(([sectionId, sectionEl]) => {
+    const hasVisible = state.generalCards.some(
+      (card) => card.sectionId === sectionId && !card.cardEl.classList.contains('hidden')
+    );
+    sectionEl.classList.toggle('hidden', !hasVisible);
+  });
+
+  if (tokens.length) {
+    updateActiveGeneralNavFromVisibility();
+  } else if (!state.generalActiveSection) {
+    updateActiveGeneralNavFromVisibility();
+  }
+}
+
+function syncGeneralSettingsUi(options = {}) {
+  updateGeneralCardStates();
+  updateGeneralCardSummaries();
+  applySearchFilter(state.generalSearchQuery);
+  computeDirtyState({ resetSnapshot: options.resetSnapshot });
+}
+
+function openAiApplyConfirm(target) {
+  if (!elements.aiApplyConfirmOverlay) return;
+  state.aiApplyConfirmTarget = target || null;
+  state.aiApplyConfirmPending = true;
+  setOverlay(elements.aiApplyConfirmOverlay, true);
+}
+
+function closeAiApplyConfirm() {
+  if (!elements.aiApplyConfirmOverlay) return;
+  setOverlay(elements.aiApplyConfirmOverlay, false);
+}
+
+function confirmAiApplyChange(allow) {
+  const target = state.aiApplyConfirmTarget;
+  state.aiApplyConfirmTarget = null;
+  state.aiApplyConfirmPending = false;
+  if (target && !allow) {
+    target.checked = false;
+  }
+  closeAiApplyConfirm();
+  syncGeneralSettingsUi();
+}
+
+function handleGeneralInputChange(event) {
+  const target = event.target;
+  if (!target || !target.id) return;
+  if (target.id === 'settings-general-search') return;
+
+  if (target.id === 'settings-ai-allow-apply' && target.checked) {
+    if (state.aiApplyConfirmPending) return;
+    openAiApplyConfirm(target);
+    return;
+  }
+
+  syncGeneralSettingsUi();
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1134,6 +3026,10 @@ function setOverlay(overlay, show) {
 }
 
 function setView(name) {
+  if (state.currentView === 'settings' && name !== 'settings' && state.generalDirty) {
+    const proceed = window.confirm('Есть несохранённые изменения в Settings → General. Перейти без сохранения?');
+    if (!proceed) return;
+  }
   state.currentView = name;
   elements.views.forEach((view) => {
     view.classList.toggle('active', view.id === `view-${name}`);
@@ -1195,6 +3091,11 @@ function setSettingsSection(section) {
   if (section === 'config-history') {
     loadConfigHistory();
   }
+  if (section === 'edit-config') {
+    if (!state.configEditorLoaded) {
+      loadFullConfig(false);
+    }
+  }
   if (section === 'license') {
     loadLicense();
   }
@@ -1206,18 +3107,33 @@ function setSettingsSection(section) {
 }
 
 function applyFeatureVisibility() {
-  const showSplitter = getSettingBool('ui_splitter_enabled', false);
-  const showBuffer = getSettingBool('ui_buffer_enabled', false);
+  const showSplitter = isViewEnabled('splitters');
+  const showBuffer = isViewEnabled('buffers');
+  const showAccess = isViewEnabled('access');
+  const helpEnabled = isViewEnabled('help');
+  const showObservability = isViewEnabled('observability');
 
   const splitterNav = document.querySelector('.nav-link[data-view="splitters"]');
   const bufferNav = document.querySelector('.nav-link[data-view="buffers"]');
+  const accessNav = document.querySelector('.nav-link[data-view="access"]');
+  const helpNav = document.querySelector('.nav-link[data-view="help"]');
+  const observabilityNav = document.querySelector('.nav-link[data-view="observability"]');
   if (splitterNav) splitterNav.hidden = !showSplitter;
   if (bufferNav) bufferNav.hidden = !showBuffer;
+  if (accessNav) accessNav.hidden = !showAccess;
+  if (helpNav) helpNav.hidden = !helpEnabled;
+  if (observabilityNav) observabilityNav.hidden = !showObservability;
 
   const splitterView = document.querySelector('#view-splitters');
   const bufferView = document.querySelector('#view-buffers');
+  const accessView = document.querySelector('#view-access');
+  const helpView = document.querySelector('#view-help');
+  const observabilityView = document.querySelector('#view-observability');
   if (splitterView) splitterView.hidden = !showSplitter;
   if (bufferView) bufferView.hidden = !showBuffer;
+  if (accessView) accessView.hidden = !showAccess;
+  if (helpView) helpView.hidden = !helpEnabled;
+  if (observabilityView) observabilityView.hidden = !showObservability;
 
   const bufferSettingsItem = elements.settingsItems.find((item) => item.dataset.section === 'buffer');
   if (bufferSettingsItem) bufferSettingsItem.hidden = !showBuffer;
@@ -1229,10 +3145,30 @@ function applyFeatureVisibility() {
   const activeView = document.querySelector('.view.active');
   if (activeView) {
     const activeId = activeView.id || '';
-    if ((!showSplitter && activeId === 'view-splitters') || (!showBuffer && activeId === 'view-buffers')) {
+    if (
+      (!showSplitter && activeId === 'view-splitters')
+      || (!showBuffer && activeId === 'view-buffers')
+      || (!showAccess && activeId === 'view-access')
+      || (!helpEnabled && activeId === 'view-help')
+      || (!showObservability && activeId === 'view-observability')
+    ) {
       setView('streams');
     }
   }
+}
+
+function isViewEnabled(name) {
+  if (name === 'splitters') return getSettingBool('ui_splitter_enabled', false);
+  if (name === 'buffers') return getSettingBool('ui_buffer_enabled', false);
+  if (name === 'access') return getSettingBool('ui_access_enabled', true);
+  if (name === 'help') return getSettingBool('ai_enabled', false);
+  if (name === 'observability') {
+    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const logsDays = getSettingNumber('ai_logs_retention_days', 0);
+    const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+    return logsDays > 0 || (!onDemand && metricsDays > 0);
+  }
+  return true;
 }
 
 function toNumber(value) {
@@ -1506,65 +3442,6 @@ function syncToggleTargets() {
   });
 }
 
-function loadObservabilityAiPreferences() {
-  if (!elements.observabilityAi) return;
-  let prefs = null;
-  try {
-    const raw = localStorage.getItem(OBS_AI_PREF_KEY);
-    prefs = raw ? JSON.parse(raw) : null;
-  } catch (err) {
-    prefs = null;
-  }
-  if (!prefs) return;
-  if (elements.observabilityAiIncludeLogs) {
-    elements.observabilityAiIncludeLogs.checked = prefs.includeLogs !== false;
-  }
-  if (elements.observabilityAiIncludeCli) {
-    elements.observabilityAiIncludeCli.checked = prefs.includeCli === true;
-  }
-  if (elements.observabilityAiCliStream) {
-    elements.observabilityAiCliStream.checked = prefs.cliStream !== false;
-  }
-  if (elements.observabilityAiCliDvbls) {
-    elements.observabilityAiCliDvbls.checked = prefs.cliDvbls === true;
-  }
-  if (elements.observabilityAiCliAnalyze) {
-    elements.observabilityAiCliAnalyze.checked = prefs.cliAnalyze === true;
-  }
-  if (elements.observabilityAiCliFemon) {
-    elements.observabilityAiCliFemon.checked = prefs.cliFemon === true;
-  }
-  if (elements.observabilityAiAnalyzeUrl && typeof prefs.analyzeUrl === 'string') {
-    elements.observabilityAiAnalyzeUrl.value = prefs.analyzeUrl;
-  }
-  if (elements.observabilityAiFemonUrl && typeof prefs.femonUrl === 'string') {
-    elements.observabilityAiFemonUrl.value = prefs.femonUrl;
-  }
-  if (elements.observabilityAiStreamId && typeof prefs.streamId === 'string') {
-    elements.observabilityAiStreamId.value = prefs.streamId;
-  }
-  syncToggleTargets();
-}
-
-function saveObservabilityAiPreferences() {
-  if (!elements.observabilityAi) return;
-  const prefs = {
-    includeLogs: elements.observabilityAiIncludeLogs ? elements.observabilityAiIncludeLogs.checked : true,
-    includeCli: elements.observabilityAiIncludeCli ? elements.observabilityAiIncludeCli.checked : false,
-    cliStream: elements.observabilityAiCliStream ? elements.observabilityAiCliStream.checked : true,
-    cliDvbls: elements.observabilityAiCliDvbls ? elements.observabilityAiCliDvbls.checked : false,
-    cliAnalyze: elements.observabilityAiCliAnalyze ? elements.observabilityAiCliAnalyze.checked : false,
-    cliFemon: elements.observabilityAiCliFemon ? elements.observabilityAiCliFemon.checked : false,
-    analyzeUrl: elements.observabilityAiAnalyzeUrl ? elements.observabilityAiAnalyzeUrl.value.trim() : '',
-    femonUrl: elements.observabilityAiFemonUrl ? elements.observabilityAiFemonUrl.value.trim() : '',
-    streamId: elements.observabilityAiStreamId ? elements.observabilityAiStreamId.value.trim() : '',
-  };
-  try {
-    localStorage.setItem(OBS_AI_PREF_KEY, JSON.stringify(prefs));
-  } catch (err) {
-    // ignore storage errors
-  }
-}
 
 function bindToggleTargets() {
   $$('[data-toggle-target]').forEach((toggle) => {
@@ -2615,7 +4492,13 @@ function formatGpuInfo(transcode) {
     const enc = Number.isFinite(stats.enc) ? `${stats.enc}%` : 'n/a';
     const memUsed = Number.isFinite(stats.mem_used) ? stats.mem_used : 'n/a';
     const memTotal = Number.isFinite(stats.mem_total) ? stats.mem_total : 'n/a';
-    return `#${device} util ${util} enc ${enc} mem ${memUsed}/${memTotal} MB`;
+    const sessions = Number.isFinite(transcode.gpu_sessions) ? transcode.gpu_sessions : null;
+    const limit = Number.isFinite(transcode.gpu_sessions_limit) ? transcode.gpu_sessions_limit : null;
+    const sessionLabel = sessions !== null
+      ? ` sess ${sessions}${limit !== null ? `/${limit}` : ''}`
+      : '';
+    const overload = transcode.gpu_overload_active ? ' OVERLOAD' : '';
+    return `#${device} util ${util} enc ${enc} mem ${memUsed}/${memTotal} MB${sessionLabel}${overload}`;
   }
   return `#${device}`;
 }
@@ -2931,8 +4814,8 @@ function buildStreamTile(stream) {
     </div>
     <div class="tile-menu">
       <button class="menu-item" data-action="edit">Edit</button>
-      ${getPlaylistUrl(stream) ? '<button class="menu-item" data-action="preview">Preview</button>' : ''}
       <button class="menu-item" data-action="analyze">Analyze</button>
+      <button class="menu-item" data-action="play">▶ Play</button>
       <button class="menu-item" data-action="toggle">${enabled ? 'Disable' : 'Enable'}</button>
       <button class="menu-item" data-action="delete">Delete</button>
     </div>
@@ -9669,6 +11552,7 @@ async function loadStreamStatus() {
     const data = await apiJson('/api/v1/stream-status');
     state.stats = data || {};
     updateTiles();
+    updatePlayerMeta();
     updateEditorTranscodeStatus();
     updateEditorTranscodeOutputStatus();
     updateEditorOutputStatus();
@@ -9740,7 +11624,7 @@ function buildStreamModel(stream) {
     outputSummary,
     clients,
     enabled,
-    hasPreview: Boolean(getPlaylistUrl(stream)),
+    hasPreview: true,
   };
 }
 
@@ -9814,9 +11698,8 @@ function buildStreamTableRow(stream) {
   outputMeta.textContent = `Clients: ${model.clients !== null ? model.clients : '-'}`;
 
   const actions = createEl('div', 'stream-actions');
-  const previewBtn = createEl('button', 'btn ghost', 'Preview');
-  previewBtn.dataset.action = 'preview';
-  previewBtn.style.display = model.hasPreview ? 'inline-flex' : 'none';
+  const previewBtn = createEl('button', 'btn ghost', 'Play');
+  previewBtn.dataset.action = 'play';
   const analyzeBtn = createEl('button', 'btn ghost', 'Analyze');
   analyzeBtn.dataset.action = 'analyze';
   const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
@@ -9876,9 +11759,9 @@ function updateStreamTableRow(row, stream) {
   if (outputMeta) {
     outputMeta.textContent = `Clients: ${model.clients !== null ? model.clients : '-'}`;
   }
-  const previewBtn = row.querySelector('[data-action="preview"]');
+  const previewBtn = row.querySelector('[data-action="play"]');
   if (previewBtn) {
-    previewBtn.style.display = model.hasPreview ? 'inline-flex' : 'none';
+    previewBtn.hidden = false;
   }
   const toggleBtn = row.querySelector('[data-action="toggle"]');
   if (toggleBtn) {
@@ -10028,8 +11911,8 @@ function handleStreamAction(stream, actionName) {
     openEditor(stream, false);
     return true;
   }
-  if (actionName === 'preview') {
-    startPreview(stream);
+  if (actionName === 'play') {
+    openPlayer(stream);
     return true;
   }
   if (actionName === 'analyze') {
@@ -10510,6 +12393,10 @@ function renderAuditLog() {
     const ip = createEl('div', '', row.ip || '-');
     const ok = createEl('div', '', row.ok ? 'yes' : 'no');
     const msg = createEl('div', '', row.message || '');
+    const metaText = formatAuditMeta(row);
+    if (metaText) {
+      msg.appendChild(createEl('div', 'audit-meta muted', metaText));
+    }
     tr.appendChild(ts);
     tr.appendChild(actor);
     tr.appendChild(action);
@@ -10522,6 +12409,27 @@ function renderAuditLog() {
   elements.auditTable.appendChild(fragment);
   if (elements.auditCount) elements.auditCount.textContent = String(entries.length);
   if (elements.accessTotal) elements.accessTotal.textContent = String(entries.length);
+}
+
+function formatAuditMeta(row) {
+  if (!row || !row.meta || typeof row.meta !== 'object') return '';
+  const meta = row.meta;
+  const parts = [];
+  if (meta.plan_id) parts.push(`plan_id=${meta.plan_id}`);
+  if (meta.mode) parts.push(`mode=${meta.mode}`);
+  if (meta.diff_summary) {
+    const summary = meta.diff_summary;
+    if (summary && typeof summary === 'object') {
+      const added = Number(summary.added || 0);
+      const updated = Number(summary.updated || 0);
+      const removed = Number(summary.removed || 0);
+      parts.push(`diff +${added} ~${updated} -${removed}`);
+    } else {
+      parts.push(`diff=${String(summary).slice(0, 120)}`);
+    }
+  }
+  if (meta.revision_id) parts.push(`rev=${meta.revision_id}`);
+  return parts.join(' · ');
 }
 
 function buildAuditQuery(limit) {
@@ -10645,8 +12553,19 @@ function updateObservabilityScopeFields() {
 function updateObservabilityOnDemandFields() {
   if (!elements.settingsObservabilityOnDemand) return;
   const onDemand = elements.settingsObservabilityOnDemand.checked;
+  const toggleField = (input, hidden) => {
+    if (!input) return;
+    input.disabled = hidden;
+    const field = input.closest ? input.closest('.field') : null;
+    if (field) {
+      field.hidden = hidden;
+    }
+  };
   if (elements.settingsObservabilityMetricsDays) {
-    elements.settingsObservabilityMetricsDays.disabled = onDemand;
+    toggleField(elements.settingsObservabilityMetricsDays, onDemand);
+  }
+  if (elements.settingsObservabilityRollup) {
+    toggleField(elements.settingsObservabilityRollup, onDemand);
   }
 }
 
@@ -10737,6 +12656,108 @@ function drawLineChart(canvas, series) {
     });
     ctx.stroke();
   });
+}
+
+function drawBarChart(canvas, series) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = rect.width * ratio;
+  canvas.height = rect.height * ratio;
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const allPoints = series.flatMap((item) => item.points || []);
+  if (!allPoints.length) {
+    drawEmptyChart(canvas, 'No data');
+    return;
+  }
+
+  let minY = Infinity;
+  let maxY = -Infinity;
+  allPoints.forEach((pt) => {
+    minY = Math.min(minY, pt.y);
+    maxY = Math.max(maxY, pt.y);
+  });
+  if (minY === maxY) {
+    minY = minY === 0 ? -1 : minY * 0.9;
+    maxY = maxY === 0 ? 1 : maxY * 1.1;
+  }
+
+  const padding = { left: 36, right: 8, top: 10, bottom: 18 };
+  const width = rect.width - padding.left - padding.right;
+  const height = rect.height - padding.top - padding.bottom;
+  const yScale = (y) => rect.height - padding.bottom - ((y - minY) / (maxY - minY)) * height;
+
+  ctx.strokeStyle = getThemeColor('--border', '#3d434e');
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding.left, padding.top);
+  ctx.lineTo(padding.left, rect.height - padding.bottom);
+  ctx.lineTo(rect.width - padding.right, rect.height - padding.bottom);
+  ctx.stroke();
+
+  const maxPoints = Math.max(...series.map((item) => (item.points || []).length));
+  if (!maxPoints) return;
+  const groupCount = series.length || 1;
+  const slotWidth = width / maxPoints;
+  const barWidth = Math.max(2, (slotWidth * 0.7) / groupCount);
+
+  series.forEach((item, sidx) => {
+    const points = item.points || [];
+    ctx.fillStyle = item.color || getThemeColor('--accent', '#5aaae5');
+    points.forEach((pt, idx) => {
+      const xBase = padding.left + idx * slotWidth + (slotWidth * 0.15);
+      const x = xBase + sidx * barWidth;
+      const y = yScale(pt.y);
+      const h = (rect.height - padding.bottom) - y;
+      ctx.fillRect(x, y, barWidth, h);
+    });
+  });
+}
+
+function renderAiCharts(charts) {
+  if (!Array.isArray(charts) || !charts.length) return null;
+  const palette = ['#5aaae5', '#7fd18c', '#f1b44c', '#d675d9'];
+  const chartMode = getSettingString('ai_chart_mode', 'spec') || 'spec';
+  const block = createEl('div', 'ai-chat-charts');
+  charts.slice(0, 4).forEach((chart, idx) => {
+    if (!chart || !Array.isArray(chart.series)) return;
+    const card = createEl('div', 'ai-chat-chart');
+    const title = createEl('div', 'ai-chart-title', chart.title || `Chart ${idx + 1}`);
+    const canvas = document.createElement('canvas');
+    canvas.className = 'ai-chart-canvas';
+    card.appendChild(title);
+    card.appendChild(canvas);
+    block.appendChild(card);
+
+    const series = chart.series.map((item, sidx) => {
+      const values = Array.isArray(item.values) ? item.values : [];
+      return {
+        name: item.name || `Series ${sidx + 1}`,
+        color: palette[sidx % palette.length],
+        points: values.map((val, xIdx) => ({ x: xIdx, y: Number(val) || 0 })),
+      };
+    });
+    if (String(chart.type || '').toLowerCase() === 'bar') {
+      drawBarChart(canvas, series);
+    } else {
+      drawLineChart(canvas, series);
+    }
+    if (chartMode === 'image') {
+      const img = document.createElement('img');
+      img.className = 'ai-chart-image';
+      img.alt = chart.title || 'Chart';
+      try {
+        img.src = canvas.toDataURL('image/png');
+        canvas.replaceWith(img);
+      } catch (err) {
+        // fallback to canvas if toDataURL fails
+      }
+    }
+  });
+  return block;
 }
 
 function groupMetrics(items) {
@@ -10836,99 +12857,6 @@ function renderObservabilityLogs(items) {
   });
 }
 
-function renderObservabilityAiSummary(data, note) {
-  if (!elements.observabilityAiBody) return;
-  elements.observabilityAiBody.innerHTML = '';
-  if (elements.observabilityAiStatus) {
-    elements.observabilityAiStatus.textContent = note || '';
-  }
-  if (!data || typeof data !== 'object') {
-    const empty = createEl('div', 'ai-summary-item', 'No AI summary yet.');
-    elements.observabilityAiBody.appendChild(empty);
-    return;
-  }
-  if (data.summary) {
-    const summary = createEl('div', 'ai-summary-section');
-    summary.appendChild(createEl('div', 'ai-summary-label', 'Summary'));
-    summary.appendChild(createEl('div', 'ai-summary-item', data.summary));
-    elements.observabilityAiBody.appendChild(summary);
-  }
-  if (Array.isArray(data.top_issues) && data.top_issues.length) {
-    const issues = createEl('div', 'ai-summary-section');
-    issues.appendChild(createEl('div', 'ai-summary-label', 'Top issues'));
-    data.top_issues.slice(0, 5).forEach((item) => {
-      issues.appendChild(createEl('div', 'ai-summary-item', item));
-    });
-    elements.observabilityAiBody.appendChild(issues);
-  }
-  if (Array.isArray(data.suggestions) && data.suggestions.length) {
-    const suggestions = createEl('div', 'ai-summary-section');
-    suggestions.appendChild(createEl('div', 'ai-summary-label', 'Suggestions'));
-    data.suggestions.slice(0, 5).forEach((item) => {
-      suggestions.appendChild(createEl('div', 'ai-summary-item', item));
-    });
-    elements.observabilityAiBody.appendChild(suggestions);
-  }
-}
-
-function collectObservabilityAiContextParams() {
-  const params = {};
-  const includeLogs = elements.observabilityAiIncludeLogs ? elements.observabilityAiIncludeLogs.checked : true;
-  params.include_logs = includeLogs ? '1' : '0';
-
-  const includeCli = elements.observabilityAiIncludeCli ? elements.observabilityAiIncludeCli.checked : false;
-  if (includeCli) {
-    const cli = [];
-    if (elements.observabilityAiCliStream && elements.observabilityAiCliStream.checked) cli.push('stream');
-    if (elements.observabilityAiCliDvbls && elements.observabilityAiCliDvbls.checked) cli.push('dvbls');
-    if (elements.observabilityAiCliAnalyze && elements.observabilityAiCliAnalyze.checked) cli.push('analyze');
-    if (elements.observabilityAiCliFemon && elements.observabilityAiCliFemon.checked) cli.push('femon');
-    if (cli.length === 0) cli.push('stream');
-    params.include_cli = cli.join(',');
-  }
-
-  if (elements.observabilityAiStreamId && elements.observabilityAiStreamId.value) {
-    params.stream_id = elements.observabilityAiStreamId.value.trim();
-  }
-  if (elements.observabilityAiAnalyzeUrl && elements.observabilityAiAnalyzeUrl.value) {
-    params.input_url = elements.observabilityAiAnalyzeUrl.value.trim();
-  }
-  if (elements.observabilityAiFemonUrl && elements.observabilityAiFemonUrl.value) {
-    params.femon_url = elements.observabilityAiFemonUrl.value.trim();
-  }
-  return params;
-}
-
-async function loadObservabilityAiSummary(range, scope) {
-  if (!elements.observabilityAi) return;
-  const aiEnabled = getSettingBool('ai_enabled', false);
-  const apiKeySet = getSettingBool('ai_api_key_set', false);
-  if (scope !== 'global') {
-    elements.observabilityAi.hidden = true;
-    return;
-  }
-  elements.observabilityAi.hidden = false;
-  if (!aiEnabled || !apiKeySet) {
-    renderObservabilityAiSummary(null, 'AI is disabled or API key is missing.');
-    return;
-  }
-  try {
-    const summaryUrl = new URL('/api/v1/ai/summary', window.location.origin);
-    summaryUrl.searchParams.set('range', range || '24h');
-    summaryUrl.searchParams.set('ai', '1');
-    const params = collectObservabilityAiContextParams();
-    Object.keys(params).forEach((key) => {
-      if (params[key] !== undefined && params[key] !== '') {
-        summaryUrl.searchParams.set(key, params[key]);
-      }
-    });
-    const summaryResp = await apiJson(summaryUrl.toString());
-    const note = summaryResp && summaryResp.note ? summaryResp.note : 'AI summary';
-    renderObservabilityAiSummary(summaryResp && summaryResp.ai, note);
-  } catch (err) {
-    renderObservabilityAiSummary(null, 'AI summary failed to load.');
-  }
-}
 
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
@@ -10948,7 +12876,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
     renderObservabilityLogs([]);
-    renderObservabilityAiSummary(null, 'Observability disabled.');
     return;
   }
 
@@ -10959,7 +12886,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
-    await loadObservabilityAiSummary(range, scope);
     return;
   }
   if (showStatus) {
@@ -11015,7 +12941,6 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
-    await loadObservabilityAiSummary(range, scope);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
@@ -11420,6 +13345,9 @@ function applySettingsToUI() {
   if (elements.settingsShowBuffer) {
     elements.settingsShowBuffer.checked = getSettingBool('ui_buffer_enabled', false);
   }
+  if (elements.settingsShowAccess) {
+    elements.settingsShowAccess.checked = getSettingBool('ui_access_enabled', true);
+  }
   if (elements.settingsEpgInterval) {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
   }
@@ -11428,6 +13356,15 @@ function applySettingsToUI() {
   }
   if (elements.settingsMonitorAnalyzeMax) {
     elements.settingsMonitorAnalyzeMax.value = getSettingNumber('monitor_analyze_max_concurrency', '');
+  }
+  if (elements.settingsPreviewMaxSessions) {
+    elements.settingsPreviewMaxSessions.value = getSettingNumber('preview_max_sessions', 2);
+  }
+  if (elements.settingsPreviewIdleTimeout) {
+    elements.settingsPreviewIdleTimeout.value = getSettingNumber('preview_idle_timeout_sec', 45);
+  }
+  if (elements.settingsPreviewTokenTtl) {
+    elements.settingsPreviewTokenTtl.value = getSettingNumber('preview_token_ttl_sec', 180);
   }
   if (elements.settingsLogMaxEntries) {
     elements.settingsLogMaxEntries.value = getSettingNumber('log_max_entries', '');
@@ -11445,10 +13382,11 @@ function applySettingsToUI() {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
     const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
+    const onDemand = getSettingBool('ai_metrics_on_demand', true);
     if (elements.settingsObservabilityOnDemand) {
-      elements.settingsObservabilityOnDemand.checked = getSettingBool('ai_metrics_on_demand', true);
+      elements.settingsObservabilityOnDemand.checked = onDemand;
     }
-    elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (metricsDays > 0);
+    elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (!onDemand && metricsDays > 0);
     setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
     setSelectValue(elements.settingsObservabilityMetricsDays, metricsDays > 0 ? metricsDays : 30, 30);
     setSelectValue(elements.settingsObservabilityRollup, rollup || 60, 60);
@@ -11528,6 +13466,13 @@ function applySettingsToUI() {
   if (elements.settingsAiModel) {
     elements.settingsAiModel.value = getSettingString('ai_model', '');
   }
+  if (elements.settingsAiModelHint) {
+    elements.settingsAiModelHint.textContent = 'Default: gpt-5.2 (auto fallback to gpt-5-mini, gpt-4.1 if unavailable).';
+  }
+  if (elements.settingsAiChartMode) {
+    const mode = getSettingString('ai_chart_mode', 'spec');
+    elements.settingsAiChartMode.value = mode || 'spec';
+  }
   if (elements.settingsAiMaxTokens) {
     elements.settingsAiMaxTokens.value = getSettingNumber('ai_max_tokens', 512);
   }
@@ -11546,13 +13491,14 @@ function applySettingsToUI() {
   if (elements.aiChatStatus) {
     const enabled = getSettingBool('ai_enabled', false);
     const model = getSettingString('ai_model', '');
+    const effectiveModel = model || 'gpt-5.2';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
       elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
-    } else if (!keySet || !model) {
-      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key and model.';
+    } else if (!keySet) {
+      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key.';
     } else {
-      elements.aiChatStatus.textContent = '';
+      elements.aiChatStatus.textContent = `Model: ${effectiveModel} (auto fallback if unavailable).`;
     }
   }
   if (elements.settingsWatchdogEnabled) {
@@ -11861,6 +13807,10 @@ function applySettingsToUI() {
   renderServers();
   updateStreamGroupOptions();
   applyFeatureVisibility();
+
+  if (state.generalRendered) {
+    syncGeneralSettingsUi({ resetSnapshot: true });
+  }
 }
 
 function collectGeneralSettings() {
@@ -11871,6 +13821,18 @@ function collectGeneralSettings() {
   const monitorMax = toNumber(elements.settingsMonitorAnalyzeMax && elements.settingsMonitorAnalyzeMax.value);
   if (monitorMax !== undefined && monitorMax < 1) {
     throw new Error('Analyze concurrency limit must be >= 1');
+  }
+  const previewMax = toNumber(elements.settingsPreviewMaxSessions && elements.settingsPreviewMaxSessions.value);
+  if (previewMax !== undefined && previewMax < 1) {
+    throw new Error('Preview max sessions must be >= 1');
+  }
+  const previewIdle = toNumber(elements.settingsPreviewIdleTimeout && elements.settingsPreviewIdleTimeout.value);
+  if (previewIdle !== undefined && previewIdle < 10) {
+    throw new Error('Preview idle timeout must be >= 10 sec');
+  }
+  const previewTtl = toNumber(elements.settingsPreviewTokenTtl && elements.settingsPreviewTokenTtl.value);
+  if (previewTtl !== undefined && (previewTtl < 60 || previewTtl > 600)) {
+    throw new Error('Preview token TTL must be between 60 and 600 sec');
   }
   const logMax = toNumber(elements.settingsLogMaxEntries && elements.settingsLogMaxEntries.value);
   if (logMax !== undefined && logMax < 0) {
@@ -12063,6 +14025,7 @@ function collectGeneralSettings() {
   const payload = {
     ui_splitter_enabled: elements.settingsShowSplitter ? elements.settingsShowSplitter.checked : false,
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
+    ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
   };
   if (elements.settingsEventRequest) {
@@ -12097,6 +14060,7 @@ function collectGeneralSettings() {
     payload.ai_api_base = elements.settingsAiApiBase.value.trim();
   }
   if (elements.settingsAiModel) payload.ai_model = elements.settingsAiModel.value.trim();
+  if (elements.settingsAiChartMode) payload.ai_chart_mode = elements.settingsAiChartMode.value || 'spec';
   if (aiMaxTokens !== undefined) payload.ai_max_tokens = aiMaxTokens;
   if (aiTemperature !== undefined) payload.ai_temperature = aiTemperature;
   if (elements.settingsAiAllowedChats) {
@@ -12105,6 +14069,9 @@ function collectGeneralSettings() {
   if (elements.settingsAiStore) payload.ai_store = elements.settingsAiStore.checked;
   if (elements.settingsAiAllowApply) payload.ai_allow_apply = elements.settingsAiAllowApply.checked;
   if (monitorMax !== undefined) payload.monitor_analyze_max_concurrency = monitorMax;
+  if (previewMax !== undefined) payload.preview_max_sessions = previewMax;
+  if (previewIdle !== undefined) payload.preview_idle_timeout_sec = previewIdle;
+  if (previewTtl !== undefined) payload.preview_token_ttl_sec = previewTtl;
   if (logMax !== undefined) payload.log_max_entries = logMax;
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
   if (accessLogMax !== undefined) payload.access_log_max_entries = accessLogMax;
@@ -12290,8 +14257,82 @@ async function loadSettings() {
   refreshInputCamOptions();
 
   applySettingsToUI();
-  if (elements.configPreview) {
-    elements.configPreview.textContent = JSON.stringify(state.settings, null, 2);
+}
+
+function setConfigEditHint(message, isError) {
+  if (!elements.configEditHint) return;
+  elements.configEditHint.textContent = message || '';
+  elements.configEditHint.classList.toggle('is-error', !!isError);
+}
+
+function getConfigExportUrl() {
+  const params = [
+    'include_users=1',
+    'include_settings=1',
+    'include_streams=1',
+    'include_adapters=1',
+    'include_softcam=1',
+    'include_splitters=1',
+  ];
+  return `/api/v1/export?${params.join('&')}`;
+}
+
+async function loadFullConfig(force) {
+  if (!elements.configEditor) return;
+  if (state.configEditorDirty && !force) {
+    const confirmed = window.confirm('Overwrite unsaved config changes?');
+    if (!confirmed) return;
+  }
+  setConfigEditHint('Loading full config...', false);
+  try {
+    const data = await apiJson(getConfigExportUrl());
+    const text = JSON.stringify(data || {}, null, 2);
+    elements.configEditor.value = text ? `${text}\n` : '';
+    state.configEditorDirty = false;
+    state.configEditorLoaded = true;
+    setConfigEditHint('Full config loaded from server.', false);
+  } catch (err) {
+    const message = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+    setConfigEditHint(message || 'Failed to load config', true);
+    setStatus(message || 'Failed to load config');
+  }
+}
+
+async function saveFullConfig() {
+  if (!elements.configEditor) return;
+  let payload = null;
+  try {
+    payload = JSON.parse(elements.configEditor.value || '{}');
+  } catch (err) {
+    setConfigEditHint('Invalid JSON: ' + (err.message || 'parse error'), true);
+    setStatus('Invalid JSON config');
+    return;
+  }
+  const mode = elements.configEditMode ? elements.configEditMode.value : 'replace';
+  if (mode === 'replace') {
+    const confirmed = window.confirm('Replace current config with this JSON?');
+    if (!confirmed) return;
+  }
+  setConfigEditHint('Applying config...', false);
+  try {
+    const result = await apiJson('/api/v1/import', {
+      method: 'POST',
+      body: JSON.stringify({ mode, config: payload }),
+    });
+    const summary = result && result.summary ? result.summary : null;
+    const summaryText = summary
+      ? `settings=${summary.settings || 0}, users=${summary.users || 0}, adapters=${summary.adapters || 0}, streams=${summary.streams || 0}`
+      : 'Config saved';
+    state.configEditorDirty = false;
+    setConfigEditHint(`Config applied (${mode}). ${summaryText}`, false);
+    setStatus('Config saved and applied');
+    await refreshAll();
+    await loadConfigHistory();
+    await loadFullConfig(true);
+  } catch (err) {
+    const message = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+    setConfigEditHint(message || 'Failed to apply config', true);
+    setStatus(message || 'Failed to apply config');
   }
 }
 
@@ -12583,44 +14624,249 @@ async function deleteStream(stream) {
   scheduleStreamSync();
 }
 
-function startPreview(stream) {
-  const playlistUrl = getPlaylistUrl(stream);
-  if (!playlistUrl) {
-    setStatus('No HLS output configured');
-    return;
+function getPlayerStream() {
+  if (!state.playerStreamId) return null;
+  return state.streamIndex[state.playerStreamId]
+    || state.streams.find((item) => item && item.id === state.playerStreamId)
+    || null;
+}
+
+function getPlayerLink() {
+  if (!state.playerUrl) return '';
+  try {
+    return new URL(state.playerUrl, window.location.origin).toString();
+  } catch (err) {
+    return state.playerUrl;
   }
+}
 
-  elements.playerSub.textContent = stream.config && stream.config.name ? stream.config.name : stream.id;
-  elements.playerUrl.textContent = playlistUrl;
+function updatePlayerActions() {
+  const hasUrl = !!state.playerUrl;
+  if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasUrl;
+  if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasUrl;
+}
 
+function updatePlayerMeta(stream) {
+  const target = stream || getPlayerStream();
+  if (!target) return;
+  const name = (target.config && target.config.name) || target.id;
+  if (elements.playerSub) elements.playerSub.textContent = name;
+  const stats = state.stats[target.id] || {};
+  const enabled = target.enabled !== false;
+  const onAir = enabled && stats.on_air === true;
+  if (elements.playerStatus) {
+    elements.playerStatus.textContent = onAir ? 'ONLINE' : 'OFFLINE';
+    elements.playerStatus.classList.toggle('ok', onAir);
+    elements.playerStatus.classList.toggle('warn', !onAir);
+    elements.playerStatus.title = enabled ? '' : 'Stream disabled';
+  }
+  if (elements.playerInput) {
+    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+    const activeIndex = getActiveInputIndex(stats);
+    const label = getActiveInputLabel(inputs, activeIndex);
+    const activeInput = inputs[Number.isFinite(activeIndex) ? activeIndex : -1];
+    const url = activeInput && activeInput.url ? activeInput.url : '';
+    elements.playerInput.textContent = label ? `Active input: ${label}` : 'Active input: -';
+    elements.playerInput.title = url || '';
+  }
+}
+
+function setPlayerLoading(active, text) {
+  if (!elements.playerLoading) return;
+  elements.playerLoading.classList.toggle('active', active);
+  elements.playerLoading.setAttribute('aria-hidden', active ? 'false' : 'true');
+  const label = elements.playerLoading.querySelector('.player-loading-text');
+  if (label) label.textContent = text || 'Подключение...';
+}
+
+function clearPlayerError() {
+  if (!elements.playerError) return;
+  elements.playerError.textContent = '';
+  elements.playerError.classList.remove('active');
+  elements.playerError.setAttribute('aria-hidden', 'true');
+  if (elements.playerRetry) elements.playerRetry.hidden = true;
+}
+
+function setPlayerError(message) {
+  if (!elements.playerError) return;
+  if (state.playerStartTimer) {
+    clearTimeout(state.playerStartTimer);
+    state.playerStartTimer = null;
+  }
+  elements.playerError.textContent = message || 'Не удалось загрузить предпросмотр.';
+  elements.playerError.classList.add('active');
+  elements.playerError.setAttribute('aria-hidden', 'false');
+  if (elements.playerRetry) elements.playerRetry.hidden = false;
+  setPlayerLoading(false);
+}
+
+function resetPlayerMedia() {
   if (state.player) {
     state.player.destroy();
     state.player = null;
+  }
+  if (elements.playerVideo) {
+    elements.playerVideo.pause();
+    elements.playerVideo.removeAttribute('src');
+    elements.playerVideo.load();
+  }
+  if (state.playerStartTimer) {
+    clearTimeout(state.playerStartTimer);
+    state.playerStartTimer = null;
+  }
+  setPlayerLoading(false);
+  clearPlayerError();
+}
+
+function formatPreviewError(err) {
+  const networkMessage = formatNetworkError(err);
+  if (networkMessage) return networkMessage;
+  const raw = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+  const text = String(raw || '');
+  if (text.toLowerCase().includes('offline')) {
+    return 'Поток оффлайн. Запустите источник и попробуйте снова.';
+  }
+  if (text.toLowerCase().includes('limit')) {
+    return 'Слишком много предпросмотров. Закройте другой плеер.';
+  }
+  if (text.toLowerCase().includes('source')) {
+    return 'Нет доступного источника для предпросмотра.';
+  }
+  return text || 'Не удалось запустить предпросмотр.';
+}
+
+function formatVideoError(err) {
+  if (!err) return 'Ошибка воспроизведения.';
+  if (err.code === 2) return 'Сетевая ошибка. Проверьте доступ к потоку.';
+  if (err.code === 3) return 'Нет видео дорожки или формат не поддерживается.';
+  if (err.code === 4) return 'Формат не поддерживается браузером.';
+  return 'Ошибка воспроизведения.';
+}
+
+function attachPlayerSource(url, opts = {}) {
+  resetPlayerMedia();
+  if (!url) {
+    setPlayerError('Не удалось получить ссылку на предпросмотр.');
+    return;
+  }
+  clearPlayerError();
+  setPlayerLoading(true, 'Подключение...');
+  state.playerStartTimer = setTimeout(() => {
+    setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
+  }, 8000);
+
+  if (opts.mode === 'mpegts') {
+    elements.playerVideo.src = url;
+    return;
   }
 
   if (window.Hls && window.Hls.isSupported()) {
     const hls = new window.Hls({ lowLatencyMode: true });
-    hls.loadSource(playlistUrl);
+    hls.on(window.Hls.Events.ERROR, (_event, data) => {
+      if (data && data.fatal) {
+        setPlayerError('Ошибка HLS-потока. Проверьте источник.');
+        hls.destroy();
+        state.player = null;
+      }
+    });
+    hls.loadSource(url);
     hls.attachMedia(elements.playerVideo);
     state.player = hls;
   } else if (elements.playerVideo.canPlayType('application/vnd.apple.mpegurl')) {
-    elements.playerVideo.src = playlistUrl;
+    elements.playerVideo.src = url;
   } else {
-    setStatus('HLS playback not supported in this browser');
+    setPlayerError('HLS playback not supported in this browser.');
   }
-
-  setOverlay(elements.playerOverlay, true);
 }
 
-function stopPreview() {
-  if (state.player) {
-    state.player.destroy();
-    state.player = null;
+async function stopPlayerSession() {
+  if (state.playerMode !== 'preview' || !state.playerStreamId) return;
+  try {
+    await apiJson(`/api/v1/streams/${state.playerStreamId}/preview/stop`, { method: 'POST' });
+  } catch (err) {
   }
-  elements.playerVideo.pause();
-  elements.playerVideo.removeAttribute('src');
-  elements.playerVideo.load();
+}
+
+async function startPlayer(stream, opts = {}) {
+  if (!stream || state.playerStarting) return;
+  state.playerStarting = true;
+  setPlayerLoading(true, 'Подключение...');
+  clearPlayerError();
+
+  const shareUrl = getPlayUrl(stream) || '';
+  let url = null;
+  let mode = 'direct';
+  let sourceMode = 'hls';
+  let token = null;
+
+  if (shareUrl && canPlayMpegTs()) {
+    url = shareUrl;
+    sourceMode = 'mpegts';
+  } else {
+    url = getPlaylistUrl(stream);
+  }
+
+  if (!url) {
+    try {
+      const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start`, { method: 'POST' });
+      url = payload.url;
+      token = payload.token;
+      mode = 'preview';
+    } catch (err) {
+      setPlayerError(formatPreviewError(err));
+      state.playerStarting = false;
+      return;
+    }
+  }
+
+  state.playerMode = mode;
+  state.playerToken = token;
+  state.playerUrl = url || '';
+  state.playerShareUrl = shareUrl || url || '';
+  if (elements.playerUrl) {
+    elements.playerUrl.textContent = state.playerShareUrl || '-';
+    elements.playerUrl.title = state.playerShareUrl || '';
+  }
+  updatePlayerActions();
+  attachPlayerSource(url, { mode: sourceMode });
+  state.playerStarting = false;
+
+  if (opts.openTab) {
+    const link = getPlayerLink();
+    if (link) window.open(link, '_blank', 'noopener');
+  }
+}
+
+function openPlayer(stream) {
+  if (!stream) return;
+  if (state.playerMode === 'preview' && state.playerStreamId && state.playerStreamId !== stream.id) {
+    apiJson(`/api/v1/streams/${state.playerStreamId}/preview/stop`, { method: 'POST' }).catch(() => {});
+  }
+  state.playerStreamId = stream.id;
+  state.playerMode = null;
+  state.playerUrl = '';
+  state.playerShareUrl = getPlayUrl(stream) || '';
+  state.playerToken = null;
+  if (elements.playerUrl) {
+    elements.playerUrl.textContent = state.playerShareUrl || '-';
+    elements.playerUrl.title = state.playerShareUrl || '';
+  }
+  updatePlayerMeta(stream);
+  updatePlayerActions();
+  setOverlay(elements.playerOverlay, true);
+  startPlayer(stream);
+}
+
+async function closePlayer() {
+  await stopPlayerSession();
+  resetPlayerMedia();
   setOverlay(elements.playerOverlay, false);
+  state.playerStreamId = null;
+  state.playerMode = null;
+  state.playerUrl = '';
+  state.playerShareUrl = '';
+  state.playerToken = null;
+  updatePlayerActions();
 }
 
 function buildInputStatusRow(input, index, activeIndex) {
@@ -12677,11 +14923,304 @@ function buildInputStatusRow(input, index, activeIndex) {
   const lastOk = formatTimestamp(input.last_ok_ts);
   const lastError = input.last_error || 'n/a';
   const failCount = Number(input.fail_count) || 0;
-  meta.textContent = `Fail: ${failCount} | Last OK: ${lastOk} | Error: ${lastError}`;
+  const incompatible = input.incompatible === true;
+  const incompatReason = input.incompatible_reason || 'mismatch';
+  const incompatText = incompatible ? ` | Incompatible: ${incompatReason}` : '';
+  const kfOk = input.keyframe_ok_ts ? formatTimestamp(input.keyframe_ok_ts) : 'n/a';
+  const kfMiss = Number(input.keyframe_miss_count) || 0;
+  const kfText = input.keyframe_last_ts || input.keyframe_ok_ts
+    ? ` | KF: ${kfOk} miss ${kfMiss}`
+    : '';
+  const sigErr = input.signature_error ? ` | Sig: ${input.signature_error}` : '';
+  meta.textContent = `Fail: ${failCount} | Last OK: ${lastOk} | Error: ${lastError}${kfText}${sigErr}${incompatText}`;
 
   row.appendChild(head);
   row.appendChild(meta);
   return row;
+}
+
+function formatHexByte(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 'n/a';
+  return `0x${num.toString(16).toUpperCase().padStart(2, '0')}`;
+}
+
+function formatCasList(items) {
+  if (!Array.isArray(items) || items.length === 0) return '';
+  return items.map((entry) => {
+    if (!entry) return '';
+    const caid = Number.isFinite(entry.caid) ? `0x${Number(entry.caid).toString(16).toUpperCase().padStart(4, '0')}` : 'n/a';
+    const pid = Number.isFinite(entry.pid) ? String(entry.pid) : 'n/a';
+    return `caid=${caid} pid=${pid}`;
+  }).filter(Boolean).join('; ');
+}
+
+function updateAnalyzeHeaderFromTotals(totals, onAir) {
+  if (!totals) return;
+  const cc = Number(totals.cc_errors) || 0;
+  const pes = Number(totals.pes_errors) || 0;
+  if (elements.analyzeRate) {
+    elements.analyzeRate.textContent = formatMaybeBitrate(totals.bitrate);
+    elements.analyzeRate.classList.toggle('warn', !onAir);
+  }
+  if (elements.analyzeCc) {
+    elements.analyzeCc.textContent = `CC:${cc}`;
+    elements.analyzeCc.classList.toggle('ok', cc === 0);
+    elements.analyzeCc.classList.toggle('warn', cc > 0);
+  }
+  if (elements.analyzePes) {
+    elements.analyzePes.textContent = `PES:${pes}`;
+    elements.analyzePes.classList.toggle('ok', pes === 0);
+    elements.analyzePes.classList.toggle('warn', pes > 0);
+  }
+}
+
+function renderAnalyzeSections(sections) {
+  elements.analyzeBody.innerHTML = '';
+  sections.forEach((section) => {
+    const block = document.createElement('div');
+    block.className = 'analyze-section';
+    const title = document.createElement('strong');
+    title.textContent = section.title;
+    block.appendChild(title);
+    section.items.forEach((item) => {
+      if (item && item.nodeType) {
+        block.appendChild(item);
+        return;
+      }
+      const line = document.createElement('div');
+      line.textContent = `- ${item}`;
+      block.appendChild(line);
+    });
+    elements.analyzeBody.appendChild(block);
+  });
+}
+
+function buildAnalyzeBaseSections(stream, stats) {
+  const sections = [];
+  const name = (stream.config && stream.config.name) || stream.id;
+  sections.push({
+    title: 'Stream',
+    items: [
+      `Name: ${name}`,
+      `ID: ${stream.id}`,
+    ],
+  });
+
+  const updated = formatTimestamp(stats.updated_at);
+  const activeIndex = getActiveInputIndex(stats);
+  const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
+  const inputItems = inputs.length
+    ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
+    : ['No input stats yet.'];
+  const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
+  let lastSwitch = 'n/a';
+  if (stats.last_switch) {
+    const from = stats.last_switch.from;
+    const to = stats.last_switch.to;
+    const reason = stats.last_switch.reason || 'n/a';
+    const ts = formatTimestamp(stats.last_switch.ts);
+    lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
+  }
+  sections.push(
+    {
+      title: 'Input status',
+      items: [
+        `On air: ${stats.on_air ? 'Yes' : 'No'}`,
+        `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
+        `Active input: ${activeInputLabel}`,
+        `Last update: ${updated}`,
+        `Last switch: ${lastSwitch}`,
+      ],
+    },
+    {
+      title: 'Inputs',
+      items: inputItems,
+    }
+  );
+  return sections;
+}
+
+function buildAnalyzeProgramLines(programs) {
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return ['No PSI/PMT data collected.'];
+  }
+  const lines = [];
+  programs.forEach((program) => {
+    if (!program) return;
+    const name = program.name ? ` ${program.name}` : '';
+    const provider = program.provider ? ` (${program.provider})` : '';
+    lines.push(`PNR ${program.pnr || 'n/a'}${name}${provider}`);
+    lines.push(`  PMT PID: ${program.pmt_pid || 'n/a'} | PCR PID: ${program.pcr || 'n/a'}`);
+    const cas = formatCasList(program.cas);
+    if (cas) lines.push(`  CAS: ${cas}`);
+    const streams = Array.isArray(program.streams) ? program.streams : [];
+    if (!streams.length) {
+      lines.push('  Streams: n/a');
+      return;
+    }
+    streams.forEach((stream) => {
+      if (!stream) return;
+      const typeName = stream.type_name || 'unknown';
+      const typeId = formatHexByte(stream.type_id);
+      const lang = stream.lang ? ` lang=${stream.lang}` : '';
+      const streamCas = formatCasList(stream.cas);
+      const casText = streamCas ? ` cas=${streamCas}` : '';
+      lines.push(`  PID ${stream.pid || 'n/a'} • ${typeName} (${typeId})${lang}${casText}`);
+    });
+  });
+  return lines;
+}
+
+function buildAnalyzePidLines(pids, programs) {
+  if (!Array.isArray(pids) || pids.length === 0) {
+    return ['No PID bitrate stats collected.'];
+  }
+  const meta = {};
+  if (Array.isArray(programs)) {
+    programs.forEach((program) => {
+      const streams = Array.isArray(program && program.streams) ? program.streams : [];
+      streams.forEach((stream) => {
+        if (!stream || stream.pid == null) return;
+        meta[stream.pid] = {
+          type: stream.type_name,
+          type_id: stream.type_id,
+          lang: stream.lang,
+          pnr: program.pnr,
+          name: program.name,
+        };
+      });
+    });
+  }
+  return pids.map((item) => {
+    if (!item) return 'PID n/a';
+    const details = meta[item.pid] || {};
+    const typeName = details.type ? `${details.type} (${formatHexByte(details.type_id)})` : '';
+    const lang = details.lang ? ` lang=${details.lang}` : '';
+    const program = details.pnr ? ` PNR ${details.pnr}${details.name ? ` (${details.name})` : ''}` : '';
+    const metaText = typeName ? ` • ${typeName}${lang}${program}` : (program ? ` •${program}` : '');
+    const bitrate = formatMaybeBitrate(item.bitrate);
+    const errors = `CC ${item.cc_error || 0} / PES ${item.pes_error || 0} / SCR ${item.sc_error || 0}`;
+    return `PID ${item.pid} • ${bitrate}${metaText} • ${errors}`;
+  });
+}
+
+function buildAnalyzeJobSections(job) {
+  if (!job) {
+    return [{
+      title: 'Analyze details',
+      items: ['Analyze job not available.'],
+    }];
+  }
+  if (job.error) {
+    return [{
+      title: 'Analyze details',
+      items: [`Error: ${job.error}`],
+    }];
+  }
+  const totals = job.totals || {};
+  const summary = job.summary || {};
+  const sections = [{
+    title: 'Analyze summary',
+    items: [
+      `Status: ${job.status || 'n/a'}`,
+      `Duration: ${job.duration_sec || 'n/a'}s`,
+      `Input URL: ${job.input_url || 'n/a'}`,
+      `Bitrate: ${formatMaybeBitrate(totals.bitrate)}`,
+      `CC errors: ${summary.cc_errors || totals.cc_errors || 0}`,
+      `PES errors: ${summary.pes_errors || totals.pes_errors || 0}`,
+      `Scrambled: ${totals.scrambled ? 'Yes' : 'No'}`,
+      `Programs: ${summary.programs || 'n/a'}`,
+      `Channels: ${summary.channels || 'n/a'}`,
+    ],
+  }];
+
+  sections.push({
+    title: 'Programs',
+    items: buildAnalyzeProgramLines(job.program_list || []),
+  });
+  sections.push({
+    title: 'PID details',
+    items: buildAnalyzePidLines(job.pids || [], job.program_list || []),
+  });
+  return sections;
+}
+
+function clearAnalyzePoll() {
+  if (state.analyzePoll) {
+    clearTimeout(state.analyzePoll);
+    state.analyzePoll = null;
+  }
+  state.analyzeJobId = null;
+}
+
+function formatAnalyzeError(err) {
+  const networkMessage = formatNetworkError(err);
+  if (networkMessage) return networkMessage;
+  const raw = (err && err.payload && err.payload.error) ? err.payload.error : err.message;
+  const text = String(raw || '');
+  if (text.toLowerCase().includes('busy')) return 'Analyze is busy. Try again later.';
+  if (text.toLowerCase().includes('input url')) return 'No input URL available for analyze.';
+  if (text.toLowerCase().includes('transcode')) return 'Analyze is not available for transcode streams.';
+  return text || 'Analyze failed to start.';
+}
+
+function pollAnalyzeJob(stream, stats, jobId, attempt) {
+  const maxAttempts = 20;
+  if (state.analyzeStreamId !== stream.id) return;
+  apiJson(`/api/v1/streams/analyze/${jobId}`).then((job) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    if (job.status === 'running' && attempt < maxAttempts) {
+      const base = buildAnalyzeBaseSections(stream, stats);
+      const sections = base.concat([{
+        title: 'Analyze details',
+        items: ['Analyzing...'],
+      }]);
+      renderAnalyzeSections(sections);
+      state.analyzePoll = setTimeout(() => {
+        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
+      }, 500);
+      return;
+    }
+    updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat(buildAnalyzeJobSections(job));
+    renderAnalyzeSections(sections);
+  }).catch((err) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    const base = buildAnalyzeBaseSections(stream, stats);
+    const sections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(sections);
+  });
+}
+
+async function startAnalyzeDetails(stream, stats) {
+  clearAnalyzePoll();
+  state.analyzeStreamId = stream.id;
+  const base = buildAnalyzeBaseSections(stream, stats);
+  const sections = base.concat([{
+    title: 'Analyze details',
+    items: ['Starting analyze...'],
+  }]);
+  renderAnalyzeSections(sections);
+
+  try {
+    const payload = await apiJson(`/api/v1/streams/${stream.id}/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ duration_sec: 4 }),
+    });
+    state.analyzeJobId = payload.id;
+    pollAnalyzeJob(stream, stats, payload.id, 0);
+  } catch (err) {
+    const failSections = base.concat([{
+      title: 'Analyze details',
+      items: [formatAnalyzeError(err)],
+    }]);
+    renderAnalyzeSections(failSections);
+  }
 }
 
 function openAnalyze(stream) {
@@ -12692,6 +15231,9 @@ function openAnalyze(stream) {
   const transcode = stats.transcode;
   const transcodeState = stats.transcode_state || (transcode && transcode.state);
   const isTranscode = Boolean(transcodeState);
+
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
 
   if (isTranscode) {
     const inputRate = formatMaybeBitrate(transcode && transcode.input_bitrate_kbps);
@@ -12716,9 +15258,8 @@ function openAnalyze(stream) {
     elements.analyzeRate.classList.toggle('warn', !onAir);
   }
 
-  elements.analyzeBody.innerHTML = '';
-  const sections = [];
   if (isTranscode) {
+    const sections = [];
     const updated = formatTimestamp(transcode && transcode.updated_at);
     const lastAlert = transcode && transcode.last_alert
       ? `${transcode.last_alert.code} @ ${formatTimestamp(transcode.last_alert.ts)}`
@@ -12749,6 +15290,45 @@ function openAnalyze(stream) {
       ? String(transcode.output_pes_errors)
       : 'n/a';
     const outputScrambled = transcode && transcode.output_scrambled ? 'Yes' : 'No';
+    const outputMin = Number.isFinite(transcode && transcode.output_bitrate_min_kbps)
+      ? `${Math.round(transcode.output_bitrate_min_kbps)} Kbit/s`
+      : 'n/a';
+    const outputMax = Number.isFinite(transcode && transcode.output_bitrate_max_kbps)
+      ? `${Math.round(transcode.output_bitrate_max_kbps)} Kbit/s`
+      : 'n/a';
+    const outputVariance = Number.isFinite(transcode && transcode.output_cbr_variance_pct)
+      ? `${Math.round(transcode.output_cbr_variance_pct)}%`
+      : 'n/a';
+    const outputCbr = transcode && transcode.output_cbr_unstable ? 'Unstable' : 'OK';
+    const switchPending = transcode && transcode.switch_pending
+      ? `to #${transcode.switch_pending.target}` +
+        `${transcode.switch_pending.target_url ? ` (${shortInputLabel(transcode.switch_pending.target_url)})` : ''}` +
+        ` @ ${formatTimestamp(transcode.switch_pending.ready_at)}`
+      : 'n/a';
+    const switchPendingSince = transcode && transcode.switch_pending && transcode.switch_pending.created_at
+      ? formatTimestamp(transcode.switch_pending.created_at)
+      : 'n/a';
+    const switchPendingTimeout = Number.isFinite(transcode && transcode.switch_pending_timeout_sec)
+      ? `${transcode.switch_pending_timeout_sec}s`
+      : 'n/a';
+    const returnPending = transcode && transcode.return_pending
+      ? `to #${transcode.return_pending.target}` +
+        `${transcode.return_pending.target_url ? ` (${shortInputLabel(transcode.return_pending.target_url)})` : ''}` +
+        ` @ ${formatTimestamp(transcode.return_pending.ready_at)}`
+      : 'n/a';
+    const switchGrace = transcode && transcode.switch_grace_until
+      ? formatTimestamp(transcode.switch_grace_until)
+      : 'n/a';
+    const warmup = transcode && transcode.switch_warmup;
+    let warmupStatus = 'n/a';
+    if (warmup) {
+      const targetLabel = Number.isFinite(warmup.target) ? `#${warmup.target}` : '#?';
+      const url = warmup.target_url ? ` (${shortInputLabel(warmup.target_url)})` : '';
+      const state = warmup.ok ? 'OK' : (warmup.done ? 'FAILED' : 'RUNNING');
+      const started = warmup.start_ts ? ` start ${formatTimestamp(warmup.start_ts)}` : '';
+      const err = warmup.error ? ` error=${warmup.error}` : '';
+      warmupStatus = `${targetLabel}${url}: ${state}${started}${err}`;
+    }
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length
       ? outputs.map((out, index) => {
@@ -12766,6 +15346,7 @@ function openAnalyze(stream) {
         `Progress: ${formatTranscodeProgress(transcode && transcode.last_progress)}`,
         `Input bitrate: ${inputRate}`,
         `Output bitrate: ${outputRate}`,
+        `Output bitrate range: ${outputMin} / ${outputMax} (variance ${outputVariance}, ${outputCbr})`,
         `Input last OK: ${inputOk}`,
         `Output last OK: ${outputOk}`,
         `Input last error: ${inputErr}`,
@@ -12773,6 +15354,12 @@ function openAnalyze(stream) {
         `Output CC errors: ${outputCc}`,
         `Output PES errors: ${outputPes}`,
         `Output scrambled: ${outputScrambled}`,
+        `Switch pending: ${switchPending}`,
+        `Switch pending since: ${switchPendingSince}`,
+        `Switch pending timeout: ${switchPendingTimeout}`,
+        `Return pending: ${returnPending}`,
+        `Switch warmup: ${warmupStatus}`,
+        `Switch grace until: ${switchGrace}`,
         `Last restart: ${restartCode}`,
         `Restart detail: ${restartMeta}`,
         `FFmpeg exit code: ${exitCode}`,
@@ -12788,6 +15375,17 @@ function openAnalyze(stream) {
       title: 'Outputs',
       items: outputItems,
     });
+    const inputs = Array.isArray(transcode && transcode.inputs_status) ? transcode.inputs_status : [];
+    const activeInputIndex = Number.isFinite(transcode && transcode.active_input_index)
+      ? transcode.active_input_index
+      : null;
+    const inputItems = inputs.length
+      ? inputs.map((input, index) => buildInputStatusRow(input, index, activeInputIndex))
+      : ['No input stats yet.'];
+    sections.push({
+      title: 'Inputs',
+      items: inputItems,
+    });
     const stderrTail = Array.isArray(transcode && transcode.stderr_tail) ? transcode.stderr_tail : [];
     if (stderrTail.length) {
       sections.push({
@@ -12795,69 +15393,23 @@ function openAnalyze(stream) {
         items: stderrTail.slice(-12),
       });
     }
-  } else {
-    const updated = formatTimestamp(stats.updated_at);
-    const activeIndex = getActiveInputIndex(stats);
-    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-    const inputItems = inputs.length
-      ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
-      : ['No input stats yet.'];
-    const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
-    let lastSwitch = 'n/a';
-    if (stats.last_switch) {
-      const from = stats.last_switch.from;
-      const to = stats.last_switch.to;
-      const reason = stats.last_switch.reason || 'n/a';
-      const ts = formatTimestamp(stats.last_switch.ts);
-      lastSwitch = `${from} -> ${to} (${reason}) @ ${ts}`;
-    }
-    sections.push(
-      {
-        title: 'Input status',
-        items: [
-          `On air: ${onAir ? 'Yes' : 'No'}`,
-          `Scrambled: ${stats.scrambled ? 'Yes' : 'No'}`,
-          `Active input: ${activeInputLabel}`,
-          `Last update: ${updated}`,
-          `Last switch: ${lastSwitch}`,
-        ],
-      },
-      {
-        title: 'Inputs',
-        items: inputItems,
-      },
-      {
-        title: 'Analyze details',
-        items: ['PSI details are available in the server log for now.'],
-      }
-    );
+    renderAnalyzeSections(sections);
+    elements.analyzeRestart.hidden = false;
+    state.activeAnalyzeId = stream.id;
+    setOverlay(elements.analyzeOverlay, true);
+    return;
   }
 
-  sections.forEach((section) => {
-    const block = document.createElement('div');
-    block.className = 'analyze-section';
-    const title = document.createElement('strong');
-    title.textContent = section.title;
-    block.appendChild(title);
-    section.items.forEach((item) => {
-      if (item && item.nodeType) {
-        block.appendChild(item);
-        return;
-      }
-      const line = document.createElement('div');
-      line.textContent = `- ${item}`;
-      block.appendChild(line);
-    });
-    elements.analyzeBody.appendChild(block);
-  });
-
-  elements.analyzeRestart.hidden = !isTranscode;
-  state.activeAnalyzeId = isTranscode ? stream.id : null;
+  elements.analyzeRestart.hidden = true;
+  state.activeAnalyzeId = null;
   setOverlay(elements.analyzeOverlay, true);
+  startAnalyzeDetails(stream, stats);
 }
 
 function closeAnalyze() {
   state.activeAnalyzeId = null;
+  clearAnalyzePoll();
+  state.analyzeStreamId = null;
   setOverlay(elements.analyzeOverlay, false);
 }
 
@@ -12876,6 +15428,28 @@ function setAiChatStatus(text) {
   }
 }
 
+function buildAiChatContent(text, attachments) {
+  const wrap = createEl('div', 'ai-chat-content');
+  if (text) {
+    wrap.appendChild(createEl('div', '', text));
+  }
+  if (Array.isArray(attachments) && attachments.length) {
+    const holder = createEl('div', 'ai-chat-user-attachments');
+    attachments.forEach((file) => {
+      if (file && file.data_url && file.mime && file.mime.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = file.data_url;
+        img.alt = file.name || 'attachment';
+        holder.appendChild(img);
+      }
+    });
+    if (holder.children.length) {
+      wrap.appendChild(holder);
+    }
+  }
+  return wrap;
+}
+
 function appendAiChatMessage(role, content) {
   if (!elements.aiChatLog) return null;
   const msg = createEl('div', `ai-chat-msg ${role || 'assistant'}`);
@@ -12890,11 +15464,49 @@ function appendAiChatMessage(role, content) {
 }
 
 function buildTypingNode() {
-  const wrap = createEl('div', 'ai-chat-typing');
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
-  wrap.appendChild(createEl('span'));
+  const wrap = createEl('div', 'ai-chat-waiting');
+  wrap.appendChild(createEl('div', 'ai-chat-waiting-photo'));
+  const dots = createEl('div', 'ai-chat-typing');
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  dots.appendChild(createEl('span'));
+  wrap.appendChild(dots);
   return wrap;
+}
+
+function getAiHelpHints() {
+  const root = document.getElementById('help-bubbles');
+  if (root) {
+    const hints = [];
+    root.querySelectorAll('.help-bubble').forEach((el) => {
+      const text = (el.textContent || '').trim();
+      if (text) hints.push(text);
+    });
+    if (hints.length) return hints;
+  }
+  return [
+    'help',
+    'refresh channel <id>',
+    'show channel graphs (24h)',
+    'show errors last 24h',
+    'analyze stream <id>',
+    'scan dvb adapter <n>',
+    'list busy adapters',
+    'check signal lock (femon)',
+    'backup config now',
+    'restart stream <id>',
+  ];
+}
+
+function buildAiHelpNode() {
+  const wrapper = createEl('div');
+  wrapper.appendChild(createEl('div', 'form-note', 'Quick hints:'));
+  const list = createEl('div', 'help-bubbles');
+  getAiHelpHints().forEach((hint) => {
+    list.appendChild(createEl('div', 'help-bubble', hint));
+  });
+  wrapper.appendChild(list);
+  return wrapper;
 }
 
 function clearAiChatPolling() {
@@ -12948,18 +15560,42 @@ async function collectAiChatAttachments() {
 function updateAiChatFilesLabel() {
   if (!elements.aiChatFiles || !elements.aiChatFilesLabel) return;
   const files = Array.from(elements.aiChatFiles.files || []);
+  if (elements.aiChatFilePreviews) {
+    elements.aiChatFilePreviews.innerHTML = '';
+  }
+  if (state.aiChatPreviewUrls && state.aiChatPreviewUrls.length) {
+    state.aiChatPreviewUrls.forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch (err) {}
+    });
+    state.aiChatPreviewUrls = [];
+  }
   if (files.length === 0) {
     elements.aiChatFilesLabel.textContent = 'No attachments';
     return;
   }
   elements.aiChatFilesLabel.textContent = files.map((file) => file.name).join(', ');
+  if (!elements.aiChatFilePreviews) return;
+  const maxFiles = 2;
+  files.slice(0, maxFiles).forEach((file) => {
+    const preview = createEl('div', 'ai-chat-file-preview');
+    if (file.type && file.type.startsWith('image/')) {
+      const img = document.createElement('img');
+      const url = URL.createObjectURL(file);
+      state.aiChatPreviewUrls.push(url);
+      img.src = url;
+      img.alt = file.name;
+      preview.appendChild(img);
+    }
+    preview.appendChild(createEl('div', '', file.name));
+    elements.aiChatFilePreviews.appendChild(preview);
+  });
 }
 
 function buildAiChatPayload(prompt, attachments) {
-  const payload = {
-    prompt,
-    include_logs: elements.aiChatIncludeLogs ? elements.aiChatIncludeLogs.checked : true,
-  };
+  const payload = { prompt };
+  if (elements.aiChatIncludeLogs) {
+    payload.include_logs = elements.aiChatIncludeLogs.checked;
+  }
   const cli = collectAiChatCliList();
   if (elements.aiChatStreamId && elements.aiChatStreamId.value.trim()) {
     payload.stream_id = elements.aiChatStreamId.value.trim();
@@ -12996,6 +15632,10 @@ function renderAiPlanResult(job) {
       helpBlock.appendChild(createEl('div', '', `- ${line}`));
     });
     wrapper.appendChild(helpBlock);
+  }
+  if (Array.isArray(plan.charts) && plan.charts.length) {
+    const charts = renderAiCharts(plan.charts);
+    if (charts) wrapper.appendChild(charts);
   }
   if (Array.isArray(plan.warnings) && plan.warnings.length) {
     const warn = createEl('div', 'form-note', `Warnings: ${plan.warnings.join('; ')}`);
@@ -13120,13 +15760,28 @@ async function sendAiChatMessage() {
   if (!elements.aiChatInput || state.aiChatBusy) return;
   const prompt = elements.aiChatInput.value.trim();
   if (!prompt) return;
+  const normalized = prompt.toLowerCase();
+  if (normalized === 'help' || normalized === '/help' || normalized === '?') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('assistant', buildAiHelpNode());
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    return;
+  }
+  const attachments = await collectAiChatAttachments();
   elements.aiChatInput.value = '';
-  appendAiChatMessage('user', prompt);
+  appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
+  if (elements.aiChatFiles) {
+    elements.aiChatFiles.value = '';
+    updateAiChatFilesLabel();
+  }
   const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
   state.aiChatPendingEl = typingMsg;
   setAiChatStatus('Sending to AI...');
   try {
-    const attachments = await collectAiChatAttachments();
     const payload = buildAiChatPayload(prompt, attachments);
     payload.preview_diff = true;
     const job = await apiJson('/api/v1/ai/plan', {
@@ -13225,16 +15880,85 @@ function bindEvents() {
     });
   });
 
+  if (elements.settingsGeneralSearch) {
+    const applySearch = debounce(() => {
+      applySearchFilter(elements.settingsGeneralSearch.value);
+    }, 150);
+    elements.settingsGeneralSearch.addEventListener('input', () => {
+      applySearch();
+    });
+  }
+  if (elements.settingsGeneralMode) {
+    elements.settingsGeneralMode.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-mode]');
+      if (!button) return;
+      setGeneralMode(button.dataset.mode);
+    });
+  }
+  if (elements.settingsGeneralNav) {
+    elements.settingsGeneralNav.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-section]');
+      if (!button) return;
+      scrollToGeneralSection(button.dataset.section);
+    });
+  }
+  if (elements.settingsGeneralNavSelect) {
+    elements.settingsGeneralNavSelect.addEventListener('change', () => {
+      scrollToGeneralSection(elements.settingsGeneralNavSelect.value);
+    });
+  }
+  if (elements.settingsGeneralRoot) {
+    elements.settingsGeneralRoot.addEventListener('input', handleGeneralInputChange);
+    elements.settingsGeneralRoot.addEventListener('change', handleGeneralInputChange);
+    elements.settingsGeneralRoot.addEventListener('click', (event) => {
+      const toggleBtn = event.target.closest('[data-action="card-toggle"]');
+      if (!toggleBtn) return;
+      const cardId = toggleBtn.dataset.cardId;
+      const cardState = state.generalCards.find((card) => card.id === cardId);
+      if (cardState) {
+        setCardOpen(cardState, cardState.bodyEl.hidden);
+      }
+    });
+  }
+  if (elements.settingsActionSave) {
+    elements.settingsActionSave.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectGeneralSettings());
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
+  if (elements.settingsActionCancel) {
+    elements.settingsActionCancel.addEventListener('click', () => {
+      applySettingsToUI();
+      computeDirtyState({ resetSnapshot: true });
+      setStatus('Изменения отменены');
+    });
+  }
+  if (elements.settingsActionReset) {
+    elements.settingsActionReset.addEventListener('click', async () => {
+      try {
+        await loadSettings();
+        setStatus('Настройки перезагружены');
+      } catch (err) {
+        setStatus(err.message || 'Не удалось перезагрузить настройки');
+      }
+    });
+  }
+  if (elements.aiApplyConfirmClose) {
+    elements.aiApplyConfirmClose.addEventListener('click', () => confirmAiApplyChange(false));
+  }
+  if (elements.aiApplyConfirmCancel) {
+    elements.aiApplyConfirmCancel.addEventListener('click', () => confirmAiApplyChange(false));
+  }
+  if (elements.aiApplyConfirmOk) {
+    elements.aiApplyConfirmOk.addEventListener('click', () => confirmAiApplyChange(true));
+  }
+
   if (elements.observabilityRefresh) {
     elements.observabilityRefresh.addEventListener('click', () => {
       loadObservability(true);
-    });
-  }
-  if (elements.observabilityAiRefresh) {
-    elements.observabilityAiRefresh.addEventListener('click', () => {
-      const range = elements.observabilityRange ? elements.observabilityRange.value : '24h';
-      const scope = elements.observabilityScope ? elements.observabilityScope.value : 'global';
-      loadObservabilityAiSummary(range, scope);
     });
   }
   if (elements.observabilityRange) {
@@ -13251,30 +15975,6 @@ function bindEvents() {
   if (elements.observabilityStream) {
     elements.observabilityStream.addEventListener('change', () => {
       loadObservability(true);
-    });
-  }
-  if (elements.observabilityAi) {
-    const persistAiPrefs = () => saveObservabilityAiPreferences();
-    [
-      elements.observabilityAiIncludeLogs,
-      elements.observabilityAiIncludeCli,
-      elements.observabilityAiCliStream,
-      elements.observabilityAiCliDvbls,
-      elements.observabilityAiCliAnalyze,
-      elements.observabilityAiCliFemon,
-    ].forEach((el) => {
-      if (el) {
-        el.addEventListener('change', persistAiPrefs);
-      }
-    });
-    [
-      elements.observabilityAiAnalyzeUrl,
-      elements.observabilityAiFemonUrl,
-      elements.observabilityAiStreamId,
-    ].forEach((el) => {
-      if (el) {
-        el.addEventListener('input', persistAiPrefs);
-      }
     });
   }
   if (elements.settingsObservabilityOnDemand) {
@@ -13338,6 +16038,33 @@ function bindEvents() {
     elements.btnConfigRefresh.addEventListener('click', (event) => {
       event.preventDefault();
       loadConfigHistory();
+    });
+  }
+  if (elements.btnConfigLoad) {
+    elements.btnConfigLoad.addEventListener('click', (event) => {
+      event.preventDefault();
+      loadFullConfig(true);
+    });
+  }
+  if (elements.btnConfigSave) {
+    elements.btnConfigSave.addEventListener('click', (event) => {
+      event.preventDefault();
+      saveFullConfig();
+    });
+  }
+  if (elements.configEditor) {
+    elements.configEditor.addEventListener('input', () => {
+      state.configEditorDirty = true;
+      setConfigEditHint('Unsaved changes.', false);
+    });
+  }
+  if (elements.configEditMode) {
+    const storedMode = localStorage.getItem('astra_config_edit_mode');
+    if (storedMode) {
+      elements.configEditMode.value = storedMode;
+    }
+    elements.configEditMode.addEventListener('change', () => {
+      localStorage.setItem('astra_config_edit_mode', elements.configEditMode.value);
     });
   }
   if (elements.btnConfigDeleteAll) {
@@ -13801,16 +16528,6 @@ function bindEvents() {
     });
   }
 
-  if (elements.btnApplyGeneral) {
-    elements.btnApplyGeneral.addEventListener('click', async () => {
-      try {
-        await saveSettings(collectGeneralSettings());
-      } catch (err) {
-        setStatus(err.message);
-      }
-    });
-  }
-
   if (elements.btnApplyCas) {
     elements.btnApplyCas.addEventListener('click', async () => {
       try {
@@ -13989,6 +16706,10 @@ function bindEvents() {
       }
       setAiChatStatus('');
       if (elements.aiChatInput) elements.aiChatInput.value = '';
+      if (elements.aiChatFiles) {
+        elements.aiChatFiles.value = '';
+        updateAiChatFilesLabel();
+      }
     });
   }
   if (elements.aiChatInput) {
@@ -14071,7 +16792,47 @@ function bindEvents() {
 
   elements.editorClose.addEventListener('click', closeEditor);
   elements.editorCancel.addEventListener('click', closeEditor);
-  elements.playerClose.addEventListener('click', stopPreview);
+  if (elements.playerClose) {
+    elements.playerClose.addEventListener('click', closePlayer);
+  }
+  if (elements.playerOpenTab) {
+    elements.playerOpenTab.addEventListener('click', () => {
+      const link = getPlayerLink();
+      if (link) window.open(link, '_blank', 'noopener');
+    });
+  }
+  if (elements.playerCopyLink) {
+    elements.playerCopyLink.addEventListener('click', () => {
+      const link = getPlayerLink();
+      if (link) copyText(link);
+    });
+  }
+  if (elements.playerRetry) {
+    elements.playerRetry.hidden = true;
+    elements.playerRetry.addEventListener('click', async () => {
+      const stream = getPlayerStream();
+      if (!stream) return;
+      await stopPlayerSession();
+      startPlayer(stream);
+    });
+  }
+  if (elements.playerVideo) {
+    elements.playerVideo.addEventListener('playing', () => {
+      setPlayerLoading(false);
+      clearPlayerError();
+      if (state.playerStartTimer) {
+        clearTimeout(state.playerStartTimer);
+        state.playerStartTimer = null;
+      }
+    });
+    elements.playerVideo.addEventListener('waiting', () => {
+      setPlayerLoading(true, 'Буферизация...');
+    });
+    elements.playerVideo.addEventListener('error', () => {
+      const message = formatVideoError(elements.playerVideo.error);
+      setPlayerError(message);
+    });
+  }
   elements.analyzeClose.addEventListener('click', closeAnalyze);
   elements.analyzeRestart.addEventListener('click', restartAnalyzeTranscode);
   if (elements.streamType) {
@@ -14887,10 +17648,17 @@ function bindEvents() {
     }
   });
 
-  loadObservabilityAiPreferences();
+  window.addEventListener('beforeunload', (event) => {
+    if (state.generalDirty || state.configEditorDirty) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
+
   bindToggleTargets();
 }
 
+renderGeneralSettings();
 bindEvents();
 setViewMode(state.viewMode, { persist: false, render: false });
 setThemeMode(state.themeMode, { persist: false });

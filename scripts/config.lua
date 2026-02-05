@@ -1006,6 +1006,9 @@ function config.get_stream(id)
 end
 
 function config.upsert_stream(id, enabled, cfg)
+    if type(cfg) == "table" then
+        cfg.enable = enabled and true or false
+    end
     local payload = json_encode(cfg)
     if config.supports_upsert then
         db_exec(config.db,
@@ -1067,6 +1070,9 @@ function config.upsert_adapter(id, enabled, cfg)
         if updated then
             cfg = cleaned
         end
+    end
+    if type(cleaned) == "table" then
+        cleaned.enable = enabled and true or false
     end
     local payload = json_encode(cleaned)
     if config.supports_upsert then
@@ -2120,6 +2126,53 @@ local function path_extension(path)
     return string.lower(ext)
 end
 
+function config.set_primary_config_path(path)
+    if type(path) ~= "string" or path == "" then
+        config.primary_config_path = nil
+        config.primary_config_ext = nil
+        return
+    end
+    config.primary_config_path = path
+    config.primary_config_ext = path_extension(path)
+end
+
+function config.get_primary_config_path()
+    return config.primary_config_path
+end
+
+function config.primary_config_is_json()
+    return config.primary_config_ext == "json"
+end
+
+function config.export_primary_config()
+    local path = config.primary_config_path
+    if not path or path == "" then
+        return nil, "primary config path not set"
+    end
+    if config.primary_config_ext ~= "json" then
+        return nil, "primary config is not json"
+    end
+    return config.export_astra_file(path)
+end
+
+function config.restore_primary_config_from_snapshot(snapshot_path)
+    local path = config.primary_config_path
+    if not path or path == "" then
+        return nil, "primary config path not set"
+    end
+    if config.primary_config_ext ~= "json" then
+        return nil, "primary config is not json"
+    end
+    if not snapshot_path or snapshot_path == "" then
+        return nil, "missing snapshot path"
+    end
+    local content, err = read_file(snapshot_path)
+    if not content then
+        return nil, err
+    end
+    return write_file_atomic(path, content)
+end
+
 local function default_config_json()
     return [[
 {
@@ -2829,9 +2882,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(streams, cfg)
         end
         payload.make_stream = streams
@@ -2843,9 +2894,7 @@ function config.export_astra(opts)
         for _, row in ipairs(rows) do
             local cfg = copy_table(row.config or {})
             cfg.id = cfg.id or row.id
-            if cfg.enable == nil then
-                cfg.enable = (tonumber(row.enabled) or 0) ~= 0
-            end
+            cfg.enable = (tonumber(row.enabled) or 0) ~= 0
             table.insert(adapters, cfg)
         end
         payload.dvb_tune = adapters
