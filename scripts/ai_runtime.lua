@@ -416,6 +416,78 @@ local function count_ops(plan, names)
     return total
 end
 
+local function sanitize_utf8(text)
+    if type(text) ~= "string" then
+        return text
+    end
+    local out = {}
+    local i = 1
+    local len = #text
+    while i <= len do
+        local c = text:byte(i)
+        if c < 0x80 then
+            table.insert(out, string.char(c))
+            i = i + 1
+        elseif c >= 0xC2 and c <= 0xDF then
+            local c2 = text:byte(i + 1)
+            if c2 and c2 >= 0x80 and c2 <= 0xBF then
+                table.insert(out, text:sub(i, i + 1))
+                i = i + 2
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        elseif c >= 0xE0 and c <= 0xEF then
+            local c2, c3 = text:byte(i + 1), text:byte(i + 2)
+            if c2 and c3 and c2 >= 0x80 and c2 <= 0xBF and c3 >= 0x80 and c3 <= 0xBF then
+                table.insert(out, text:sub(i, i + 2))
+                i = i + 3
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        elseif c >= 0xF0 and c <= 0xF4 then
+            local c2, c3, c4 = text:byte(i + 1), text:byte(i + 2), text:byte(i + 3)
+            if c2 and c3 and c4
+                and c2 >= 0x80 and c2 <= 0xBF
+                and c3 >= 0x80 and c3 <= 0xBF
+                and c4 >= 0x80 and c4 <= 0xBF then
+                table.insert(out, text:sub(i, i + 3))
+                i = i + 4
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        else
+            table.insert(out, "?")
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+local function sanitize_value(value, depth)
+    if depth and depth > 6 then
+        return value
+    end
+    local t = type(value)
+    if t == "string" then
+        return sanitize_utf8(value)
+    end
+    if t == "table" then
+        local out = {}
+        for k, v in pairs(value) do
+            local key = k
+            if type(k) == "string" then
+                key = sanitize_utf8(k)
+            end
+            out[key] = sanitize_value(v, (depth or 0) + 1)
+        end
+        return out
+    end
+    return value
+end
+
 build_prompt_text = function(prompt, context)
     local parts = {}
     table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
@@ -425,7 +497,7 @@ build_prompt_text = function(prompt, context)
     table.insert(parts, "If asked for charts, include a 'charts' array with line/bar series values.")
     if context then
         table.insert(parts, "Context:")
-        table.insert(parts, json.encode(context))
+        table.insert(parts, json.encode(sanitize_value(context)))
     end
     if prompt and prompt ~= "" then
         table.insert(parts, "Request:")
