@@ -97,3 +97,10 @@
 - Для стабильной работы каждый input рекомендуется как SPTS.
 - EIT/CAT pass‑through корректен только при 1 сервисе (иначе возможны коллизии).
 - `nit.network_search` принимает список `tsid` или `tsid:onid` через запятую и добавляет их в NIT.
+
+## Быстрая проверка
+```bash
+./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+EXPECT_TOT=1 ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
+```
+`EXPECT_TOT=1` нужен, если указан `country` и ожидается TOT.
