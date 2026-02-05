@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added SDT free_CA/service_type logging and CI assertions for SDT flags.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Added NIT LCN parsing and CI assertions for logical channel numbers.
 - Tests:
   - Not run (CI script update).

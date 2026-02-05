@@ -16,6 +16,8 @@ EXPECT_MODULATION="${EXPECT_MODULATION:-}"
 EXPECT_FEC="${EXPECT_FEC:-}"
 EXPECT_NETWORK_NAME="${EXPECT_NETWORK_NAME:-}"
 EXPECT_LCN="${EXPECT_LCN:-}"
+EXPECT_FREE_CA="${EXPECT_FREE_CA:-}"
+EXPECT_SERVICE_TYPE="${EXPECT_SERVICE_TYPE:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -144,6 +146,38 @@ if [[ -n "$EXPECT_LCN" ]]; then
     echo "NIT lcn mismatch (expected ${EXPECT_LCN})"
     exit 1
   fi
+fi
+
+if [[ -n "$EXPECT_FREE_CA" ]]; then
+  IFS=',' read -r -a FREECA_LIST <<< "$EXPECT_FREE_CA"
+  for entry in "${FREECA_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "SDT: sid: ${sid} free_ca: ${value}" "$LOG_FILE"; then
+      echo "SDT free_ca mismatch for sid ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_SERVICE_TYPE" ]]; then
+  IFS=',' read -r -a STYPE_LIST <<< "$EXPECT_SERVICE_TYPE"
+  for entry in "${STYPE_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    sid="${entry_trim%%=*}"
+    value="${entry_trim#*=}"
+    if ! grep -q "SDT: sid: ${sid} .* service_type: ${value}" "$LOG_FILE"; then
+      echo "SDT service_type mismatch for sid ${sid} (expected ${value})"
+      exit 1
+    fi
+  done
 fi
 
 if [[ -n "$EXPECT_TSID" ]]; then

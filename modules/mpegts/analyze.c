@@ -116,6 +116,7 @@ static const char __modulation[] = "modulation";
 static const char __fec_inner[] = "fec_inner";
 static const char __network_name[] = "network_name";
 static const char __lcn_list[] = "lcn";
+static const char __free_ca[] = "free_ca";
 static const char __descriptors[] = "descriptors";
 static const char __psi[] = "psi";
 static const char __err[] = "error";
@@ -743,6 +744,9 @@ static void on_sdt(void *arg, mpegts_psi_t *psi)
         lua_newtable(lua);
         lua_pushnumber(lua, sid);
         lua_setfield(lua, -2, "sid");
+        // В SDT free_CA_mode находится в старшем полубайте после running_status.
+        lua_pushboolean(lua, (pointer[3] & 0x10) != 0);
+        lua_setfield(lua, -2, __free_ca);
 
         descriptors_count = 1;
         lua_newtable(lua);
