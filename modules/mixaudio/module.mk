@@ -23,35 +23,30 @@ ffmpeg_configure()
 {
     FFMPEG_CONTRIB="$SRCDIR/contrib/build/ffmpeg"
 
-    if ! check_cflags "" ; then
-        if check_pkgconfig ; then
-            CFLAGS="$(pkg-config --cflags libavcodec libavutil 2>/dev/null)"
-            LDFLAGS="$(pkg-config --libs libavcodec libavutil 2>/dev/null)"
-            if [ -n "$CFLAGS" ] && check_cflags "$CFLAGS" ; then
-                return 0
-            fi
+    # Prefer system-provided FFmpeg headers/libs via pkg-config when available.
+    # Note: compilation may succeed with default include paths, but we still need
+    # proper link flags (libavcodec/libavutil) to avoid undefined references.
+    if check_pkgconfig ; then
+        CFLAGS="$(pkg-config --cflags libavcodec libavutil 2>/dev/null)"
+        LDFLAGS="$(pkg-config --libs libavcodec libavutil 2>/dev/null)"
+        if [ -n "$LDFLAGS" ] && check_cflags "$CFLAGS" ; then
+            return 0
         fi
-
-        if [ -d "$FFMPEG_CONTRIB" ] ; then
-            CFLAGS="-I$FFMPEG_CONTRIB/"
-            LDFLAGS="$FFMPEG_CONTRIB/libavcodec/libavcodec.a $FFMPEG_CONTRIB/libavutil/libavutil.a"
-            if check_cflags "$CFLAGS" ; then
-                return 0
-            fi
-        else
-            if build_ffmpeg_contrib ; then
-                if [ -d "$FFMPEG_CONTRIB" ] ; then
-                    CFLAGS="-I$FFMPEG_CONTRIB/"
-                    LDFLAGS="$FFMPEG_CONTRIB/libavcodec/libavcodec.a $FFMPEG_CONTRIB/libavutil/libavutil.a"
-                    if check_cflags "$CFLAGS" ; then
-                        return 0
-                    fi
-                fi
-            fi
-        fi
-
-        return 1
     fi
+
+    # Fallback to contrib FFmpeg build (static libs).
+    if [ ! -d "$FFMPEG_CONTRIB" ] ; then
+        build_ffmpeg_contrib || return 1
+    fi
+    if [ -d "$FFMPEG_CONTRIB" ] ; then
+        CFLAGS="-I$FFMPEG_CONTRIB/"
+        LDFLAGS="$FFMPEG_CONTRIB/libavcodec/libavcodec.a $FFMPEG_CONTRIB/libavutil/libavutil.a"
+        if check_cflags "$CFLAGS" ; then
+            return 0
+        fi
+    fi
+
+    return 1
 }
 
 if ! ffmpeg_configure ; then
