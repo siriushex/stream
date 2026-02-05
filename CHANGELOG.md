@@ -2155,6 +2155,7 @@
   - Updated `docs/ASTRAL_AI.md` to reflect minimal‑load defaults and chat behavior.
   - Adjusted AI autoselect unit test for new log‑default behavior.
   - Added AI apply guardrail: large plans require `allow_destructive` (configurable via `ai_max_ops`).
+  - Added guardrail: disable ops require `allow_destructive`.
   - Added unit tests for AI chat diff preview and OpenAI image fallback behavior.
 - Tests:
   - Not run (server deploy only).

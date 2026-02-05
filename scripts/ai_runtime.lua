@@ -402,6 +402,20 @@ local function op_count(plan)
     return #plan.ops
 end
 
+local function count_ops(plan, names)
+    if not plan or type(plan.ops) ~= "table" then
+        return 0
+    end
+    local total = 0
+    for _, item in ipairs(plan.ops) do
+        local op = tostring(item.op or "")
+        if names[op] then
+            total = total + 1
+        end
+    end
+    return total
+end
+
 build_prompt_text = function(prompt, context)
     local parts = {}
     table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
@@ -969,6 +983,16 @@ function ai_runtime.apply(payload, ctx)
         job.status = "error"
         job.error = "too many ops (" .. tostring(ops_total) .. "), allow_destructive required"
         log_audit(job, false, job.error, { mode = mode, op_count = ops_total })
+        return nil, job.error
+    end
+    local destructive_ops = count_ops(plan, {
+        disable_stream = true,
+        disable_adapter = true,
+    })
+    if destructive_ops > 0 and not allow_destructive then
+        job.status = "error"
+        job.error = "disable ops require allow_destructive"
+        log_audit(job, false, job.error, { mode = mode, op_count = ops_total, disable_ops = destructive_ops })
         return nil, job.error
     end
     if mode == "replace" and not allow_destructive then

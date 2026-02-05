@@ -85,7 +85,13 @@ local function extract_error_message(body)
     if not ok or type(decoded) ~= "table" then
         return nil
     end
+    if decoded.message and decoded.message ~= "" then
+        return tostring(decoded.message)
+    end
     local err = decoded.error
+    if type(err) == "string" and err ~= "" then
+        return tostring(err)
+    end
     if type(err) ~= "table" then
         return nil
     end
@@ -99,6 +105,21 @@ local function extract_error_message(body)
         return tostring(err.type)
     end
     return nil
+end
+
+local function snip_error_body(body, limit)
+    if type(body) ~= "string" then
+        return nil
+    end
+    local text = body:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return nil
+    end
+    local max_len = tonumber(limit) or 200
+    if #text > max_len then
+        text = text:sub(1, max_len) .. "…"
+    end
+    return text
 end
 
 local function detect_image_error(body)
@@ -392,7 +413,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                     code = response_code,
                     rate_limits = {},
                 }
-                local err_detail = extract_error_message(response_body or "")
+                local err_detail = extract_error_message(response_body or "") or snip_error_body(response_body, 200)
                 if detect_model_not_found(response_code, response_body) and model_index < #models then
                     model_index = model_index + 1
                     return perform_request()
@@ -533,6 +554,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                     rate_limits = parse_rate_limits(normalize_headers(response and response.headers or {})),
                 }
                 local err_detail = extract_error_message(response and response.content or "")
+                    or snip_error_body(response and response.content or "", 200)
                 if not response or not response.code then
                     return callback(false, "no response", meta)
                 end

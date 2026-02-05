@@ -210,3 +210,4 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
 ## Важно
 Apply доступен только при `ai_allow_apply=true` и использует backup + rollback.
 Большие планы (ops > `ai_max_ops`) требуют `allow_destructive=true` в apply‑запросе.
+Операции `disable_stream` и `disable_adapter` также требуют `allow_destructive=true`.
