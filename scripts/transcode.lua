@@ -545,6 +545,8 @@ local function normalize_watchdog_defaults(tc)
         cc_error_hold_sec = num("cc_error_hold_sec", 0),
         pes_error_hold_sec = num("pes_error_hold_sec", 0),
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
+        pat_timeout_sec = num("pat_timeout_sec", 0),
+        pmt_timeout_sec = num("pmt_timeout_sec", 0),
         monitor_engine = normalize_monitor_engine(wd.monitor_engine),
         low_bitrate_enabled = normalize_bool(wd.low_bitrate_enabled, true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -596,6 +598,8 @@ local function normalize_output_watchdog(wd, base)
         cc_error_hold_sec = num("cc_error_hold_sec", 0),
         pes_error_hold_sec = num("pes_error_hold_sec", 0),
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
+        pat_timeout_sec = num("pat_timeout_sec", 0),
+        pmt_timeout_sec = num("pmt_timeout_sec", 0),
         monitor_engine = normalize_monitor_engine(pick("monitor_engine")),
         low_bitrate_enabled = normalize_bool(pick("low_bitrate_enabled"), true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -2080,6 +2084,8 @@ local function resolve_restart_reason_code(code)
         CC_ERRORS = "CC_ERRORS",
         PES_ERRORS = "PES_ERRORS",
         SCRAMBLED = "SCRAMBLED",
+        PAT_TIMEOUT = "PAT_TIMEOUT",
+        PMT_TIMEOUT = "PMT_TIMEOUT",
     }
     if map[code] then
         return map[code]
@@ -2647,6 +2653,39 @@ local function evaluate_probe(job, output_state, watchdog, payload)
     return true, nil
 end
 
+local function check_psi_timeout(job, output_state, watchdog, now)
+    if not watchdog then
+        return
+    end
+    local pat_timeout = tonumber(watchdog.pat_timeout_sec) or 0
+    local pmt_timeout = tonumber(watchdog.pmt_timeout_sec) or 0
+    if pat_timeout <= 0 and pmt_timeout <= 0 then
+        return
+    end
+    local engine = resolve_monitor_engine(watchdog.monitor_engine, output_state.url)
+    if engine ~= "astra_analyze" then
+        return
+    end
+    if pat_timeout > 0 then
+        local last_pat = output_state.psi_pat_ts
+        if not last_pat or (now - last_pat) >= pat_timeout then
+            schedule_restart(job, output_state, "PAT_TIMEOUT", "PAT timeout", {
+                timeout_sec = pat_timeout,
+                last_ts = last_pat,
+            })
+        end
+    end
+    if pmt_timeout > 0 then
+        local last_pmt = output_state.psi_pmt_ts
+        if not last_pmt or (now - last_pmt) >= pmt_timeout then
+            schedule_restart(job, output_state, "PMT_TIMEOUT", "PMT timeout", {
+                timeout_sec = pmt_timeout,
+                last_ts = last_pmt,
+            })
+        end
+    end
+end
+
 local function update_output_bitrate(job, output_state, bitrate, now)
     if not bitrate then
         return
@@ -3084,6 +3123,8 @@ local function tick_job(job)
                     })
                 end
 
+                check_psi_timeout(job, output_state, wd, now)
+
                 if wd.probe_interval_sec > 0 then
                     if not output_state.next_probe_ts then
                         output_state.next_probe_ts = now + math.min(wd.probe_interval_sec, 5)
@@ -3502,6 +3543,8 @@ function transcode.get_status(id)
                 scrambled_active = output_state.scrambled_active or false,
                 psi_pat_ts = output_state.psi_pat_ts,
                 psi_pmt_ts = output_state.psi_pmt_ts,
+                pat_timeout_sec = output_state.watchdog and output_state.watchdog.pat_timeout_sec or nil,
+                pmt_timeout_sec = output_state.watchdog and output_state.watchdog.pmt_timeout_sec or nil,
                 low_bitrate_active = output_state.low_bitrate_active or false,
                 low_bitrate_seconds_accum = output_state.low_bitrate_active and output_state.low_bitrate_seconds or 0,
                 last_restart_ts = output_state.last_restart_ts,
