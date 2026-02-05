@@ -30,6 +30,7 @@ struct mpts_service_t
     bool has_pnr;
     uint16_t pnr_in;
     uint16_t pnr_out;
+    bool pnr_conflict_warned;
 
     uint16_t pmt_pid_in;
     uint16_t pmt_pid_out;
@@ -779,16 +780,16 @@ static void rebuild_tables(module_data_t *mod)
         if(!svc->ready || !svc->mapping_ready)
             continue;
 
-        uint16_t pnr = 0;
+        uint16_t requested_pnr = 0;
         if(svc->has_pnr)
-            pnr = svc->pnr_cfg;
+            requested_pnr = svc->pnr_cfg;
         else if(svc->pnr_in > 0)
-            pnr = svc->pnr_in;
+            requested_pnr = svc->pnr_in;
 
-        if(pnr > 0 && pnr <= MPTS_PNR_MAX && !pnr_used[pnr])
+        if(requested_pnr > 0 && requested_pnr <= MPTS_PNR_MAX && !pnr_used[requested_pnr])
         {
-            svc->pnr_out = pnr;
-            pnr_used[pnr] = true;
+            svc->pnr_out = requested_pnr;
+            pnr_used[requested_pnr] = true;
         }
         else
         {
@@ -813,6 +814,19 @@ static void rebuild_tables(module_data_t *mod)
         svc->pnr_out = next_pnr;
         pnr_used[next_pnr] = true;
         next_pnr++;
+
+        // Если был задан PNR (явно или из входа), а мы назначили новый — логируем.
+        if((svc->has_pnr || svc->pnr_in > 0) && !svc->pnr_conflict_warned)
+        {
+            const uint16_t requested_pnr = svc->has_pnr ? svc->pnr_cfg : svc->pnr_in;
+            if(requested_pnr > MPTS_PNR_MAX)
+                asc_log_warning(SVC_MSG(svc, "PNR вне диапазона (PNR=%d), назначен %d"),
+                                requested_pnr, svc->pnr_out);
+            else
+                asc_log_warning(SVC_MSG(svc, "PNR %d уже используется, назначен %d"),
+                                requested_pnr, svc->pnr_out);
+            svc->pnr_conflict_warned = true;
+        }
     }
 
     build_pat(mod);
