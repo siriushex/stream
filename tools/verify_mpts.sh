@@ -18,6 +18,8 @@ EXPECT_NETWORK_NAME="${EXPECT_NETWORK_NAME:-}"
 EXPECT_LCN="${EXPECT_LCN:-}"
 EXPECT_FREE_CA="${EXPECT_FREE_CA:-}"
 EXPECT_SERVICE_TYPE="${EXPECT_SERVICE_TYPE:-}"
+EXPECT_BITRATE_KBIT="${EXPECT_BITRATE_KBIT:-}"
+EXPECT_BITRATE_TOL_PCT="${EXPECT_BITRATE_TOL_PCT:-10}"
 
 LOG_FILE="$(mktemp)"
 
@@ -178,6 +180,25 @@ if [[ -n "$EXPECT_SERVICE_TYPE" ]]; then
       exit 1
     fi
   done
+fi
+
+if [[ -n "$EXPECT_BITRATE_KBIT" ]]; then
+  bitrate_line="$(grep -E "^Bitrate: [0-9]+ Kbit/s" "$LOG_FILE" | tail -n 1 | awk '{print $2}')"
+  if [[ -z "$bitrate_line" ]]; then
+    echo "Bitrate not found"
+    exit 1
+  fi
+  actual_bitrate=$bitrate_line
+  expected_bitrate=$EXPECT_BITRATE_KBIT
+  tol_pct=$EXPECT_BITRATE_TOL_PCT
+  if ! awk -v actual="$actual_bitrate" -v expected="$expected_bitrate" -v tol="$tol_pct" 'BEGIN {
+        diff = actual - expected; if (diff < 0) diff = -diff;
+        allowed = expected * tol / 100.0;
+        exit(diff <= allowed ? 0 : 1)
+      }'; then
+    echo "Bitrate mismatch (expected ${expected_bitrate} Kbit/s +/- ${tol_pct}%, got ${actual_bitrate})"
+    exit 1
+  fi
 fi
 
 if [[ -n "$EXPECT_TSID" ]]; then
