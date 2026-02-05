@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Warn when target_bitrate is lower than input bitrate (CBR cannot be maintained).
+- Tests:
+  - Not run (runtime log change).
+### 2026-02-05
+- Changes:
   - Added UI warning for duplicate MPTS input URLs.
 - Tests:
   - Not run (UI change).

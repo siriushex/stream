@@ -123,6 +123,7 @@ struct module_data_t
     asc_timer_t *cbr_timer;
     uint64_t cbr_start_us;
     uint64_t sent_packets;
+    uint64_t cbr_last_warn_us;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -907,6 +908,18 @@ static void on_cbr_timer(void *arg)
         if(diff > 2000)
             diff = 2000; // ограничение за один тик
         mpts_send_null(mod, (size_t)diff);
+    }
+    else if(elapsed > 1000000ULL)
+    {
+        // Если входной битрейт превышает target_bitrate, предупреждаем раз в 5 секунд.
+        const uint64_t actual_bitrate = mod->sent_packets * (uint64_t)TS_PACKET_SIZE * 8ULL * 1000000ULL / elapsed;
+        const uint64_t warn_threshold = (uint64_t)mod->target_bitrate * 105ULL / 100ULL;
+        if(actual_bitrate > warn_threshold && (now - mod->cbr_last_warn_us) > 5000000ULL)
+        {
+            asc_log_warning(MSG("target_bitrate %d ниже входного (%llu), CBR не выдерживается"),
+                            mod->target_bitrate, (unsigned long long)actual_bitrate);
+            mod->cbr_last_warn_us = now;
+        }
     }
 }
 
