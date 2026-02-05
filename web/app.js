@@ -2598,6 +2598,21 @@ function formatRestartMeta(meta) {
   return parts.join(' · ');
 }
 
+function formatGpuInfo(transcode) {
+  if (!transcode) return 'n/a';
+  const device = transcode.gpu_device_selected;
+  if (device === undefined || device === null || device === '') return 'n/a';
+  const stats = transcode.gpu_stats;
+  if (stats) {
+    const util = Number.isFinite(stats.util) ? `${stats.util}%` : 'n/a';
+    const enc = Number.isFinite(stats.enc) ? `${stats.enc}%` : 'n/a';
+    const memUsed = Number.isFinite(stats.mem_used) ? stats.mem_used : 'n/a';
+    const memTotal = Number.isFinite(stats.mem_total) ? stats.mem_total : 'n/a';
+    return `#${device} util ${util} enc ${enc} mem ${memUsed}/${memTotal} MB`;
+  }
+  return `#${device}`;
+}
+
 function linesToArgs(text) {
   if (!text) return [];
   return text
@@ -3367,6 +3382,8 @@ const TRANSCODE_OUTPUT_PRESETS = {
 
 const TRANSCODE_WATCHDOG_DEFAULTS = {
   restart_delay_sec: 4,
+  restart_jitter_sec: 2,
+  restart_backoff_max_sec: 60,
   no_progress_timeout_sec: 8,
   max_error_lines_per_min: 20,
   desync_threshold_ms: 500,
@@ -3376,6 +3393,7 @@ const TRANSCODE_WATCHDOG_DEFAULTS = {
   probe_timeout_sec: 8,
   max_restarts_per_10min: 10,
   probe_fail_count: 2,
+  keyframe_miss_count: 3,
   monitor_engine: 'auto',
   low_bitrate_enabled: true,
   low_bitrate_min_kbps: 400,
@@ -3436,6 +3454,8 @@ function normalizeOutputWatchdog(watchdog, defaults) {
   };
   return {
     restart_delay_sec: num(wd.restart_delay_sec, base.restart_delay_sec),
+    restart_jitter_sec: num(wd.restart_jitter_sec, base.restart_jitter_sec),
+    restart_backoff_max_sec: num(wd.restart_backoff_max_sec, base.restart_backoff_max_sec),
     no_progress_timeout_sec: num(wd.no_progress_timeout_sec, base.no_progress_timeout_sec),
     max_error_lines_per_min: num(wd.max_error_lines_per_min, base.max_error_lines_per_min),
     desync_threshold_ms: num(wd.desync_threshold_ms, base.desync_threshold_ms),
@@ -3445,6 +3465,7 @@ function normalizeOutputWatchdog(watchdog, defaults) {
     probe_timeout_sec: num(wd.probe_timeout_sec, base.probe_timeout_sec),
     max_restarts_per_10min: num(wd.max_restarts_per_10min, base.max_restarts_per_10min),
     probe_fail_count: num(wd.probe_fail_count, base.probe_fail_count),
+    keyframe_miss_count: num(wd.keyframe_miss_count, base.keyframe_miss_count),
     monitor_engine: normalizeMonitorEngine(wd.monitor_engine || base.monitor_engine),
     low_bitrate_enabled: flag(wd.low_bitrate_enabled, base.low_bitrate_enabled),
     low_bitrate_min_kbps: num(wd.low_bitrate_min_kbps, base.low_bitrate_min_kbps),
@@ -12547,6 +12568,17 @@ function openAnalyze(stream) {
     const exitCode = Number.isFinite(transcode && transcode.ffmpeg_exit_code)
       ? String(transcode.ffmpeg_exit_code)
       : 'n/a';
+    const exitSignal = Number.isFinite(transcode && transcode.ffmpeg_exit_signal)
+      ? String(transcode.ffmpeg_exit_signal)
+      : 'n/a';
+    const gpuInfo = formatGpuInfo(transcode);
+    const outputCc = Number.isFinite(transcode && transcode.output_cc_errors)
+      ? String(transcode.output_cc_errors)
+      : 'n/a';
+    const outputPes = Number.isFinite(transcode && transcode.output_pes_errors)
+      ? String(transcode.output_pes_errors)
+      : 'n/a';
+    const outputScrambled = transcode && transcode.output_scrambled ? 'Yes' : 'No';
     const outputs = Array.isArray(transcode && transcode.outputs) ? transcode.outputs : [];
     const outputItems = outputs.length
       ? outputs.map((out, index) => {
@@ -12568,9 +12600,14 @@ function openAnalyze(stream) {
         `Output last OK: ${outputOk}`,
         `Input last error: ${inputErr}`,
         `Output last error: ${outputErr}`,
+        `Output CC errors: ${outputCc}`,
+        `Output PES errors: ${outputPes}`,
+        `Output scrambled: ${outputScrambled}`,
         `Last restart: ${restartCode}`,
         `Restart detail: ${restartMeta}`,
         `FFmpeg exit code: ${exitCode}`,
+        `FFmpeg exit signal: ${exitSignal}`,
+        `GPU: ${gpuInfo}`,
         `Last alert: ${lastAlert}`,
         `Last error: ${lastError}`,
         `Last desync: ${desync}`,
@@ -12854,9 +12891,12 @@ function renderAiPlanResult(job) {
 }
 
 async function fetchAiJob(jobId) {
-  const jobs = await apiJson('/api/v1/ai/jobs');
-  if (Array.isArray(jobs)) {
-    return jobs.find((job) => job.id === jobId) || null;
+  const payload = await apiJson('/api/v1/ai/jobs');
+  if (Array.isArray(payload)) {
+    return payload.find((job) => job.id === jobId) || null;
+  }
+  if (payload && Array.isArray(payload.jobs)) {
+    return payload.jobs.find((job) => job.id === jobId) || null;
   }
   return null;
 }
