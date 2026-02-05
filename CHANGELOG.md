@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AI: scrub ASCII control bytes and sanitize UTF-8 in OpenAI request bodies (prevents OpenAI "Invalid body: failed to parse JSON value" 400s).
+- Tests:
+  - `./astra scripts/tests/ai_openai_body_scrub_unit.lua`
+### 2026-02-05
+- Changes:
   - HLS: memfd mode avoids touching disk HLS dir unless disk HLS is explicitly used; playlist rewrite path avoids disk fallback when memfd playlist isn't ready.
   - HLS: gate `debug_hold_sec` behind `-DHLS_MEMFD_DEBUG`.
   - Tools: add/update `tools/hls_memfd_smoke.sh` for repeatable HLS memfd on-demand/no-disk sanity.

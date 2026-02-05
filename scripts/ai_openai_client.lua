@@ -139,6 +139,70 @@ local function snip_error_body(body, limit)
     return text
 end
 
+local function sanitize_utf8(text)
+    if type(text) ~= "string" or text == "" then
+        return text
+    end
+    local out = {}
+    local i = 1
+    local len = #text
+    while i <= len do
+        local c = text:byte(i)
+        if c < 0x20 or c == 0x7F then
+            -- Never send ASCII control bytes to OpenAI: some JSON parsers reject them.
+            table.insert(out, " ")
+            i = i + 1
+        elseif c < 0x80 then
+            table.insert(out, string.char(c))
+            i = i + 1
+        elseif c >= 0xC2 and c <= 0xDF then
+            local c2 = text:byte(i + 1)
+            if c2 and c2 >= 0x80 and c2 <= 0xBF then
+                table.insert(out, text:sub(i, i + 1))
+                i = i + 2
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        elseif c >= 0xE0 and c <= 0xEF then
+            local c2, c3 = text:byte(i + 1), text:byte(i + 2)
+            if c2 and c3 and c2 >= 0x80 and c2 <= 0xBF and c3 >= 0x80 and c3 <= 0xBF then
+                table.insert(out, text:sub(i, i + 2))
+                i = i + 3
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        elseif c >= 0xF0 and c <= 0xF4 then
+            local c2, c3, c4 = text:byte(i + 1), text:byte(i + 2), text:byte(i + 3)
+            if c2 and c3 and c4
+                and c2 >= 0x80 and c2 <= 0xBF
+                and c3 >= 0x80 and c3 <= 0xBF
+                and c4 >= 0x80 and c4 <= 0xBF then
+                table.insert(out, text:sub(i, i + 3))
+                i = i + 4
+            else
+                table.insert(out, "?")
+                i = i + 1
+            end
+        else
+            table.insert(out, "?")
+            i = i + 1
+        end
+    end
+    return table.concat(out)
+end
+
+local function scrub_json_body(body)
+    if type(body) ~= "string" or body == "" then
+        return body, 0
+    end
+    -- Replace all control bytes (including newline/tab) with spaces, then ensure UTF-8.
+    local out, n = body:gsub("[%z\1-\31\127]", " ")
+    out = sanitize_utf8(out)
+    return out, n
+end
+
 local function detect_image_error(body)
     local msg = ""
     if type(body) == "string" then
@@ -469,6 +533,18 @@ function ai_openai_client.request_json_schema(opts, callback)
             },
         }
         local body = json.encode(payload)
+        local scrubbed = 0
+        body, scrubbed = scrub_json_body(body)
+        local ok_local = pcall(json.decode, body)
+        if not ok_local then
+            return callback(false, "invalid json body (local encode)", {
+                attempts = attempts,
+                code = 0,
+                model = models[model_index],
+                scrubbed_control_bytes = scrubbed > 0 and scrubbed or nil,
+                error_detail = "local json.encode produced invalid json",
+            })
+        end
         local body_path = nil
         if #proxies > 0 then
             body_path = write_temp_body(body)
@@ -493,6 +569,9 @@ function ai_openai_client.request_json_schema(opts, callback)
                     rate_limits = {},
                     model = models[model_index],
                 }
+                if scrubbed > 0 then
+                    meta.scrubbed_control_bytes = scrubbed
+                end
                 local err_detail = extract_error_message(response_body or "") or snip_error_body(response_body, 200)
                 meta.error_detail = err_detail
                 if detect_model_not_found(response_code, response_body) and model_index < #models then
@@ -641,6 +720,9 @@ function ai_openai_client.request_json_schema(opts, callback)
                     rate_limits = parse_rate_limits(normalize_headers(response and response.headers or {})),
                     model = models[model_index],
                 }
+                if scrubbed > 0 then
+                    meta.scrubbed_control_bytes = scrubbed
+                end
                 local err_detail = extract_error_message(response and response.content or "")
                     or snip_error_body(response and response.content or "", 200)
                 meta.error_detail = err_detail
@@ -717,4 +799,5 @@ ai_openai_client._test = {
     should_retry = should_retry,
     detect_model_not_found = detect_model_not_found,
     build_url = build_url,
+    scrub_json_body = scrub_json_body,
 }
