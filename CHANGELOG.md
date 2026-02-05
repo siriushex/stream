@@ -10,6 +10,16 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-06
+- Changes:
+  - Transcode: add per-output workers (one ffmpeg per output) for fault isolation.
+  - Transcode: add seamless UDP/RTP cutover via local UDP proxy (`udp_switch`) to allow warm-switch without full output downtime.
+  - UI: add per-output + seamless proxy toggles and surface worker/proxy state in Editor and Analyze.
+  - CI: add seamless failover fixture + smoke script.
+- Tests:
+  - `./configure.sh && make`
+  - `contrib/ci/smoke.sh`
+  - `contrib/ci/smoke_transcode_seamless_failover.sh` (intended for Ubuntu/Debian; multicast input)
 ### 2026-02-05
 - Changes:
   - AI: scrub ASCII control bytes and sanitize UTF-8 in OpenAI request bodies (prevents OpenAI "Invalid body: failed to parse JSON value" 400s).
