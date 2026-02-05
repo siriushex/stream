@@ -775,6 +775,7 @@ const elements = {
   streamTranscodeCommonArgs: $('#stream-transcode-common-args'),
   streamTranscodeInputProbeUdp: $('#stream-transcode-input-probe-udp'),
   streamTranscodeInputProbeRestart: $('#stream-transcode-input-probe-restart'),
+  streamTranscodeWarmup: $('#stream-transcode-warmup'),
   streamTranscodeRestart: $('#stream-transcode-restart'),
   streamTranscodeStderr: $('#stream-transcode-stderr'),
   transcodeOutputList: $('#transcode-output-list'),
@@ -11504,10 +11505,43 @@ function formatTranscodeRestartSummary(transcode) {
     : transcode.restart_reason_code;
 }
 
+function formatWarmupSummary(warmup) {
+  if (!warmup) return '';
+  const target = Number.isFinite(warmup.target) ? `#${warmup.target}` : '#?';
+  const url = warmup.target_url ? ` (${shortInputLabel(warmup.target_url)})` : '';
+  const state = warmup.done
+    ? (warmup.ok ? 'OK' : 'FAILED')
+    : (warmup.ready ? 'READY' : 'RUNNING');
+  const parts = [`Warmup ${target}${url}: ${state}`];
+  if (warmup.require_idr) {
+    parts.push(warmup.idr_seen ? 'IDR:yes' : 'IDR:no');
+  }
+  if (warmup.stable_ok !== undefined) {
+    parts.push(warmup.stable_ok ? 'Stable:yes' : 'Stable:no');
+  }
+  if (Number.isFinite(warmup.last_out_time_ms)) {
+    parts.push(`out_time_ms:${Math.round(warmup.last_out_time_ms)}`);
+  }
+  if (Number.isFinite(warmup.min_out_time_ms)) {
+    parts.push(`min_ms:${Math.round(warmup.min_out_time_ms)}`);
+  }
+  if (Number.isFinite(warmup.stable_sec)) {
+    parts.push(`stable_sec:${Math.round(warmup.stable_sec)}`);
+  }
+  if (warmup.error) {
+    parts.push(`err:${warmup.error}`);
+  }
+  return parts.join(' • ');
+}
+
 function updateEditorTranscodeStatus() {
   if (!elements.streamTranscodeStatus) return;
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
+  }
+  if (elements.streamTranscodeWarmup) {
+    elements.streamTranscodeWarmup.textContent = '';
+    elements.streamTranscodeWarmup.classList.remove('is-error');
   }
   if (elements.streamTranscodeRestart) {
     elements.streamTranscodeRestart.textContent = '';
@@ -11548,6 +11582,15 @@ function updateEditorTranscodeStatus() {
     elements.streamTranscodeRestart.textContent = `${prefix}: ${restartSummary}`;
     if (transcodeState === 'ERROR' || transcodeState === 'RESTARTING') {
       elements.streamTranscodeRestart.classList.add('is-error');
+    }
+  }
+  if (elements.streamTranscodeWarmup) {
+    const warmupSummary = formatWarmupSummary(transcode && transcode.switch_warmup);
+    if (warmupSummary) {
+      elements.streamTranscodeWarmup.textContent = warmupSummary;
+      if (transcodeState === 'ERROR') {
+        elements.streamTranscodeWarmup.classList.add('is-error');
+      }
     }
   }
   if (elements.streamTranscodeStderr) {
