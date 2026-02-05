@@ -4,6 +4,7 @@ const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
+const OBS_AI_PREF_KEY = 'astral.obs.ai.prefs';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 
 function getStoredBool(key, fallback) {
@@ -167,6 +168,7 @@ const state = {
   bufferTimer: null,
   users: [],
   accessLogEntries: [],
+  auditEntries: [],
   token: localStorage.getItem('astra_token'),
   editing: null,
   streamIdAuto: false,
@@ -178,6 +180,7 @@ const state = {
   transcodeOutputMonitorIndex: null,
   transcodeWatchdogDefaults: null,
   inputs: [],
+  mptsServices: [],
   inputEditingIndex: null,
   inputExtras: {},
   settingsSection: 'general',
@@ -211,6 +214,11 @@ const state = {
   accessTextFilter: '',
   accessLimit: 200,
   accessPaused: false,
+  auditLimit: 200,
+  auditActionFilter: '',
+  auditActorFilter: '',
+  auditOkFilter: '',
+  accessMode: 'access',
   streamSyncTimer: null,
   groups: [],
   groupEditing: null,
@@ -226,6 +234,10 @@ const state = {
   userEditing: null,
   userMode: 'edit',
   activeAnalyzeId: null,
+  aiChatJobId: null,
+  aiChatPoll: null,
+  aiChatPendingEl: null,
+  aiChatBusy: false,
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
@@ -266,11 +278,42 @@ const elements = {
   observabilityStreamField: $('#obs-stream-field'),
   observabilityRefresh: $('#obs-refresh'),
   observabilitySummary: $('#obs-summary'),
+  observabilityAi: $('#obs-ai'),
+  observabilityAiStatus: $('#obs-ai-status'),
+  observabilityAiBody: $('#obs-ai-body'),
+  observabilityAiRefresh: $('#obs-ai-refresh'),
+  observabilityAiIncludeLogs: $('#obs-ai-include-logs'),
+  observabilityAiIncludeCli: $('#obs-ai-include-cli'),
+  observabilityAiCliFields: $('#obs-ai-cli-fields'),
+  observabilityAiCliStream: $('#obs-ai-cli-stream'),
+  observabilityAiCliDvbls: $('#obs-ai-cli-dvbls'),
+  observabilityAiCliAnalyze: $('#obs-ai-cli-analyze'),
+  observabilityAiCliFemon: $('#obs-ai-cli-femon'),
+  observabilityAiAnalyzeUrl: $('#obs-ai-analyze-url'),
+  observabilityAiFemonUrl: $('#obs-ai-femon-url'),
+  observabilityAiStreamId: $('#obs-ai-stream-id'),
   observabilityEmpty: $('#obs-empty'),
+  observabilityHint: $('#obs-hint'),
   observabilityChartBitrate: $('#obs-chart-bitrate'),
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
   observabilityLogs: $('#obs-logs'),
+  aiChatLog: $('#ai-chat-log'),
+  aiChatInput: $('#ai-chat-input'),
+  aiChatSend: $('#ai-chat-send'),
+  aiChatStop: $('#ai-chat-stop'),
+  aiChatClear: $('#ai-chat-clear'),
+  aiChatStatus: $('#ai-chat-status'),
+  aiChatFiles: $('#ai-chat-files'),
+  aiChatFilesLabel: $('#ai-chat-files-label'),
+  aiChatIncludeLogs: $('#ai-chat-logs'),
+  aiChatCliStream: $('#ai-chat-cli-stream'),
+  aiChatCliDvbls: $('#ai-chat-cli-dvbls'),
+  aiChatCliAnalyze: $('#ai-chat-cli-analyze'),
+  aiChatCliFemon: $('#ai-chat-cli-femon'),
+  aiChatStreamId: $('#ai-chat-stream-id'),
+  aiChatAnalyzeUrl: $('#ai-chat-analyze-url'),
+  aiChatFemonUrl: $('#ai-chat-femon-url'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
   settingsShowEpg: $('#settings-show-epg'),
@@ -439,6 +482,17 @@ const elements = {
   accessCount: $('#access-count'),
   accessPause: $('#access-pause'),
   accessClear: $('#access-clear'),
+  accessMode: $('#access-mode'),
+  accessControls: $('#access-controls'),
+  auditControls: $('#audit-controls'),
+  auditActionFilter: $('#audit-action-filter'),
+  auditActorFilter: $('#audit-actor-filter'),
+  auditOkFilter: $('#audit-ok-filter'),
+  auditLimit: $('#audit-limit'),
+  auditRefresh: $('#audit-refresh'),
+  auditCount: $('#audit-count'),
+  auditAiOnly: $('#audit-ai-only'),
+  auditTable: $('#audit-table'),
   groupNew: $('#group-new'),
   groupTable: $('#group-table'),
   groupEmpty: $('#group-empty'),
@@ -505,6 +559,7 @@ const elements = {
   settingsObservabilityLogsDays: $('#settings-observability-logs-days'),
   settingsObservabilityMetricsDays: $('#settings-observability-metrics-days'),
   settingsObservabilityRollup: $('#settings-observability-rollup'),
+  settingsObservabilityOnDemand: $('#settings-observability-on-demand'),
   settingsTelegramEnabled: $('#settings-telegram-enabled'),
   settingsTelegramLevel: $('#settings-telegram-level'),
   settingsTelegramToken: $('#settings-telegram-token'),
@@ -630,6 +685,7 @@ const elements = {
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
   mptsSiInterval: $('#mpts-si-interval'),
+  mptsTargetBitrate: $('#mpts-target-bitrate'),
   mptsPatVersion: $('#mpts-pat-version'),
   mptsNitVersion: $('#mpts-nit-version'),
   mptsCatVersion: $('#mpts-cat-version'),
@@ -717,11 +773,14 @@ const elements = {
   transcodeMonitorError: $('#transcode-monitor-error'),
   transcodeMonitorClose: $('#transcode-monitor-close'),
   transcodeMonitorCancel: $('#transcode-monitor-cancel'),
+  streamInputBlock: $('#stream-input-block'),
   inputList: $('#input-list'),
   inputPreset: $('#input-preset'),
   inputPresetApply: $('#input-preset-apply'),
   outputList: $('#output-list'),
   btnAddInput: $('#btn-add-input'),
+  btnAddMptsService: $('#btn-add-mpts-service'),
+  mptsServiceList: $('#mpts-service-list'),
   btnAddOutput: $('#btn-add-output'),
   btnApplyStream: $('#btn-apply'),
   btnDelete: $('#btn-delete'),
@@ -1438,6 +1497,66 @@ function syncToggleTargets() {
     if (!target) return;
     target.hidden = !toggle.checked;
   });
+}
+
+function loadObservabilityAiPreferences() {
+  if (!elements.observabilityAi) return;
+  let prefs = null;
+  try {
+    const raw = localStorage.getItem(OBS_AI_PREF_KEY);
+    prefs = raw ? JSON.parse(raw) : null;
+  } catch (err) {
+    prefs = null;
+  }
+  if (!prefs) return;
+  if (elements.observabilityAiIncludeLogs) {
+    elements.observabilityAiIncludeLogs.checked = prefs.includeLogs !== false;
+  }
+  if (elements.observabilityAiIncludeCli) {
+    elements.observabilityAiIncludeCli.checked = prefs.includeCli === true;
+  }
+  if (elements.observabilityAiCliStream) {
+    elements.observabilityAiCliStream.checked = prefs.cliStream !== false;
+  }
+  if (elements.observabilityAiCliDvbls) {
+    elements.observabilityAiCliDvbls.checked = prefs.cliDvbls === true;
+  }
+  if (elements.observabilityAiCliAnalyze) {
+    elements.observabilityAiCliAnalyze.checked = prefs.cliAnalyze === true;
+  }
+  if (elements.observabilityAiCliFemon) {
+    elements.observabilityAiCliFemon.checked = prefs.cliFemon === true;
+  }
+  if (elements.observabilityAiAnalyzeUrl && typeof prefs.analyzeUrl === 'string') {
+    elements.observabilityAiAnalyzeUrl.value = prefs.analyzeUrl;
+  }
+  if (elements.observabilityAiFemonUrl && typeof prefs.femonUrl === 'string') {
+    elements.observabilityAiFemonUrl.value = prefs.femonUrl;
+  }
+  if (elements.observabilityAiStreamId && typeof prefs.streamId === 'string') {
+    elements.observabilityAiStreamId.value = prefs.streamId;
+  }
+  syncToggleTargets();
+}
+
+function saveObservabilityAiPreferences() {
+  if (!elements.observabilityAi) return;
+  const prefs = {
+    includeLogs: elements.observabilityAiIncludeLogs ? elements.observabilityAiIncludeLogs.checked : true,
+    includeCli: elements.observabilityAiIncludeCli ? elements.observabilityAiIncludeCli.checked : false,
+    cliStream: elements.observabilityAiCliStream ? elements.observabilityAiCliStream.checked : true,
+    cliDvbls: elements.observabilityAiCliDvbls ? elements.observabilityAiCliDvbls.checked : false,
+    cliAnalyze: elements.observabilityAiCliAnalyze ? elements.observabilityAiCliAnalyze.checked : false,
+    cliFemon: elements.observabilityAiCliFemon ? elements.observabilityAiCliFemon.checked : false,
+    analyzeUrl: elements.observabilityAiAnalyzeUrl ? elements.observabilityAiAnalyzeUrl.value.trim() : '',
+    femonUrl: elements.observabilityAiFemonUrl ? elements.observabilityAiFemonUrl.value.trim() : '',
+    streamId: elements.observabilityAiStreamId ? elements.observabilityAiStreamId.value.trim() : '',
+  };
+  try {
+    localStorage.setItem(OBS_AI_PREF_KEY, JSON.stringify(prefs));
+  } catch (err) {
+    // ignore storage errors
+  }
 }
 
 function bindToggleTargets() {
@@ -2571,6 +2690,9 @@ function updateMptsFields() {
   $$('.mpts-section').forEach((section) => {
     section.classList.toggle('is-disabled', !enabled);
   });
+  if (elements.streamInputBlock) {
+    elements.streamInputBlock.classList.toggle('is-hidden', enabled);
+  }
 }
 
 function truncateText(text, max) {
@@ -4734,6 +4856,142 @@ function renderInputList() {
 
     elements.inputList.appendChild(row);
   });
+}
+
+function normalizeMptsServices(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((item) => {
+    if (typeof item === 'string') {
+      return { input: item };
+    }
+    return {
+      input: item.input || item.url || '',
+      service_name: item.service_name || '',
+      service_provider: item.service_provider || item.provider_name || '',
+      service_type_id: item.service_type_id || '',
+      pnr: item.pnr || '',
+      scrambled: item.scrambled === true,
+      name: item.name || '',
+    };
+  });
+}
+
+function renderMptsServiceList() {
+  if (!elements.mptsServiceList) return;
+  elements.mptsServiceList.innerHTML = '';
+  if (!state.mptsServices || state.mptsServices.length === 0) {
+    state.mptsServices = [{ input: '' }];
+  }
+
+  state.mptsServices.forEach((service, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row mpts-service-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const grid = document.createElement('div');
+    grid.className = 'mpts-service-grid';
+
+    const input = document.createElement('input');
+    input.className = 'list-input mpts-field mpts-service-input';
+    input.type = 'text';
+    input.placeholder = 'Input URL';
+    input.value = service.input || '';
+    input.addEventListener('input', () => {
+      service.input = input.value;
+    });
+
+    const serviceName = document.createElement('input');
+    serviceName.className = 'list-input mpts-field mpts-service-input';
+    serviceName.type = 'text';
+    serviceName.placeholder = 'Service name';
+    serviceName.value = service.service_name || '';
+    serviceName.addEventListener('input', () => {
+      service.service_name = serviceName.value;
+    });
+
+    const provider = document.createElement('input');
+    provider.className = 'list-input mpts-field mpts-service-input';
+    provider.type = 'text';
+    provider.placeholder = 'Provider';
+    provider.value = service.service_provider || '';
+    provider.addEventListener('input', () => {
+      service.service_provider = provider.value;
+    });
+
+    const pnr = document.createElement('input');
+    pnr.className = 'list-input mpts-field mpts-service-input';
+    pnr.type = 'number';
+    pnr.placeholder = 'PNR';
+    pnr.min = '1';
+    pnr.max = '65535';
+    pnr.value = service.pnr || '';
+    pnr.addEventListener('input', () => {
+      service.pnr = pnr.value;
+    });
+
+    const serviceType = document.createElement('input');
+    serviceType.className = 'list-input mpts-field mpts-service-input';
+    serviceType.type = 'number';
+    serviceType.placeholder = 'Type';
+    serviceType.min = '0';
+    serviceType.max = '255';
+    serviceType.value = service.service_type_id || '';
+    serviceType.addEventListener('input', () => {
+      service.service_type_id = serviceType.value;
+    });
+
+    const scrambledLabel = document.createElement('label');
+    scrambledLabel.className = 'mpts-service-scrambled';
+    const scrambled = document.createElement('input');
+    scrambled.type = 'checkbox';
+    scrambled.className = 'mpts-field';
+    scrambled.checked = service.scrambled === true;
+    scrambled.addEventListener('change', () => {
+      service.scrambled = scrambled.checked;
+    });
+    const scrambledText = document.createElement('span');
+    scrambledText.textContent = 'Scrambled';
+    scrambledLabel.appendChild(scrambled);
+    scrambledLabel.appendChild(scrambledText);
+
+    grid.appendChild(input);
+    grid.appendChild(serviceName);
+    grid.appendChild(provider);
+    grid.appendChild(pnr);
+    grid.appendChild(serviceType);
+    grid.appendChild(scrambledLabel);
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'mpts-service-remove';
+    remove.textContent = 'x';
+
+    row.appendChild(idx);
+    row.appendChild(grid);
+    row.appendChild(remove);
+
+    elements.mptsServiceList.appendChild(row);
+  });
+}
+
+function collectMptsServices() {
+  return (state.mptsServices || []).map((service) => {
+    const input = (service.input || '').trim();
+    return {
+      input,
+      service_name: (service.service_name || '').trim(),
+      service_provider: (service.service_provider || '').trim(),
+      service_type_id: service.service_type_id,
+      pnr: service.pnr,
+      scrambled: service.scrambled === true,
+      name: (service.name || '').trim(),
+    };
+  }).filter((service) => service.input);
 }
 
 function setOutputGroup(group) {
@@ -8293,6 +8551,9 @@ function openEditor(stream, isNew) {
   if (elements.mptsSiInterval) {
     elements.mptsSiInterval.value = mptsAdv.si_interval_ms || '';
   }
+  if (elements.mptsTargetBitrate) {
+    elements.mptsTargetBitrate.value = mptsAdv.target_bitrate || '';
+  }
   if (elements.mptsPatVersion) {
     elements.mptsPatVersion.value = mptsAdv.pat_version || '';
   }
@@ -8446,6 +8707,12 @@ function openEditor(stream, isNew) {
   state.inputs = normalizeInputs(config.input || []);
   renderInputList();
 
+  state.mptsServices = normalizeMptsServices(config.mpts_services || []);
+  if (state.mptsServices.length === 0 && config.mpts === true) {
+    state.mptsServices = normalizeMptsServices(config.input || []);
+  }
+  renderMptsServiceList();
+
   state.outputs = normalizeOutputs(config.output || [], stream.id || '');
   renderOutputList();
   renderTranscodeOutputList();
@@ -8530,7 +8797,8 @@ function readStreamForm() {
   const id = elements.streamId.value.trim();
   const name = elements.streamName.value.trim();
   const enabled = elements.streamEnabled.checked;
-  const inputs = collectInputs();
+  const mptsEnabled = elements.streamMpts && elements.streamMpts.checked;
+  let inputs = collectInputs();
   const description = elements.streamDesc.value.trim();
   const streamType = elements.streamType ? elements.streamType.value.trim() : '';
   const isTranscode = streamType === 'transcode' || streamType === 'ffmpeg';
@@ -8543,7 +8811,31 @@ function readStreamForm() {
   if (!name) {
     throw new Error('Stream name is required (General tab)');
   }
-  if (!inputs.length) {
+  let mptsServices = [];
+  if (mptsEnabled) {
+    mptsServices = collectMptsServices();
+    if (!mptsServices.length) {
+      throw new Error('At least one MPTS service input is required (MPTS tab)');
+    }
+    mptsServices.forEach((service, index) => {
+      if (!service.input) {
+        throw new Error(`MPTS service #${index + 1}: input URL is required`);
+      }
+      const parsed = parseInputUrl(service.input);
+      if (!parsed || !parsed.format) {
+        throw new Error(`MPTS service #${index + 1}: invalid input URL`);
+      }
+      const pnr = toNumber(service.pnr);
+      if (pnr !== undefined && (pnr < 1 || pnr > 65535)) {
+        throw new Error(`MPTS service #${index + 1}: PNR must be between 1 and 65535`);
+      }
+      const st = toNumber(service.service_type_id);
+      if (st !== undefined && (st < 0 || st > 255)) {
+        throw new Error(`MPTS service #${index + 1}: service type must be between 0 and 255`);
+      }
+    });
+    inputs = mptsServices.map((service) => service.input);
+  } else if (!inputs.length) {
     throw new Error('At least one input URL is required (General tab)');
   }
 
@@ -8673,7 +8965,6 @@ function readStreamForm() {
     config.cas = true;
   }
 
-  const mptsEnabled = elements.streamMpts && elements.streamMpts.checked;
   const mptsConfig = { general: {}, nit: {}, advanced: {} };
   const mptsGeneral = mptsConfig.general;
   const mptsNit = mptsConfig.nit;
@@ -8713,6 +9004,8 @@ function readStreamForm() {
 
   const siInterval = toNumber(elements.mptsSiInterval && elements.mptsSiInterval.value);
   if (siInterval !== undefined) mptsAdv.si_interval_ms = siInterval;
+  const targetBitrate = toNumber(elements.mptsTargetBitrate && elements.mptsTargetBitrate.value);
+  if (targetBitrate !== undefined) mptsAdv.target_bitrate = targetBitrate;
   const patVersion = toNumber(elements.mptsPatVersion && elements.mptsPatVersion.value);
   if (patVersion !== undefined) mptsAdv.pat_version = patVersion;
   const nitVersion = toNumber(elements.mptsNitVersion && elements.mptsNitVersion.value);
@@ -8739,6 +9032,21 @@ function readStreamForm() {
 
   if (mptsEnabled || hasAnyValue(mptsConfig)) {
     config.mpts_config = mptsConfig;
+  }
+  if (mptsEnabled || (mptsServices && mptsServices.length)) {
+    const normalizedServices = mptsServices.map((service) => {
+      const entry = { input: service.input };
+      if (service.service_name) entry.service_name = service.service_name;
+      if (service.service_provider) entry.service_provider = service.service_provider;
+      const pnr = toNumber(service.pnr);
+      if (pnr !== undefined) entry.pnr = pnr;
+      const typeId = toNumber(service.service_type_id);
+      if (typeId !== undefined) entry.service_type_id = typeId;
+      if (service.scrambled === true) entry.scrambled = true;
+      if (service.name) entry.name = service.name;
+      return entry;
+    });
+    config.mpts_services = normalizedServices;
   }
 
   const epgId = (elements.streamEpgId && elements.streamEpgId.value || '').trim();
@@ -9939,7 +10247,83 @@ function appendAccessLogEntries(entries) {
   renderAccessLog();
 }
 
+function renderAuditLog() {
+  if (!elements.auditTable) return;
+  const entries = state.auditEntries || [];
+  const header = `
+    <div class="table-row header">
+      <div>Time</div>
+      <div>Actor</div>
+      <div>Action</div>
+      <div>Target</div>
+      <div>IP</div>
+      <div>OK</div>
+      <div>Message</div>
+    </div>
+  `;
+  elements.auditTable.innerHTML = header;
+  if (!entries.length) {
+    const row = createEl('div', 'table-row');
+    row.innerHTML = '<div class="muted">No audit entries yet</div>';
+    elements.auditTable.appendChild(row);
+    if (elements.auditCount) elements.auditCount.textContent = '0';
+    if (elements.accessTotal) elements.accessTotal.textContent = '0';
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  entries.forEach((row) => {
+    const tr = createEl('div', 'table-row');
+    const ts = createEl('div', '', formatLogTime(row.ts || 0));
+    const actor = createEl('div', '', row.actor_username || '-');
+    const action = createEl('div', '', row.action || '-');
+    const target = createEl('div', '', row.target_username || '-');
+    const ip = createEl('div', '', row.ip || '-');
+    const ok = createEl('div', '', row.ok ? 'yes' : 'no');
+    const msg = createEl('div', '', row.message || '');
+    tr.appendChild(ts);
+    tr.appendChild(actor);
+    tr.appendChild(action);
+    tr.appendChild(target);
+    tr.appendChild(ip);
+    tr.appendChild(ok);
+    tr.appendChild(msg);
+    fragment.appendChild(tr);
+  });
+  elements.auditTable.appendChild(fragment);
+  if (elements.auditCount) elements.auditCount.textContent = String(entries.length);
+  if (elements.accessTotal) elements.accessTotal.textContent = String(entries.length);
+}
+
+function buildAuditQuery(limit) {
+  const params = [];
+  const action = String(state.auditActionFilter || '').trim();
+  const actor = String(state.auditActorFilter || '').trim();
+  const ok = String(state.auditOkFilter || '').trim();
+  if (action) params.push(`action=${encodeURIComponent(action)}`);
+  if (actor) params.push(`actor=${encodeURIComponent(actor)}`);
+  if (ok !== '') params.push(`ok=${encodeURIComponent(ok)}`);
+  params.push(`limit=${encodeURIComponent(limit)}`);
+  params.push('since=0');
+  return params.join('&');
+}
+
+async function loadAuditLog(reset = true) {
+  if (state.accessMode !== 'audit') {
+    return;
+  }
+  try {
+    const limit = Math.max(50, Math.min(500, Number(state.auditLimit) || 200));
+    const data = await apiJson(`/api/v1/audit?${buildAuditQuery(limit)}`);
+    state.auditEntries = Array.isArray(data) ? data : [];
+    renderAuditLog();
+  } catch (err) {
+  }
+}
+
 async function loadAccessLog(reset = false) {
+  if (state.accessMode !== 'access') {
+    return;
+  }
   try {
     const since = reset ? 0 : state.accessLogCursor;
     const limit = Math.max(50, Math.min(500, Number(state.accessLimit) || 200));
@@ -9969,8 +10353,13 @@ function startAccessLogPolling() {
   if (state.accessLogTimer) {
     clearInterval(state.accessLogTimer);
   }
-  state.accessLogTimer = setInterval(() => loadAccessLog(false), POLL_ACCESS_MS);
-  loadAccessLog(true);
+  if (state.accessMode === 'audit') {
+    state.accessLogTimer = setInterval(() => loadAuditLog(true), POLL_ACCESS_MS);
+    loadAuditLog(true);
+  } else {
+    state.accessLogTimer = setInterval(() => loadAccessLog(false), POLL_ACCESS_MS);
+    loadAccessLog(true);
+  }
 }
 
 function stopAccessLogPolling() {
@@ -10021,6 +10410,14 @@ function updateObservabilityScopeFields() {
   if (!elements.observabilityScope || !elements.observabilityStreamField) return;
   const isStream = elements.observabilityScope.value === 'stream';
   elements.observabilityStreamField.hidden = !isStream;
+}
+
+function updateObservabilityOnDemandFields() {
+  if (!elements.settingsObservabilityOnDemand) return;
+  const onDemand = elements.settingsObservabilityOnDemand.checked;
+  if (elements.settingsObservabilityMetricsDays) {
+    elements.settingsObservabilityMetricsDays.disabled = onDemand;
+  }
 }
 
 function getThemeColor(name, fallback) {
@@ -10209,18 +10606,119 @@ function renderObservabilityLogs(items) {
   });
 }
 
+function renderObservabilityAiSummary(data, note) {
+  if (!elements.observabilityAiBody) return;
+  elements.observabilityAiBody.innerHTML = '';
+  if (elements.observabilityAiStatus) {
+    elements.observabilityAiStatus.textContent = note || '';
+  }
+  if (!data || typeof data !== 'object') {
+    const empty = createEl('div', 'ai-summary-item', 'No AI summary yet.');
+    elements.observabilityAiBody.appendChild(empty);
+    return;
+  }
+  if (data.summary) {
+    const summary = createEl('div', 'ai-summary-section');
+    summary.appendChild(createEl('div', 'ai-summary-label', 'Summary'));
+    summary.appendChild(createEl('div', 'ai-summary-item', data.summary));
+    elements.observabilityAiBody.appendChild(summary);
+  }
+  if (Array.isArray(data.top_issues) && data.top_issues.length) {
+    const issues = createEl('div', 'ai-summary-section');
+    issues.appendChild(createEl('div', 'ai-summary-label', 'Top issues'));
+    data.top_issues.slice(0, 5).forEach((item) => {
+      issues.appendChild(createEl('div', 'ai-summary-item', item));
+    });
+    elements.observabilityAiBody.appendChild(issues);
+  }
+  if (Array.isArray(data.suggestions) && data.suggestions.length) {
+    const suggestions = createEl('div', 'ai-summary-section');
+    suggestions.appendChild(createEl('div', 'ai-summary-label', 'Suggestions'));
+    data.suggestions.slice(0, 5).forEach((item) => {
+      suggestions.appendChild(createEl('div', 'ai-summary-item', item));
+    });
+    elements.observabilityAiBody.appendChild(suggestions);
+  }
+}
+
+function collectObservabilityAiContextParams() {
+  const params = {};
+  const includeLogs = elements.observabilityAiIncludeLogs ? elements.observabilityAiIncludeLogs.checked : true;
+  params.include_logs = includeLogs ? '1' : '0';
+
+  const includeCli = elements.observabilityAiIncludeCli ? elements.observabilityAiIncludeCli.checked : false;
+  if (includeCli) {
+    const cli = [];
+    if (elements.observabilityAiCliStream && elements.observabilityAiCliStream.checked) cli.push('stream');
+    if (elements.observabilityAiCliDvbls && elements.observabilityAiCliDvbls.checked) cli.push('dvbls');
+    if (elements.observabilityAiCliAnalyze && elements.observabilityAiCliAnalyze.checked) cli.push('analyze');
+    if (elements.observabilityAiCliFemon && elements.observabilityAiCliFemon.checked) cli.push('femon');
+    if (cli.length === 0) cli.push('stream');
+    params.include_cli = cli.join(',');
+  }
+
+  if (elements.observabilityAiStreamId && elements.observabilityAiStreamId.value) {
+    params.stream_id = elements.observabilityAiStreamId.value.trim();
+  }
+  if (elements.observabilityAiAnalyzeUrl && elements.observabilityAiAnalyzeUrl.value) {
+    params.input_url = elements.observabilityAiAnalyzeUrl.value.trim();
+  }
+  if (elements.observabilityAiFemonUrl && elements.observabilityAiFemonUrl.value) {
+    params.femon_url = elements.observabilityAiFemonUrl.value.trim();
+  }
+  return params;
+}
+
+async function loadObservabilityAiSummary(range, scope) {
+  if (!elements.observabilityAi) return;
+  const aiEnabled = getSettingBool('ai_enabled', false);
+  const apiKeySet = getSettingBool('ai_api_key_set', false);
+  if (scope !== 'global') {
+    elements.observabilityAi.hidden = true;
+    return;
+  }
+  elements.observabilityAi.hidden = false;
+  if (!aiEnabled || !apiKeySet) {
+    renderObservabilityAiSummary(null, 'AI is disabled or API key is missing.');
+    return;
+  }
+  try {
+    const summaryUrl = new URL('/api/v1/ai/summary', window.location.origin);
+    summaryUrl.searchParams.set('range', range || '24h');
+    summaryUrl.searchParams.set('ai', '1');
+    const params = collectObservabilityAiContextParams();
+    Object.keys(params).forEach((key) => {
+      if (params[key] !== undefined && params[key] !== '') {
+        summaryUrl.searchParams.set(key, params[key]);
+      }
+    });
+    const summaryResp = await apiJson(summaryUrl.toString());
+    const note = summaryResp && summaryResp.note ? summaryResp.note : 'AI summary';
+    renderObservabilityAiSummary(summaryResp && summaryResp.ai, note);
+  } catch (err) {
+    renderObservabilityAiSummary(null, 'AI summary failed to load.');
+  }
+}
+
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
   const logsDays = getSettingNumber('ai_logs_retention_days', 0);
   const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+  const onDemand = getSettingBool('ai_metrics_on_demand', true);
   const enabled = logsDays > 0 || metricsDays > 0;
   if (elements.observabilityEmpty) {
     elements.observabilityEmpty.classList.toggle('active', !enabled);
+  }
+  if (elements.observabilityHint) {
+    elements.observabilityHint.textContent = onDemand
+      ? 'Metrics are calculated on request (logs + runtime snapshot).'
+      : '';
   }
   if (!enabled) {
     renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
     renderObservabilityCharts([], 'global');
     renderObservabilityLogs([]);
+    renderObservabilityAiSummary(null, 'Observability disabled.');
     return;
   }
 
@@ -10231,6 +10729,7 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
+    await loadObservabilityAiSummary(range, scope);
     return;
   }
   if (showStatus) {
@@ -10286,6 +10785,7 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
+    await loadObservabilityAiSummary(range, scope);
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
@@ -10309,7 +10809,7 @@ function syncPollingForView() {
     stopLogPolling();
   }
   if (state.currentView === 'access') {
-    startAccessLogPolling();
+    setAccessMode(state.accessMode || 'access');
   } else {
     stopAccessLogPolling();
   }
@@ -10366,6 +10866,24 @@ function setAccessPaused(paused) {
   } else {
     startAccessLogPolling();
   }
+}
+
+function setAccessMode(mode) {
+  const next = mode === 'audit' ? 'audit' : 'access';
+  state.accessMode = next;
+  if (elements.accessControls) {
+    elements.accessControls.hidden = next !== 'access';
+  }
+  if (elements.auditControls) {
+    elements.auditControls.hidden = next !== 'audit';
+  }
+  if (elements.accessTable) {
+    elements.accessTable.hidden = next !== 'access';
+  }
+  if (elements.auditTable) {
+    elements.auditTable.hidden = next !== 'audit';
+  }
+  startAccessLogPolling();
 }
 
 function logLevelClass(level) {
@@ -10697,10 +11215,14 @@ function applySettingsToUI() {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
     const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
+    if (elements.settingsObservabilityOnDemand) {
+      elements.settingsObservabilityOnDemand.checked = getSettingBool('ai_metrics_on_demand', true);
+    }
     elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (metricsDays > 0);
     setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
     setSelectValue(elements.settingsObservabilityMetricsDays, metricsDays > 0 ? metricsDays : 30, 30);
     setSelectValue(elements.settingsObservabilityRollup, rollup || 60, 60);
+    updateObservabilityOnDemandFields();
   }
   if (elements.settingsTelegramEnabled) {
     elements.settingsTelegramEnabled.checked = getSettingBool('telegram_enabled', false);
@@ -10790,6 +11312,18 @@ function applySettingsToUI() {
   }
   if (elements.settingsAiAllowApply) {
     elements.settingsAiAllowApply.checked = getSettingBool('ai_allow_apply', false);
+  }
+  if (elements.aiChatStatus) {
+    const enabled = getSettingBool('ai_enabled', false);
+    const model = getSettingString('ai_model', '');
+    const keySet = getSettingBool('ai_api_key_set', false);
+    if (!enabled) {
+      elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
+    } else if (!keySet || !model) {
+      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key and model.';
+    } else {
+      elements.aiChatStatus.textContent = '';
+    }
   }
   if (elements.settingsWatchdogEnabled) {
     elements.settingsWatchdogEnabled.checked = getSettingBool('resource_watchdog_enabled', true);
@@ -11128,12 +11662,15 @@ function collectGeneralSettings() {
   const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
+  const observabilityOnDemand = elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked;
   if (observabilityEnabled) {
     if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
       throw new Error('Log retention days must be >= 1');
     }
-    if (observabilityMetricsDays !== undefined && observabilityMetricsDays < 1) {
-      throw new Error('Metrics retention days must be >= 1');
+    if (!observabilityOnDemand) {
+      if (observabilityMetricsDays !== undefined && observabilityMetricsDays < 1) {
+        throw new Error('Metrics retention days must be >= 1');
+      }
     }
     if (observabilityRollup !== undefined && observabilityRollup < 30) {
       throw new Error('Rollup interval must be >= 30 sec');
@@ -11345,12 +11882,15 @@ function collectGeneralSettings() {
   if (elements.settingsObservabilityEnabled) {
     if (observabilityEnabled) {
       payload.ai_logs_retention_days = observabilityLogsDays || 7;
-      payload.ai_metrics_retention_days = observabilityMetricsDays || 30;
+      payload.ai_metrics_retention_days = observabilityOnDemand ? 0 : (observabilityMetricsDays || 30);
       payload.ai_rollup_interval_sec = observabilityRollup || 60;
     } else {
       payload.ai_logs_retention_days = 0;
       payload.ai_metrics_retention_days = 0;
     }
+  }
+  if (elements.settingsObservabilityOnDemand) {
+    payload.ai_metrics_on_demand = !!observabilityOnDemand;
   }
   if (elements.settingsInfluxEnabled) payload.influx_enabled = influxEnabled;
   if (elements.settingsInfluxUrl) payload.influx_url = elements.settingsInfluxUrl.value.trim();
@@ -12069,6 +12609,274 @@ async function restartAnalyzeTranscode() {
   }
 }
 
+function setAiChatStatus(text) {
+  if (elements.aiChatStatus) {
+    elements.aiChatStatus.textContent = text || '';
+  }
+}
+
+function appendAiChatMessage(role, content) {
+  if (!elements.aiChatLog) return null;
+  const msg = createEl('div', `ai-chat-msg ${role || 'assistant'}`);
+  if (content && content.nodeType) {
+    msg.appendChild(content);
+  } else {
+    msg.textContent = content || '';
+  }
+  elements.aiChatLog.appendChild(msg);
+  elements.aiChatLog.scrollTop = elements.aiChatLog.scrollHeight;
+  return msg;
+}
+
+function buildTypingNode() {
+  const wrap = createEl('div', 'ai-chat-typing');
+  wrap.appendChild(createEl('span'));
+  wrap.appendChild(createEl('span'));
+  wrap.appendChild(createEl('span'));
+  return wrap;
+}
+
+function clearAiChatPolling() {
+  if (state.aiChatPoll) {
+    clearInterval(state.aiChatPoll);
+    state.aiChatPoll = null;
+  }
+  state.aiChatJobId = null;
+  state.aiChatBusy = false;
+  if (elements.aiChatSend) elements.aiChatSend.disabled = false;
+  if (elements.aiChatStop) elements.aiChatStop.disabled = true;
+}
+
+function collectAiChatCliList() {
+  const cli = [];
+  if (elements.aiChatCliStream && elements.aiChatCliStream.checked) cli.push('stream');
+  if (elements.aiChatCliDvbls && elements.aiChatCliDvbls.checked) cli.push('dvbls');
+  if (elements.aiChatCliAnalyze && elements.aiChatCliAnalyze.checked) cli.push('analyze');
+  if (elements.aiChatCliFemon && elements.aiChatCliFemon.checked) cli.push('femon');
+  return cli;
+}
+
+function readAiChatFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function collectAiChatAttachments() {
+  if (!elements.aiChatFiles || !elements.aiChatFiles.files) return [];
+  const files = Array.from(elements.aiChatFiles.files);
+  if (files.length === 0) return [];
+  const maxFiles = 2;
+  const maxBytes = 1500000;
+  const out = [];
+  for (let i = 0; i < files.length && out.length < maxFiles; i += 1) {
+    const file = files[i];
+    if (file.size > maxBytes) {
+      setAiChatStatus(`Attachment too large: ${file.name}`);
+      continue;
+    }
+    const dataUrl = await readAiChatFile(file);
+    out.push({ data_url: dataUrl, mime: file.type, name: file.name });
+  }
+  return out;
+}
+
+function updateAiChatFilesLabel() {
+  if (!elements.aiChatFiles || !elements.aiChatFilesLabel) return;
+  const files = Array.from(elements.aiChatFiles.files || []);
+  if (files.length === 0) {
+    elements.aiChatFilesLabel.textContent = 'No attachments';
+    return;
+  }
+  elements.aiChatFilesLabel.textContent = files.map((file) => file.name).join(', ');
+}
+
+function buildAiChatPayload(prompt, attachments) {
+  const payload = {
+    prompt,
+    include_logs: elements.aiChatIncludeLogs ? elements.aiChatIncludeLogs.checked : true,
+  };
+  const cli = collectAiChatCliList();
+  if (elements.aiChatStreamId && elements.aiChatStreamId.value.trim()) {
+    payload.stream_id = elements.aiChatStreamId.value.trim();
+    if (!cli.includes('stream')) cli.push('stream');
+  }
+  if (elements.aiChatAnalyzeUrl && elements.aiChatAnalyzeUrl.value.trim()) {
+    payload.input_url = elements.aiChatAnalyzeUrl.value.trim();
+    if (!cli.includes('analyze')) cli.push('analyze');
+  }
+  if (elements.aiChatFemonUrl && elements.aiChatFemonUrl.value.trim()) {
+    payload.femon_url = elements.aiChatFemonUrl.value.trim();
+    if (!cli.includes('femon')) cli.push('femon');
+  }
+  if (cli.length) {
+    payload.include_cli = cli;
+  }
+  if (attachments && attachments.length) {
+    payload.attachments = attachments;
+  }
+  return payload;
+}
+
+function renderAiPlanResult(job) {
+  const wrapper = document.createElement('div');
+  const plan = job && job.result && job.result.plan;
+  if (!plan) {
+    wrapper.appendChild(createEl('div', '', 'No plan data returned.'));
+    return wrapper;
+  }
+  wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
+  if (Array.isArray(plan.warnings) && plan.warnings.length) {
+    const warn = createEl('div', 'form-note', `Warnings: ${plan.warnings.join('; ')}`);
+    wrapper.appendChild(warn);
+  }
+  if (Array.isArray(plan.ops) && plan.ops.length) {
+    const list = document.createElement('div');
+    plan.ops.forEach((op) => {
+      const line = createEl(
+        'div',
+        '',
+        `- ${op.op || 'op'} ${op.target || ''} ${op.field ? '(' + op.field + ')' : ''} ${op.value !== undefined ? '=' + op.value : ''}`
+      );
+      list.appendChild(line);
+    });
+    wrapper.appendChild(list);
+  }
+  const diff = job && job.result && job.result.diff;
+  const diffError = job && job.result && job.result.diff_error;
+  if (diffError) {
+    wrapper.appendChild(createEl('div', 'form-note', `Diff preview failed: ${diffError}`));
+  }
+  if (diff && diff.sections) {
+    const diffBlock = document.createElement('div');
+    diffBlock.className = 'ai-summary-section';
+    diffBlock.appendChild(createEl('div', 'ai-summary-label', 'Diff preview'));
+    Object.keys(diff.sections).forEach((key) => {
+      const section = diff.sections[key];
+      if (!section) return;
+      const added = Array.isArray(section.added) ? section.added.length : 0;
+      const removed = Array.isArray(section.removed) ? section.removed.length : 0;
+      const updated = Array.isArray(section.updated) ? section.updated.length : 0;
+      const line = createEl('div', 'ai-summary-item', `${key}: +${added} ~${updated} -${removed}`);
+      diffBlock.appendChild(line);
+    });
+    wrapper.appendChild(diffBlock);
+  }
+  const allowApply = getSettingBool('ai_allow_apply', false);
+  if (allowApply && job && job.id) {
+    const applyBtn = createEl('button', 'btn', 'Apply plan');
+    applyBtn.type = 'button';
+    applyBtn.addEventListener('click', async () => {
+      applyBtn.disabled = true;
+      try {
+        await apiJson('/api/v1/ai/apply', {
+          method: 'POST',
+          body: JSON.stringify({
+            plan_id: job.id,
+            mode: 'merge',
+            comment: 'ai chat apply',
+          }),
+        });
+        appendAiChatMessage('system', 'Applied plan successfully.');
+      } catch (err) {
+        appendAiChatMessage('system', `Apply failed: ${formatNetworkError(err) || err.message}`);
+      } finally {
+        applyBtn.disabled = false;
+      }
+    });
+    wrapper.appendChild(applyBtn);
+  }
+  return wrapper;
+}
+
+async function fetchAiJob(jobId) {
+  const jobs = await apiJson('/api/v1/ai/jobs');
+  if (Array.isArray(jobs)) {
+    return jobs.find((job) => job.id === jobId) || null;
+  }
+  return null;
+}
+
+function startAiChatPolling(jobId) {
+  clearAiChatPolling();
+  state.aiChatJobId = jobId;
+  state.aiChatBusy = true;
+  if (elements.aiChatSend) elements.aiChatSend.disabled = true;
+  if (elements.aiChatStop) elements.aiChatStop.disabled = false;
+  let attempts = 0;
+  const maxAttempts = 60;
+  state.aiChatPoll = setInterval(async () => {
+    attempts += 1;
+    if (attempts > maxAttempts) {
+      appendAiChatMessage('system', 'AI response timed out.');
+      clearAiChatPolling();
+      return;
+    }
+    try {
+      const job = await fetchAiJob(jobId);
+      if (!job) return;
+      if (job.status === 'running' || job.status === 'queued' || job.status === 'retry') {
+        setAiChatStatus(`AI ${job.status}...`);
+        return;
+      }
+      if (job.status === 'done') {
+        if (state.aiChatPendingEl) {
+          state.aiChatPendingEl.remove();
+          state.aiChatPendingEl = null;
+        }
+        appendAiChatMessage('assistant', renderAiPlanResult(job));
+        setAiChatStatus('');
+      } else if (job.status === 'error') {
+        if (state.aiChatPendingEl) {
+          state.aiChatPendingEl.remove();
+          state.aiChatPendingEl = null;
+        }
+        appendAiChatMessage('system', `AI error: ${job.error || 'unknown'}`);
+        setAiChatStatus('');
+      }
+      clearAiChatPolling();
+    } catch (err) {
+      appendAiChatMessage('system', `AI polling error: ${formatNetworkError(err) || err.message}`);
+      clearAiChatPolling();
+    }
+  }, 1500);
+}
+
+async function sendAiChatMessage() {
+  if (!elements.aiChatInput || state.aiChatBusy) return;
+  const prompt = elements.aiChatInput.value.trim();
+  if (!prompt) return;
+  elements.aiChatInput.value = '';
+  appendAiChatMessage('user', prompt);
+  const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
+  state.aiChatPendingEl = typingMsg;
+  setAiChatStatus('Sending to AI...');
+  try {
+    const attachments = await collectAiChatAttachments();
+    const payload = buildAiChatPayload(prompt, attachments);
+    payload.preview_diff = true;
+    const job = await apiJson('/api/v1/ai/plan', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (!job || !job.id) {
+      throw new Error('AI job failed');
+    }
+    startAiChatPolling(job.id);
+  } catch (err) {
+    if (state.aiChatPendingEl) {
+      state.aiChatPendingEl.remove();
+      state.aiChatPendingEl = null;
+    }
+    appendAiChatMessage('system', `AI request failed: ${formatNetworkError(err) || err.message}`);
+    setAiChatStatus('');
+    clearAiChatPolling();
+  }
+}
+
 async function submitLogin(event) {
   event.preventDefault();
   elements.loginError.textContent = '';
@@ -12151,6 +12959,13 @@ function bindEvents() {
       loadObservability(true);
     });
   }
+  if (elements.observabilityAiRefresh) {
+    elements.observabilityAiRefresh.addEventListener('click', () => {
+      const range = elements.observabilityRange ? elements.observabilityRange.value : '24h';
+      const scope = elements.observabilityScope ? elements.observabilityScope.value : 'global';
+      loadObservabilityAiSummary(range, scope);
+    });
+  }
   if (elements.observabilityRange) {
     elements.observabilityRange.addEventListener('change', () => {
       loadObservability(true);
@@ -12165,6 +12980,35 @@ function bindEvents() {
   if (elements.observabilityStream) {
     elements.observabilityStream.addEventListener('change', () => {
       loadObservability(true);
+    });
+  }
+  if (elements.observabilityAi) {
+    const persistAiPrefs = () => saveObservabilityAiPreferences();
+    [
+      elements.observabilityAiIncludeLogs,
+      elements.observabilityAiIncludeCli,
+      elements.observabilityAiCliStream,
+      elements.observabilityAiCliDvbls,
+      elements.observabilityAiCliAnalyze,
+      elements.observabilityAiCliFemon,
+    ].forEach((el) => {
+      if (el) {
+        el.addEventListener('change', persistAiPrefs);
+      }
+    });
+    [
+      elements.observabilityAiAnalyzeUrl,
+      elements.observabilityAiFemonUrl,
+      elements.observabilityAiStreamId,
+    ].forEach((el) => {
+      if (el) {
+        el.addEventListener('input', persistAiPrefs);
+      }
+    });
+  }
+  if (elements.settingsObservabilityOnDemand) {
+    elements.settingsObservabilityOnDemand.addEventListener('change', () => {
+      updateObservabilityOnDemandFields();
     });
   }
   updateObservabilityScopeFields();
@@ -12855,6 +13699,40 @@ function bindEvents() {
     });
   }
 
+  if (elements.aiChatSend) {
+    elements.aiChatSend.addEventListener('click', () => {
+      sendAiChatMessage();
+    });
+  }
+  if (elements.aiChatStop) {
+    elements.aiChatStop.addEventListener('click', () => {
+      clearAiChatPolling();
+      setAiChatStatus('Stopped.');
+    });
+    elements.aiChatStop.disabled = true;
+  }
+  if (elements.aiChatClear) {
+    elements.aiChatClear.addEventListener('click', () => {
+      if (elements.aiChatLog) {
+        elements.aiChatLog.innerHTML = '';
+      }
+      setAiChatStatus('');
+      if (elements.aiChatInput) elements.aiChatInput.value = '';
+    });
+  }
+  if (elements.aiChatInput) {
+    elements.aiChatInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        sendAiChatMessage();
+      }
+    });
+  }
+  if (elements.aiChatFiles) {
+    elements.aiChatFiles.addEventListener('change', updateAiChatFilesLabel);
+    updateAiChatFilesLabel();
+  }
+
   elements.dashboardStreams.addEventListener('click', (event) => {
     const tile = event.target.closest('.tile');
     if (!tile) return;
@@ -12957,6 +13835,14 @@ function bindEvents() {
     renderInputList();
   });
 
+  if (elements.btnAddMptsService) {
+    elements.btnAddMptsService.addEventListener('click', () => {
+      state.mptsServices = state.mptsServices || [];
+      state.mptsServices.push({ input: '' });
+      renderMptsServiceList();
+    });
+  }
+
   elements.inputList.addEventListener('click', (event) => {
     const action = event.target.closest('[data-action]');
     if (!action) return;
@@ -12972,6 +13858,20 @@ function bindEvents() {
       renderInputList();
     }
   });
+
+  if (elements.mptsServiceList) {
+    elements.mptsServiceList.addEventListener('click', (event) => {
+      const action = event.target.closest('[data-action]');
+      if (!action) return;
+      const row = event.target.closest('.list-row');
+      if (!row) return;
+      const index = Number(row.dataset.index);
+      if (action.dataset.action === 'mpts-service-remove') {
+        state.mptsServices.splice(index, 1);
+        renderMptsServiceList();
+      }
+    });
+  }
 
   elements.btnAddOutput.addEventListener('click', () => {
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));
@@ -13542,6 +14442,69 @@ function bindEvents() {
     });
   }
 
+  if (elements.accessMode) {
+    elements.accessMode.value = state.accessMode || 'access';
+    elements.accessMode.addEventListener('change', () => {
+      setAccessMode(elements.accessMode.value);
+    });
+  }
+
+  if (elements.auditActionFilter) {
+    elements.auditActionFilter.value = state.auditActionFilter || '';
+    elements.auditActionFilter.addEventListener('input', debounce(() => {
+      state.auditActionFilter = elements.auditActionFilter.value;
+      loadAuditLog(true);
+    }, 300));
+  }
+  if (elements.auditAiOnly) {
+    elements.auditAiOnly.checked = state.auditActionFilter === 'ai_change';
+    if (elements.auditActionFilter) {
+      elements.auditActionFilter.disabled = elements.auditAiOnly.checked;
+    }
+  }
+  if (elements.auditAiOnly) {
+    elements.auditAiOnly.addEventListener('change', () => {
+      if (elements.auditAiOnly.checked) {
+        state.auditActionFilter = 'ai_change';
+        if (elements.auditActionFilter) {
+          elements.auditActionFilter.value = 'ai_change';
+          elements.auditActionFilter.disabled = true;
+        }
+      } else {
+        if (elements.auditActionFilter) {
+          elements.auditActionFilter.disabled = false;
+          elements.auditActionFilter.value = '';
+        }
+        state.auditActionFilter = '';
+      }
+      loadAuditLog(true);
+    });
+  }
+  if (elements.auditActorFilter) {
+    elements.auditActorFilter.addEventListener('input', debounce(() => {
+      state.auditActorFilter = elements.auditActorFilter.value;
+      loadAuditLog(true);
+    }, 300));
+  }
+  if (elements.auditOkFilter) {
+    elements.auditOkFilter.addEventListener('change', () => {
+      state.auditOkFilter = elements.auditOkFilter.value;
+      loadAuditLog(true);
+    });
+  }
+  if (elements.auditLimit) {
+    elements.auditLimit.value = String(state.auditLimit || 200);
+    elements.auditLimit.addEventListener('change', () => {
+      state.auditLimit = toNumber(elements.auditLimit.value) || 200;
+      loadAuditLog(true);
+    });
+  }
+  if (elements.auditRefresh) {
+    elements.auditRefresh.addEventListener('click', () => {
+      loadAuditLog(true);
+    });
+  }
+
   if (elements.sessionPause) {
     elements.sessionPause.addEventListener('click', () => {
       setSessionPaused(!state.sessionPaused);
@@ -13623,6 +14586,7 @@ function bindEvents() {
     }
   });
 
+  loadObservabilityAiPreferences();
   bindToggleTargets();
 }
 
