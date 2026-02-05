@@ -20,8 +20,10 @@
   - Added strict input validation for /api/v1/ai/plan.
   - Added AI plan smoke test fixture.
   - Added server-side validation for AI plan output schema.
+  - Added AI apply: backup/validate/diff/apply with runtime reload + rollback.
 - Tests:
   - ./astra scripts/tests/ai_plan_smoke.lua
+  - ./astra scripts/tests/ai_apply_smoke.lua
 ### 2026-02-05
 - Changes:
   - Added View menu toggle to show/hide disabled streams.

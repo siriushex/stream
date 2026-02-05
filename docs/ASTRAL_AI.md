@@ -9,12 +9,12 @@
 - OpenAI ключ не хранится в репозитории и не логируется.
 
 ## Этапы внедрения
-### Phase 0 — Scaffolding (текущий этап)
+### Phase 0 — Scaffolding (готово)
 - Каркас модулей: `ai_runtime.lua`, `ai_tools.lua`, `ai_prompt.lua`, `ai_telegram.lua`.
-- Настройки `ai_*` в settings, apply‑операций нет.
+- Настройки `ai_*` в settings, apply разрешён только при `ai_allow_apply=true`.
 - API endpoints:
-  - `POST /api/v1/ai/plan` (заглушка)
-  - `POST /api/v1/ai/apply` (заглушка)
+  - `POST /api/v1/ai/plan`
+  - `POST /api/v1/ai/apply`
   - `GET /api/v1/ai/jobs`
   - `POST /api/v1/ai/telegram` (заглушка)
 
@@ -23,7 +23,7 @@
 - Валидатор до apply.
 - Доступен diff и audit‑лог.
 
-Статус: выполняется.
+Статус: выполнено.
 - Локальный режим: `/api/v1/ai/plan` принимает `proposed_config` и возвращает diff.
 - AI режим: `/api/v1/ai/plan` принимает `prompt` и возвращает job с `plan` (без apply).
 
@@ -46,9 +46,20 @@
 - `prompt` должен быть непустой строкой.
 - `proposed_config` должен быть объектом (валидируется через `config.validate_payload`).
 
-### Phase 2 — Controlled apply
-- Apply + rollback.
-- UI панель для предпросмотра.
+### Phase 2 — Controlled apply (частично)
+- `/api/v1/ai/apply` принимает `proposed_config` (и optional `mode`/`comment`).
+- Делает backup → validate → diff → apply → runtime reload.
+- При ошибке: rollback на LKG snapshot.
+- Apply доступен при `ai_enabled=true` и `ai_allow_apply=true` (без ключа).
+
+Пример (apply):
+```json
+{
+  "proposed_config": { "settings": { "http_play_stream": true } },
+  "mode": "merge",
+  "comment": "ai apply test"
+}
+```
 
 ### Phase 3 — Monitoring & Telegram
 - AI‑alerts.
@@ -78,4 +89,4 @@ AI‑эндпоинты отвечают только когда `ai_enabled=tru
 - `ASTRAL_OPENAI_API_KEY` или `OPENAI_API_KEY`.
 
 ## Важно
-Этот модуль не делает прямых write‑операций. Применение изменений будет доступно только после реализации Phase 2.
+Apply доступен только при `ai_allow_apply=true` и использует backup + rollback.

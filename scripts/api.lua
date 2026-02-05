@@ -2395,9 +2395,6 @@ local function ai_apply(server, client, request)
     if not ai_runtime.is_enabled or not ai_runtime.is_enabled() then
         return error_response(server, client, 400, "ai disabled")
     end
-    if not ai_runtime.is_ready or not ai_runtime.is_ready() then
-        return error_response(server, client, 400, "ai not configured")
-    end
     if not (ai_runtime.config and ai_runtime.config.allow_apply) then
         return error_response(server, client, 403, "ai apply disabled")
     end
