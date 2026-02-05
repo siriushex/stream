@@ -43,4 +43,5 @@ MPTS_STRICT_PNR_SMOKE=1 contrib/ci/smoke.sh
 contrib/ci/smoke_mpts_pid_collision.sh
 contrib/ci/smoke_mpts_pass_tables.sh
 contrib/ci/smoke_mpts_spts_only.sh
+contrib/ci/smoke_mpts_auto_probe.sh
 ```
