@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AI: add fallback for unsupported response_format/json_schema and expose error detail + model metadata.
+  - UI: show AI error details in chat.
+- Tests:
+  - Not run (runtime/UI change only).
+### 2026-02-05
+- Changes:
   - UI: warmup alerts now show actionable hints.
 - Tests:
   - Not run (UI change only).
