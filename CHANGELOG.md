@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Validate MPTS service_type_id (1..255) and warn on invalid values.
+  - UI: clarify service_type_id range in MPTS service list.
+  - Documented service_type_id limits in MPTS design notes.
+- Tests:
+  - Not run (UI/config validation).
+### 2026-02-05
+- Changes:
   - Removed unsupported MPTS LCN version field from UI and config serialization.
   - Documented that `mpts_config.nit.lcn_version` is ignored.
 - Tests:

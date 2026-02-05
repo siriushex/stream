@@ -4996,9 +4996,10 @@ function renderMptsServiceList() {
     const serviceType = document.createElement('input');
     serviceType.className = 'list-input mpts-field mpts-service-input';
     serviceType.type = 'number';
-    serviceType.placeholder = 'Type';
-    serviceType.min = '0';
+    serviceType.placeholder = 'Service type (1..255)';
+    serviceType.min = '1';
     serviceType.max = '255';
+    serviceType.title = 'DVB service_type_id (1..255); пусто = 1';
     serviceType.value = service.service_type_id || '';
     serviceType.addEventListener('input', () => {
       service.service_type_id = serviceType.value;
