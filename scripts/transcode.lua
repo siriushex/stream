@@ -419,6 +419,12 @@ local function normalize_watchdog_defaults(tc)
         probe_timeout_sec = num("probe_timeout_sec", 8),
         max_restarts_per_10min = num("max_restarts_per_10min", 10),
         probe_fail_count = num("probe_fail_count", 2),
+        cc_error_limit = num("cc_error_limit", 0),
+        pes_error_limit = num("pes_error_limit", 0),
+        scrambled_limit = num("scrambled_limit", 0),
+        cc_error_hold_sec = num("cc_error_hold_sec", 0),
+        pes_error_hold_sec = num("pes_error_hold_sec", 0),
+        scrambled_hold_sec = num("scrambled_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(wd.monitor_engine),
         low_bitrate_enabled = normalize_bool(wd.low_bitrate_enabled, true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -464,6 +470,12 @@ local function normalize_output_watchdog(wd, base)
         probe_timeout_sec = num("probe_timeout_sec", 8),
         max_restarts_per_10min = num("max_restarts_per_10min", 10),
         probe_fail_count = num("probe_fail_count", 2),
+        cc_error_limit = num("cc_error_limit", 0),
+        pes_error_limit = num("pes_error_limit", 0),
+        scrambled_limit = num("scrambled_limit", 0),
+        cc_error_hold_sec = num("cc_error_hold_sec", 0),
+        pes_error_hold_sec = num("pes_error_hold_sec", 0),
+        scrambled_hold_sec = num("scrambled_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(pick("monitor_engine")),
         low_bitrate_enabled = normalize_bool(pick("low_bitrate_enabled"), true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -1945,6 +1957,9 @@ local function resolve_restart_reason_code(code)
         TRANSCODE_AV_DESYNC = "AV_DESYNC",
         TRANSCODE_EXIT = "EXIT_UNEXPECTED",
         TRANSCODE_INPUT_FAILOVER = "INPUT_NO_DATA",
+        CC_ERRORS = "CC_ERRORS",
+        PES_ERRORS = "PES_ERRORS",
+        SCRAMBLED = "SCRAMBLED",
     }
     if map[code] then
         return map[code]
@@ -2165,6 +2180,16 @@ local function parse_analyze_error_count(line, prefix)
         total = total + (tonumber(value) or 0)
     end
     return total
+end
+
+local function should_trigger_error(now, last_ts, hold_sec)
+    if not last_ts then
+        return true
+    end
+    if not hold_sec or hold_sec <= 0 then
+        return true
+    end
+    return (now - last_ts) >= hold_sec
 end
 
 local function is_output_monitor_enabled(wd)
@@ -2626,17 +2651,47 @@ local function tick_output_probe(job, output_state, now)
                 if cc_errors ~= nil then
                     output_state.cc_errors = cc_errors
                     output_state.cc_errors_ts = now
+                    local wd = output_state.watchdog
+                    if wd and wd.cc_error_limit and wd.cc_error_limit > 0 and cc_errors >= wd.cc_error_limit then
+                        if should_trigger_error(now, output_state.cc_error_trigger_ts, wd.cc_error_hold_sec) then
+                            output_state.cc_error_trigger_ts = now
+                            schedule_restart(job, output_state, "CC_ERRORS", "CC errors detected", {
+                                count = cc_errors,
+                                limit = wd.cc_error_limit,
+                            })
+                        end
+                    end
                 end
                 local pes_errors = parse_analyze_error_count(line, "PES:")
                 if pes_errors ~= nil then
                     output_state.pes_errors = pes_errors
                     output_state.pes_errors_ts = now
+                    local wd = output_state.watchdog
+                    if wd and wd.pes_error_limit and wd.pes_error_limit > 0 and pes_errors >= wd.pes_error_limit then
+                        if should_trigger_error(now, output_state.pes_error_trigger_ts, wd.pes_error_hold_sec) then
+                            output_state.pes_error_trigger_ts = now
+                            schedule_restart(job, output_state, "PES_ERRORS", "PES errors detected", {
+                                count = pes_errors,
+                                limit = wd.pes_error_limit,
+                            })
+                        end
+                    end
                 end
                 local scrambled = parse_analyze_error_count(line, "Scrambled:")
                 if scrambled ~= nil then
                     output_state.scrambled_errors = scrambled
                     output_state.scrambled_errors_ts = now
                     output_state.scrambled_active = scrambled > 0
+                    local wd = output_state.watchdog
+                    if wd and wd.scrambled_limit and wd.scrambled_limit > 0 and scrambled >= wd.scrambled_limit then
+                        if should_trigger_error(now, output_state.scrambled_trigger_ts, wd.scrambled_hold_sec) then
+                            output_state.scrambled_trigger_ts = now
+                            schedule_restart(job, output_state, "SCRAMBLED", "scrambled packets detected", {
+                                count = scrambled,
+                                limit = wd.scrambled_limit,
+                            })
+                        end
+                    end
                 end
             end)
         else
@@ -2967,11 +3022,14 @@ local function reset_output_monitor_state(output_state, now)
     output_state.last_desync_ms = nil
     output_state.cc_errors = nil
     output_state.cc_errors_ts = nil
+    output_state.cc_error_trigger_ts = nil
     output_state.pes_errors = nil
     output_state.pes_errors_ts = nil
+    output_state.pes_error_trigger_ts = nil
     output_state.scrambled_errors = nil
     output_state.scrambled_errors_ts = nil
     output_state.scrambled_active = nil
+    output_state.scrambled_trigger_ts = nil
     output_state.next_probe_ts = nil
     output_state.analyze_pending = false
     if output_state.watchdog and output_state.watchdog.probe_interval_sec > 0 then
