@@ -4487,21 +4487,27 @@ function formatRestartMeta(meta) {
 
 function formatGpuInfo(transcode) {
   if (!transcode) return 'n/a';
-  const device = transcode.gpu_device_selected;
+  const device = transcode.gpu_device_selected ?? transcode.gpu_device;
   if (device === undefined || device === null || device === '') return 'n/a';
-  const stats = transcode.gpu_stats;
+  let stats = transcode.gpu_stats;
+  if (!stats && Array.isArray(transcode.gpu_metrics)) {
+    stats = transcode.gpu_metrics.find((gpu) => gpu && gpu.index === device) || transcode.gpu_metrics[0];
+  }
   if (stats) {
     const util = Number.isFinite(stats.util) ? `${stats.util}%` : 'n/a';
-    const enc = Number.isFinite(stats.enc) ? `${stats.enc}%` : 'n/a';
+    const enc = Number.isFinite(stats.enc) ? `${stats.enc}%` : null;
     const memUsed = Number.isFinite(stats.mem_used) ? stats.mem_used : 'n/a';
     const memTotal = Number.isFinite(stats.mem_total) ? stats.mem_total : 'n/a';
-    const sessions = Number.isFinite(transcode.gpu_sessions) ? transcode.gpu_sessions : null;
+    const sessions = Number.isFinite(transcode.gpu_sessions)
+      ? transcode.gpu_sessions
+      : (Number.isFinite(stats.session_count) ? stats.session_count : null);
     const limit = Number.isFinite(transcode.gpu_sessions_limit) ? transcode.gpu_sessions_limit : null;
     const sessionLabel = sessions !== null
       ? ` sess ${sessions}${limit !== null ? `/${limit}` : ''}`
       : '';
     const overload = transcode.gpu_overload_active ? ' OVERLOAD' : '';
-    return `#${device} util ${util} enc ${enc} mem ${memUsed}/${memTotal} MB${sessionLabel}${overload}`;
+    const encLabel = enc ? ` enc ${enc}` : '';
+    return `#${device} util ${util}${encLabel} mem ${memUsed}/${memTotal} MB${sessionLabel}${overload}`;
   }
   return `#${device}`;
 }

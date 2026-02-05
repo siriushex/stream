@@ -77,6 +77,23 @@ local function normalize_api_base(value)
     return out
 end
 
+local function write_temp_body(body)
+    if type(body) ~= "string" or body == "" then
+        return nil
+    end
+    local path = os.tmpname()
+    if type(path) ~= "string" or path == "" then
+        path = "/tmp/astral-ai-body-" .. tostring(os.time()) .. "-" .. tostring(math.random(100000, 999999)) .. ".json"
+    end
+    local ok, fh = pcall(io.open, path, "wb")
+    if not ok or not fh then
+        return nil
+    end
+    fh:write(body)
+    fh:close()
+    return path
+end
+
 local function extract_error_message(body)
     if type(body) ~= "string" or body == "" then
         return nil

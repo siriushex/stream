@@ -3378,6 +3378,13 @@ function transcode.start(job, opts)
     end
     local tc = job.config.transcode or {}
     local engine = normalize_engine(tc)
+    if engine ~= "nvidia" then
+        job.gpu_metrics = nil
+        job.gpu_device = nil
+        job.gpu_metrics_error = nil
+        job.gpu_overload_active = false
+        job.gpu_overload_reason = nil
+    end
     if engine == "nvidia" then
         local ok, err = check_nvidia_support()
         if not ok then
@@ -3397,6 +3404,8 @@ function transcode.start(job, opts)
             job.gpu_metrics_error = nil
         end
         local overload = check_gpu_overload(tc, metrics, selected_gpu)
+        job.gpu_overload_active = overload ~= nil
+        job.gpu_overload_reason = overload
         if overload then
             local action = tostring(tc.gpu_overload_action or "warn"):lower()
             record_alert(job, "TRANSCODE_GPU_OVERLOAD", "gpu resource overload", overload)
@@ -3648,6 +3657,7 @@ function transcode.get_status(id)
     end
     local now = os.time()
     prune_time_list(job.restart_history, now - 600)
+    local tc = job.config and job.config.transcode or {}
     local outputs_status = {}
     for _, output_state in ipairs(job.output_monitors or {}) do
         local wd = output_state.watchdog
@@ -3720,6 +3730,21 @@ function transcode.get_status(id)
             stderr_tail = warm.stderr_tail,
         }
     end
+    local selected_gpu_stats = nil
+    if type(job.gpu_metrics) == "table" and job.gpu_device ~= nil then
+        for _, gpu in ipairs(job.gpu_metrics) do
+            if gpu.index == job.gpu_device then
+                selected_gpu_stats = gpu
+                break
+            end
+        end
+        if not selected_gpu_stats then
+            selected_gpu_stats = job.gpu_metrics[1]
+        end
+    end
+    local gpu_sessions = selected_gpu_stats and selected_gpu_stats.session_count or nil
+    local gpu_sessions_limit = tonumber(tc.gpu_session_limit or tc.nvidia_session_limit)
+
     return {
         id = job.id,
         name = job.name,
@@ -3751,8 +3776,14 @@ function transcode.get_status(id)
         ffmpeg_path_source = job.ffmpeg_path_source,
         ffmpeg_bundled = job.ffmpeg_bundled,
         gpu_device = job.gpu_device,
+        gpu_device_selected = job.gpu_device,
         gpu_metrics = job.gpu_metrics,
+        gpu_stats = selected_gpu_stats,
         gpu_metrics_error = job.gpu_metrics_error,
+        gpu_sessions = gpu_sessions,
+        gpu_sessions_limit = gpu_sessions_limit,
+        gpu_overload_active = job.gpu_overload_active or false,
+        gpu_overload_reason = job.gpu_overload_reason,
         backup_type = fo and fo.mode or nil,
         global_state = fo and fo.global_state or "RUNNING",
         last_switch = fo and fo.last_switch or nil,
