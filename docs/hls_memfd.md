@@ -66,6 +66,11 @@ Per-stream override is supported via the HLS output config (`storage`, `on_deman
 - `memfd` is Linux-only; when unavailable, Astra falls back to in-memory buffers with a warning.
 - Disk HLS (`hls_storage="disk"`) is unchanged and still served by `http_static`.
 - On-demand mode suppresses HLS generation until a `/hls/<id>/...` request is seen.
+- `debug_hold_sec` is a test-only option and is available only when compiled with `-DHLS_MEMFD_DEBUG`.
+
+## Smoke script
+- Run from repo root (Linux recommended):
+  - `tools/hls_memfd_smoke.sh`
 
 ## Status counters
 - `GET /api/v1/stream-status/<id>` now includes:
