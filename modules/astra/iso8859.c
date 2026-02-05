@@ -416,6 +416,22 @@ char * iso8859_decode(const uint8_t *data, size_t size)
             default: break;
         }
     }
+    else if(charset_id == 0x15)
+    {
+        // UTF-8 (ETSI EN 300 468). Return bytes as-is without ISO-8859 decoding.
+        if(size <= 1)
+        {
+            char *text = (char *)malloc(1);
+            if(text) text[0] = '\0';
+            return text;
+        }
+        char *text = (char *)malloc(size);
+        if(!text)
+            return NULL;
+        memcpy(text, &data[1], size - 1);
+        text[size - 1] = '\0';
+        return text;
+    }
     else if(charset_id >= 0x20)
     {
         return (char *)iso8859_1_decode(data, size); // Western European
