@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
+- Tests:
+  - Not run (CI fix).
+### 2026-02-05
+- Changes:
   - Export: принудительно синхронизирует `enable` для streams/adapters с текущим состоянием БД.
 - Tests:
   - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
