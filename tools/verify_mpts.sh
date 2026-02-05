@@ -38,6 +38,7 @@ EXPECT_FREE_CA="${EXPECT_FREE_CA:-}"
 EXPECT_SERVICE_TYPE="${EXPECT_SERVICE_TYPE:-}"
 EXPECT_BITRATE_KBIT="${EXPECT_BITRATE_KBIT:-}"
 EXPECT_BITRATE_TOL_PCT="${EXPECT_BITRATE_TOL_PCT:-10}"
+EXPECT_LOG="${EXPECT_LOG:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -46,6 +47,13 @@ LOG_FILE="$(mktemp)"
 if ! grep -q "PAT:" "$LOG_FILE"; then
   echo "PAT not found"
   exit 1
+fi
+
+if [[ -n "$EXPECT_LOG" ]]; then
+  if ! grep -qF "$EXPECT_LOG" "$LOG_FILE"; then
+    echo "Expected log not found: ${EXPECT_LOG}"
+    exit 1
+  fi
 fi
 
 if ! grep -q "PMT:" "$LOG_FILE"; then

@@ -2704,11 +2704,11 @@ local function ai_summary(server, client, request)
         return error_response(server, client, 400, "observability unavailable")
     end
     local query = request and request.query or {}
-    local include_logs = true
+    local include_logs = false
     if query.include_logs ~= nil then
         local value = tostring(query.include_logs)
-        if value == "0" or value == "false" then
-            include_logs = false
+        if value == "1" or value == "true" then
+            include_logs = true
         end
     end
     local include_cli = query.include_cli or query.cli
