@@ -684,6 +684,7 @@ const elements = {
   mptsFec: $('#mpts-fec'),
   mptsModulation: $('#mpts-modulation'),
   mptsNetworkSearch: $('#mpts-network-search'),
+  mptsDeliveryWarning: $('#mpts-delivery-warning'),
   mptsSiInterval: $('#mpts-si-interval'),
   mptsTargetBitrate: $('#mpts-target-bitrate'),
   mptsPatVersion: $('#mpts-pat-version'),
@@ -5063,6 +5064,7 @@ function renderMptsServiceList() {
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
   updateMptsInputWarning();
+  updateMptsDeliveryWarning();
 }
 
 function updateMptsPassWarning() {
@@ -5129,6 +5131,31 @@ function updateMptsInputWarning() {
   }
   elements.mptsDupInputWarning.textContent = `Duplicate inputs: ${duplicates.join(', ')}`;
   elements.mptsDupInputWarning.classList.remove('is-hidden');
+}
+
+function updateMptsDeliveryWarning() {
+  if (!elements.mptsDeliveryWarning) return;
+  const mptsEnabled = !elements.streamMpts || elements.streamMpts.checked;
+  const delivery = String(elements.mptsDelivery && elements.mptsDelivery.value || '').toLowerCase();
+  if (!mptsEnabled || !delivery || (delivery !== 'dvb-c' && delivery !== 'cable' && delivery !== 'dvb_c')) {
+    elements.mptsDeliveryWarning.classList.add('is-hidden');
+    elements.mptsDeliveryWarning.textContent = '';
+    return;
+  }
+  const freq = Number(elements.mptsFrequency && elements.mptsFrequency.value);
+  const sr = Number(elements.mptsSymbolrate && elements.mptsSymbolrate.value);
+  const mod = String(elements.mptsModulation && elements.mptsModulation.value || '').trim();
+  const missing = [];
+  if (!Number.isFinite(freq) || freq <= 0) missing.push('frequency');
+  if (!Number.isFinite(sr) || sr <= 0) missing.push('symbolrate');
+  if (!mod) missing.push('modulation');
+  if (missing.length === 0) {
+    elements.mptsDeliveryWarning.classList.add('is-hidden');
+    elements.mptsDeliveryWarning.textContent = '';
+    return;
+  }
+  elements.mptsDeliveryWarning.textContent = `DVB-C delivery requires: ${missing.join(', ')}`;
+  elements.mptsDeliveryWarning.classList.remove('is-hidden');
 }
 
 function bindMptsWarningHandlers() {
@@ -8746,6 +8773,7 @@ function openEditor(stream, isNew) {
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
   updateMptsInputWarning();
+  updateMptsDeliveryWarning();
   const epgConfig = config.epg || {};
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';
@@ -14100,6 +14128,11 @@ function bindEvents() {
   [elements.mptsPassNit, elements.mptsPassSdt, elements.mptsPassEit, elements.mptsPassTdt].forEach((control) => {
     if (!control) return;
     control.addEventListener('change', updateMptsPassWarning);
+  });
+  [elements.mptsDelivery, elements.mptsFrequency, elements.mptsSymbolrate, elements.mptsModulation].forEach((control) => {
+    if (!control) return;
+    control.addEventListener('change', updateMptsDeliveryWarning);
+    control.addEventListener('input', updateMptsDeliveryWarning);
   });
 
   bindMptsWarningHandlers();
