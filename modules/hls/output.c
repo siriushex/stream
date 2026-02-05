@@ -139,6 +139,7 @@ static bool hls_memfd_checked = false;
 static bool hls_memfd_available = false;
 
 static uint32_t hls_memfd_hash_name(const char *name);
+static void hls_memfd_stream_hash_rebuild(size_t new_bucket_count);
 
 #ifdef __linux__
 #ifndef MFD_CLOEXEC
@@ -243,12 +244,12 @@ static void hls_memfd_register_stream(module_data_t *mod)
     if(!hls_memfd_streams)
         hls_memfd_streams = asc_list_init();
     if(!hls_memfd_stream_buckets)
+        hls_memfd_stream_hash_rebuild(64);
+    if(hls_memfd_stream_buckets && hls_memfd_stream_bucket_count > 0)
     {
-        hls_memfd_stream_bucket_count = 64;
-        hls_memfd_stream_buckets = (module_data_t **)calloc(hls_memfd_stream_bucket_count,
-                                                            sizeof(*hls_memfd_stream_buckets));
-        if(!hls_memfd_stream_buckets)
-            hls_memfd_stream_bucket_count = 0;
+        const size_t count = asc_list_size(hls_memfd_streams);
+        if(count + 1 > hls_memfd_stream_bucket_count * 2)
+            hls_memfd_stream_hash_rebuild(hls_memfd_stream_bucket_count * 2);
     }
     if(hls_memfd_stream_buckets && hls_memfd_stream_bucket_count > 0 && mod->stream_id)
     {
@@ -311,6 +312,41 @@ static uint32_t hls_memfd_hash_name(const char *name)
         hash *= 16777619u;
     }
     return hash;
+}
+
+static void hls_memfd_stream_hash_rebuild(size_t new_bucket_count)
+{
+    if(new_bucket_count < 32)
+        new_bucket_count = 32;
+    module_data_t **buckets = (module_data_t **)calloc(new_bucket_count, sizeof(*buckets));
+    if(!buckets)
+        return;
+
+    if(hls_memfd_stream_buckets)
+        free(hls_memfd_stream_buckets);
+    hls_memfd_stream_buckets = buckets;
+    hls_memfd_stream_bucket_count = new_bucket_count;
+
+    if(!hls_memfd_streams)
+        return;
+
+    asc_list_for(hls_memfd_streams)
+    {
+        module_data_t *mod = (module_data_t *)asc_list_data(hls_memfd_streams);
+        if(!mod || !mod->stream_id)
+        {
+            if(mod)
+            {
+                mod->stream_hash = 0;
+                mod->stream_hash_next = NULL;
+            }
+            continue;
+        }
+        mod->stream_hash = hls_memfd_hash_name(mod->stream_id);
+        const size_t idx = (size_t)(mod->stream_hash % hls_memfd_stream_bucket_count);
+        mod->stream_hash_next = hls_memfd_stream_buckets[idx];
+        hls_memfd_stream_buckets[idx] = mod;
+    }
 }
 
 static void hls_memfd_segment_hash_add(module_data_t *mod, hls_memfd_segment_t *seg)
