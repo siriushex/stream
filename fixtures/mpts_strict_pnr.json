@@ -27,7 +27,8 @@
           "network_id": 1
         },
         "advanced": {
-          "strict_pnr": true
+          "strict_pnr": true,
+          "spts_only": false
         }
       }
     }
