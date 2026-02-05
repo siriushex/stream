@@ -13962,7 +13962,7 @@ function getPlaylistUrl(stream) {
 
 function getPlayBaseUrl() {
   const configuredPort = getSettingNumber('http_play_port', undefined);
-  const fallbackPort = getSettingNumber('http_port', window.location.port || 8000);
+  const fallbackPort = window.location.port ? Number(window.location.port) : undefined;
   // http_play_port=0 трактуем как "использовать основной HTTP порт".
   const port = (configuredPort && configuredPort > 0) ? configuredPort : fallbackPort;
   const noTls = getSettingBool('http_play_no_tls', false);
@@ -14029,7 +14029,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260205s`;
+  const src = `/vendor/hls.min.js?v=20260206a`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -15646,22 +15646,18 @@ async function startPlayer(stream, opts = {}) {
   const shareUrl = getPlayUrl(stream) || '';
   let url = null;
   let mode = 'direct';
-  let sourceMode = 'hls';
   let token = null;
 
-  if (shareUrl && canPlayMpegTs()) {
-    url = shareUrl;
-    sourceMode = 'mpegts';
-  } else {
-    url = getPlaylistUrl(stream);
-  }
+  // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
+  // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
+  url = getPlaylistUrl(stream);
 
   if (!url) {
     try {
       const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start`, { method: 'POST' });
       url = payload.url;
       token = payload.token;
-      mode = 'preview';
+      mode = payload.mode || (payload.token ? 'preview' : 'direct');
     } catch (err) {
       setPlayerError(formatPreviewError(err));
       state.playerStarting = false;
@@ -15669,7 +15665,7 @@ async function startPlayer(stream, opts = {}) {
     }
   }
 
-  state.playerMode = mode;
+  state.playerMode = (mode === 'preview') ? 'preview' : 'direct';
   state.playerToken = token;
   state.playerUrl = url || '';
   state.playerShareUrl = shareUrl || url || '';
@@ -15678,7 +15674,7 @@ async function startPlayer(stream, opts = {}) {
     elements.playerUrl.title = state.playerShareUrl || '';
   }
   updatePlayerActions();
-  await attachPlayerSource(url, { mode: sourceMode });
+  await attachPlayerSource(url, { mode: 'hls' });
   state.playerStarting = false;
 
   if (opts.openTab) {
