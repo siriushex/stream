@@ -4,6 +4,7 @@ const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
+const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
@@ -50,6 +51,15 @@ function loadViewModeState() {
     localStorage.setItem(VIEW_DEFAULT_VERSION_KEY, '20260205');
   }
   return mode;
+}
+
+function loadShowDisabledState() {
+  const stored = localStorage.getItem(SHOW_DISABLED_KEY);
+  if (stored === null || stored === undefined || stored === '') {
+    localStorage.setItem(SHOW_DISABLED_KEY, '1');
+    return true;
+  }
+  return stored === '1' || stored === 'true';
 }
 
 function saveTilesUiState() {
@@ -218,6 +228,7 @@ const state = {
   viewMode: loadViewModeState(),
   themeMode: localStorage.getItem('astra.theme') || 'auto',
   tilesUi: loadTilesUiState(),
+  showDisabledStreams: loadShowDisabledState(),
   dashboardNoticeTimer: null,
   streamIndex: {},
   streamTableRows: {},
@@ -2180,14 +2191,20 @@ function updateViewMenuSelection() {
     const viewMode = option.dataset.viewMode;
     const themeMode = option.dataset.theme;
     const tilesMode = option.dataset.tilesMode;
+    const viewToggle = option.dataset.viewToggle;
     const isActive = viewMode
       ? viewMode === state.viewMode
       : themeMode
       ? themeMode === state.themeMode
       : tilesMode
       ? (state.tilesUi && tilesMode === state.tilesUi.mode)
+      : viewToggle
+      ? (viewToggle === 'disabled' ? state.showDisabledStreams : false)
       : false;
     option.classList.toggle('active', isActive);
+    if (viewToggle) {
+      option.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    }
   });
   updateViewButtonLabel();
 }
@@ -2206,6 +2223,17 @@ function setViewMode(mode, opts) {
     renderStreams();
   }
   applyTilesUiState();
+}
+
+function setShowDisabledStreams(value, opts) {
+  state.showDisabledStreams = !!value;
+  if (!opts || opts.persist !== false) {
+    localStorage.setItem(SHOW_DISABLED_KEY, state.showDisabledStreams ? '1' : '0');
+  }
+  updateViewMenuSelection();
+  if (!opts || opts.render !== false) {
+    renderStreams();
+  }
 }
 
 function setThemeMode(mode, opts) {
@@ -2607,6 +2635,9 @@ function formatInputSummary(inputs, activeIndex) {
 
 function isStreamVisible(stream) {
   const term = searchTerm.toLowerCase();
+  if (!state.showDisabledStreams && stream && stream.enabled === false) {
+    return false;
+  }
   if (!term) return true;
   const name = (stream.config && stream.config.name) || '';
   return (stream.id + ' ' + name).toLowerCase().includes(term);
@@ -9371,11 +9402,7 @@ function renderStreams() {
   if (autoFitObserver) {
     autoFitObserver.disconnect();
   }
-  const term = searchTerm.toLowerCase();
-  const filtered = state.streams.filter((stream) => {
-    const name = (stream.config && stream.config.name) || '';
-    return (stream.id + ' ' + name).toLowerCase().includes(term);
-  });
+  const filtered = state.streams.filter(isStreamVisible);
 
   rebuildStreamIndex(filtered);
 
@@ -11603,6 +11630,7 @@ function bindEvents() {
         const viewMode = option.dataset.viewMode;
         const themeMode = option.dataset.theme;
         const tilesMode = option.dataset.tilesMode;
+        const viewToggle = option.dataset.viewToggle;
         if (viewMode) {
           setViewMode(viewMode);
         }
@@ -11614,6 +11642,9 @@ function bindEvents() {
             ? 'expanded'
             : 'compact';
           setTilesMode(nextMode);
+        }
+        if (viewToggle === 'disabled') {
+          setShowDisabledStreams(!state.showDisabledStreams);
         }
         closeViewMenu();
         event.stopPropagation();

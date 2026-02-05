@@ -7,9 +7,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260205o" />
+  <link rel="stylesheet" href="/styles.css?v=20260205p" />
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
-  <script defer src="/app.js?v=20260205o"></script>
+  <script defer src="/app.js?v=20260205p"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260205o</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260205p</div>
       </div>
     </header>
 
@@ -67,6 +67,10 @@
       <div class="view-menu-group">
         <div class="view-menu-title">Tiles</div>
         <button class="view-option" data-tiles-mode="compact">Compact tiles</button>
+      </div>
+      <div class="view-menu-group">
+        <div class="view-menu-title">Filters</div>
+        <button class="view-option" id="view-toggle-disabled" data-view-toggle="disabled" aria-pressed="true">Show disabled streams</button>
       </div>
       <div class="view-menu-group">
         <div class="view-menu-title">Theme</div>
