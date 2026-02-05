@@ -1019,8 +1019,38 @@ local function transcode_failover_tick(job, now)
         if not active_ok and allow_switch then
             local delay = fo.start_delay
             if down_for >= delay then
-                activate_next_available_input(job, active_id, "no_data_timeout")
+                local next_id = pick_next_input(fo.inputs, active_id, true)
+                if not next_id then
+                    next_id = pick_next_input(fo.inputs, active_id, false)
+                end
+                if next_id then
+                    if warmup_enabled(fo) then
+                        ensure_switch_warmup(job, next_id, now)
+                        local warm_state = warmup_status(fo, next_id)
+                        if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
+                            activate_failover_input(job, next_id, "no_data_timeout")
+                            fo.switch_pending = nil
+                        else
+                            if not fo.switch_pending or fo.switch_pending.target ~= next_id then
+                                local target = fo.inputs[next_id]
+                                fo.switch_pending = {
+                                    target = next_id,
+                                    ready_at = now,
+                                    created_at = now,
+                                    reason = "no_data_timeout",
+                                    target_url = target and target.source_url or nil,
+                                }
+                            end
+                        end
+                    else
+                        activate_failover_input(job, next_id, "no_data_timeout")
+                        fo.switch_pending = nil
+                    end
+                end
             end
+        end
+        if active_ok then
+            fo.switch_pending = nil
         end
     end
 
@@ -1033,18 +1063,46 @@ local function transcode_failover_tick(job, now)
                     target = 1,
                     ready_at = now + fo.return_delay,
                     reason = "return_primary",
+                    target_url = primary and primary.source_url or nil,
                 }
             end
         else
             fo.return_pending = nil
         end
 
+        if fo.return_pending then
+            ensure_switch_warmup(job, fo.return_pending.target, now)
+        end
         if fo.return_pending and now >= fo.return_pending.ready_at then
-            activate_failover_input(job, fo.return_pending.target, fo.return_pending.reason)
-            fo.return_pending = nil
+            local warm_state = warmup_status(fo, fo.return_pending.target)
+            if warm_state == "ok" or warm_state == "disabled" then
+                activate_failover_input(job, fo.return_pending.target, fo.return_pending.reason)
+                fo.return_pending = nil
+            elseif warm_state == "failed" then
+                fo.return_pending = nil
+            end
         end
     else
         fo.return_pending = nil
+    end
+
+    if fo.switch_pending then
+        local pending = fo.switch_pending
+        local pending_timeout = tonumber(fo.switch_pending_timeout_sec) or 0
+        if pending_timeout > 0 and pending.created_at and (now - pending.created_at) >= pending_timeout then
+            fo.switch_pending = nil
+        else
+            ensure_switch_warmup(job, pending.target, now)
+            local warm_state = warmup_status(fo, pending.target)
+            if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
+                activate_failover_input(job, pending.target, pending.reason or "switch_pending")
+                fo.switch_pending = nil
+            end
+        end
+    end
+
+    if fo.switch_warmup and fo.switch_warmup.proc and not fo.switch_pending and not fo.return_pending then
+        stop_switch_warmup(job, "warmup no longer needed")
     end
 
     update_failover_connections(job, now)
