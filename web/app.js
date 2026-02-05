@@ -677,7 +677,6 @@ const elements = {
   mptsCodepage: $('#mpts-codepage'),
   mptsTsid: $('#mpts-tsid'),
   mptsOnid: $('#mpts-onid'),
-  mptsLcnVersion: $('#mpts-lcn-version'),
   mptsDelivery: $('#mpts-delivery'),
   mptsFrequency: $('#mpts-frequency'),
   mptsSymbolrate: $('#mpts-symbolrate'),
@@ -8717,9 +8716,6 @@ function openEditor(stream, isNew) {
   if (elements.mptsOnid) {
     elements.mptsOnid.value = mptsGeneral.onid || '';
   }
-  if (elements.mptsLcnVersion) {
-    elements.mptsLcnVersion.value = mptsNit.lcn_version || '';
-  }
   if (elements.mptsDelivery) {
     elements.mptsDelivery.value = mptsNit.delivery || '';
   }
@@ -9184,8 +9180,6 @@ function readStreamForm() {
   const onid = toNumber(elements.mptsOnid && elements.mptsOnid.value);
   if (onid !== undefined) mptsGeneral.onid = onid;
 
-  const lcnVersion = toNumber(elements.mptsLcnVersion && elements.mptsLcnVersion.value);
-  if (lcnVersion !== undefined) mptsNit.lcn_version = lcnVersion;
   const delivery = (elements.mptsDelivery && elements.mptsDelivery.value || '').trim();
   if (delivery) mptsNit.delivery = delivery;
   const frequency = toNumber(elements.mptsFrequency && elements.mptsFrequency.value);
