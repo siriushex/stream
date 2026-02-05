@@ -5,6 +5,7 @@ INPUT_URL="${1:-udp://127.0.0.1:12346}"
 DURATION_SEC="${2:-5}"
 EXPECT_PNRS="${EXPECT_PNRS:-}"
 EXPECT_PMT_PNRS="${EXPECT_PMT_PNRS:-}"
+EXPECT_SERVICE_COUNT="${EXPECT_SERVICE_COUNT:-}"
 EXPECT_NO_CC_ERRORS="${EXPECT_NO_CC_ERRORS:-0}"
 EXPECT_NO_PES_ERRORS="${EXPECT_NO_PES_ERRORS:-0}"
 EXPECT_NO_SCRAMBLED="${EXPECT_NO_SCRAMBLED:-0}"
@@ -72,6 +73,14 @@ if [[ -n "$EXPECT_PMT_PNRS" ]]; then
       exit 1
     fi
   done
+fi
+
+if [[ -n "$EXPECT_SERVICE_COUNT" ]]; then
+  sdt_count=$(grep -c "^SDT: sid:" "$LOG_FILE" || true)
+  if [[ "$sdt_count" != "$EXPECT_SERVICE_COUNT" ]]; then
+    echo "SDT service count mismatch (expected ${EXPECT_SERVICE_COUNT}, got ${sdt_count})"
+    exit 1
+  fi
 fi
 
 if [[ "$EXPECT_NO_CC_ERRORS" == "1" ]]; then
