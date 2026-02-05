@@ -2369,21 +2369,15 @@ local function ai_plan(server, client, request)
     if not ai_runtime or not ai_runtime.plan then
         return error_response(server, client, 400, "ai runtime unavailable")
     end
-    if not ai_runtime.is_enabled or not ai_runtime.is_enabled() then
-        return error_response(server, client, 400, "ai disabled")
-    end
-    if not ai_runtime.is_ready or not ai_runtime.is_ready() then
-        return error_response(server, client, 400, "ai not configured")
-    end
     local body = parse_json_body(request)
     if not body then
         return error_response(server, client, 400, "invalid json")
     end
-    local ok, err = ai_runtime.plan(body, { user = request and request.user or "" })
-    if not ok then
-        return error_response(server, client, 501, err or "ai plan not implemented")
+    local job = ai_runtime.plan(body, { user = request and request.user or "" })
+    if not job then
+        return error_response(server, client, 500, "ai plan failed")
     end
-    json_response(server, client, 200, ok)
+    json_response(server, client, 200, job)
 end
 
 local function ai_apply(server, client, request)

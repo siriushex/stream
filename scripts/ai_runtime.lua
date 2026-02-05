@@ -5,6 +5,7 @@ ai_runtime = ai_runtime or {}
 ai_runtime.config = ai_runtime.config or {}
 ai_runtime.jobs = ai_runtime.jobs or {}
 ai_runtime.next_job_id = ai_runtime.next_job_id or 1
+ai_runtime.request_seq = ai_runtime.request_seq or 0
 
 local function setting_bool(key, fallback)
     if config and config.get_setting then
@@ -73,6 +74,183 @@ local function resolve_api_key()
         return nil
     end
     return key
+end
+
+local function resolve_api_base()
+    local base = os.getenv("ASTRAL_OPENAI_API_BASE")
+    if base == nil or base == "" then
+        base = "https://api.openai.com"
+    end
+    return base
+end
+
+local function build_json_schema()
+    return {
+        name = "astral_ai_plan",
+        strict = true,
+        schema = {
+            type = "object",
+            additionalProperties = false,
+            required = { "summary", "ops", "warnings" },
+            properties = {
+                summary = { type = "string" },
+                warnings = {
+                    type = "array",
+                    items = { type = "string" },
+                },
+                ops = {
+                    type = "array",
+                    items = {
+                        type = "object",
+                        additionalProperties = false,
+                        required = { "op", "target" },
+                        properties = {
+                            op = { type = "string" },
+                            target = { type = "string" },
+                            field = { type = { "string", "null" } },
+                            value = { type = { "string", "number", "boolean", "null" } },
+                            note = { type = { "string", "null" } },
+                        },
+                    },
+                },
+            },
+        },
+    }
+end
+
+local function build_prompt_text(prompt, context)
+    local parts = {}
+    table.insert(parts, "You are AstralAI. Return JSON only, strictly following the schema.")
+    table.insert(parts, "Do not include markdown or extra text.")
+    if context then
+        table.insert(parts, "Context:")
+        table.insert(parts, json.encode(context))
+    end
+    if prompt and prompt ~= "" then
+        table.insert(parts, "Request:")
+        table.insert(parts, prompt)
+    end
+    return table.concat(parts, "\n")
+end
+
+local function extract_output_json(response)
+    if type(response) ~= "table" then
+        return nil, "invalid response"
+    end
+    if type(response.output) ~= "table" then
+        return nil, "missing output"
+    end
+    for _, item in ipairs(response.output) do
+        if item.type == "message" and type(item.content) == "table" then
+            for _, chunk in ipairs(item.content) do
+                if chunk.type == "output_text" and chunk.text and chunk.text ~= "" then
+                    return chunk.text
+                end
+            end
+        end
+    end
+    return nil, "output text missing"
+end
+
+local function schedule_openai_plan(job, prompt)
+    if not http_request then
+        job.status = "error"
+        job.error = "http_request unavailable"
+        return
+    end
+    local api_key = resolve_api_key()
+    if not api_key then
+        job.status = "error"
+        job.error = "api key missing"
+        return
+    end
+    local base = resolve_api_base()
+    local parsed = parse_url(base)
+    if not parsed or not parsed.host then
+        job.status = "error"
+        job.error = "invalid api base"
+        return
+    end
+    local path = parsed.path or "/"
+    if path:sub(-1) == "/" then
+        path = path:sub(1, -2)
+    end
+    path = path .. "/v1/responses"
+    local context = ai_prompt and ai_prompt.build_context and ai_prompt.build_context({}) or {}
+    local payload = {
+        model = ai_runtime.config.model,
+        input = build_prompt_text(prompt, context),
+        max_output_tokens = ai_runtime.config.max_tokens or 512,
+        temperature = ai_runtime.config.temperature or 0,
+        store = ai_runtime.config.store == true,
+        parallel_tool_calls = false,
+        text = {
+            format = {
+                type = "json_schema",
+                json_schema = build_json_schema(),
+            },
+        },
+    }
+
+    local body = json.encode(payload)
+    ai_runtime.request_seq = ai_runtime.request_seq + 1
+    local req_id = ai_runtime.request_seq
+    job.status = "running"
+    job.request_id = req_id
+    http_request({
+        host = parsed.host,
+        port = parsed.port or 443,
+        path = path,
+        method = "POST",
+        timeout = 30,
+        tls = (parsed.format == "https"),
+        headers = {
+            "Content-Type: application/json",
+            "Authorization: Bearer " .. api_key,
+            "Connection: close",
+        },
+        content = body,
+        callback = function(_, response)
+            if not response or not response.code then
+                job.status = "error"
+                job.error = "no response"
+                return
+            end
+            if response.code < 200 or response.code >= 300 then
+                job.status = "error"
+                job.error = "http " .. tostring(response.code)
+                return
+            end
+            if not response.content then
+                job.status = "error"
+                job.error = "empty response"
+                return
+            end
+            local decoded = json.decode(response.content)
+            if type(decoded) ~= "table" then
+                job.status = "error"
+                job.error = "invalid json"
+                return
+            end
+            local text, err = extract_output_json(decoded)
+            if not text then
+                job.status = "error"
+                job.error = err or "missing output"
+                return
+            end
+            local plan = json.decode(text)
+            if type(plan) ~= "table" then
+                job.status = "error"
+                job.error = "invalid plan json"
+                return
+            end
+            job.status = "done"
+            job.result = {
+                plan = plan,
+                summary = plan.summary or "",
+            }
+        end,
+    })
 end
 
 function ai_runtime.configure()
@@ -160,41 +338,55 @@ function ai_runtime.plan(payload, ctx)
         requested_by = ctx and ctx.user or "",
         source = ctx and ctx.source or "api",
     })
-    if not ai_runtime.is_ready() then
-        job.status = "error"
-        job.error = "ai not configured"
-        return nil, job.error
-    end
     if type(payload) ~= "table" then
         job.status = "error"
         job.error = "invalid payload"
-        return nil, job.error
+        return job
     end
-    local ok, err = ai_tools.config_validate(payload)
-    if not ok then
+    if not ai_runtime.is_enabled() then
         job.status = "error"
-        job.error = err or "validation failed"
-        return nil, job.error
+        job.error = "ai disabled"
+        return job
     end
-    local current, snap_err = ai_tools.config_snapshot()
-    if not current then
-        job.status = "error"
-        job.error = snap_err or "snapshot failed"
-        return nil, job.error
+    if payload.proposed_config ~= nil and type(payload.proposed_config) == "table" then
+        local ok, err = ai_tools.config_validate(payload.proposed_config)
+        if not ok then
+            job.status = "error"
+            job.error = err or "validation failed"
+            return job
+        end
+        local current, snap_err = ai_tools.config_snapshot()
+        if not current then
+            job.status = "error"
+            job.error = snap_err or "snapshot failed"
+            return job
+        end
+        local diff, diff_err = ai_tools.config_diff(current, payload.proposed_config)
+        if not diff then
+            job.status = "error"
+            job.error = diff_err or "diff failed"
+            return job
+        end
+        job.status = "done"
+        job.result = {
+            validated = true,
+            diff = diff,
+            summary = diff.summary or {},
+        }
+        return job
     end
-    local diff, diff_err = ai_tools.config_diff(current, payload)
-    if not diff then
-        job.status = "error"
-        job.error = diff_err or "diff failed"
-        return nil, job.error
+    if payload.prompt and payload.prompt ~= "" then
+        if not ai_runtime.is_ready() then
+            job.status = "error"
+            job.error = "ai not configured"
+            return job
+        end
+        schedule_openai_plan(job, tostring(payload.prompt))
+        return job
     end
-    job.status = "done"
-    job.result = {
-        validated = true,
-        diff = diff,
-        summary = diff.summary or {},
-    }
-    return job.result
+    job.status = "error"
+    job.error = "prompt or proposed_config required"
+    return job
 end
 
 function ai_runtime.apply(payload, ctx)
