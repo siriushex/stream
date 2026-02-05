@@ -13,6 +13,7 @@
 ### 2026-02-05
 - Changes:
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
+  - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
 - Tests:
   - Not run (CI fix).
 ### 2026-02-05
