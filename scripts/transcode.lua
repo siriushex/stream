@@ -698,6 +698,8 @@ local function normalize_failover_config(cfg, enabled)
     local compat_probe_timeout = read_number_opt(cfg, "backup_compat_probe_timeout_sec") or 8
     local switch_warmup_min_ms = read_number_opt(cfg, "backup_switch_warmup_min_ms") or 500
     local switch_warmup_require_idr = normalize_bool(cfg.backup_switch_warmup_require_idr, false)
+    local switch_warmup_stable_sec = read_number_opt(cfg,
+        "backup_switch_warmup_stable_sec", "backup_switch_warmup_stable") or 1
     local switch_warmup_probe_sec = read_number_opt(cfg, "backup_switch_warmup_probe_sec") or 2
     local switch_warmup_probe_timeout = read_number_opt(cfg, "backup_switch_warmup_probe_timeout_sec") or 6
     local stop_if_all_inactive_sec = read_number_opt(cfg,
@@ -719,6 +721,7 @@ local function normalize_failover_config(cfg, enabled)
     if compat_probe_sec < 0 then compat_probe_sec = 0 end
     if compat_probe_timeout < 0 then compat_probe_timeout = 0 end
     if switch_warmup_min_ms < 0 then switch_warmup_min_ms = 0 end
+    if switch_warmup_stable_sec < 0 then switch_warmup_stable_sec = 0 end
     if switch_warmup_probe_sec < 0 then switch_warmup_probe_sec = 0 end
     if switch_warmup_probe_timeout < 0 then switch_warmup_probe_timeout = 0 end
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
@@ -734,6 +737,7 @@ local function normalize_failover_config(cfg, enabled)
         switch_warmup_sec = switch_warmup,
         switch_warmup_min_ms = switch_warmup_min_ms,
         switch_warmup_require_idr = switch_warmup_require_idr,
+        switch_warmup_stable_sec = switch_warmup_stable_sec,
         switch_warmup_probe_sec = switch_warmup_probe_sec,
         switch_warmup_probe_timeout_sec = switch_warmup_probe_timeout,
         no_data_timeout = no_data_timeout,
@@ -1037,6 +1041,7 @@ local function ensure_switch_warmup(job, target_id, now)
     local warmup_sec = tonumber(fo.switch_warmup_sec) or 0
     local warmup_min_ms = tonumber(fo.switch_warmup_min_ms) or 500
     local require_idr = fo.switch_warmup_require_idr == true
+    local warmup_stable_sec = tonumber(fo.switch_warmup_stable_sec) or 0
     if warm and warm.target == target_id then
         if not warm.done then
             return
@@ -1084,6 +1089,7 @@ local function ensure_switch_warmup(job, target_id, now)
         duration_sec = warmup_sec,
         min_out_time_ms = warmup_min_ms,
         require_idr = require_idr,
+        stable_sec = warmup_stable_sec,
         proc = proc,
         stdout_buf = "",
         stderr_buf = "",
@@ -1091,7 +1097,7 @@ local function ensure_switch_warmup(job, target_id, now)
     ensure_warmup_keyframe_probe(job, fo.switch_warmup, entry, started_at)
 end
 
-local function warmup_status(fo, target_id)
+local function warmup_status(fo, target_id, now)
     if not warmup_enabled(fo) then
         return "disabled"
     end
@@ -1099,7 +1105,8 @@ local function warmup_status(fo, target_id)
     if not warm or warm.target ~= target_id then
         return "idle"
     end
-    if warm.ready and (not warm.require_idr or warm.idr_seen) then
+    local ts = now or os.time()
+    if warmup_ready(warm, ts) then
         return "ok"
     end
     if warm.done then
@@ -1119,17 +1126,59 @@ local function update_warmup_progress(warm, line)
     if key == "out_time_ms" then
         local ms = tonumber(value)
         if ms then
+            local prev = warm.last_out_time_ms
             warm.last_out_time_ms = ms
+            if not prev or ms > prev then
+                warm.last_progress_ts = os.time()
+            end
             local min_ms = tonumber(warm.min_out_time_ms) or 0
             if min_ms <= 0 then
                 min_ms = 1
             end
             if ms >= min_ms then
-                warm.ready = true
                 warm.ready_ts = warm.ready_ts or os.time()
             end
         end
     end
+end
+
+local function warmup_is_stable(warm, now)
+    if not warm or not warm.ready_ts then
+        return false
+    end
+    local stable_sec = tonumber(warm.stable_sec) or 0
+    if stable_sec <= 0 then
+        return true
+    end
+    local ready_age = now - warm.ready_ts
+    if ready_age < stable_sec then
+        return false
+    end
+    local last_progress = warm.last_progress_ts or warm.ready_ts
+    if last_progress and (now - last_progress) > math.max(1, stable_sec) then
+        return false
+    end
+    return true
+end
+
+local function warmup_ready(warm, now)
+    if not warm then
+        return false
+    end
+    local min_ms = tonumber(warm.min_out_time_ms) or 0
+    if min_ms <= 0 then
+        min_ms = 1
+    end
+    if not warm.last_out_time_ms or warm.last_out_time_ms < min_ms then
+        return false
+    end
+    if not warmup_is_stable(warm, now) then
+        return false
+    end
+    if warm.require_idr and not warm.idr_seen then
+        return false
+    end
+    return true
 end
 
 local function tick_switch_warmup(job, now)
@@ -1172,10 +1221,13 @@ local function tick_switch_warmup(job, now)
         warm.exit_code = exit_code
         warm.exit_signal = exit_signal
         if exit_code == 0 or exit_code == nil then
-            warm.ok = true
+            warm.ok = warmup_is_stable(warm, now)
             if warm.require_idr and not warm.idr_seen then
                 warm.ok = false
                 warm.error = warm.error or warm.keyframe_error or "keyframe not found"
+            end
+            if not warm.ok and not warm.error then
+                warm.error = "warmup not stable"
             end
         else
             warm.ok = false
@@ -1184,6 +1236,8 @@ local function tick_switch_warmup(job, now)
         end
         return
     end
+    warm.stable_ok = warmup_is_stable(warm, now)
+    warm.ready = warmup_ready(warm, now)
     if warm.deadline_ts and now >= warm.deadline_ts then
         warm.proc:kill()
         warm.proc:close()
@@ -1871,7 +1925,7 @@ local function transcode_failover_tick(job, now)
                 if next_id then
                     if warmup_enabled(fo) then
                         ensure_switch_warmup(job, next_id, now)
-                        local warm_state = warmup_status(fo, next_id)
+                        local warm_state = warmup_status(fo, next_id, now)
                         if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
                             activate_failover_input(job, next_id, "no_data_timeout")
                             fo.switch_pending = nil
@@ -1919,7 +1973,7 @@ local function transcode_failover_tick(job, now)
             ensure_switch_warmup(job, fo.return_pending.target, now)
         end
         if fo.return_pending and now >= fo.return_pending.ready_at then
-            local warm_state = warmup_status(fo, fo.return_pending.target)
+            local warm_state = warmup_status(fo, fo.return_pending.target, now)
             if warm_state == "ok" or warm_state == "disabled" then
                 activate_failover_input(job, fo.return_pending.target, fo.return_pending.reason)
                 fo.return_pending = nil
@@ -1938,7 +1992,7 @@ local function transcode_failover_tick(job, now)
             fo.switch_pending = nil
         else
             ensure_switch_warmup(job, pending.target, now)
-            local warm_state = warmup_status(fo, pending.target)
+            local warm_state = warmup_status(fo, pending.target, now)
             if warm_state == "ok" or warm_state == "failed" or warm_state == "disabled" then
                 activate_failover_input(job, pending.target, pending.reason or "switch_pending")
                 fo.switch_pending = nil
@@ -3650,6 +3704,10 @@ function transcode.get_status(id)
             idr_seen = warm.idr_seen,
             keyframe_error = warm.keyframe_error,
             ready = warm.ready,
+            stable_sec = warm.stable_sec,
+            stable_ok = warm.stable_ok,
+            ready_ts = warm.ready_ts,
+            last_progress_ts = warm.last_progress_ts,
             last_out_time_ms = warm.last_out_time_ms,
             min_out_time_ms = warm.min_out_time_ms,
             start_ts = warm.start_ts,
