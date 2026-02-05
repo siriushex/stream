@@ -1078,8 +1078,12 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
             }
             return;
         }
-        asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "
-            "Рекомендуется явно задать pnr"), program_count, selected_pnr);
+        if(!svc->pnr_missing_warned)
+        {
+            asc_log_warning(SVC_MSG(svc, "PAT содержит %d программ, выбран первый (PNR=%d). "
+                "Рекомендуется явно задать pnr"), program_count, selected_pnr);
+            svc->pnr_missing_warned = true;
+        }
     }
 
     if(svc->has_pnr && selected_pnr != svc->pnr_cfg)
