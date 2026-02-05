@@ -695,6 +695,8 @@ local function schedule_openai_plan(job, prompt, context_opts)
         if not ok then
             job.status = "error"
             job.error = result or "request failed"
+            job.error_detail = meta and meta.error_detail or nil
+            job.model = meta and meta.model or job.model
             log_audit(job, false, job.error, { mode = "prompt", code = meta and meta.code })
             return
         end

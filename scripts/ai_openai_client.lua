@@ -234,6 +234,35 @@ local function detect_model_not_found(code, body)
     return false
 end
 
+local function detect_response_format_error(code, body)
+    if code ~= 400 then
+        return false
+    end
+    if type(body) ~= "string" or body == "" then
+        return false
+    end
+    local ok, decoded = pcall(json.decode, body)
+    if not ok or type(decoded) ~= "table" then
+        return false
+    end
+    local err = decoded.error
+    if type(err) ~= "table" then
+        return false
+    end
+    local err_code = tostring(err.code or err.type or ""):lower()
+    if err_code:find("response_format") or err_code:find("json_schema") then
+        return true
+    end
+    local msg = tostring(err.message or ""):lower()
+    if msg:find("response_format") or msg:find("json schema") or msg:find("structured output") then
+        return true
+    end
+    if msg:find("does not support") and (msg:find("response") or msg:find("json")) then
+        return true
+    end
+    return false
+end
+
 local function strip_input_images(input)
     if type(input) ~= "table" then
         return nil
@@ -441,9 +470,15 @@ function ai_openai_client.request_json_schema(opts, callback)
                     attempts = attempts,
                     code = response_code,
                     rate_limits = {},
+                    model = models[model_index],
                 }
                 local err_detail = extract_error_message(response_body or "") or snip_error_body(response_body, 200)
+                meta.error_detail = err_detail
                 if detect_model_not_found(response_code, response_body) and model_index < #models then
+                    model_index = model_index + 1
+                    return perform_request()
+                end
+                if detect_response_format_error(response_code, response_body) and model_index < #models then
                     model_index = model_index + 1
                     return perform_request()
                 end
@@ -583,14 +618,21 @@ function ai_openai_client.request_json_schema(opts, callback)
                     attempts = attempts,
                     code = response and response.code or nil,
                     rate_limits = parse_rate_limits(normalize_headers(response and response.headers or {})),
+                    model = models[model_index],
                 }
                 local err_detail = extract_error_message(response and response.content or "")
                     or snip_error_body(response and response.content or "", 200)
+                meta.error_detail = err_detail
                 if not response or not response.code then
                     return callback(false, "no response", meta)
                 end
                 if response.code < 200 or response.code >= 300 then
                     if detect_model_not_found(response.code, response.content or "") and model_index < #models then
+                        model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
+                    if detect_response_format_error(response.code, response.content or "") and model_index < #models then
                         model_index = model_index + 1
                         perform_request()
                         return
