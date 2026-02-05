@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - AI: fix strict JSON schema (Structured Outputs) by requiring all object keys (prevents OpenAI schema validation errors).
+- Tests:
+  - `./astra scripts/tests/ai_openai_strict_schema_unit.lua`
+### 2026-02-05
+- Changes:
   - AI: fix OpenAI Responses json_schema request format (text.format.name/schema/strict) to avoid 400 errors.
 - Tests:
   - `./astra scripts/tests/ai_openai_fallback_unit.lua`
