@@ -78,7 +78,19 @@ dump_psi_info["pmt"] = function(info)
         dump_descriptor("PMT: ", descriptor_info)
     end
 
+    local streams_total = 0
+    local streams_video = 0
+    local streams_audio = 0
+    local streams_data = 0
     for _, stream_info in pairs(info.streams) do
+        streams_total = streams_total + 1
+        if stream_info.type_name == "VIDEO" then
+            streams_video = streams_video + 1
+        elseif stream_info.type_name == "AUDIO" then
+            streams_audio = streams_audio + 1
+        else
+            streams_data = streams_data + 1
+        end
         log.info(("%s: pid: %d type: 0x%02X"):format(stream_info.type_name,
                                                       stream_info.pid,
                                                       stream_info.type_id))
@@ -86,6 +98,9 @@ dump_psi_info["pmt"] = function(info)
             dump_descriptor(stream_info.type_name .. ": ", descriptor_info)
         end
     end
+    -- Сводная строка для проверок PMT (количество потоков по типам).
+    log.info(("PMT: summary: pnr=%d pcr=%d streams=%d video=%d audio=%d data=%d")
+        :format(info.pnr, info.pcr, streams_total, streams_video, streams_audio, streams_data))
     log.info(("PMT: crc32: 0x%X"):format(info.crc32))
 end
 
