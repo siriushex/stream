@@ -4,6 +4,7 @@ const TILE_COLLAPSED_KEY = 'ui_tiles_collapsed';
 const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
+const SETTINGS_DENSITY_KEY = 'astral.settings.density';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 
 function getStoredBool(key, fallback) {
@@ -189,6 +190,8 @@ const state = {
   configEditorDirty: false,
   configEditorLoaded: false,
   generalMode: getStoredBool(SETTINGS_ADVANCED_KEY, false) ? 'advanced' : 'basic',
+  // Компактный режим для карточек Settings -> General (визуально плотнее, на конфиг не влияет).
+  generalCompact: getStoredBool(SETTINGS_DENSITY_KEY, false),
   generalDirty: false,
   generalSnapshot: '',
   generalCardOpen: {},
@@ -1092,6 +1095,11 @@ const elements = {
   btnNewAdapter: $('#btn-new-adapter'),
   btnView: $('#btn-view'),
   btnLogout: $('#btn-logout'),
+  hlsStorage: $('#hls-storage'),
+  hlsOnDemand: $('#hls-on-demand'),
+  hlsIdleTimeout: $('#hls-idle-timeout'),
+  hlsMaxBytesMb: $('#hls-max-bytes-mb'),
+  hlsMaxSegments: $('#hls-max-segments'),
   hlsDuration: $('#hls-duration'),
   hlsQuantity: $('#hls-quantity'),
   hlsNaming: $('#hls-naming'),
@@ -2361,10 +2369,15 @@ function renderSettingsHeader() {
   advancedBtn.dataset.mode = 'advanced';
   modeToggle.append(basicBtn, advancedBtn);
 
+  const densityWrap = createEl('div', 'settings-switch-inline');
+  const densityLabel = createEl('span', 'settings-switch-label', 'Компактно');
+  const densityControl = renderSwitchControl('settings-general-density');
+  densityWrap.append(densityLabel, densityControl.wrapper);
+
   const dirty = createEl('div', 'settings-dirty-indicator hidden', 'Есть несохранённые изменения');
   dirty.id = 'settings-general-dirty';
 
-  controls.append(modeToggle, dirty);
+  controls.append(modeToggle, densityWrap, dirty);
   header.append(searchWrap, controls);
   return header;
 }
@@ -2585,6 +2598,7 @@ function bindGeneralElements() {
   const map = {
     settingsGeneralSearch: 'settings-general-search',
     settingsGeneralMode: 'settings-general-mode',
+    settingsGeneralDensity: 'settings-general-density',
     settingsGeneralDirty: 'settings-general-dirty',
     settingsGeneralNav: 'settings-general-nav',
     settingsGeneralNavSelect: 'settings-general-nav-select',
@@ -2721,6 +2735,7 @@ function renderGeneralSettings() {
     elements.settingsGeneralSearch.value = state.generalSearchQuery;
   }
   setGeneralMode(state.generalMode, { persist: false });
+  setGeneralDensity(state.generalCompact, { persist: false });
   updateGeneralCardSummaries();
   updateGeneralCardStates();
   applySearchFilter(state.generalSearchQuery);
@@ -2742,6 +2757,19 @@ function setGeneralMode(mode, options = {}) {
     });
   }
   applySearchFilter(state.generalSearchQuery);
+}
+
+function setGeneralDensity(compact, options = {}) {
+  state.generalCompact = !!compact;
+  if (options.persist !== false) {
+    localStorage.setItem(SETTINGS_DENSITY_KEY, state.generalCompact ? '1' : '0');
+  }
+  if (elements.settingsGeneralDensity) {
+    elements.settingsGeneralDensity.checked = state.generalCompact;
+  }
+  if (elements.settingsGeneralRoot) {
+    elements.settingsGeneralRoot.classList.toggle('is-compact', state.generalCompact);
+  }
 }
 
 function setActiveGeneralNav(sectionId) {
@@ -2997,6 +3025,7 @@ function handleGeneralInputChange(event) {
   const target = event.target;
   if (!target || !target.id) return;
   if (target.id === 'settings-general-search') return;
+  if (target.id === 'settings-general-density') return;
 
   if (target.id === 'settings-ai-allow-apply' && target.checked) {
     if (state.aiApplyConfirmPending) return;
@@ -14561,6 +14590,26 @@ function applySettingsToUI() {
   if (elements.hlsQuantity) {
     elements.hlsQuantity.value = getSettingNumber('hls_quantity', 5);
   }
+  if (elements.hlsStorage) {
+    elements.hlsStorage.value = getSettingString('hls_storage', 'disk');
+  }
+  const hlsStorageMode = elements.hlsStorage
+    ? String(elements.hlsStorage.value || 'disk')
+    : getSettingString('hls_storage', 'disk');
+  if (elements.hlsOnDemand) {
+    elements.hlsOnDemand.checked = getSettingBool('hls_on_demand', hlsStorageMode === 'memfd');
+  }
+  if (elements.hlsIdleTimeout) {
+    elements.hlsIdleTimeout.value = getSettingNumber('hls_idle_timeout_sec', 30);
+  }
+  if (elements.hlsMaxBytesMb) {
+    const bytes = getSettingNumber('hls_max_bytes_per_stream', 64 * 1024 * 1024);
+    const mb = Math.max(0, Math.round((Number(bytes) || 0) / (1024 * 1024)));
+    elements.hlsMaxBytesMb.value = String(mb);
+  }
+  if (elements.hlsMaxSegments) {
+    elements.hlsMaxSegments.value = getSettingNumber('hls_max_segments', 12);
+  }
   if (elements.hlsNaming) {
     elements.hlsNaming.value = getSettingString('hls_naming', 'sequence');
   }
@@ -14591,6 +14640,7 @@ function applySettingsToUI() {
   if (elements.hlsTsHeaders) {
     elements.hlsTsHeaders.checked = getSettingBool('hls_ts_headers', true);
   }
+  updateHlsStorageUi();
 
   if (elements.httpPlayAllow) {
     elements.httpPlayAllow.checked = getSettingBool('http_play_allow', false);
@@ -15097,9 +15147,17 @@ function collectPasswordPolicySettings() {
 }
 
 function collectHlsSettings() {
+  const storage = elements.hlsStorage ? elements.hlsStorage.value : 'disk';
+  const maxMb = toNumber(elements.hlsMaxBytesMb && elements.hlsMaxBytesMb.value);
+  const maxBytes = (maxMb !== undefined ? Math.max(0, maxMb) : 64) * 1024 * 1024;
   return {
     hls_duration: toNumber(elements.hlsDuration.value) || 6,
     hls_quantity: toNumber(elements.hlsQuantity.value) || 5,
+    hls_storage: storage,
+    hls_on_demand: elements.hlsOnDemand ? elements.hlsOnDemand.checked : (storage === 'memfd'),
+    hls_idle_timeout_sec: toNumber(elements.hlsIdleTimeout && elements.hlsIdleTimeout.value) || 30,
+    hls_max_bytes_per_stream: Math.floor(maxBytes),
+    hls_max_segments: toNumber(elements.hlsMaxSegments && elements.hlsMaxSegments.value) || 12,
     hls_naming: elements.hlsNaming.value,
     hls_session_timeout: toNumber(elements.hlsSessionTimeout.value) || 60,
     hls_resource_path: elements.hlsResourcePath.value,
@@ -15111,6 +15169,15 @@ function collectHlsSettings() {
     hls_ts_mime: elements.hlsTsMime.value.trim() || 'video/MP2T',
     hls_ts_headers: elements.hlsTsHeaders.checked,
   };
+}
+
+function updateHlsStorageUi() {
+  if (!elements.hlsStorage) return;
+  const isMemfd = elements.hlsStorage.value === 'memfd';
+  // Показываем memfd-only поля только когда выбран memfd.
+  $$('.hls-memfd-only').forEach((el) => {
+    el.hidden = !isMemfd;
+  });
 }
 
 function collectHttpPlaySettings() {
@@ -17023,6 +17090,11 @@ function bindEvents() {
       setGeneralMode(button.dataset.mode);
     });
   }
+  if (elements.settingsGeneralDensity) {
+    elements.settingsGeneralDensity.addEventListener('change', () => {
+      setGeneralDensity(elements.settingsGeneralDensity.checked);
+    });
+  }
   if (elements.settingsGeneralNav) {
     elements.settingsGeneralNav.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-section]');
@@ -17654,6 +17726,9 @@ function bindEvents() {
         setStatus(err.message);
       }
     });
+  }
+  if (elements.hlsStorage) {
+    elements.hlsStorage.addEventListener('change', updateHlsStorageUi);
   }
 
   if (elements.btnApplyCas) {
