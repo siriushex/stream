@@ -11,6 +11,14 @@ check_pkgconfig()
     command -v pkg-config >/dev/null 2>&1
 }
 
+build_ffmpeg_contrib()
+{
+    if [ ! -x "$SRCDIR/contrib/ffmpeg.sh" ] ; then
+        return 1
+    fi
+    "$SRCDIR/contrib/ffmpeg.sh" >/dev/null 2>&1
+}
+
 ffmpeg_configure()
 {
     FFMPEG_CONTRIB="$SRCDIR/contrib/build/ffmpeg"
@@ -29,6 +37,16 @@ ffmpeg_configure()
             LDFLAGS="$FFMPEG_CONTRIB/libavcodec/libavcodec.a $FFMPEG_CONTRIB/libavutil/libavutil.a"
             if check_cflags "$CFLAGS" ; then
                 return 0
+            fi
+        else
+            if build_ffmpeg_contrib ; then
+                if [ -d "$FFMPEG_CONTRIB" ] ; then
+                    CFLAGS="-I$FFMPEG_CONTRIB/"
+                    LDFLAGS="$FFMPEG_CONTRIB/libavcodec/libavcodec.a $FFMPEG_CONTRIB/libavutil/libavutil.a"
+                    if check_cflags "$CFLAGS" ; then
+                        return 0
+                    fi
+                fi
             fi
         fi
 
