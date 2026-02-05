@@ -1,0 +1,64 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "transcode_seamless_failover",
+      "type": "transcode",
+      "name": "Transcode Seamless Failover",
+      "enable": true,
+      "backup_type": "passive",
+      "backup_initial_delay": 0,
+      "backup_start_delay": 0,
+      "backup_return_delay": 0,
+      "no_data_timeout_sec": 1,
+      "probe_interval_sec": 1,
+      "stable_ok_sec": 1,
+      "backup_switch_warmup_min_ms": 250,
+      "backup_switch_warmup_stable_sec": 0,
+      "backup_compat_check": false,
+      "input": [
+        "udp://239.255.0.1:12100",
+        "udp://239.255.0.1:12101"
+      ],
+      "transcode": {
+        "engine": "cpu",
+        "process_per_output": true,
+        "seamless_udp_proxy": true,
+        "ffmpeg_global_args": [
+          "-fflags",
+          "+genpts"
+        ],
+        "outputs": [
+          {
+            "name": "out1",
+            "vcodec": "mpeg2video",
+            "acodec": "mp2",
+            "format_args": [
+              "-f",
+              "mpegts"
+            ],
+            "url": "udp://127.0.0.1:12340?pkt_size=1316"
+          },
+          {
+            "name": "out2",
+            "vcodec": "mpeg2video",
+            "acodec": "mp2",
+            "format_args": [
+              "-f",
+              "mpegts"
+            ],
+            "url": "udp://127.0.0.1:12341?pkt_size=1316"
+          }
+        ],
+        "watchdog": {
+          "restart_delay_sec": 1,
+          "no_progress_timeout_sec": 10,
+          "max_error_lines_per_min": 200,
+          "probe_interval_sec": 0,
+          "max_restarts_per_10min": 10
+        }
+      }
+    }
+  ]
+}
+

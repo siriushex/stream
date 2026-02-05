@@ -790,10 +790,13 @@ const elements = {
   streamTranscodeFfmpegPath: $('#stream-transcode-ffmpeg-path'),
   streamTranscodeLogFile: $('#stream-transcode-log-file'),
   streamTranscodeLogMain: $('#stream-transcode-log-main'),
+  streamTranscodeProcessPerOutput: $('#stream-transcode-process-per-output'),
+  streamTranscodeSeamlessUdpProxy: $('#stream-transcode-seamless-udp-proxy'),
   streamTranscodePreset: $('#stream-transcode-preset'),
   streamTranscodePresetApply: $('#stream-transcode-preset-apply'),
   streamTranscodeInputUrl: $('#stream-transcode-input-url'),
   streamTranscodeStatus: $('#stream-transcode-status'),
+  streamTranscodeWorkers: $('#stream-transcode-workers'),
   streamTranscodeGlobalArgs: $('#stream-transcode-global-args'),
   streamTranscodeDecoderArgs: $('#stream-transcode-decoder-args'),
   streamTranscodeCommonArgs: $('#stream-transcode-common-args'),
@@ -5282,6 +5285,15 @@ function updateInputProbeRestartToggle() {
   elements.streamTranscodeInputProbeRestart.disabled = !enabled;
   if (!enabled) {
     elements.streamTranscodeInputProbeRestart.checked = false;
+  }
+}
+
+function updateSeamlessProxyToggle() {
+  if (!elements.streamTranscodeProcessPerOutput || !elements.streamTranscodeSeamlessUdpProxy) return;
+  const enabled = elements.streamTranscodeProcessPerOutput.checked;
+  elements.streamTranscodeSeamlessUdpProxy.disabled = !enabled;
+  if (!enabled) {
+    elements.streamTranscodeSeamlessUdpProxy.checked = false;
   }
 }
 
@@ -11114,7 +11126,14 @@ function openEditor(stream, isNew) {
     if (elements.streamTranscodeInputProbeRestart) {
       elements.streamTranscodeInputProbeRestart.checked = tc.input_probe_restart === true;
     }
+    if (elements.streamTranscodeProcessPerOutput) {
+      elements.streamTranscodeProcessPerOutput.checked = tc.process_per_output === true;
+    }
+    if (elements.streamTranscodeSeamlessUdpProxy) {
+      elements.streamTranscodeSeamlessUdpProxy.checked = tc.seamless_udp_proxy === true;
+    }
     updateInputProbeRestartToggle();
+    updateSeamlessProxyToggle();
   }
 
   state.inputs = normalizeInputs(config.input || []);
@@ -11647,6 +11666,13 @@ function readStreamForm() {
     if (elements.streamTranscodeInputProbeRestart && elements.streamTranscodeInputProbeRestart.checked) {
       transcode.input_probe_restart = true;
     }
+    const perOutput = Boolean(elements.streamTranscodeProcessPerOutput && elements.streamTranscodeProcessPerOutput.checked);
+    if (perOutput) {
+      transcode.process_per_output = true;
+    }
+    if (perOutput && elements.streamTranscodeSeamlessUdpProxy && elements.streamTranscodeSeamlessUdpProxy.checked) {
+      transcode.seamless_udp_proxy = true;
+    }
 
     const globalArgs = linesToArgs(elements.streamTranscodeGlobalArgs && elements.streamTranscodeGlobalArgs.value);
     if (globalArgs.length) transcode.ffmpeg_global_args = globalArgs;
@@ -11879,6 +11905,21 @@ function formatTranscodeAlert(alert) {
   if (alert.code === 'TRANSCODE_WARMUP_STOP') {
     return `${alert.message}. Warmup stopped before completion.`;
   }
+  if (alert.code === 'TRANSCODE_CUTOVER_START') {
+    return `Cutover started: ${alert.message}`;
+  }
+  if (alert.code === 'TRANSCODE_CUTOVER_OK') {
+    return `Cutover OK: ${alert.message}`;
+  }
+  if (alert.code === 'TRANSCODE_CUTOVER_FAIL') {
+    return `Cutover failed: ${alert.message}`;
+  }
+  if (alert.code === 'TRANSCODE_PROXY_UNAVAILABLE') {
+    return `${alert.message}. Missing udp_switch/udp_output modules.`;
+  }
+  if (alert.code === 'TRANSCODE_PROXY_FAILED') {
+    return `Proxy failed: ${alert.message}`;
+  }
   return alert.message;
 }
 
@@ -11950,6 +11991,10 @@ function updateEditorTranscodeStatus() {
     elements.streamTranscodeRestart.textContent = '';
     elements.streamTranscodeRestart.classList.remove('is-error');
   }
+  if (elements.streamTranscodeWorkers) {
+    elements.streamTranscodeWorkers.textContent = '';
+    elements.streamTranscodeWorkers.classList.remove('is-error');
+  }
   if (elements.streamTranscodeStderr) {
     elements.streamTranscodeStderr.textContent = '';
     elements.streamTranscodeStderr.classList.remove('is-error');
@@ -11996,6 +12041,36 @@ function updateEditorTranscodeStatus() {
       }
     }
   }
+  if (elements.streamTranscodeWorkers) {
+    const workers = Array.isArray(transcode.workers) ? transcode.workers : [];
+    if (workers.length) {
+      const lines = [`Workers: ${workers.length}`];
+      workers.forEach((worker) => {
+        if (!worker) return;
+        const index = Number.isFinite(worker.output_index) ? worker.output_index : '?';
+        const state = worker.state || 'n/a';
+        const parts = [`#${index} ${state}`];
+        if (worker.pid) parts.push(`pid ${worker.pid}`);
+        if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        if (worker.proxy_enabled) {
+          const port = Number(worker.proxy_listen_port) || 0;
+          parts.push(port ? `proxy 127.0.0.1:${port}` : 'proxy enabled');
+          const src = worker.proxy_active_source || null;
+          if (src && src.addr && src.port) {
+            parts.push(`src ${src.addr}:${src.port}`);
+          }
+          if (Number.isFinite(worker.proxy_senders_count)) {
+            parts.push(`senders ${worker.proxy_senders_count}`);
+          }
+        }
+        lines.push(parts.join(' | '));
+      });
+      elements.streamTranscodeWorkers.textContent = lines.join('\n');
+      if (transcodeState === 'ERROR') {
+        elements.streamTranscodeWorkers.classList.add('is-error');
+      }
+    }
+  }
   if (elements.streamTranscodeWarmup) {
     const warm = transcode && transcode.switch_warmup;
     if (warm) {
@@ -12026,9 +12101,16 @@ function updateEditorTranscodeStatus() {
     return;
   }
   if (transcodeState === 'RUNNING') {
-    elements.streamTranscodeStatus.textContent = rateLabel
+    const lastAlert = transcode && transcode.last_alert;
+    const isCutover = lastAlert && typeof lastAlert.code === 'string' && lastAlert.code.startsWith('TRANSCODE_CUTOVER_');
+    const cutoverHint = isCutover ? formatTranscodeAlert(lastAlert) : '';
+    let text = rateLabel
       ? `Transcode active (${rateLabel})`
       : 'Transcode active';
+    if (cutoverHint) {
+      text += ` | ${cutoverHint}`;
+    }
+    elements.streamTranscodeStatus.textContent = text;
     elements.streamTranscodeStatus.classList.remove('is-error');
     return;
   }
@@ -15650,6 +15732,44 @@ function buildAnalyzeBaseSections(stream, stats) {
     ],
   });
 
+  const transcodeState = stats.transcode_state || (stats.transcode && stats.transcode.state);
+  if (transcodeState) {
+    const transcode = stats.transcode || {};
+    const items = [
+      `State: ${transcodeState}`,
+      `Per-output: ${transcode.process_per_output ? 'Yes' : 'No'}`,
+      `Seamless UDP proxy: ${transcode.seamless_udp_proxy ? 'Yes' : 'No'}`,
+    ];
+    const alertText = formatTranscodeAlert(transcode.last_alert);
+    if (alertText) {
+      items.push(`Last alert: ${alertText}`);
+    }
+    const workers = Array.isArray(transcode.workers) ? transcode.workers : [];
+    if (workers.length) {
+      workers.forEach((worker) => {
+        if (!worker) return;
+        const idx = Number.isFinite(worker.output_index) ? worker.output_index : '?';
+        const state = worker.state || 'n/a';
+        let line = `Worker #${idx}: ${state}`;
+        if (worker.pid) line += ` pid=${worker.pid}`;
+        if (worker.restart_reason_code) line += ` restart=${worker.restart_reason_code}`;
+        if (worker.proxy_enabled) {
+          const port = Number(worker.proxy_listen_port) || 0;
+          line += port ? ` proxy=127.0.0.1:${port}` : ' proxy=on';
+          const src = worker.proxy_active_source || null;
+          if (src && src.addr && src.port) {
+            line += ` src=${src.addr}:${src.port}`;
+          }
+          if (Number.isFinite(worker.proxy_senders_count)) {
+            line += ` senders=${worker.proxy_senders_count}`;
+          }
+        }
+        items.push(line);
+      });
+    }
+    sections.push({ title: 'Transcode', items });
+  }
+
   const updated = formatTimestamp(stats.updated_at);
   const activeIndex = getActiveInputIndex(stats);
   const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
@@ -17865,6 +17985,9 @@ function bindEvents() {
   }
   if (elements.streamTranscodeInputProbeUdp && elements.streamTranscodeInputProbeRestart) {
     elements.streamTranscodeInputProbeUdp.addEventListener('change', updateInputProbeRestartToggle);
+  }
+  if (elements.streamTranscodeProcessPerOutput && elements.streamTranscodeSeamlessUdpProxy) {
+    elements.streamTranscodeProcessPerOutput.addEventListener('change', updateSeamlessProxyToggle);
   }
 
   if (elements.transcodeOutputClose) {
