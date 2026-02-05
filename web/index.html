@@ -1791,46 +1791,73 @@
             <div class="form-hint is-hidden" id="mpts-dup-input-warning"></div>
             <div class="form-hint is-hidden" id="mpts-spts-warning"></div>
           </div>
-          <div class="form-subsection mpts-section">
-            <div class="panel-title">NIT</div>
-            <div class="form-grid">
-              <label class="field">
-                <span>Delivery system</span>
-                <select id="mpts-delivery" class="mpts-field">
-                  <option value="">Auto</option>
-                  <option value="dvb-t">DVB-T</option>
-                  <option value="dvb-c">DVB-C</option>
-                  <option value="dvb-s">DVB-S</option>
-                  <option value="atsc">ATSC</option>
-                </select>
-              </label>
-              <div class="form-hint">
-                Сейчас поддерживается только DVB-C; остальные типы зарезервированы.
-              </div>
-              <label class="field">
-                <span>Frequency (kHz)</span>
-                <input type="number" id="mpts-frequency" class="mpts-field" placeholder="650000" />
-              </label>
-              <label class="field">
-                <span>Symbol rate (kSymbols/s)</span>
-                <input type="number" id="mpts-symbolrate" class="mpts-field" placeholder="6875" />
-              </label>
-              <label class="field">
-                <span>FEC</span>
-                <select id="mpts-fec" class="mpts-field">
-                  <option value="">Auto</option>
-                  <option value="1/2">1/2</option>
+	          <div class="form-subsection mpts-section">
+	            <div class="panel-title">NIT</div>
+	            <div class="form-grid">
+	              <label class="field">
+	                <span>Delivery system</span>
+	                <select id="mpts-delivery" class="mpts-field">
+	                  <option value="">Auto</option>
+	                  <option value="dvb-t">DVB-T</option>
+	                  <option value="dvb-c">DVB-C</option>
+	                  <option value="dvb-s">DVB-S</option>
+	                  <option value="atsc">ATSC</option>
+	                </select>
+	              </label>
+	              <div class="form-hint">
+	                Поддерживаются: DVB-C (0x44), DVB-T (0x5A), DVB-S/S2 (0x43). Остальные типы зарезервированы.
+	              </div>
+	              <label class="field">
+	                <span>Frequency (kHz)</span>
+	                <input type="number" id="mpts-frequency" class="mpts-field" placeholder="650000" />
+	              </label>
+	              <label class="field mpts-nit-sat-cable">
+	                <span>Symbol rate (kSymbols/s)</span>
+	                <input type="number" id="mpts-symbolrate" class="mpts-field" placeholder="6875" />
+	              </label>
+	              <label class="field mpts-nit-dvbt is-hidden">
+	                <span>Bandwidth (MHz)</span>
+	                <input type="number" id="mpts-bandwidth" class="mpts-field" placeholder="8" min="5" max="8" />
+	              </label>
+	              <label class="field mpts-nit-sat-only is-hidden">
+	                <span>Orbital position</span>
+	                <input type="text" id="mpts-orbital-position" class="mpts-field" placeholder="19.2E" />
+	              </label>
+	              <label class="field mpts-nit-sat-only is-hidden">
+	                <span>Polarization</span>
+	                <select id="mpts-polarization" class="mpts-field">
+	                  <option value="">Auto (H)</option>
+	                  <option value="H">H (Horizontal)</option>
+	                  <option value="V">V (Vertical)</option>
+	                  <option value="L">L (Left)</option>
+	                  <option value="R">R (Right)</option>
+	                </select>
+	              </label>
+	              <label class="field mpts-nit-sat-only is-hidden">
+	                <span>Rolloff</span>
+	                <select id="mpts-rolloff" class="mpts-field">
+	                  <option value="">Auto (0.35)</option>
+	                  <option value="0.35">0.35</option>
+	                  <option value="0.25">0.25</option>
+	                  <option value="0.20">0.20</option>
+	                </select>
+	              </label>
+	              <label class="field mpts-nit-sat-cable">
+	                <span>FEC</span>
+	                <select id="mpts-fec" class="mpts-field">
+	                  <option value="">Auto</option>
+	                  <option value="1/2">1/2</option>
                   <option value="2/3">2/3</option>
                   <option value="3/4">3/4</option>
                   <option value="5/6">5/6</option>
-                  <option value="7/8">7/8</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Modulation</span>
-                <select id="mpts-modulation" class="mpts-field">
-                  <option value="">Auto</option>
-                  <option value="qpsk">QPSK</option>
+	                  <option value="7/8">7/8</option>
+	                </select>
+	              </label>
+	              <label class="field mpts-nit-sat-cable">
+	                <span>Modulation</span>
+	                <select id="mpts-modulation" class="mpts-field">
+	                  <option value="">Auto</option>
+	                  <option value="qpsk">QPSK</option>
                   <option value="8psk">8PSK</option>
                   <option value="16qam">16-QAM</option>
                   <option value="64qam">64-QAM</option>
@@ -1854,14 +1881,14 @@
                 <input type="number" id="mpts-lcn-version" class="mpts-field" min="0" max="31" placeholder="0..31" />
               </label>
             </div>
-            <div class="form-hint is-hidden" id="mpts-delivery-warning"></div>
-            <div class="form-hint is-hidden" id="mpts-lcn-tags-warning"></div>
-            <div class="form-hint is-hidden" id="mpts-lcn-version-warning"></div>
-            <div class="form-hint">Only DVB-C delivery is generated; other delivery types are stored but not applied.</div>
-            <div class="form-hint">LCN задаётся в списке сервисов; tag 0x83 (NorDig) или совместимые варианты.</div>
-            <div class="form-hint">Если задан список LCN tags, одиночный LCN tag игнорируется.</div>
-            <div class="form-hint">LCN version используется для совместимости и переопределяет NIT version, если он не задан.</div>
-          </div>
+	            <div class="form-hint is-hidden" id="mpts-delivery-warning"></div>
+	            <div class="form-hint is-hidden" id="mpts-lcn-tags-warning"></div>
+	            <div class="form-hint is-hidden" id="mpts-lcn-version-warning"></div>
+	            <div class="form-hint">Delivery descriptor генерируется для DVB-C/DVB-T/DVB-S. Для остальных типов поля сохраняются, но не применяются.</div>
+	            <div class="form-hint">LCN задаётся в списке сервисов; tag 0x83 (NorDig) или совместимые варианты.</div>
+	            <div class="form-hint">Если задан список LCN tags, одиночный LCN tag игнорируется.</div>
+	            <div class="form-hint">LCN version используется для совместимости и переопределяет NIT version, если он не задан.</div>
+	          </div>
           <div class="form-subsection mpts-section">
             <div class="panel-title">Advanced</div>
             <div class="form-grid">
