@@ -895,55 +895,6 @@
 
           <div class="observability-summary" id="obs-summary"></div>
 
-          <div class="observability-ai" id="obs-ai">
-            <div class="observability-ai-header">
-              <div class="chart-title">AI Summary</div>
-              <button class="btn ghost" type="button" id="obs-ai-refresh">Generate AI summary</button>
-            </div>
-            <div class="observability-ai-options">
-              <label class="checkline">
-                <input type="checkbox" id="obs-ai-include-logs" checked />
-                <span>Include logs</span>
-              </label>
-              <label class="checkline">
-                <input type="checkbox" id="obs-ai-include-cli" data-toggle-target="obs-ai-cli-fields" />
-                <span>Include CLI context</span>
-              </label>
-              <div class="form-grid observability-ai-cli" id="obs-ai-cli-fields" hidden>
-                <label class="checkline">
-                  <input type="checkbox" id="obs-ai-cli-stream" checked />
-                  <span>Stream snapshot (--stream)</span>
-                </label>
-                <label class="checkline">
-                  <input type="checkbox" id="obs-ai-cli-dvbls" />
-                  <span>DVB list (--dvbls)</span>
-                </label>
-                <label class="checkline">
-                  <input type="checkbox" id="obs-ai-cli-analyze" />
-                  <span>MPEG‑TS analyze (--analyze)</span>
-                </label>
-                <label class="field">
-                  <span>Analyze URL</span>
-                  <input type="text" id="obs-ai-analyze-url" placeholder="udp://... or http://..." />
-                </label>
-                <label class="checkline">
-                  <input type="checkbox" id="obs-ai-cli-femon" />
-                  <span>DVB signal (--femon)</span>
-                </label>
-                <label class="field">
-                  <span>Femon URL</span>
-                  <input type="text" id="obs-ai-femon-url" placeholder="dvb://#adapter=0&type=S2&tp=..." />
-                </label>
-                <label class="field">
-                  <span>Stream ID</span>
-                  <input type="text" id="obs-ai-stream-id" placeholder="optional" />
-                </label>
-              </div>
-            </div>
-            <div class="observability-ai-status muted" id="obs-ai-status">AI summary is disabled.</div>
-            <div class="observability-ai-body" id="obs-ai-body"></div>
-          </div>
-
           <div class="observability-charts">
             <div class="chart-card">
               <div class="chart-title">Bitrate</div>
@@ -2000,45 +1951,6 @@
             <h4>AstralAI Chat</h4>
             <div class="ai-chat" id="ai-chat">
               <div class="ai-chat-log" id="ai-chat-log"></div>
-              <div class="ai-chat-tools">
-                <label class="checkline">
-                  <input type="checkbox" id="ai-chat-logs" checked />
-                  <span>Include logs (last 24h)</span>
-                </label>
-                <div class="ai-chat-cli">
-                  <div class="ai-chat-cli-title">CLI tools (on demand)</div>
-                  <label class="checkline">
-                    <input type="checkbox" id="ai-chat-cli-stream" />
-                    <span>--stream status</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="ai-chat-cli-dvbls" />
-                    <span>--dvbls (DVB list)</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="ai-chat-cli-analyze" />
-                    <span>--analyze (input URL)</span>
-                  </label>
-                  <label class="checkline">
-                    <input type="checkbox" id="ai-chat-cli-femon" />
-                    <span>--femon (adapter URL)</span>
-                  </label>
-                  <div class="ai-chat-cli-fields">
-                    <label class="field">
-                      <span>Stream ID</span>
-                      <input type="text" id="ai-chat-stream-id" placeholder="stream_01" />
-                    </label>
-                    <label class="field">
-                      <span>Analyze URL</span>
-                      <input type="text" id="ai-chat-analyze-url" placeholder="udp://... or http://..." />
-                    </label>
-                    <label class="field">
-                      <span>Femon URL</span>
-                      <input type="text" id="ai-chat-femon-url" placeholder="dvb://adapter" />
-                    </label>
-                  </div>
-                </div>
-              </div>
               <label class="field">
                 <span>Message</span>
                 <textarea id="ai-chat-input" rows="3" placeholder="Describe the task or ask for analysis..."></textarea>
