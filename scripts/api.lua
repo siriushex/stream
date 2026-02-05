@@ -41,6 +41,34 @@ local function parse_json_body(request)
     return json.decode(request.content)
 end
 
+local function shell_escape(value)
+    local text = tostring(value or "")
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+local function has_timeout()
+    local ok = os.execute("command -v timeout >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function run_command(cmd, timeout_sec)
+    local timeout_cmd = ""
+    if timeout_sec and timeout_sec > 0 then
+        if has_timeout() then
+            timeout_cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " "
+        else
+            return nil, "timeout tool missing"
+        end
+    end
+    local ok, handle = pcall(io.popen, timeout_cmd .. cmd .. " 2>&1")
+    if not ok or not handle then
+        return nil, "exec failed"
+    end
+    local output = handle:read("*a") or ""
+    handle:close()
+    return output
+end
+
 local function get_header(headers, key)
     if not headers then
         return nil
@@ -159,6 +187,69 @@ local stream_analyze = {
     jobs = {},
     active = 0,
 }
+
+local function mpts_scan(server, client, request)
+    local body = parse_json_body(request)
+    if not body or not body.input then
+        return error_response(server, client, 400, "input required")
+    end
+    local input = tostring(body.input or "")
+    if input == "" then
+        return error_response(server, client, 400, "input required")
+    end
+    if #input > 512 then
+        return error_response(server, client, 400, "input too long")
+    end
+
+    local cfg = parse_url(input)
+    if not cfg or not cfg.format then
+        return error_response(server, client, 400, "invalid input")
+    end
+    local format = tostring(cfg.format or ""):lower()
+    if format ~= "udp" and format ~= "rtp" then
+        return error_response(server, client, 400, "only udp/rtp inputs supported")
+    end
+    local addr = tostring(cfg.addr or "")
+    local port = tonumber(cfg.port)
+    if addr == "" or not port then
+        return error_response(server, client, 400, "invalid input addr/port")
+    end
+
+    local duration = tonumber(body.duration) or 3
+    if duration < 1 then duration = 1 end
+    if duration > 10 then duration = 10 end
+
+    local script_path = "tools/mpts_pat_scan.py"
+    local handle = io.open(script_path, "r")
+    if not handle then
+        return error_response(server, client, 500, "mpts_pat_scan.py not found")
+    end
+    handle:close()
+
+    local cmd = table.concat({
+        "python3",
+        shell_escape(script_path),
+        "--addr",
+        shell_escape(addr),
+        "--port",
+        shell_escape(port),
+        "--duration",
+        shell_escape(duration),
+        "--input",
+        shell_escape(input),
+        "--pretty",
+    }, " ")
+    local output, err = run_command(cmd, duration + 2)
+    if not output or output == "" then
+        return error_response(server, client, 500, err or "empty output")
+    end
+    local ok, parsed = pcall(json.decode, output)
+    if not ok or type(parsed) ~= "table" then
+        return error_response(server, client, 500, "scan failed: invalid output")
+    end
+    local services = parsed.services or {}
+    return json_response(server, client, 200, { services = services })
+end
 
 local function dvb_scan_cleanup()
     local now = os.time()
@@ -2165,6 +2256,16 @@ local function list_metrics(server, client, request)
     end
     local perf = (runtime and runtime.perf) or {}
 
+    local mpts_metrics = nil
+    for id, entry in pairs(status) do
+        if entry and entry.mpts_stats then
+            if not mpts_metrics then
+                mpts_metrics = {}
+            end
+            mpts_metrics[id] = entry.mpts_stats
+        end
+    end
+
     local payload = {
         ts = now,
         version = astra and astra.version or "",
@@ -2198,6 +2299,9 @@ local function list_metrics(server, client, request)
             adapter_refresh_ts = perf.last_adapter_refresh_ts,
         },
     }
+    if mpts_metrics then
+        payload.mpts = mpts_metrics
+    end
 
     local format = ""
     if request and request.query and request.query.format then
@@ -2232,6 +2336,20 @@ local function list_metrics(server, client, request)
         end
         if perf.last_adapter_refresh_ms then
             table.insert(lines, "astra_perf_adapter_refresh_ms " .. tostring(perf.last_adapter_refresh_ms))
+        end
+        if mpts_metrics then
+            for stream_id, stats in pairs(mpts_metrics) do
+                local label = string.format("{stream_id=\"%s\"}", tostring(stream_id):gsub("\"", "\\\""))
+                if stats.bitrate_bps then
+                    table.insert(lines, "astra_mpts_bitrate_bps" .. label .. " " .. tostring(stats.bitrate_bps))
+                end
+                if stats.null_percent then
+                    table.insert(lines, "astra_mpts_null_percent" .. label .. " " .. tostring(stats.null_percent))
+                end
+                if stats.psi_interval_ms then
+                    table.insert(lines, "astra_mpts_psi_interval_ms" .. label .. " " .. tostring(stats.psi_interval_ms))
+                end
+            end
         end
         server:send(client, {
             code = 200,
@@ -4414,6 +4532,9 @@ function api.handle_request(server, client, request)
     local stream_analyze_stream = path:match("^/api/v1/streams/([%w%-%_]+)/analyze$")
     if stream_analyze_stream and method == "POST" then
         return start_stream_analyze(server, client, request, stream_analyze_stream)
+    end
+    if path == "/api/v1/mpts/scan" and method == "POST" then
+        return mpts_scan(server, client, request)
     end
 
     if path == "/api/v1/adapters" and method == "GET" then

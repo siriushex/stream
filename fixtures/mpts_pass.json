@@ -1,0 +1,41 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_pass",
+      "name": "MPTS Pass",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12345"
+      ],
+      "mpts_services": [
+        {
+          "input": "udp://127.0.0.1:12345",
+          "pnr": 101,
+          "service_name": "Pass Service",
+          "service_provider": "Astral",
+          "service_type_id": 1,
+          "lcn": 101
+        }
+      ],
+      "output": [
+        "udp://127.0.0.1:12346"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "tsid": 1,
+          "onid": 1
+        },
+        "advanced": {
+          "pass_sdt": true,
+          "pass_eit": true,
+          "pass_cat": true,
+          "eit_source": 1,
+          "cat_source": 1
+        }
+      }
+    }
+  ]
+}

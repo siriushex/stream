@@ -1,0 +1,31 @@
+{
+  "streams": [
+    {
+      "id": "mpts_spts_only",
+      "name": "MPTS SPTS-only",
+      "mpts": true,
+      "mpts_services": [
+        {
+          "input": "udp://127.0.0.1:12355",
+          "pnr": 101,
+          "service_name": "SPTS Only",
+          "service_provider": "Astral",
+          "service_type_id": 1
+        }
+      ],
+      "mpts_config": {
+        "general": {
+          "tsid": 1,
+          "onid": 1
+        },
+        "advanced": {
+          "spts_only": true,
+          "si_interval_ms": 500
+        }
+      },
+      "output": [
+        "udp://127.0.0.1:12356"
+      ]
+    }
+  ]
+}

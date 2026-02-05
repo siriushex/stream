@@ -3,17 +3,24 @@
 Краткая сводка реализации MPTS и проверок.
 
 ## Что реализовано
-- Полноценный MPTS mux с PAT/PMT/SDT/NIT/TDT/TOT (CAT пустой).
+- Полноценный MPTS mux с PAT/PMT/SDT/NIT/TDT/TOT (CAT пустой или pass‑through).
 - Auto-remap PID по умолчанию; строгий режим при `disable_auto_remap=true`.
 - CBR с null stuffing по `advanced.target_bitrate`.
-- Поддержка `strict_pnr` для multi‑PAT без явного PNR.
-- UI для параметров MPTS + предупреждения о конфликтных режимах.
+- `strict_pnr` и `spts_only` для контроля multi‑PAT.
+- PCR restamp + EWMA‑сглаживание (`pcr_smoothing`).
+- Pass‑through EIT/CAT из выбранного источника.
+- LCN tags configurable (`nit.lcn_descriptor_tag` / `nit.lcn_descriptor_tags`).
+- Экспорт MPTS метрик (bitrate/null%/PSI interval) в статус и Prometheus.
+- UI для параметров MPTS + массовые операции по сервисам.
+- Auto-probe сервисов из UDP/RTP входа при пустом `mpts_services` (`advanced.auto_probe`).
 
 ## Ограничения
 - Delivery поддерживается только DVB‑C.
 - `advanced.si_interval_ms` < 50 игнорируется.
 - `advanced.target_bitrate <= 0` отключает CBR (игнорируется).
-- `mpts_config.nit.lcn_version` не поддерживается.
+- `mpts_config.nit.lcn_version` действует как alias для `advanced.nit_version` (если он не задан).
+- Повторяющиеся `mpts_services[].input` используют общий сокет.
+- `advanced.auto_probe` работает только для UDP/RTP; `timeout` желателен, но не обязателен.
 
 ## Быстрая проверка
 ```bash
@@ -22,8 +29,19 @@ EXPECT_TOT=1 EXPECT_PNRS="101,102" EXPECT_PMT_PNRS="101,102" ./tools/verify_mpts
 EXPECT_LOG="NIT: network_id: 1" ./tools/verify_mpts.sh "udp://127.0.0.1:12346"
 ```
 
+## Auto-split helper
+```bash
+python3 tools/mpts_pat_scan.py --addr 239.1.1.1 --port 1234 --duration 3 \\
+  --input "udp://239.1.1.1:1234" --pretty
+```
+UI “Probe input” использует `/api/v1/mpts/scan` и возвращает список сервисов для UDP/RTP.
+
 ## CI smoke
 ```bash
 contrib/ci/smoke_mpts.sh
 MPTS_STRICT_PNR_SMOKE=1 contrib/ci/smoke.sh
+contrib/ci/smoke_mpts_pid_collision.sh
+contrib/ci/smoke_mpts_pass_tables.sh
+contrib/ci/smoke_mpts_spts_only.sh
+contrib/ci/smoke_mpts_auto_probe.sh
 ```

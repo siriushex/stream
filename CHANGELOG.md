@@ -98,6 +98,18 @@
   - Not run (CI/doc updates; covered by CI).
 ### 2026-02-05
 - Changes:
+  - MPTS: не отправляет пустые PSI (PAT/SDT/NIT), если все сервисы отклонены (spts_only/strict_pnr).
+  - Runtime: validate_stream_config больше не падает, когда MPTS stream не имеет поля input.
+  - Fixtures: mpts_spts_only output URL исправлен (Astral URL options не парсятся через `?`).
+- Tests:
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_pid_collision.sh`
+  - `contrib/ci/smoke_mpts_pass_tables.sh`
+  - `contrib/ci/smoke_mpts_strict_pnr.sh`
+  - `contrib/ci/smoke_mpts_spts_only.sh`
+  - `contrib/ci/smoke_mpts_auto_probe.sh`
+### 2026-02-05
+- Changes:
   - Release: исправлены кавычки в сборке bundle; обновлены SHA256 для ffmpeg sources.
   - Release: корректное определение версии из version.h для имени bundle (без падения при отсутствии ASTRA_VERSION).
   - CI: check_changelog учитывает shallow clone и подтягивает merge-base.
@@ -2225,18 +2237,45 @@
   - `POST http://127.0.0.1:9017/api/v1/auth/login`
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_passive` (inputs + switch checks)
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_active` (switch + return checks)
-# 2026-02-05
+### 2026-02-05
 - Changes:
-  - Improved OpenAI client error details and auto‑retry without images on 400 image‑input errors.
-  - Normalized `ai_api_base` to avoid duplicate `/v1` paths.
-  - AI context now includes logs by default and always provides a stream runtime snapshot; dvb/analyze/femon remain on‑demand.
-  - Updated `docs/ASTRAL_AI.md` to reflect minimal‑load defaults and chat behavior.
-  - Adjusted AI autoselect unit test for new log‑default behavior.
-  - Added AI apply guardrail: large plans require `allow_destructive` (configurable via `ai_max_ops`).
-  - Added guardrail: disable ops require `allow_destructive`.
-  - Fixed AI proxy polling timer to avoid zero interval (prevents crash when proxies are set).
-  - Sanitized AI context strings to avoid invalid UTF‑8 in OpenAI requests.
-  - Proxied OpenAI requests now send the body without command‑line truncation.
-  - Added unit tests for AI chat diff preview and OpenAI image fallback behavior.
+  - Added PCR smoothing (EWMA) options and pass-through EIT/CAT handling in MPTS mux.
+  - Added `spts_only` guard, LCN descriptor tag override, and MPTS stats for bitrate/null%/PSI interval.
+  - Fixed PAT program counting so `strict_pnr`/`spts_only` detect multi-PAT reliably.
+  - Removed unused `pcr_from_pmt` flag to silence build warning.
+  - Updated MPTS UI with bulk actions, pass sources, PCR smoothing fields, LCN tag input, and built-in manual/enable action.
+  - Added MPTS runtime stats panel (bitrate/null%/PSI) to the editor UI.
+  - Added LCN version alias (`nit.lcn_version`) and UI warning for NIT version precedence.
+  - Added PAT/SDT scan helper to build `mpts_services` from multi-PAT inputs.
+  - Added multi-tag LCN output (`nit.lcn_descriptor_tags`) for receiver compatibility.
+  - Added MPTS stats line to stream tiles and SPTS-only duplicate-input warning.
+  - Added `smoke_mpts_spts_only.sh` to validate SPTS-only rejection of multi-PAT inputs.
+  - Added `/api/v1/mpts/scan` + UI probe button to auto-fill services from UDP inputs.
+  - Reused shared input sockets when multiple MPTS services point to the same input URL.
+  - Improved MPTS probe UX (prefill from existing input + UDP/RTP validation).
+  - Added optional runtime auto-probe (`advanced.auto_probe`) to populate services from UDP/RTP inputs.
+  - Auto-probe no longer requires `timeout` binary; it falls back to direct scan.
+  - Added auto-probe smoke test and fixture (`smoke_mpts_auto_probe.sh`, `mpts_auto_probe.json`).
+  - Extended CI smoke coverage (PID collision + pass tables) and added TS PID scanner.
+  - Extended SPTS generator to emit SDT/EIT/CAT for pass-through tests.
 - Tests:
-  - Not run (server deploy only).
+  - `python3 -m py_compile tools/gen_spts.py tools/scan_pid.py`
+  - `contrib/ci/smoke_mpts_pid_collision.sh`
+  - `contrib/ci/smoke_mpts_pass_tables.sh`
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_strict_pnr.sh`
+  - Not run (auto-probe UI/runtime update)
+  - Not run (auto-probe smoke)
+### 2026-02-05
+- Changes:
+  - MPTS: generate PAT/SDT/NIT as multi-section DVB PSI/SI tables (max 1024 bytes per section) to avoid truncation with large service counts.
+  - Tools: `tools/gen_spts.py` supports `--program-count` and correct PSI packetization across multiple TS packets.
+  - CI: add `contrib/ci/smoke_mpts_multisection.sh` + `tools/mpts_si_verify.py` and run it in GitHub Actions `mpts-smoke`.
+- Tests:
+  - `contrib/ci/smoke_mpts.sh`
+  - `contrib/ci/smoke_mpts_pid_collision.sh`
+  - `contrib/ci/smoke_mpts_pass_tables.sh`
+  - `contrib/ci/smoke_mpts_strict_pnr.sh`
+  - `contrib/ci/smoke_mpts_spts_only.sh`
+  - `contrib/ci/smoke_mpts_auto_probe.sh`
+  - `contrib/ci/smoke_mpts_multisection.sh`

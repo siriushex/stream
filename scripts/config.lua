@@ -2400,6 +2400,11 @@ local function lint_stream_list(list, label, warnings)
             end
 
             if entry.mpts == true then
+                local mpts = type(entry.mpts_config) == "table" and entry.mpts_config or {}
+                local nit = type(mpts.nit) == "table" and mpts.nit or {}
+                local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
+                local spts_only = adv.spts_only ~= false
+
                 local services = entry.mpts_services
                 if type(services) ~= "table" or #services == 0 then
                     if entry.input ~= nil then
@@ -2420,7 +2425,11 @@ local function lint_stream_list(list, label, warnings)
                             else
                                 local key = tostring(input):lower()
                                 if input_seen[key] then
-                                    warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input: " .. tostring(input)
+                                    if spts_only then
+                                        warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input (spts_only=true): " .. tostring(input)
+                                    else
+                                        warnings[#warnings + 1] = label .. "[" .. idx .. "] duplicate mpts input (shared socket): " .. tostring(input)
+                                    end
                                 end
                                 input_seen[key] = true
                             end
@@ -2436,10 +2445,9 @@ local function lint_stream_list(list, label, warnings)
                     end
                 end
 
-                local mpts = type(entry.mpts_config) == "table" and entry.mpts_config or {}
-                local nit = type(mpts.nit) == "table" and mpts.nit or {}
-                local adv = type(mpts.advanced) == "table" and mpts.advanced or {}
                 local delivery = tostring(nit.delivery or ""):lower()
+                local lcn_version = nit.lcn_version
+                local lcn_tags = nit.lcn_descriptor_tags
                 if delivery ~= "" then
                     if delivery == "cable" or delivery == "dvb-c" or delivery == "dvb_c" then
                         if nit.frequency == nil then
@@ -2455,9 +2463,55 @@ local function lint_stream_list(list, label, warnings)
                         warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.delivery is not supported (only DVB-C is generated)"
                     end
                 end
+                if lcn_tags ~= nil then
+                    if type(lcn_tags) == "table" then
+                        for _, value in ipairs(lcn_tags) do
+                            local tag = tonumber(value)
+                            if tag == nil or tag < 1 or tag > 255 then
+                                warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags contains invalid tag"
+                                break
+                            end
+                        end
+                    elseif type(lcn_tags) == "string" then
+                        for token in string.gmatch(lcn_tags, "[^,%s]+") do
+                            local tag = tonumber(token)
+                            if tag == nil or tag < 1 or tag > 255 then
+                                warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags contains invalid tag"
+                                break
+                            end
+                        end
+                    else
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags should be string or array"
+                    end
+                    if nit.lcn_descriptor_tag ~= nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_descriptor_tags overrides nit.lcn_descriptor_tag"
+                    end
+                end
+                if lcn_version ~= nil then
+                    local value = tonumber(lcn_version)
+                    if value == nil or value < 0 or value > 31 then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_version must be 0..31"
+                    end
+                    if adv.nit_version ~= nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] nit.lcn_version ignored because advanced.nit_version is set"
+                    end
+                end
                 local pass_enabled = adv.pass_nit == true or adv.pass_sdt == true or adv.pass_eit == true or adv.pass_tdt == true
                 if pass_enabled and type(entry.mpts_services) == "table" and #entry.mpts_services > 1 then
                     warnings[#warnings + 1] = label .. "[" .. idx .. "] pass_* is intended for single-service MPTS"
+                end
+                -- Валидация auto-probe: нужен input и допустимая длительность.
+                if adv.auto_probe == true then
+                    if type(entry.mpts_services) == "table" and #entry.mpts_services > 0 then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe ignored when mpts_services is set"
+                    end
+                    local duration = tonumber(adv.auto_probe_duration_sec or adv.auto_probe_duration)
+                    if duration and (duration < 1 or duration > 10) then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe_duration_sec must be 1..10"
+                    end
+                    if entry.input == nil then
+                        warnings[#warnings + 1] = label .. "[" .. idx .. "] advanced.auto_probe requires input list"
+                    end
                 end
             end
         end
