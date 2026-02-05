@@ -509,6 +509,51 @@ config.migrations = {
     CREATE INDEX IF NOT EXISTS config_revisions_ts_idx ON config_revisions(created_ts);
     CREATE INDEX IF NOT EXISTS config_revisions_status_idx ON config_revisions(status);
     ]],
+    [[
+    CREATE TABLE IF NOT EXISTS ai_log_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        stream_id TEXT,
+        component TEXT,
+        message TEXT,
+        fingerprint TEXT,
+        tags_json TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS ai_log_events_ts_idx ON ai_log_events(ts);
+    CREATE INDEX IF NOT EXISTS ai_log_events_stream_idx ON ai_log_events(stream_id);
+    CREATE INDEX IF NOT EXISTS ai_log_events_level_idx ON ai_log_events(level);
+
+    CREATE TABLE IF NOT EXISTS ai_metrics_rollup (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts_bucket INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        scope_id TEXT,
+        metric_key TEXT NOT NULL,
+        value REAL NOT NULL,
+        tags_json TEXT
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ai_metrics_rollup_unique
+        ON ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_ts_idx ON ai_metrics_rollup(ts_bucket);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_idx ON ai_metrics_rollup(scope, scope_id);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_key_idx ON ai_metrics_rollup(metric_key);
+
+    CREATE TABLE IF NOT EXISTS ai_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        severity TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details_json TEXT,
+        ack_by TEXT,
+        ack_ts INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS ai_alerts_ts_idx ON ai_alerts(ts);
+    CREATE INDEX IF NOT EXISTS ai_alerts_severity_idx ON ai_alerts(severity);
+    ]],
 }
 
 function config.init(opts)
@@ -1779,6 +1824,16 @@ function config.add_alert(level, stream_id, code, message, meta)
             log.warning("[alerts] telegram notify failed")
         end
     end
+    if ai_observability and ai_observability.ingest_alert then
+        pcall(ai_observability.ingest_alert, {
+            ts = ts,
+            level = tostring(level or "INFO"),
+            stream_id = tostring(stream_id or ""),
+            code = tostring(code or ""),
+            message = tostring(message or ""),
+            meta = meta,
+        })
+    end
     return true
 end
 
@@ -1813,6 +1868,161 @@ function config.list_alerts(opts)
         end
     end
     return rows
+end
+
+function config.count_alerts(opts)
+    opts = opts or {}
+    local since = tonumber(opts.since) or 0
+    local until_ts = tonumber(opts.until) or 0
+    local where = { "ts >= " .. since }
+    if until_ts and until_ts > 0 then
+        table.insert(where, "ts < " .. until_ts)
+    end
+    if opts.levels and type(opts.levels) == "table" and #opts.levels > 0 then
+        local parts = {}
+        for _, item in ipairs(opts.levels) do
+            table.insert(parts, "'" .. sql_escape(tostring(item)) .. "'")
+        end
+        table.insert(where, "level IN (" .. table.concat(parts, ",") .. ")")
+    end
+    local where_sql = table.concat(where, " AND ")
+    local value = db_scalar(config.db, "SELECT COUNT(*) FROM alerts WHERE " .. where_sql .. ";")
+    return tonumber(value) or 0
+end
+
+function config.add_ai_log_event(entry)
+    if type(entry) ~= "table" then
+        return nil, "invalid entry"
+    end
+    local ts = tonumber(entry.ts) or os.time()
+    local level = tostring(entry.level or "INFO")
+    local stream_id = tostring(entry.stream_id or "")
+    local component = tostring(entry.component or "")
+    local message = tostring(entry.message or "")
+    local fingerprint = tostring(entry.fingerprint or "")
+    local tags_json = ""
+    if entry.tags ~= nil then
+        tags_json = json_encode(entry.tags)
+    end
+    db_exec(config.db,
+        "INSERT INTO ai_log_events(ts, level, stream_id, component, message, fingerprint, tags_json) VALUES(" ..
+        ts .. ", '" .. sql_escape(level) .. "', '" .. sql_escape(stream_id) .. "', '" ..
+        sql_escape(component) .. "', '" .. sql_escape(message) .. "', '" ..
+        sql_escape(fingerprint) .. "', '" .. sql_escape(tags_json) .. "');")
+    return true
+end
+
+function config.list_ai_log_events(opts)
+    opts = opts or {}
+    local since = tonumber(opts.since) or 0
+    local until_ts = tonumber(opts.until) or 0
+    local limit = tonumber(opts.limit) or 500
+    if limit < 1 then
+        limit = 1
+    elseif limit > 5000 then
+        limit = 5000
+    end
+    local where = { "ts >= " .. since }
+    if until_ts and until_ts > 0 then
+        table.insert(where, "ts < " .. until_ts)
+    end
+    if opts.level and tostring(opts.level) ~= "" then
+        table.insert(where, "level='" .. sql_escape(tostring(opts.level)) .. "'")
+    end
+    if opts.stream_id and tostring(opts.stream_id) ~= "" then
+        table.insert(where, "stream_id='" .. sql_escape(tostring(opts.stream_id)) .. "'")
+    end
+    local where_sql = table.concat(where, " AND ")
+    local rows = db_query(config.db, "SELECT id, ts, level, stream_id, component, message, fingerprint, tags_json " ..
+        "FROM ai_log_events WHERE " .. where_sql .. " ORDER BY ts DESC LIMIT " .. limit .. ";")
+    for _, row in ipairs(rows) do
+        if row.tags_json and row.tags_json ~= "" then
+            row.tags = json_decode(row.tags_json)
+        else
+            row.tags = nil
+        end
+    end
+    return rows
+end
+
+function config.prune_ai_log_events(before_ts)
+    local cutoff = tonumber(before_ts) or 0
+    if cutoff <= 0 then
+        return 0
+    end
+    local res = db_exec(config.db, "DELETE FROM ai_log_events WHERE ts < " .. cutoff .. ";")
+    return res and true or false
+end
+
+function config.upsert_ai_metric(entry)
+    if type(entry) ~= "table" then
+        return nil, "invalid entry"
+    end
+    local ts_bucket = tonumber(entry.ts_bucket) or 0
+    if ts_bucket <= 0 then
+        return nil, "invalid ts_bucket"
+    end
+    local scope = tostring(entry.scope or "global")
+    local scope_id = tostring(entry.scope_id or "")
+    local metric_key = tostring(entry.metric_key or "")
+    if metric_key == "" then
+        return nil, "metric_key required"
+    end
+    local value = tonumber(entry.value) or 0
+    local tags_json = ""
+    if entry.tags ~= nil then
+        tags_json = json_encode(entry.tags)
+    end
+    db_exec(config.db,
+        "INSERT OR REPLACE INTO ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, value, tags_json) VALUES(" ..
+        ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
+        sql_escape(metric_key) .. "', " .. value .. ", '" .. sql_escape(tags_json) .. "');")
+    return true
+end
+
+function config.list_ai_metrics(opts)
+    opts = opts or {}
+    local since = tonumber(opts.since) or 0
+    local until_ts = tonumber(opts.until) or 0
+    local limit = tonumber(opts.limit) or 2000
+    if limit < 1 then
+        limit = 1
+    elseif limit > 20000 then
+        limit = 20000
+    end
+    local where = { "ts_bucket >= " .. since }
+    if until_ts and until_ts > 0 then
+        table.insert(where, "ts_bucket < " .. until_ts)
+    end
+    if opts.scope and tostring(opts.scope) ~= "" then
+        table.insert(where, "scope='" .. sql_escape(tostring(opts.scope)) .. "'")
+    end
+    if opts.scope_id and tostring(opts.scope_id) ~= "" then
+        table.insert(where, "scope_id='" .. sql_escape(tostring(opts.scope_id)) .. "'")
+    end
+    if opts.metric_key and tostring(opts.metric_key) ~= "" then
+        table.insert(where, "metric_key='" .. sql_escape(tostring(opts.metric_key)) .. "'")
+    end
+    local where_sql = table.concat(where, " AND ")
+    local rows = db_query(config.db, "SELECT ts_bucket, scope, scope_id, metric_key, value, tags_json " ..
+        "FROM ai_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    for _, row in ipairs(rows) do
+        if row.tags_json and row.tags_json ~= "" then
+            row.tags = json_decode(row.tags_json)
+        else
+            row.tags = nil
+        end
+    end
+    return rows
+end
+
+function config.prune_ai_metrics(before_ts)
+    local cutoff = tonumber(before_ts) or 0
+    if cutoff <= 0 then
+        return 0
+    end
+    local res = db_exec(config.db, "DELETE FROM ai_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
+    return res and true or false
 end
 
 function config.add_audit_event(action, opts)

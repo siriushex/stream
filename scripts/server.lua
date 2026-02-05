@@ -36,6 +36,7 @@ dofile(script_path("ai_runtime.lua"))
 dofile(script_path("ai_tools.lua"))
 dofile(script_path("ai_prompt.lua"))
 dofile(script_path("ai_telegram.lua"))
+dofile(script_path("ai_observability.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("api.lua"))
 
@@ -732,6 +733,9 @@ function main()
     end
     if ai_runtime and ai_runtime.configure then
         ai_runtime.configure()
+    end
+    if ai_observability and ai_observability.configure then
+        ai_observability.configure()
     end
     if watchdog and watchdog.configure then
         watchdog.configure()

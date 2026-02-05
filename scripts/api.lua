@@ -2309,6 +2309,12 @@ local function set_settings(server, client, request)
             then
                 ai_runtime.configure()
             end
+            if ai_observability and ai_observability.configure
+                and (body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
+                    or body.ai_rollup_interval_sec ~= nil)
+            then
+                ai_observability.configure()
+            end
             if watchdog and watchdog.configure
                 and (body.resource_watchdog_enabled ~= nil or body.resource_watchdog_interval_sec ~= nil
                     or body.resource_watchdog_cpu_pct ~= nil or body.resource_watchdog_rss_mb ~= nil
@@ -2360,6 +2366,134 @@ local function ai_jobs(server, client)
         return json_response(server, client, 200, { status = ai_runtime and ai_runtime.status and ai_runtime.status() or {}, jobs = {} })
     end
     json_response(server, client, 200, { status = ai_runtime.status(), jobs = ai_runtime.list_jobs() })
+end
+
+local function parse_range_seconds(value, fallback)
+    if value == nil or value == "" then
+        return fallback
+    end
+    local text = tostring(value)
+    local num, unit = text:match("^(%d+)%s*([smhdwSMHDW]?)$")
+    if not num then
+        return fallback
+    end
+    local n = tonumber(num)
+    if not n or n <= 0 then
+        return fallback
+    end
+    unit = (unit or ""):lower()
+    if unit == "m" then
+        return n * 60
+    elseif unit == "h" or unit == "" then
+        return n * 3600
+    elseif unit == "d" then
+        return n * 86400
+    elseif unit == "w" then
+        return n * 604800
+    end
+    return fallback
+end
+
+local function ai_logs(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not config or not config.list_ai_log_events then
+        return error_response(server, client, 400, "observability unavailable")
+    end
+    local query = request and request.query or {}
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local since_ts = os.time() - range
+    local until_ts = nil
+    local level = query.level
+    local stream_id = query.stream_id or query.stream
+    local limit = tonumber(query.limit) or 500
+    local rows = config.list_ai_log_events({
+        since = since_ts,
+        until = until_ts,
+        level = level,
+        stream_id = stream_id,
+        limit = limit,
+    })
+    json_response(server, client, 200, {
+        since = since_ts,
+        range = range,
+        items = rows,
+    })
+end
+
+local function ai_metrics(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not config or not config.list_ai_metrics then
+        return error_response(server, client, 400, "observability unavailable")
+    end
+    local query = request and request.query or {}
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local since_ts = os.time() - range
+    local scope = query.scope or "global"
+    local scope_id = query.id or query.stream_id or ""
+    local metric_key = query.metric or ""
+    local limit = tonumber(query.limit) or 2000
+    local rows = config.list_ai_metrics({
+        since = since_ts,
+        scope = scope,
+        scope_id = scope_id,
+        metric_key = metric_key,
+        limit = limit,
+    })
+    json_response(server, client, 200, {
+        since = since_ts,
+        range = range,
+        items = rows,
+    })
+end
+
+local function ai_summary(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not config or not config.list_ai_metrics then
+        return error_response(server, client, 400, "observability unavailable")
+    end
+    local query = request and request.query or {}
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local since_ts = os.time() - range
+    local metrics = config.list_ai_metrics({
+        since = since_ts,
+        scope = "global",
+        limit = 10000,
+    })
+    local summary = {
+        total_bitrate_kbps = 0,
+        streams_on_air = 0,
+        streams_down = 0,
+        streams_total = 0,
+        input_switch = 0,
+        alerts_error = 0,
+    }
+    local last_bucket = 0
+    for _, row in ipairs(metrics) do
+        if row.ts_bucket and row.ts_bucket > last_bucket then
+            last_bucket = row.ts_bucket
+        end
+    end
+    if last_bucket > 0 then
+        for _, row in ipairs(metrics) do
+            if row.ts_bucket == last_bucket then
+                if summary[row.metric_key] ~= nil then
+                    summary[row.metric_key] = row.value
+                end
+            end
+        end
+    end
+    json_response(server, client, 200, {
+        range = range,
+        latest_bucket = last_bucket,
+        summary = summary,
+        note = "AI summary not enabled; returning latest rollup snapshot",
+    })
 end
 
 local function ai_plan(server, client, request)
@@ -4189,6 +4323,15 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/backup" and method == "POST" then
         return telegram_backup(server, client)
+    end
+    if path == "/api/v1/ai/logs" and method == "GET" then
+        return ai_logs(server, client, request)
+    end
+    if path == "/api/v1/ai/metrics" and method == "GET" then
+        return ai_metrics(server, client, request)
+    end
+    if path == "/api/v1/ai/summary" and method == "GET" then
+        return ai_summary(server, client, request)
     end
     if path == "/api/v1/ai/jobs" and method == "GET" then
         return ai_jobs(server, client)
