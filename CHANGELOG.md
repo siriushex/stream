@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added optional Strict PNR smoke hook in `contrib/ci/smoke.sh` (MPTS_STRICT_PNR_SMOKE=1).
+- Tests:
+  - Not run (CI hook update).
+### 2026-02-05
+- Changes:
   - Added strict PNR smoke test and fixture (multi-program PAT generator).
 - Tests:
   - Not run (new CI script).
