@@ -6,6 +6,8 @@ DURATION_SEC="${2:-5}"
 EXPECT_PNRS="${EXPECT_PNRS:-}"
 EXPECT_SERVICES="${EXPECT_SERVICES:-}"
 EXPECT_PROVIDERS="${EXPECT_PROVIDERS:-}"
+EXPECT_NETWORK_ID="${EXPECT_NETWORK_ID:-}"
+EXPECT_TSID="${EXPECT_TSID:-}"
 
 LOG_FILE="$(mktemp)"
 
@@ -71,6 +73,24 @@ fi
 if ! grep -q "NIT:" "$LOG_FILE"; then
   echo "NIT not found"
   exit 1
+fi
+
+if [[ -n "$EXPECT_NETWORK_ID" ]]; then
+  if ! grep -q "NIT: network_id: ${EXPECT_NETWORK_ID}" "$LOG_FILE"; then
+    echo "NIT network_id mismatch (expected ${EXPECT_NETWORK_ID})"
+    exit 1
+  fi
+fi
+
+if [[ -n "$EXPECT_TSID" ]]; then
+  if ! grep -q "PAT: tsid: ${EXPECT_TSID}" "$LOG_FILE"; then
+    echo "PAT tsid mismatch (expected ${EXPECT_TSID})"
+    exit 1
+  fi
+  if ! grep -q "SDT: tsid: ${EXPECT_TSID}" "$LOG_FILE"; then
+    echo "SDT tsid mismatch (expected ${EXPECT_TSID})"
+    exit 1
+  fi
 fi
 
 if ! grep -q "TDT:" "$LOG_FILE"; then

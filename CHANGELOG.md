@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - Added MPTS verify assertions for NIT network_id and PAT/SDT TSID.
+- Tests:
+  - Not run (CI script update).
+### 2026-02-05
+- Changes:
   - Extended MPTS verify script to assert expected SDT service/provider names.
 - Tests:
   - Not run (CI script update).
