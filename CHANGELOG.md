@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-05
 - Changes:
+  - UI: analyze shows GPU overload reason and GPU metrics error.
+- Tests:
+  - Not run (UI change only).
+### 2026-02-05
+- Changes:
   - Transcode: publish selected GPU stats/limits/overload in status for UI.
   - UI: GPU info now reflects actual metrics and overload state.
   - AI: proxy requests write JSON body to temp file for curl payload.
