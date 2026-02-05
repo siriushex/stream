@@ -392,6 +392,25 @@ function ai_openai_client.request_json_schema(opts, callback)
     if type(schema) ~= "table" then
         return nil, "json_schema required"
     end
+
+    -- OpenAI Responses API expects json schema fields at `text.format.*`:
+    -- { type="json_schema", name="...", schema={...}, strict=true }.
+    -- Internally we use the common `{ name, strict, schema }` object, so map it.
+    local text_format = {
+        type = "json_schema",
+        name = schema.name,
+        schema = schema.schema,
+        strict = schema.strict,
+    }
+    if type(text_format.name) ~= "string" or text_format.name == "" then
+        text_format.name = "astral_schema"
+    end
+    if type(text_format.schema) ~= "table" then
+        return nil, "json_schema.schema required"
+    end
+    if text_format.strict == nil then
+        text_format.strict = true
+    end
     local api_key = opts.api_key or ai_openai_client.resolve_api_key()
     if not api_key then
         return nil, "api key missing"
@@ -442,8 +461,10 @@ function ai_openai_client.request_json_schema(opts, callback)
             parallel_tool_calls = false,
             text = {
                 format = {
-                    type = "json_schema",
-                    json_schema = schema,
+                    type = text_format.type,
+                    name = text_format.name,
+                    schema = text_format.schema,
+                    strict = text_format.strict,
                 },
             },
         }
