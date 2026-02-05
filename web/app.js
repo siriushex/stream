@@ -749,6 +749,11 @@ const elements = {
   mptsManual: $('#mpts-manual'),
   mptsEnabledStatus: $('#mpts-enabled-status'),
   btnMptsEnable: $('#btn-mpts-enable'),
+  mptsRuntime: $('#mpts-runtime'),
+  mptsRuntimeBitrate: $('#mpts-runtime-bitrate'),
+  mptsRuntimeNull: $('#mpts-runtime-null'),
+  mptsRuntimePsi: $('#mpts-runtime-psi'),
+  mptsRuntimeNote: $('#mpts-runtime-note'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4207,6 +4212,18 @@ function formatBitrate(value) {
   return `${rate}Kbit/s`;
 }
 
+function formatBitrateBps(value) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate)) return '-';
+  return formatBitrate(rate / 1000);
+}
+
+function formatPercentOneDecimal(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return `${num.toFixed(1)}%`;
+}
+
 function formatMaybeBitrate(value) {
   if (value === null || value === undefined) return '-';
   const rate = Number(value);
@@ -4678,6 +4695,7 @@ function updateMptsFields() {
   updateMptsPnrWarning();
   updateMptsInputWarning();
   updateMptsDeliveryWarning();
+  updateEditorMptsStatus();
 }
 
 function truncateText(text, max) {
@@ -11881,6 +11899,41 @@ function updateEditorOutputStatus() {
   });
 }
 
+function updateEditorMptsStatus() {
+  if (!elements.mptsRuntime) return;
+  if (!state.editing || !state.editing.stream) return;
+  const enabled = elements.streamMpts && elements.streamMpts.checked;
+  elements.mptsRuntime.classList.toggle('is-disabled', !enabled);
+  const streamId = state.editing.stream.id;
+  const stats = state.stats[streamId] || {};
+  const mpts = stats.mpts_stats;
+
+  if (!enabled) {
+    // MPTS выключен — показываем заглушку.
+    if (elements.mptsRuntimeBitrate) elements.mptsRuntimeBitrate.textContent = '-';
+    if (elements.mptsRuntimeNull) elements.mptsRuntimeNull.textContent = '-';
+    if (elements.mptsRuntimePsi) elements.mptsRuntimePsi.textContent = '-';
+    if (elements.mptsRuntimeNote) elements.mptsRuntimeNote.textContent = 'Enable MPTS to see runtime stats.';
+    return;
+  }
+
+  if (!mpts) {
+    if (elements.mptsRuntimeBitrate) elements.mptsRuntimeBitrate.textContent = '-';
+    if (elements.mptsRuntimeNull) elements.mptsRuntimeNull.textContent = '-';
+    if (elements.mptsRuntimePsi) elements.mptsRuntimePsi.textContent = '-';
+    if (elements.mptsRuntimeNote) elements.mptsRuntimeNote.textContent = 'No runtime stats yet (stream stopped or not running).';
+    return;
+  }
+
+  if (elements.mptsRuntimeBitrate) elements.mptsRuntimeBitrate.textContent = formatBitrateBps(mpts.bitrate_bps);
+  if (elements.mptsRuntimeNull) elements.mptsRuntimeNull.textContent = formatPercentOneDecimal(mpts.null_percent);
+  if (elements.mptsRuntimePsi) {
+    const psi = Number.isFinite(Number(mpts.psi_interval_ms)) ? `${Math.round(mpts.psi_interval_ms)} ms` : '-';
+    elements.mptsRuntimePsi.textContent = psi;
+  }
+  if (elements.mptsRuntimeNote) elements.mptsRuntimeNote.textContent = 'Stats update on status polling.';
+}
+
 async function loadStreamStatus() {
   try {
     const data = await apiJson('/api/v1/stream-status');
@@ -11890,6 +11943,7 @@ async function loadStreamStatus() {
     updateEditorTranscodeStatus();
     updateEditorTranscodeOutputStatus();
     updateEditorOutputStatus();
+    updateEditorMptsStatus();
   } catch (err) {
   }
 }
