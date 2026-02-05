@@ -124,6 +124,31 @@ local function should_retry(code)
     return false
 end
 
+local function detect_model_not_found(code, body)
+    if code ~= 400 and code ~= 404 then
+        return false
+    end
+    if type(body) ~= "string" or body == "" then
+        return false
+    end
+    local ok, decoded = pcall(json.decode, body)
+    if not ok or type(decoded) ~= "table" then
+        return false
+    end
+    local err = decoded.error
+    if type(err) ~= "table" then
+        return false
+    end
+    local err_code = tostring(err.code or err.type or ""):lower()
+    if err_code == "model_not_found" then
+        return true
+    end
+    local msg = tostring(err.message or ""):lower()
+    if msg:find("model") and (msg:find("not found") or msg:find("does not exist") or msg:find("no longer available")) then
+        return true
+    end
+    return false
+end
 local function extract_output_json(response)
     if type(response) ~= "table" then
         return nil, "invalid response"
@@ -183,6 +208,12 @@ local function build_url(base)
     if path:sub(-1) == "/" then
         path = path:sub(1, -2)
     end
+    if path:match("/v1$") then
+        path = path:sub(1, -4)
+    end
+    if path == "" then
+        path = ""
+    end
     return {
         host = parsed.host,
         port = parsed.port or 443,
@@ -230,11 +261,27 @@ function ai_openai_client.request_json_schema(opts, callback)
     local timeout = tonumber(opts.timeout_sec) or ai_openai_client.config.timeout_sec or 30
     local attempts = 0
     local proxies = resolve_proxy_list()
+    local models = {}
+    local primary_model = opts.model
+    if type(primary_model) ~= "string" or primary_model == "" then
+        primary_model = "gpt-5.2"
+    end
+    table.insert(models, primary_model)
+    local fallbacks = opts.model_fallbacks or opts.fallback_models
+    if type(fallbacks) ~= "table" then
+        fallbacks = { "gpt-5-mini", "gpt-4.1" }
+    end
+    for _, name in ipairs(fallbacks) do
+        if type(name) == "string" and name ~= "" and name ~= primary_model then
+            table.insert(models, name)
+        end
+    end
+    local model_index = 1
 
     local function perform_request()
         attempts = attempts + 1
         local payload = {
-            model = opts.model,
+            model = models[model_index],
             input = input,
             max_output_tokens = opts.max_output_tokens or 512,
             temperature = opts.temperature or 0,
@@ -259,6 +306,10 @@ function ai_openai_client.request_json_schema(opts, callback)
                     code = response_code,
                     rate_limits = {},
                 }
+                if detect_model_not_found(response_code, response_body) and model_index < #models then
+                    model_index = model_index + 1
+                    return perform_request()
+                end
                 if not ok then
                     if should_retry(response_code) and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
@@ -390,6 +441,11 @@ function ai_openai_client.request_json_schema(opts, callback)
                     return callback(false, "no response", meta)
                 end
                 if response.code < 200 or response.code >= 300 then
+                    if detect_model_not_found(response.code, response.content or "") and model_index < #models then
+                        model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
                     if should_retry(response.code) and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
                         if type(opts.on_retry) == "function" then
@@ -438,4 +494,6 @@ ai_openai_client._test = {
     normalize_headers = normalize_headers,
     parse_rate_limits = parse_rate_limits,
     should_retry = should_retry,
+    detect_model_not_found = detect_model_not_found,
+    build_url = build_url,
 }
