@@ -32,6 +32,8 @@
 #include <astra.h>
 
 #include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/samplefmt.h>
 
 #define MSG(_msg) "[mixaudio] " _msg
 
@@ -50,14 +52,11 @@ struct module_data_t
     mixaudio_direction_t direction;
 
     // ffmpeg
-    AVPacket davpkt;
-    AVPacket eavpkt;
-
     AVFrame *frame;
 
-    AVCodec *decoder;
+    const AVCodec *decoder;
     AVCodecContext *ctx_decode;
-    AVCodec *encoder;
+    const AVCodec *encoder;
     AVCodecContext *ctx_encode;
 
     // PES packets
@@ -75,28 +74,99 @@ struct module_data_t
     int max_count;
 };
 
-// buffer16[i  ] - L
-// buffer16[i+1] - R
-
-void mix_buffer_ll(uint8_t *buffer, int buffer_size)
+static void log_av_err(const char *what, int err)
 {
-    uint16_t *buffer16 = (uint16_t *)buffer;
-    buffer_size /= 2;
-
-    for(int i = 0; i < buffer_size; i += 2)
-        buffer16[i+1] = buffer16[i];
+    char buf[256];
+    buf[0] = '\0';
+    av_strerror(err, buf, sizeof(buf));
+    asc_log_error(MSG("%s: %s"), what, buf[0] ? buf : "(unknown error)");
 }
 
-void mix_buffer_rr(uint8_t *buffer, int buffer_size)
+static void mix_frame_lr(module_data_t *mod, AVFrame *frame)
 {
-    uint16_t *buffer16 = (uint16_t *)buffer;
-    buffer_size /= 2;
+    if(!frame)
+        return;
+    if(mod->direction != MIXAUDIO_DIRECTION_LL && mod->direction != MIXAUDIO_DIRECTION_RR)
+        return;
+    if(frame->channels < 2)
+        return;
 
-    for(int i = 0; i < buffer_size; i += 2)
-        buffer16[i] = buffer16[i+1];
+    const enum AVSampleFormat fmt = (enum AVSampleFormat)frame->format;
+    const int bps = av_get_bytes_per_sample(fmt);
+    if(bps <= 0)
+        return;
+
+    const int nb_samples = frame->nb_samples;
+    if(nb_samples <= 0)
+        return;
+
+    if(av_sample_fmt_is_planar(fmt))
+    {
+        const int plane_size = bps * nb_samples;
+        if(!frame->data[0] || !frame->data[1])
+            return;
+
+        if(mod->direction == MIXAUDIO_DIRECTION_LL)
+            memcpy(frame->data[1], frame->data[0], plane_size);
+        else
+            memcpy(frame->data[0], frame->data[1], plane_size);
+        return;
+    }
+
+    // packed/interleaved samples
+    if(!frame->data[0])
+        return;
+
+    // Only handle stereo packed formats in this simple mixer.
+    if(frame->channels != 2)
+        return;
+
+    uint8_t *p = frame->data[0];
+    const int frame_stride = 2 * bps;
+    for(int i = 0; i < nb_samples; ++i)
+    {
+        uint8_t *l = p + (i * frame_stride);
+        uint8_t *r = l + bps;
+        if(mod->direction == MIXAUDIO_DIRECTION_LL)
+            memcpy(r, l, bps);
+        else
+            memcpy(l, r, bps);
+    }
 }
 
 /* callbacks */
+
+static void pes_add_data(mpegts_pes_t *pes, const uint8_t *data, size_t size)
+{
+    if(!pes || !data || size == 0)
+        return;
+
+    if(pes->buffer_size >= PES_MAX_SIZE)
+        return;
+
+    if(pes->buffer_size + size > PES_MAX_SIZE)
+        size = PES_MAX_SIZE - pes->buffer_size;
+
+    memcpy(&pes->buffer[pes->buffer_size], data, size);
+    pes->buffer_size += size;
+
+    // Update PES_packet_length if it is present and fits.
+    if(pes->buffer_size >= PES_HEADER_SIZE)
+    {
+        const uint32_t payload_len = pes->buffer_size - PES_HEADER_SIZE;
+        if(payload_len <= 0xFFFF)
+        {
+            pes->buffer[4] = (payload_len >> 8) & 0xFF;
+            pes->buffer[5] = payload_len & 0xFF;
+        }
+        else
+        {
+            // 0 means "unspecified" in PES.
+            pes->buffer[4] = 0;
+            pes->buffer[5] = 0;
+        }
+    }
+}
 
 static void pack_es(module_data_t *mod, uint8_t *data, size_t size)
 {
@@ -109,7 +179,7 @@ static void pack_es(module_data_t *mod, uint8_t *data, size_t size)
         mod->pes_o->buffer_size = pes_hdr;
     }
 
-    mpegts_pes_add_data(mod->pes_o, data, size);
+    pes_add_data(mod->pes_o, data, size);
     ++mod->count;
 
     if(mod->count == mod->max_count)
@@ -124,59 +194,63 @@ static void pack_es(module_data_t *mod, uint8_t *data, size_t size)
 
 static bool transcode(module_data_t *mod, const uint8_t *data)
 {
-    av_init_packet(&mod->davpkt);
+    if(!mod->ctx_decode || !mod->ctx_encode || !mod->frame)
+        return false;
 
-    mod->davpkt.data = (uint8_t *)data;
-    mod->davpkt.size = mod->fsize;
+    AVPacket pkt;
+    memset(&pkt, 0, sizeof(pkt));
+    pkt.data = (uint8_t *)data;
+    pkt.size = (int)mod->fsize;
 
-    while(mod->davpkt.size > 0)
+    int ret = avcodec_send_packet(mod->ctx_decode, &pkt);
+    if(ret < 0)
     {
-        int got_frame = 0;
+        log_av_err("error while sending packet to decoder", ret);
+        mod->fsize = 0;
+        return false;
+    }
 
-        if(!mod->frame)
-            mod->frame = avcodec_alloc_frame();
-        else
-            avcodec_get_frame_defaults(mod->frame);
-
-        const int len_d = avcodec_decode_audio4(mod->ctx_decode, mod->frame
-                                                , &got_frame, &mod->davpkt);
-
-        if(len_d < 0)
+    while(1)
+    {
+        ret = avcodec_receive_frame(mod->ctx_decode, mod->frame);
+        if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            break;
+        if(ret < 0)
         {
-            asc_log_error(MSG("error while decoding"));
+            log_av_err("error while decoding", ret);
             mod->fsize = 0;
-            mod->davpkt.size = 0;
             return false;
         }
-        if(got_frame)
+
+        mix_frame_lr(mod, mod->frame);
+
+        ret = avcodec_send_frame(mod->ctx_encode, mod->frame);
+        if(ret < 0)
         {
-            const int data_size
-                = av_samples_get_buffer_size(NULL
-                                             , mod->ctx_decode->channels
-                                             , mod->frame->nb_samples
-                                             , mod->ctx_decode->sample_fmt
-                                             , 1);
-
-            if(mod->direction == MIXAUDIO_DIRECTION_LL)
-                mix_buffer_ll(mod->frame->data[0], data_size);
-            else
-                mix_buffer_rr(mod->frame->data[0], data_size);
-
-            int got_packet = 0;
-            av_init_packet(&mod->eavpkt);
-            mod->eavpkt.data = NULL;
-            mod->eavpkt.size = 0;
-            if(avcodec_encode_audio2(mod->ctx_encode, &mod->eavpkt, mod->frame, &got_packet) >= 0
-               && got_packet)
-            {
-                // TODO: read http://bbs.rosoo.net/thread-14926-1-1.html
-                pack_es(mod, mod->eavpkt.data, mod->eavpkt.size);
-                av_free_packet(&mod->eavpkt);
-            }
+            log_av_err("error while sending frame to encoder", ret);
+            av_frame_unref(mod->frame);
+            continue;
         }
 
-        mod->davpkt.size -= len_d;
-        mod->davpkt.data += len_d;
+        while(1)
+        {
+            AVPacket out_pkt;
+            memset(&out_pkt, 0, sizeof(out_pkt));
+            ret = avcodec_receive_packet(mod->ctx_encode, &out_pkt);
+            if(ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                break;
+            if(ret < 0)
+            {
+                log_av_err("error while encoding", ret);
+                break;
+            }
+
+            // TODO: read http://bbs.rosoo.net/thread-14926-1-1.html
+            pack_es(mod, out_pkt.data, (size_t)out_pkt.size);
+            av_packet_unref(&out_pkt);
+        }
+
+        av_frame_unref(mod->frame);
     }
 
     return true;
@@ -281,7 +355,7 @@ static void mux_pes(void *arg, mpegts_pes_t *pes)
                 mod->decoder = avcodec_find_decoder(codec_id);
                 if(!mod->decoder)
                 {
-                    asc_log_error(MSG("mp3 decoder is not found"));
+                    asc_log_error(MSG("mpeg audio decoder is not found"));
                     break;
                 }
 
@@ -289,7 +363,7 @@ static void mux_pes(void *arg, mpegts_pes_t *pes)
                 if(avcodec_open2(mod->ctx_decode, mod->decoder, NULL) < 0)
                 {
                     mod->decoder = NULL;
-                    asc_log_error(MSG("failed to open mp3 decoder"));
+                    asc_log_error(MSG("failed to open audio decoder"));
                     break;
                 }
 
@@ -402,13 +476,12 @@ static void module_init(module_data_t *mod)
 
     av_log_set_callback(ffmpeg_log_callback);
 
-    avcodec_register_all();
     do
     {
-        mod->encoder = avcodec_find_encoder(CODEC_ID_MP2);
+        mod->encoder = avcodec_find_encoder(AV_CODEC_ID_MP2);
         if(!mod->encoder)
         {
-            asc_log_error(MSG("mp3 encoder is not found"));
+            asc_log_error(MSG("mp2 encoder is not found"));
             astra_abort();
         }
         mod->ctx_encode = avcodec_alloc_context3(mod->encoder);
@@ -416,14 +489,20 @@ static void module_init(module_data_t *mod)
         mod->ctx_encode->sample_rate = 48000;
         mod->ctx_encode->channels = 2;
         mod->ctx_encode->sample_fmt = AV_SAMPLE_FMT_S16;
-        mod->ctx_encode->channel_layout = av_get_channel_layout("stereo");
+        mod->ctx_encode->channel_layout = AV_CH_LAYOUT_STEREO;
+        mod->ctx_encode->time_base = (AVRational){ .num = 1, .den = mod->ctx_encode->sample_rate };
         if(avcodec_open2(mod->ctx_encode, mod->encoder, NULL) < 0)
         {
-            asc_log_error(MSG("failed to open mp3 encoder"));
+            asc_log_error(MSG("failed to open mp2 encoder"));
             astra_abort();
         }
 
-        av_init_packet(&mod->davpkt);
+        mod->frame = av_frame_alloc();
+        if(!mod->frame)
+        {
+            asc_log_error(MSG("failed to allocate AVFrame"));
+            astra_abort();
+        }
 
         mod->pes_i = mpegts_pes_init(MPEGTS_PACKET_AUDIO, mod->pid, 0);
         mod->pes_o = mpegts_pes_init(MPEGTS_PACKET_AUDIO, mod->pid, 0);
@@ -435,12 +514,11 @@ static void module_destroy(module_data_t *mod)
     module_stream_destroy(mod);
 
     if(mod->ctx_encode)
-        avcodec_close(mod->ctx_encode);
+        avcodec_free_context(&mod->ctx_encode);
     if(mod->ctx_decode)
-        avcodec_close(mod->ctx_decode);
+        avcodec_free_context(&mod->ctx_decode);
     if(mod->frame)
-        avcodec_free_frame(&mod->frame);
-    av_free_packet(&mod->davpkt);
+        av_frame_free(&mod->frame);
 
     if(mod->pes_i)
         mpegts_pes_destroy(mod->pes_i);
