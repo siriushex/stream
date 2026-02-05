@@ -2074,6 +2074,17 @@
             <input type="checkbox" id="stream-transcode-log-main" />
             <span>Log ffmpeg to Astra log</span>
           </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-process-per-output" />
+            <span>One ffmpeg process per output (fault isolation)</span>
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-seamless-udp-proxy" />
+            <span>Seamless UDP/RTP cutover via local proxy (warm-switch)</span>
+          </label>
+          <div class="form-hint">
+            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
+          </div>
 
           <label class="field">
             <span>Global args (one per line)</span>
@@ -2098,6 +2109,7 @@
           <div class="form-hint" id="stream-transcode-status"></div>
           <div class="form-hint" id="stream-transcode-warmup"></div>
           <div class="form-hint" id="stream-transcode-restart"></div>
+          <div class="form-hint form-hint-pre" id="stream-transcode-workers"></div>
           <div class="form-hint form-hint-pre" id="stream-transcode-stderr"></div>
 
           <label class="checkline">
