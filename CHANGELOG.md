@@ -27,6 +27,11 @@
   - Not run (CI script update).
 ### 2026-02-05
 - Changes:
+  - Warn at runtime when DVB-C delivery is missing frequency/symbolrate/modulation.
+- Tests:
+  - Not run (log change).
+### 2026-02-05
+- Changes:
   - Warn when unsupported delivery type is set (only DVB-C is generated).
 - Tests:
   - Not run (log change).
