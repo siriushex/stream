@@ -18,8 +18,9 @@
   - Added safe AI context summary builder (streams/adapters).
   - Added AI audit log entries and retry/backoff with rate-limit header capture.
   - Added strict input validation for /api/v1/ai/plan.
+  - Added AI plan smoke test fixture.
 - Tests:
-  - Not run (scaffold-only).
+  - ./astra scripts/tests/ai_plan_smoke.lua
 ### 2026-02-05
 - Changes:
   - Added View menu toggle to show/hide disabled streams.

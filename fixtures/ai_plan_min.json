@@ -1,0 +1,11 @@
+{
+  "settings": {
+    "http_play_stream": true
+  },
+  "users": {},
+  "make_stream": [],
+  "adapters": [],
+  "dvb_tune": [],
+  "softcam": [],
+  "splitters": []
+}
