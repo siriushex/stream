@@ -590,6 +590,31 @@ local function http_play_stream_id(path)
     return rest
 end
 
+local function http_live_stream_ids(path)
+    if not path then
+        return nil
+    end
+    if path:sub(1, 6) ~= "/live/" then
+        return nil
+    end
+    local rest = path:sub(7)
+    if rest == "" then
+        return nil
+    end
+    rest = rest:gsub("%.ts$", "")
+
+    -- Prefer explicit delimiter (unambiguous): "<stream_id>~<profile_id>"
+    local base, profile = rest:match("^(.+)~([A-Za-z0-9_-]+)$")
+    if not base then
+        -- Fallback: split by the last "_" (profile ids with "_" should use "~" form).
+        base, profile = rest:match("^(.+)_([^_]+)$")
+    end
+    if not base or base == "" or not profile or profile == "" then
+        return nil
+    end
+    return base, profile
+end
+
 local web_static_handler = nil
 
 local function http_favicon(server, client, request)
@@ -1349,6 +1374,70 @@ function main()
         allow_stream(nil)
     end
 
+    local function http_live_stream(server, client, request)
+        if not request then
+            return nil
+        end
+        if request.method ~= "GET" then
+            server:abort(client, 405)
+            return nil
+        end
+
+        -- In http_upstream mode, successful response must be a single server:send() with upstream.
+        if not http_auth_check(request) then
+            server:abort(client, 401)
+            return nil
+        end
+
+        local stream_id, profile_id = http_live_stream_ids(request.path)
+        if not stream_id or not profile_id then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local job = transcode and transcode.jobs and transcode.jobs[stream_id] or nil
+        if not job or job.ladder_enabled ~= true then
+            server:abort(client, 404)
+            return nil
+        end
+        local bus = job.profile_buses and job.profile_buses[profile_id] or nil
+        if not bus or not bus.switch then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local buffer_size = math.max(128, http_play_buffer_kb)
+        if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+            buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+        end
+        local buffer_fill = math.floor(buffer_size / 4)
+        if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+            buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+        end
+
+        local query = request and request.query or nil
+        if query then
+            local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
+            if qbuf and qbuf > 0 then
+                buffer_size = math.max(128, math.floor(qbuf))
+                buffer_fill = math.floor(buffer_size / 4)
+                if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                    buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                end
+            end
+            local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
+            if qfill and qfill > 0 then
+                buffer_fill = math.min(buffer_size, math.floor(qfill))
+            end
+        end
+
+        server:send(client, {
+            upstream = bus.switch:stream(),
+            buffer_size = buffer_size,
+            buffer_fill = buffer_fill,
+        }, "video/MP2T")
+    end
+
     local function preview_route_handler(server, client, request)
         local client_data = server:data(client)
 
@@ -1577,8 +1666,11 @@ function main()
         return routes
     end
 
+    local live_upstream = http_upstream({ callback = http_live_stream })
+
     local main_routes = {
         { "/api/*", api.handle_request },
+        { "/live/*", live_upstream },
         { "/favicon.ico", http_favicon },
         { "/index.html", web_static },
     }
