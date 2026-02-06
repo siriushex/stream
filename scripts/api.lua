@@ -1920,10 +1920,10 @@ local function stream_analyze_finish(job, status, err)
         kill_input(job.input)
         job.input = nil
     end
-    if job.retained and job.channel_data and channel_release then
+    if job.retained and job.channel_data and _G.channel_release then
         -- Analyze can temporarily retain a live stream pipeline so it stays active without viewers.
         -- Release the retain when the job finishes, even on errors.
-        pcall(channel_release, job.channel_data, "analyze")
+        pcall(_G.channel_release, job.channel_data, "analyze")
         job.retained = nil
         job.channel_data = nil
     end
@@ -2040,7 +2040,9 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     -- This avoids SSRF/allowlist problems for remote inputs and works for stream:// sources.
     local entry = runtime and runtime.streams and runtime.streams[tostring(stream_id)] or nil
     local channel_data = entry and entry.channel or nil
-    local can_attach_live = channel_data and channel_data.tail and channel_retain and channel_release
+    -- stream.lua экспортирует удержание канала как _G.channel_retain/_G.channel_release
+    -- (локальные channel_retain/channel_release не видны отсюда).
+    local can_attach_live = channel_data and channel_data.tail and _G.channel_retain and _G.channel_release
 
     if not can_attach_live and not input_url then
         return error_response(server, client, 400, input_err or "input url not found")
@@ -2074,7 +2076,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
 
     if can_attach_live then
         job.channel_data = channel_data
-        local ok, retained = pcall(channel_retain, channel_data, "analyze")
+        local ok, retained = pcall(_G.channel_retain, channel_data, "analyze")
         if ok and retained then
             job.retained = true
         end
