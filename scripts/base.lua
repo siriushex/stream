@@ -542,14 +542,15 @@ function http_auth_check(request)
         return true, info
     end
 
-    -- Allow internal ffmpeg consumers (transcode/audio-fix) to read /play without credentials.
+    -- Allow internal ffmpeg consumers (transcode/audio-fix/publish) to read certain endpoints
+    -- without credentials.
     -- This is constrained to:
     -- - loopback source IP
     -- - no forwarded headers (avoid accidental reverse-proxy bypass)
     -- - explicit query flag (?internal=1)
-    -- - /play/* only
+    -- - /play/* and /live/* only
     local path = request and request.path or ""
-    if path:sub(1, 6) == "/play/" then
+    if path:sub(1, 6) == "/play/" or path:sub(1, 6) == "/live/" then
         local ip = request and request.addr or ""
         local headers = request and request.headers or {}
         local query = request and request.query or nil
