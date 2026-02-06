@@ -212,6 +212,7 @@ NOW="$(date +%s)"
 END="$((NOW + DURATION_SEC))"
 ITER=0
 LAST_SINCE="$NOW"
+LAST_ALERT_ID=0
 
 echo '{"ts":'"$NOW"',"event":"start","port":'"$PORT"',"stream_id":"'"$STREAM_ID"'"}' >>"$RESULTS_JSONL"
 
@@ -228,17 +229,44 @@ while [[ "$(date +%s)" -lt "$END" ]]; do
 
   CUTOVER_OK=0
   CUTOVER_TS=""
+  CUTOVER_ALERT_ID=""
+  CUTOVER_ID=""
+  CUTOVER_DUR_SEC=""
+  CUTOVER_READY_SEC=""
+  CUTOVER_STABLE_OK_SEC=""
   for _ in $(seq 1 40); do
-    ALERTS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/alerts?stream_id=${STREAM_ID}&code=TRANSCODE_CUTOVER_OK&since=${LAST_SINCE}&limit=5" "${AUTH_ARGS[@]}")"
-    read -r COUNT CUTOVER_TS <<<"$(ALERTS_JSON="$ALERTS_JSON" python3 - <<'PY'
+    ALERTS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/alerts?stream_id=${STREAM_ID}&code=TRANSCODE_CUTOVER_OK&since=${LAST_SINCE}&limit=50" "${AUTH_ARGS[@]}")"
+    IFS=$'\t' read -r FOUND CUTOVER_ALERT_ID CUTOVER_TS CUTOVER_ID CUTOVER_DUR_SEC CUTOVER_READY_SEC CUTOVER_STABLE_OK_SEC <<<"$(ALERTS_JSON="$ALERTS_JSON" LAST_ID="$LAST_ALERT_ID" python3 - <<'PY'
 import json, os
-rows = json.loads(os.environ.get("ALERTS_JSON") or "[]")
-rows = rows or []
-ts = rows[0].get("ts") if rows else None
-print(len(rows), ts if ts is not None else "")
+rows = json.loads(os.environ.get("ALERTS_JSON") or "[]") or []
+last_id = int(os.environ.get("LAST_ID") or "0")
+best = None
+best_id = 0
+for r in rows:
+  try:
+    rid = int(r.get("id") or 0)
+  except Exception:
+    rid = 0
+  if rid > last_id and rid > best_id:
+    best = r
+    best_id = rid
+
+if not best:
+  print("0\t\t\t\t\t\t")
+  raise SystemExit(0)
+
+meta = best.get("meta") or {}
+print("1\t%s\t%s\t%s\t%s\t%s\t%s" % (
+  str(best.get("id") or ""),
+  str(best.get("ts") or ""),
+  str(meta.get("cutover_id") or ""),
+  str(meta.get("duration_sec") or ""),
+  str(meta.get("ready_sec") or ""),
+  str(meta.get("stable_ok_sec") or ""),
+))
 PY
 )"
-    if [[ "${COUNT:-0}" -gt 0 ]]; then
+    if [[ "${FOUND:-0}" -gt 0 ]]; then
       CUTOVER_OK=1
       break
     fi
@@ -246,11 +274,14 @@ PY
   done
 
   TS1="$(date +%s)"
-  echo '{"ts":'"$TS1"',"iter":'"$ITER"',"event":"failover","ok":'"$CUTOVER_OK"',"wait_sec":'"$((TS1-TS0))"',"cutover_ts":"'"$CUTOVER_TS"'"}' >>"$RESULTS_JSONL"
+  echo '{"ts":'"$TS1"',"iter":'"$ITER"',"event":"failover","ok":'"$CUTOVER_OK"',"wait_sec":'"$((TS1-TS0))"',"alert_id":"'"$CUTOVER_ALERT_ID"'","cutover_ts":"'"$CUTOVER_TS"'","cutover_id":"'"$CUTOVER_ID"'","duration_sec":"'"$CUTOVER_DUR_SEC"'","ready_sec":"'"$CUTOVER_READY_SEC"'","stable_ok_sec":"'"$CUTOVER_STABLE_OK_SEC"'"}' >>"$RESULTS_JSONL"
   if [[ "$CUTOVER_OK" -ne 1 ]]; then
     echo "FAIL: no cutover OK after primary stop (iter=$ITER)" >&2
     tail -n 200 "$LOG_FILE" >&2 || true
     exit 1
+  fi
+  if [[ -n "${CUTOVER_ALERT_ID:-}" ]]; then
+    LAST_ALERT_ID="$CUTOVER_ALERT_ID"
   fi
   LAST_SINCE="$TS1"
 
@@ -263,15 +294,39 @@ PY
   FEED_PRIMARY_PID=$!
 
   RETURN_OK=0
+  RETURN_ALERT_ID=""
+  RETURN_TS=""
+  RETURN_CUTOVER_ID=""
   for _ in $(seq 1 "$RETURN_WAIT_SEC"); do
-    ALERTS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/alerts?stream_id=${STREAM_ID}&code=TRANSCODE_CUTOVER_OK&since=${LAST_SINCE}&limit=5" "${AUTH_ARGS[@]}")"
-    COUNT="$(ALERTS_JSON="$ALERTS_JSON" python3 - <<'PY'
+    ALERTS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/alerts?stream_id=${STREAM_ID}&code=TRANSCODE_CUTOVER_OK&since=${LAST_SINCE}&limit=50" "${AUTH_ARGS[@]}")"
+    IFS=$'\t' read -r FOUND RETURN_ALERT_ID RETURN_TS RETURN_CUTOVER_ID _REST <<<"$(ALERTS_JSON="$ALERTS_JSON" LAST_ID="$LAST_ALERT_ID" python3 - <<'PY'
 import json, os
-rows = json.loads(os.environ.get("ALERTS_JSON") or "[]")
-print(len(rows))
+rows = json.loads(os.environ.get("ALERTS_JSON") or "[]") or []
+last_id = int(os.environ.get("LAST_ID") or "0")
+best = None
+best_id = 0
+for r in rows:
+  try:
+    rid = int(r.get("id") or 0)
+  except Exception:
+    rid = 0
+  if rid > last_id and rid > best_id:
+    best = r
+    best_id = rid
+
+if not best:
+  print("0\t\t\t\t")
+  raise SystemExit(0)
+
+meta = best.get("meta") or {}
+print("1\t%s\t%s\t%s\t" % (
+  str(best.get("id") or ""),
+  str(best.get("ts") or ""),
+  str(meta.get("cutover_id") or ""),
+))
 PY
 )"
-    if [[ "$COUNT" -gt 0 ]]; then
+    if [[ "${FOUND:-0}" -gt 0 ]]; then
       RETURN_OK=1
       break
     fi
@@ -279,7 +334,10 @@ PY
   done
 
   TS2="$(date +%s)"
-  echo '{"ts":'"$TS2"',"iter":'"$ITER"',"event":"return","ok":'"$RETURN_OK"',"wait_sec":'"$((TS2-TS1))"'}' >>"$RESULTS_JSONL"
+  echo '{"ts":'"$TS2"',"iter":'"$ITER"',"event":"return","ok":'"$RETURN_OK"',"wait_sec":'"$((TS2-TS1))"',"alert_id":"'"$RETURN_ALERT_ID"'","cutover_ts":"'"$RETURN_TS"'","cutover_id":"'"$RETURN_CUTOVER_ID"'"}' >>"$RESULTS_JSONL"
+  if [[ "$RETURN_OK" -eq 1 && -n "${RETURN_ALERT_ID:-}" ]]; then
+    LAST_ALERT_ID="$RETURN_ALERT_ID"
+  fi
   LAST_SINCE="$TS2"
 
   if [[ "$CHECK_OUTPUT" == "1" ]]; then
@@ -290,4 +348,3 @@ PY
 done
 
 echo '{"ts":'"$(date +%s)"',"event":"done","iters":'"$ITER"'}' >>"$RESULTS_JSONL"
-
