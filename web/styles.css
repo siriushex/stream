@@ -2286,10 +2286,24 @@ select {
 .tabbar {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 12px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
   flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; /* Firefox */
+  padding-bottom: 2px;
+}
+
+.tabbar::-webkit-scrollbar {
+  height: 0;
+}
+
+.tabbar.is-scrollable {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
 }
 
 .modal > form {
@@ -2321,6 +2335,8 @@ select {
   color: var(--muted);
   cursor: pointer;
   padding: 6px 2px;
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .tab.active {

@@ -686,6 +686,7 @@ const elements = {
   editorClose: $('#editor-close'),
   editorCancel: $('#editor-cancel'),
   editorError: $('#editor-error'),
+  tabbars: $$('.tabbar'),
   tabs: $$('.tab'),
   tabContents: $$('.tab-content'),
   streamForm: $('#stream-form'),
@@ -6992,11 +6993,42 @@ function renderTranscodeOutputList() {
 function setTab(name, scope) {
   const tabs = scope ? $$('.tab[data-tab-scope="' + scope + '"]') : elements.tabs;
   const contents = scope ? $$('.tab-content[data-tab-scope="' + scope + '"]') : elements.tabContents;
+  let activeTab = null;
   tabs.forEach((tab) => {
-    tab.classList.toggle('active', tab.dataset.tab === name);
+    const active = tab.dataset.tab === name;
+    tab.classList.toggle('active', active);
+    if (active) activeTab = tab;
   });
+  if (activeTab && typeof activeTab.scrollIntoView === 'function') {
+    activeTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    const tabbar = activeTab.closest('.tabbar');
+    if (tabbar) updateTabbarScrollState(tabbar);
+  }
   contents.forEach((content) => {
     content.classList.toggle('active', content.dataset.tabContent === name);
+  });
+}
+
+function updateTabbarScrollState(tabbar) {
+  if (!tabbar) return;
+  const scrollable = tabbar.scrollWidth > tabbar.clientWidth + 2;
+  tabbar.classList.toggle('is-scrollable', scrollable);
+}
+
+function initTabbars() {
+  const list = Array.isArray(elements.tabbars) ? elements.tabbars : [];
+  if (!list.length) return;
+  const updateAll = () => list.forEach((tabbar) => updateTabbarScrollState(tabbar));
+  const onResize = debounce(updateAll, 150);
+  window.addEventListener('resize', onResize);
+  list.forEach((tabbar) => {
+    updateTabbarScrollState(tabbar);
+    tabbar.addEventListener('focusin', (event) => {
+      const target = event.target;
+      if (target && target.classList && target.classList.contains('tab')) {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
+    });
   });
 }
 
@@ -18873,6 +18905,7 @@ function bindEvents() {
   elements.tabs.forEach((tab) => {
     tab.addEventListener('click', () => setTab(tab.dataset.tab, tab.dataset.tabScope));
   });
+  initTabbars();
 
   elements.btnAddInput.addEventListener('click', () => {
     collectInputs();
