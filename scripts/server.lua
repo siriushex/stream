@@ -408,6 +408,14 @@ local function track_hls_session(request, route_prefix)
     if not stream_id then
         return
     end
+    -- Ladder HLS uses composite ids like "<stream_id>~<profile_id>" for variants.
+    -- For access/session tracking we want the base stream id.
+    do
+        local base = stream_id:match("^(.+)~[A-Za-z0-9_-]+$")
+        if base and base ~= "" then
+            stream_id = base
+        end
+    end
 
     local headers = request.headers or {}
     local user_agent = header_value(headers, "user-agent") or ""
@@ -1539,8 +1547,8 @@ function main()
         end
 
         local rest = request.path:sub(#prefix + 1)
-        local stream_id = rest:match("^([^/]+)/")
-        if not stream_id then
+        local requested_id = rest:match("^([^/]+)/")
+        if not requested_id then
             if hls_static then
                 return hls_static(server, client, request)
             end
@@ -1548,12 +1556,22 @@ function main()
             return nil
         end
 
-        local entry = runtime.streams[stream_id]
+        local base_id = requested_id
+        local profile_id = nil
+        do
+            local b, p = requested_id:match("^(.+)~([A-Za-z0-9_-]+)$")
+            if b and b ~= "" and p and p ~= "" then
+                base_id = b
+                profile_id = p
+            end
+        end
+
+        local entry = runtime.streams[base_id]
         local stream_cfg = entry and entry.channel and entry.channel.config or nil
         local token = auth and auth.get_token and auth.get_token(request) or nil
         ensure_token_auth(server, client, request, {
-            stream_id = stream_id,
-            stream_name = stream_cfg and stream_cfg.name or stream_id,
+            stream_id = base_id,
+            stream_name = stream_cfg and stream_cfg.name or base_id,
             stream_cfg = stream_cfg,
             proto = "hls",
             token = token,
@@ -1573,8 +1591,75 @@ function main()
                     return
                 end
                 local payload = nil
-                if hls_memfd_handler and hls_memfd_handler.get_playlist then
-                    payload = hls_memfd_handler:get_playlist(stream_id)
+
+                local is_master_index = (profile_id == nil)
+                    and (rest == (tostring(base_id) .. "/index.m3u8") or rest == (tostring(base_id) .. "/index.m3u"))
+                if is_master_index then
+                    local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
+                    if job and job.ladder_enabled == true and type(job.publish) == "table" then
+                        local variant_set = {}
+                        for _, pub in ipairs(job.publish) do
+                            if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
+                                and type(pub.variants) == "table" then
+                                for _, pid in ipairs(pub.variants) do
+                                    if pid and pid ~= "" then
+                                        variant_set[tostring(pid)] = true
+                                    end
+                                end
+                            end
+                        end
+                        local variants = {}
+                        for pid, _ in pairs(variant_set) do
+                            variants[#variants + 1] = pid
+                        end
+                        if #variants > 0 then
+                            local profiles_by_id = {}
+                            for _, p in ipairs(job.profiles or {}) do
+                                if p and p.id then
+                                    profiles_by_id[tostring(p.id)] = p
+                                end
+                            end
+                            table.sort(variants, function(a, b)
+                                local pa = profiles_by_id[a] or {}
+                                local pb = profiles_by_id[b] or {}
+                                local ba = tonumber(pa.bitrate_kbps) or 0
+                                local bb = tonumber(pb.bitrate_kbps) or 0
+                                if ba ~= bb then
+                                    return ba > bb
+                                end
+                                local ha = tonumber(pa.height) or 0
+                                local hb = tonumber(pb.height) or 0
+                                if ha ~= hb then
+                                    return ha > hb
+                                end
+                                return tostring(a) < tostring(b)
+                            end)
+                            local lines = {
+                                "#EXTM3U",
+                                "#EXT-X-VERSION:3",
+                                "#EXT-X-INDEPENDENT-SEGMENTS",
+                            }
+                            for _, pid in ipairs(variants) do
+                                local p = profiles_by_id[pid] or {}
+                                local bw = tonumber(p.bitrate_kbps) or 0
+                                if bw < 1 then bw = 1 end
+                                bw = math.floor(bw * 1000)
+                                local inf = "BANDWIDTH=" .. tostring(bw)
+                                local w = tonumber(p.width)
+                                local h = tonumber(p.height)
+                                if w and h and w > 0 and h > 0 then
+                                    inf = inf .. ",RESOLUTION=" .. tostring(math.floor(w)) .. "x" .. tostring(math.floor(h))
+                                end
+                                table.insert(lines, "#EXT-X-STREAM-INF:" .. inf)
+                                table.insert(lines, opt.hls_route .. "/" .. tostring(base_id) .. "~" .. tostring(pid) .. "/index.m3u8")
+                            end
+                            payload = table.concat(lines, "\n") .. "\n"
+                        end
+                    end
+                end
+
+                if not payload and hls_memfd_handler and hls_memfd_handler.get_playlist then
+                    payload = hls_memfd_handler:get_playlist(requested_id)
                 end
                 if not payload then
                     if hls_memfd_handler then
