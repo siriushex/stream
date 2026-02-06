@@ -1078,6 +1078,10 @@
                 <input type="checkbox" id="http-play-hls" />
                 <span>Allow HLS access to all streams</span>
               </label>
+              <div class="form-hint is-warning" id="http-play-hls-storage-warning" hidden>
+                HLS is enabled, but storage backend is Disk. This may cause high disk I/O.
+                <button class="text-link is-warning" type="button" id="btn-hls-switch-memfd">Switch to Memfd</button>
+              </div>
               <label class="field">
                 <span>HTTP play port</span>
                 <input type="number" id="http-play-port" placeholder="Custom port" />

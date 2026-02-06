@@ -208,9 +208,20 @@ local function resolve_hls_output_config(channel_data, conf)
     end
 end
 
+local warned_disk_hls_storage = false
+
 local function ensure_auto_hls_output(channel_config)
     if not setting_bool("http_play_hls", false) then
         return
+    end
+
+    if not warned_disk_hls_storage then
+        local storage = setting_string("hls_storage", "disk")
+        if storage ~= "memfd" then
+            warned_disk_hls_storage = true
+            log.warning("[hls] http_play_hls=true with hls_storage=disk: will write segments to disk. " ..
+                "For zero disk I/O use hls_storage=memfd.")
+        end
     end
 
     if channel_config.output == nil then
