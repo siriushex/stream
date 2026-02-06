@@ -1616,6 +1616,38 @@ local function dvb_scan_find_lang(descriptors)
     return nil
 end
 
+local function dvb_scan_find_descriptor(descriptors, type_ids)
+    if type(descriptors) ~= "table" then
+        return nil
+    end
+    local wanted = {}
+    if type(type_ids) == "table" then
+        for _, value in ipairs(type_ids) do
+            local id = tonumber(value)
+            if id then
+                wanted[id] = true
+            end
+        end
+    else
+        local id = tonumber(type_ids)
+        if id then
+            wanted[id] = true
+        end
+    end
+    if next(wanted) == nil then
+        return nil
+    end
+    for _, desc in ipairs(descriptors) do
+        if type(desc) == "table" then
+            local id = tonumber(desc.type_id)
+            if id and wanted[id] and desc.data ~= nil then
+                return tostring(desc.data)
+            end
+        end
+    end
+    return nil
+end
+
 local function dvb_scan_add_pat(job, data)
     if type(data.programs) ~= "table" then
         return
@@ -1660,6 +1692,10 @@ local function dvb_scan_add_pmt(job, data)
                 lang = dvb_scan_find_lang(stream.descriptors),
                 cas = dvb_scan_collect_cas(stream.descriptors),
             }
+            local desc = dvb_scan_find_descriptor(stream.descriptors, { 0x59, 0x56 })
+            if desc ~= nil then
+                item.descriptor = desc
+            end
             entry.streams[#entry.streams + 1] = item
             entry.cas = dvb_scan_merge_cas(entry.cas, item.cas)
         end
