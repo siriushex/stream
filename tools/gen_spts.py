@@ -153,9 +153,9 @@ def build_sdt(tsid: int, onid: int, services, version: int = 0) -> bytes:
     return bytes(section)
 
 
-def build_eit(service_id: int, tsid: int, onid: int, version: int = 0) -> bytes:
+def build_eit(service_id: int, tsid: int, onid: int, table_id: int = 0x4E, version: int = 0) -> bytes:
     section = bytearray()
-    section.append(0x4E)  # EIT p/f actual
+    section.append(table_id & 0xFF)  # EIT table_id
     section.extend(b"\x00\x00")
     section.extend(struct.pack("!H", service_id & 0xFFFF))
     section.append(0xC1 | ((version & 0x1F) << 1))
@@ -164,7 +164,7 @@ def build_eit(service_id: int, tsid: int, onid: int, version: int = 0) -> bytes:
     section.extend(struct.pack("!H", tsid & 0xFFFF))
     section.extend(struct.pack("!H", onid & 0xFFFF))
     section.append(0x00)  # segment_last_section_number
-    section.append(0x4E)  # last_table_id
+    section.append(table_id & 0xFF)  # last_table_id (минимальный валидный вариант)
     sec_len = len(section) - 3 + 4
     section[1] = 0xB0 | ((sec_len >> 8) & 0x0F)
     section[2] = sec_len & 0xFF
@@ -260,6 +260,9 @@ def main() -> int:
     parser.add_argument("--service-type", type=int, default=1)
     parser.add_argument("--emit-sdt", action="store_true")
     parser.add_argument("--emit-eit", action="store_true")
+    parser.add_argument("--eit-table-ids", default="0x4E",
+                        help="Comma-separated EIT table_id list (e.g. 0x4E,0x50-0x5F not supported here). "
+                             "Used only with --emit-eit.")
     parser.add_argument("--emit-cat", action="store_true")
     parser.add_argument("--pmt-ca-system-id", type=parse_int_auto, default=None,
                         help="Optional PMT CA_descriptor CA_system_id (e.g. 0x0B00)")
@@ -312,7 +315,22 @@ def main() -> int:
             "name": f"{args.service_name}{suffix}",
         })
     sdt = build_sdt(args.tsid, args.onid, services) if args.emit_sdt else None
-    eit_map = {pnr: build_eit(pnr, args.tsid, args.onid) for pnr, _, _, _ in programs} if args.emit_eit else {}
+    eit_table_ids = []
+    if args.emit_eit:
+        raw = str(args.eit_table_ids or "").strip()
+        if raw:
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    eit_table_ids.append(parse_int_auto(part))
+                except Exception:
+                    raise SystemExit(f"invalid --eit-table-ids entry: {part}")
+        if not eit_table_ids:
+            eit_table_ids = [0x4E]
+    eit_map = {pnr: [build_eit(pnr, args.tsid, args.onid, table_id=t) for t in eit_table_ids]
+               for pnr, _, _, _ in programs} if args.emit_eit else {}
     cat = build_cat() if args.emit_cat else None
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -349,9 +367,10 @@ def main() -> int:
             for pkt in packetize_section(0x0011, sdt, cc_map):
                 sock.sendto(pkt, target)
         if eit_map:
-            for pnr, eit in eit_map.items():
-                for pkt in packetize_section(0x0012, eit, cc_map):
-                    sock.sendto(pkt, target)
+            for pnr, eit_list in eit_map.items():
+                for eit in eit_list:
+                    for pkt in packetize_section(0x0012, eit, cc_map):
+                        sock.sendto(pkt, target)
         if cat:
             for pkt in packetize_section(0x0001, cat, cc_map):
                 sock.sendto(pkt, target)

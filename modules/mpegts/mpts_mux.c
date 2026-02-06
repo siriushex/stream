@@ -98,7 +98,14 @@ struct module_data_t
     const char *provider_name;
     const char *codepage;
     const char *country;
+    // utc_offset хранится в минутах.
+    // Для обратной совместимости также принимаем "часы" (|utc_offset| <= 24).
     int utc_offset;
+    bool disable_tot;
+    bool dst_has_time_of_change;
+    time_t dst_time_of_change;
+    bool dst_has_next_offset;
+    int dst_next_offset_minutes;
 
     const char *delivery;
     uint32_t frequency_khz;
@@ -130,6 +137,8 @@ struct module_data_t
 
     int eit_source_index;
     int cat_source_index;
+    bool eit_table_filter_enabled;
+    uint8_t eit_table_allowed[256];
     uint8_t lcn_descriptor_tag;
     uint8_t lcn_descriptor_tags[MPTS_MAX_LCN_TAGS];
     uint8_t lcn_descriptor_tags_count;
@@ -161,9 +170,9 @@ struct module_data_t
     asc_list_t *services;
     int service_count;
 
-    // PAT/SDT/NIT могут занимать несколько секций при большом количестве сервисов.
+    // PAT/CAT/SDT/NIT могут занимать несколько секций при большом количестве сервисов.
     asc_list_t *pat_out;
-    mpegts_psi_t *cat_out;
+    asc_list_t *cat_out;
     asc_list_t *sdt_out;
     asc_list_t *nit_out;
     mpegts_psi_t *tdt_out;
@@ -219,17 +228,70 @@ static uint16_t mjd_from_time(time_t t)
     return (uint16_t)(40587 + (t / 86400));
 }
 
-static void write_utc_time(uint8_t *dst)
+static void write_utc_time_at(uint8_t *dst, time_t t)
 {
-    const time_t now = time(NULL);
-    const struct tm *tm = gmtime(&now);
-    const uint16_t mjd = mjd_from_time(now);
+    if(t < 0)
+        t = 0;
+    const struct tm *tm = gmtime(&t);
+    const uint16_t mjd = mjd_from_time(t);
 
     dst[0] = (uint8_t)(mjd >> 8);
     dst[1] = (uint8_t)(mjd & 0xFF);
     dst[2] = to_bcd((uint8_t)(tm ? tm->tm_hour : 0));
     dst[3] = to_bcd((uint8_t)(tm ? tm->tm_min : 0));
     dst[4] = to_bcd((uint8_t)(tm ? tm->tm_sec : 0));
+}
+
+static void write_utc_time(uint8_t *dst)
+{
+    write_utc_time_at(dst, time(NULL));
+}
+
+static bool parse_utc_time_value(const char *value, time_t *out)
+{
+    if(!value || !out)
+        return false;
+
+    while(*value == ' ' || *value == '\t')
+        value++;
+    if(*value == '\0')
+        return false;
+
+    // 1) Epoch seconds.
+    char *endptr = NULL;
+    long long epoch = strtoll(value, &endptr, 10);
+    if(endptr && endptr != value && *endptr == '\0')
+    {
+        if(epoch < 0)
+            epoch = 0;
+        *out = (time_t)epoch;
+        return true;
+    }
+
+    // 2) ISO-8601 UTC: YYYY-MM-DDTHH:MM:SSZ
+    int y = 0, mon = 0, d = 0, h = 0, m = 0, s = 0;
+    int parsed = sscanf(value, "%d-%d-%dT%d:%d:%dZ", &y, &mon, &d, &h, &m, &s);
+    if(parsed != 6)
+        parsed = sscanf(value, "%d-%d-%d %d:%d:%d", &y, &mon, &d, &h, &m, &s);
+    if(parsed == 6)
+    {
+        struct tm tm;
+        memset(&tm, 0, sizeof(tm));
+        tm.tm_year = y - 1900;
+        tm.tm_mon = mon - 1;
+        tm.tm_mday = d;
+        tm.tm_hour = h;
+        tm.tm_min = m;
+        tm.tm_sec = s;
+        // timegm() converts tm in UTC into epoch seconds.
+        const time_t t = timegm(&tm);
+        if(t == (time_t)-1)
+            return false;
+        *out = t;
+        return true;
+    }
+
+    return false;
 }
 
 static int64_t pcr_diff(uint64_t a, uint64_t b)
@@ -1013,6 +1075,96 @@ static void parse_lcn_descriptor_tags(module_data_t *mod, const char *value)
     free(dup);
 }
 
+static void parse_eit_table_ids(module_data_t *mod, const char *value)
+{
+    if(!mod || !value || value[0] == '\0')
+        return;
+
+    memset(mod->eit_table_allowed, 0, sizeof(mod->eit_table_allowed));
+    mod->eit_table_filter_enabled = true;
+    size_t set_count = 0;
+
+    char *dup = strdup(value);
+    if(!dup)
+        return;
+
+    char *saveptr = NULL;
+    for(char *token = strtok_r(dup, ",", &saveptr); token; token = strtok_r(NULL, ",", &saveptr))
+    {
+        while(*token == ' ' || *token == '\t')
+            token++;
+        if(*token == '\0')
+            continue;
+
+        // Trim end.
+        char *end = token + strlen(token);
+        while(end > token && (end[-1] == ' ' || end[-1] == '\t'))
+            end--;
+        *end = '\0';
+
+        char *dash = strchr(token, '-');
+        if(dash)
+        {
+            *dash = '\0';
+            char *rhs = dash + 1;
+            while(*rhs == ' ' || *rhs == '\t') rhs++;
+
+            char *end_a = NULL;
+            char *end_b = NULL;
+            long a = strtol(token, &end_a, 0);
+            long b = strtol(rhs, &end_b, 0);
+            if(end_a == token || end_b == rhs || a < 0 || a > 255 || b < 0 || b > 255)
+            {
+                asc_log_warning(MSG("eit_table_ids: неверный диапазон: %s-%s"), token, rhs);
+                continue;
+            }
+            if(a > b)
+            {
+                long tmp = a;
+                a = b;
+                b = tmp;
+            }
+            for(long id = a; id <= b; ++id)
+            {
+                if(id < 0x4E || id > 0x6F)
+                    continue;
+                if(!mod->eit_table_allowed[id])
+                {
+                    mod->eit_table_allowed[id] = 1;
+                    set_count++;
+                }
+            }
+            continue;
+        }
+
+        char *endptr = NULL;
+        long id = strtol(token, &endptr, 0);
+        if(endptr == token || id < 0 || id > 255)
+        {
+            asc_log_warning(MSG("eit_table_ids: неверное значение: %s"), token);
+            continue;
+        }
+        if(id < 0x4E || id > 0x6F)
+        {
+            asc_log_warning(MSG("eit_table_ids: table_id 0x%02lX вне диапазона EIT (0x4E..0x6F), игнорируем"), id);
+            continue;
+        }
+        if(!mod->eit_table_allowed[id])
+        {
+            mod->eit_table_allowed[id] = 1;
+            set_count++;
+        }
+    }
+
+    free(dup);
+
+    if(set_count == 0)
+    {
+        asc_log_warning(MSG("eit_table_ids задан, но список пустой после парсинга; используем default фильтр"));
+        mod->eit_table_filter_enabled = false;
+    }
+}
+
 static bool is_utf8_codepage(const char *value)
 {
     if(!value || value[0] == '\0') return false;
@@ -1021,17 +1173,76 @@ static bool is_utf8_codepage(const char *value)
     return false;
 }
 
+static bool is_iso_8859_codepage(const char *value, int number)
+{
+    if(!value || value[0] == '\0')
+        return false;
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "iso-8859-%d", number);
+    if(!strcasecmp(value, buf))
+        return true;
+
+    snprintf(buf, sizeof(buf), "iso8859-%d", number);
+    if(!strcasecmp(value, buf))
+        return true;
+
+    return false;
+}
+
+static bool is_iso_8859_1_codepage(const char *value)
+{
+    if(!value || value[0] == '\0') return false;
+    if(is_iso_8859_codepage(value, 1)) return true;
+    if(!strcasecmp(value, "latin-1")) return true;
+    if(!strcasecmp(value, "latin1")) return true;
+    return false;
+}
+
+static size_t dvb_charset_prefix(const char *codepage, uint8_t out[3], bool *supported)
+{
+    if(supported) *supported = true;
+    if(!codepage || codepage[0] == '\0')
+        return 0;
+
+    if(is_utf8_codepage(codepage))
+    {
+        // DVB UTF-8 marker (ETSI EN 300 468).
+        out[0] = 0x15;
+        return 1;
+    }
+
+    // ISO-8859-1 is DVB default in many receivers, use empty marker.
+    if(is_iso_8859_1_codepage(codepage))
+        return 0;
+
+    // One-byte DVB charset markers.
+    if(is_iso_8859_codepage(codepage, 5)) { out[0] = 0x01; return 1; } // Cyrillic
+    if(is_iso_8859_codepage(codepage, 7)) { out[0] = 0x03; return 1; } // Greek
+    if(is_iso_8859_codepage(codepage, 8)) { out[0] = 0x04; return 1; } // Hebrew
+    if(is_iso_8859_codepage(codepage, 9)) { out[0] = 0x05; return 1; } // Turkish
+
+    // Extended markers (0x10 + 2 bytes). Минимальный набор под decode().
+    if(is_iso_8859_codepage(codepage, 2)) { out[0] = 0x10; out[1] = 0x00; out[2] = 0x02; return 3; }
+    if(is_iso_8859_codepage(codepage, 4)) { out[0] = 0x10; out[1] = 0x00; out[2] = 0x04; return 3; }
+
+    if(supported) *supported = false;
+    return 0;
+}
+
 static size_t write_encoded_text(uint8_t *dst, size_t max_len, const char *text,
-                                 size_t raw_len, bool use_utf8)
+                                 size_t raw_len, const uint8_t *prefix, size_t prefix_len)
 {
     if(!dst || !text || max_len == 0 || raw_len == 0)
         return 0;
 
     size_t pos = 0;
-    if(use_utf8)
+    if(prefix && prefix_len > 0)
     {
-        // DVB UTF-8 marker (ETSI EN 300 468)
-        dst[pos++] = 0x15;
+        // DVB charset marker is a part of the string payload.
+        const size_t take = (prefix_len <= max_len) ? prefix_len : max_len;
+        memcpy(&dst[pos], prefix, take);
+        pos += take;
         if(pos >= max_len)
             return pos;
     }
@@ -1086,20 +1297,34 @@ static void build_pat(module_data_t *mod)
     }
 }
 
-static void build_cat(module_data_t *mod)
+static uint16_t init_cat_section(module_data_t *mod, mpegts_psi_t *psi)
 {
-    uint8_t *buf = mod->cat_out->buffer;
+    uint8_t *buf = psi->buffer;
+
     buf[0] = 0x01; // CAT
     buf[1] = 0x80 | 0x30; // section_syntax_indicator + reserved
     buf[2] = 0x00; // section_length (set later)
     buf[3] = 0xFF; // reserved
     buf[4] = 0xFF; // reserved
     buf[5] = 0x01; // current_next_indicator
-    CAT_SET_VERSION(mod->cat_out, mod->cat_version);
-    buf[6] = 0x00; // section_number
-    buf[7] = 0x00; // last_section_number
+    CAT_SET_VERSION(psi, mod->cat_version);
+    buf[6] = 0x00; // section_number (set later)
+    buf[7] = 0x00; // last_section_number (set later)
 
-    size_t pos = 8;
+    return 8;
+}
+
+static void build_cat(module_data_t *mod)
+{
+    if(!mod->cat_out)
+        return;
+
+    clear_psi_section_list(mod->cat_out);
+
+    mpegts_psi_t *sec = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
+    uint8_t *buf = sec->buffer;
+    uint16_t pos = init_cat_section(mod, sec);
+
     if(mod->cat_ca)
     {
         asc_list_for(mod->cat_ca)
@@ -1114,14 +1339,15 @@ static void build_cat(module_data_t *mod)
             if(need > (size_t)MPTS_DESC_MAX_LEN + 2)
                 continue;
 
-            if(pos + need + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
+            if((size_t)pos + need + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
             {
-                if(!mod->cat_ca_truncated_warned)
-                {
-                    asc_log_warning(MSG("CAT CA_descriptors не помещаются в одну секцию, обрезаем"));
-                    mod->cat_ca_truncated_warned = true;
-                }
-                break;
+                sec->buffer_size = pos + CRC32_SIZE;
+                PSI_SET_SIZE(sec);
+                asc_list_insert_tail(mod->cat_out, sec);
+
+                sec = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
+                buf = sec->buffer;
+                pos = init_cat_section(mod, sec);
             }
 
             buf[pos + 0] = 0x09; // CA_descriptor
@@ -1132,13 +1358,25 @@ static void build_cat(module_data_t *mod)
             buf[pos + 5] = (uint8_t)(entry->ca_pid & 0xFF);
             if(priv_len > 0 && entry->private_data)
                 memcpy(&buf[pos + 6], entry->private_data, priv_len);
-            pos += need;
+            pos += (uint16_t)need;
         }
     }
 
-    mod->cat_out->buffer_size = (uint16_t)(pos + CRC32_SIZE);
-    PSI_SET_SIZE(mod->cat_out);
-    PSI_SET_CRC32(mod->cat_out);
+    sec->buffer_size = pos + CRC32_SIZE;
+    PSI_SET_SIZE(sec);
+    asc_list_insert_tail(mod->cat_out, sec);
+
+    const size_t sections = asc_list_size(mod->cat_out);
+    const uint8_t last = (sections > 0) ? (uint8_t)(sections - 1) : 0;
+    uint8_t idx = 0;
+    asc_list_for(mod->cat_out)
+    {
+        mpegts_psi_t *psi = (mpegts_psi_t *)asc_list_data(mod->cat_out);
+        psi->buffer[6] = idx;
+        psi->buffer[7] = last;
+        PSI_SET_CRC32(psi);
+        ++idx;
+    }
 }
 
 static uint16_t init_sdt_section(module_data_t *mod, mpegts_psi_t *psi)
@@ -1171,7 +1409,8 @@ static void build_sdt(module_data_t *mod)
     mpegts_psi_t *sec = mpegts_psi_init(MPEGTS_PACKET_SDT, 0x0011);
     uint8_t *buf = sec->buffer;
     uint16_t pos = init_sdt_section(mod, sec);
-    const bool use_utf8 = is_utf8_codepage(mod->codepage);
+    uint8_t charset_prefix[3];
+    const size_t charset_prefix_len = dvb_charset_prefix(mod->codepage, charset_prefix, NULL);
 
     asc_list_for(mod->services)
     {
@@ -1185,29 +1424,29 @@ static void build_sdt(module_data_t *mod)
 
         size_t provider_raw_len = strlen(provider);
         size_t service_raw_len = strlen(service_name);
-        const size_t max_raw = use_utf8 ? 254 : 255;
+        const size_t max_raw = (charset_prefix_len > 0) ? (255 - charset_prefix_len) : 255;
         if(provider_raw_len > max_raw) provider_raw_len = max_raw;
         if(service_raw_len > max_raw) service_raw_len = max_raw;
 
-        size_t provider_len = provider_raw_len + ((use_utf8 && provider_raw_len > 0) ? 1 : 0);
-        size_t service_len = service_raw_len + ((use_utf8 && service_raw_len > 0) ? 1 : 0);
+        size_t provider_len = provider_raw_len + ((provider_raw_len > 0) ? charset_prefix_len : 0);
+        size_t service_len = service_raw_len + ((service_raw_len > 0) ? charset_prefix_len : 0);
 
-        if(3 + provider_len + 1 + service_len > 255)
+        if(3 + provider_len + service_len > 255)
         {
-            size_t max_service_len = (255 > (4 + provider_len)) ? (255 - 4 - provider_len) : 0;
+            size_t max_service_len = (255 > (3 + provider_len)) ? (255 - 3 - provider_len) : 0;
             if(service_len > max_service_len)
             {
-                if(use_utf8)
+                if(charset_prefix_len > 0)
                 {
-                    if(max_service_len <= 1)
+                    if(max_service_len <= charset_prefix_len)
                     {
                         service_raw_len = 0;
                         service_len = 0;
                     }
                     else
                     {
-                        service_raw_len = max_service_len - 1;
-                        service_len = service_raw_len + 1;
+                        service_raw_len = max_service_len - charset_prefix_len;
+                        service_len = service_raw_len + charset_prefix_len;
                     }
                 }
                 else
@@ -1221,14 +1460,20 @@ static void build_sdt(module_data_t *mod)
         uint8_t desc[512];
         uint16_t desc_len = 0;
         desc[desc_len++] = 0x48; // service_descriptor
-        desc[desc_len++] = (uint8_t)(3 + provider_len + 1 + service_len);
+        desc[desc_len++] = (uint8_t)(3 + provider_len + service_len);
         desc[desc_len++] = (uint8_t)(svc->has_service_type_id ? svc->service_type_id : 1);
         desc[desc_len++] = (uint8_t)provider_len;
         desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
-                                                 provider, provider_raw_len, use_utf8);
+                                                 provider,
+                                                 provider_raw_len,
+                                                 (provider_raw_len > 0 && charset_prefix_len > 0) ? charset_prefix : NULL,
+                                                 (provider_raw_len > 0) ? charset_prefix_len : 0);
         desc[desc_len++] = (uint8_t)service_len;
         desc_len += (uint16_t)write_encoded_text(&desc[desc_len], sizeof(desc) - desc_len,
-                                                 service_name, service_raw_len, use_utf8);
+                                                 service_name,
+                                                 service_raw_len,
+                                                 (service_raw_len > 0 && charset_prefix_len > 0) ? charset_prefix : NULL,
+                                                 (service_raw_len > 0) ? charset_prefix_len : 0);
 
         const uint16_t item_len = 5 + desc_len;
         if((size_t)pos + item_len + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
@@ -1419,13 +1664,20 @@ static void build_nit(module_data_t *mod)
         uint16_t network_desc_start = pos;
         if(mod->network_name && mod->network_name[0] != '\0')
         {
-            const bool use_utf8 = is_utf8_codepage(mod->codepage);
+            uint8_t charset_prefix[3];
+            const size_t charset_prefix_len = dvb_charset_prefix(mod->codepage, charset_prefix, NULL);
             size_t raw_len = strlen(mod->network_name);
-            const size_t max_raw = use_utf8 ? 254 : 255;
+            const size_t max_raw = (charset_prefix_len > 0) ? (255 - charset_prefix_len) : 255;
             if(raw_len > max_raw) raw_len = max_raw;
 
             uint8_t tmp[256];
-            const size_t out_len = write_encoded_text(tmp, sizeof(tmp), mod->network_name, raw_len, use_utf8);
+            const size_t prefix_len = (raw_len > 0) ? charset_prefix_len : 0;
+            const size_t out_len = write_encoded_text(tmp,
+                                                      sizeof(tmp),
+                                                      mod->network_name,
+                                                      raw_len,
+                                                      (prefix_len > 0) ? charset_prefix : NULL,
+                                                      prefix_len);
             if(out_len > 0)
                 pos = append_descriptor(buf, pos, 0x40, tmp, (uint8_t)out_len);
         }
@@ -1705,10 +1957,15 @@ static void build_tot(module_data_t *mod)
     uint16_t desc_start = pos;
     if(mod->country && mod->country[0] != '\0')
     {
-        const int offset_minutes = mod->utc_offset * 60;
+        const int offset_minutes = mod->utc_offset;
         const int abs_minutes = offset_minutes >= 0 ? offset_minutes : -offset_minutes;
         const uint8_t offset_h = (uint8_t)(abs_minutes / 60);
         const uint8_t offset_m = (uint8_t)(abs_minutes % 60);
+
+        const int next_minutes = mod->dst_has_next_offset ? mod->dst_next_offset_minutes : offset_minutes;
+        const int abs_next = next_minutes >= 0 ? next_minutes : -next_minutes;
+        const uint8_t next_h = (uint8_t)(abs_next / 60);
+        const uint8_t next_m = (uint8_t)(abs_next % 60);
 
         uint8_t desc[13];
         memset(desc, 0, sizeof(desc));
@@ -1719,10 +1976,12 @@ static void build_tot(module_data_t *mod)
         desc[4] = to_bcd(offset_h);
         desc[5] = to_bcd(offset_m);
 
-        // time_of_change: текущее время (без DST логики)
-        write_utc_time(&desc[6]);
-        desc[11] = desc[4];
-        desc[12] = desc[5];
+        // time_of_change/next_time_offset: задаются вручную (general.dst),
+        // иначе используем "сейчас" и текущий offset.
+        const time_t toc = mod->dst_has_time_of_change ? mod->dst_time_of_change : time(NULL);
+        write_utc_time_at(&desc[6], toc);
+        desc[11] = to_bcd(next_h);
+        desc[12] = to_bcd(next_m);
 
         pos = append_descriptor(buf, pos, 0x58, desc, sizeof(desc));
     }
@@ -1872,7 +2131,7 @@ static void on_si_timer(void *arg)
     if(mod->pat_out)
         demux_psi_section_list(mod, mod->pat_out);
     if(mod->cat_out && !mod->pass_cat)
-        mpegts_psi_demux(mod->cat_out, mpts_send_psi, mod);
+        demux_psi_section_list(mod, mod->cat_out);
 
     asc_list_for(mod->services)
     {
@@ -1891,7 +2150,7 @@ static void on_si_timer(void *arg)
     {
         build_tdt(mod);
         mpegts_psi_demux(mod->tdt_out, mpts_send_psi, mod);
-        if(mod->country && mod->country[0] != '\0')
+        if(!mod->disable_tot && mod->country && mod->country[0] != '\0')
         {
             build_tot(mod);
             mpegts_psi_demux(mod->tot_out, mpts_send_psi, mod);
@@ -1945,8 +2204,16 @@ static void on_eit(void *arg, mpegts_psi_t *psi)
     const uint8_t table_id = psi->buffer[0];
     if(table_id < 0x4E || table_id > 0x6F)
         return;
-    if(table_id == 0x4F || table_id >= 0x60)
-        return; // только EIT Actual
+    if(mod->eit_table_filter_enabled)
+    {
+        if(!mod->eit_table_allowed[table_id])
+            return;
+    }
+    else
+    {
+        if(table_id == 0x4F || table_id >= 0x60)
+            return; // только EIT Actual
+    }
 
     const uint16_t pnr_in = EIT_GET_PNR(psi);
     mpts_service_t *svc = find_service_by_pnr_in(mod, pnr_in);
@@ -2351,9 +2618,43 @@ static void module_init(module_data_t *mod)
     module_option_string("provider_name", &mod->provider_name, NULL);
     module_option_string("codepage", &mod->codepage, NULL);
     module_option_string("country", &mod->country, NULL);
-    if(module_option_number("utc_offset", &tmp)) mod->utc_offset = tmp;
-    if(mod->codepage && mod->codepage[0] != '\0' && !is_utf8_codepage(mod->codepage))
-        asc_log_warning(MSG("codepage %s не поддерживается; используется исходная строка"), mod->codepage);
+    if(module_option_number("utc_offset", &tmp))
+    {
+        // Совместимость:
+        // - если |utc_offset| <= 24, считаем что это часы (старые конфиги/тесты),
+        // - иначе это минуты (новый UI).
+        if(tmp >= -24 && tmp <= 24)
+            mod->utc_offset = tmp * 60;
+        else
+            mod->utc_offset = tmp;
+    }
+    const char *dst_toc = NULL;
+    if(module_option_string("dst_time_of_change", &dst_toc, NULL) && dst_toc && dst_toc[0] != '\0')
+    {
+        time_t toc = 0;
+        if(parse_utc_time_value(dst_toc, &toc))
+        {
+            mod->dst_has_time_of_change = true;
+            mod->dst_time_of_change = toc;
+        }
+        else
+        {
+            asc_log_warning(MSG("dst_time_of_change '%s' не распознан"), dst_toc);
+        }
+    }
+    if(module_option_number("dst_next_offset_minutes", &tmp))
+    {
+        mod->dst_has_next_offset = true;
+        mod->dst_next_offset_minutes = tmp;
+    }
+    if(mod->codepage && mod->codepage[0] != '\0')
+    {
+        uint8_t prefix[3];
+        bool supported = true;
+        dvb_charset_prefix(mod->codepage, prefix, &supported);
+        if(!supported)
+            asc_log_warning(MSG("codepage %s не поддерживается; используется исходная строка"), mod->codepage);
+    }
 
     module_option_string("delivery", &mod->delivery, NULL);
     if(module_option_number("frequency", &tmp)) mod->frequency_khz = (uint32_t)tmp;
@@ -2417,6 +2718,7 @@ static void module_init(module_data_t *mod)
     module_option_boolean("pass_sdt", &mod->pass_sdt);
     module_option_boolean("pass_eit", &mod->pass_eit);
     module_option_boolean("pass_tdt", &mod->pass_tdt);
+    module_option_boolean("disable_tot", &mod->disable_tot);
     module_option_boolean("pass_cat", &mod->pass_cat);
     module_option_boolean("pcr_restamp", &mod->pcr_restamp);
     module_option_boolean("pcr_smoothing", &mod->pcr_smoothing);
@@ -2445,6 +2747,10 @@ static void module_init(module_data_t *mod)
             parse_cat_ca_list(mod, ca_list);
         }
     }
+
+    const char *eit_table_ids = NULL;
+    if(module_option_string("eit_table_ids", &eit_table_ids, NULL) && eit_table_ids && eit_table_ids[0] != '\0')
+        parse_eit_table_ids(mod, eit_table_ids);
 
     if(module_option_number("eit_source", &tmp) && tmp > 0)
         mod->eit_source_index = tmp;
@@ -2505,7 +2811,7 @@ static void module_init(module_data_t *mod)
     }
 
     mod->pat_out = asc_list_init();
-    mod->cat_out = mpegts_psi_init(MPEGTS_PACKET_CAT, 0x0001);
+    mod->cat_out = asc_list_init();
     mod->sdt_out = asc_list_init();
     mod->nit_out = asc_list_init();
     mod->tdt_out = mpegts_psi_init(MPEGTS_PACKET_TDT, 0x0014);
@@ -2564,7 +2870,11 @@ static void module_destroy(module_data_t *mod)
         clear_psi_section_list(mod->pat_out);
         asc_list_destroy(mod->pat_out);
     }
-    if(mod->cat_out) mpegts_psi_destroy(mod->cat_out);
+    if(mod->cat_out)
+    {
+        clear_psi_section_list(mod->cat_out);
+        asc_list_destroy(mod->cat_out);
+    }
     if(mod->sdt_out)
     {
         clear_psi_section_list(mod->sdt_out);

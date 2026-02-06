@@ -54,6 +54,9 @@ jobs:
           contrib/ci/smoke_mpts_dvbs.sh
           contrib/ci/smoke_mpts_multisection.sh
           contrib/ci/smoke_mpts_cat.sh
+          contrib/ci/smoke_mpts_cat_multisection.sh
+          contrib/ci/smoke_mpts_tot_disable.sh
+          contrib/ci/smoke_mpts_eit_mask.sh
 
   transcode-workers-smoke:
     runs-on: ubuntu-latest
