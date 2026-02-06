@@ -434,11 +434,15 @@ function preview.start(stream_id, opts)
     end
 
     -- Дешёвый путь: если у потока уже есть HLS output, возвращаем его без preview-сессии.
-    local out = find_hls_output(stream.channel.config or {})
-    if out then
-        local url = build_direct_hls_url(stream_id, out)
-        if url and url ~= "" then
-            return { mode = "hls", url = url }
+    -- Но если UI запросил video_only (фолбэк для браузерной совместимости), HLS нельзя использовать,
+    -- потому что там может быть неподдерживаемое аудио (например MP2).
+    if not video_only then
+        local out = find_hls_output(stream.channel.config or {})
+        if out then
+            local url = build_direct_hls_url(stream_id, out)
+            if url and url ~= "" then
+                return { mode = "hls", url = url }
+            end
         end
     end
 
