@@ -79,19 +79,50 @@ local function parse_duration_seconds(value)
     if unit == "s" or unit == "sec" or unit == "secs" then
         return n
     end
+    if unit == "second" or unit == "seconds" then
+        return n
+    end
     if unit == "m" or unit == "min" or unit == "mins" then
+        return n * 60
+    end
+    if unit == "minute" or unit == "minutes" then
         return n * 60
     end
     if unit == "h" or unit == "hr" or unit == "hrs" then
         return n * 3600
     end
+    if unit == "hour" or unit == "hours" then
+        return n * 3600
+    end
     return nil
+end
+
+local function extract_retry_after_seconds(text)
+    if type(text) ~= "string" or text == "" then
+        return nil
+    end
+    local lower = text:lower()
+    -- OpenAI (and some proxies) embed retry hints in error messages:
+    -- "Please try again in 20s" / "try again in 2 seconds" / "retry after 100ms".
+    local raw = lower:match("try again in%s+([%d%.]+%s*[a-z]+)")
+        or lower:match("retry after%s+([%d%.]+%s*[a-z]+)")
+        or lower:match("please retry in%s+([%d%.]+%s*[a-z]+)")
+    if not raw then
+        return nil
+    end
+    raw = raw:gsub("%s+", "")
+    return parse_duration_seconds(raw)
 end
 
 function ai_openai_client.compute_retry_delay(meta, fallback_delay)
     local delay = tonumber(fallback_delay) or 15
     local rl = type(meta) == "table" and meta.rate_limits or nil
+    local has_rl = false
     if type(rl) == "table" then
+        for _ in pairs(rl) do
+            has_rl = true
+            break
+        end
         local function apply_candidate(candidate)
             local parsed = parse_duration_seconds(candidate)
             if parsed and parsed > delay then
@@ -101,6 +132,26 @@ function ai_openai_client.compute_retry_delay(meta, fallback_delay)
         apply_candidate(rl["retry-after"])
         apply_candidate(rl["x-ratelimit-reset-requests"])
         apply_candidate(rl["x-ratelimit-reset-tokens"])
+    end
+    if type(meta) == "table" then
+        local from_msg = extract_retry_after_seconds(meta.error_detail)
+        if from_msg and from_msg > delay then
+            delay = from_msg
+        end
+        -- If we got HTTP 429 without rate-limit headers, fall back to safer defaults.
+        -- This avoids rapid-fire retries against proxies that strip headers.
+        if meta.code == 429 and not has_rl then
+            local attempt = tonumber(meta.attempts) or 1
+            local min_delay = 10
+            if attempt >= 3 then
+                min_delay = 60
+            elseif attempt >= 2 then
+                min_delay = 30
+            end
+            if delay < min_delay then
+                delay = min_delay
+            end
+        end
     end
     delay = math.ceil(delay)
     if delay < 1 then
@@ -366,6 +417,45 @@ local function should_retry(code)
         return true
     end
     return false
+end
+
+local function detect_quota_exceeded_429(body)
+    if type(body) ~= "string" or body == "" then
+        return false
+    end
+    local ok, decoded = pcall(json.decode, body)
+    if not ok or type(decoded) ~= "table" then
+        return false
+    end
+    local err = decoded.error
+    if type(err) ~= "table" then
+        return false
+    end
+    local err_code = tostring(err.code or err.type or ""):lower()
+    if err_code == "insufficient_quota" or err_code == "billing_hard_limit_reached" then
+        return true
+    end
+    local msg = tostring(err.message or ""):lower()
+    if msg:find("exceeded your current quota", 1, true) then
+        return true
+    end
+    if msg:find("insufficient quota", 1, true) then
+        return true
+    end
+    if msg:find("billing") and msg:find("hard limit") then
+        return true
+    end
+    return false
+end
+
+local function should_retry_response(code, body)
+    if not should_retry(code) then
+        return false
+    end
+    if code == 429 and detect_quota_exceeded_429(body) then
+        return false
+    end
+    return true
 end
 
 local function detect_model_not_found(code, body)
@@ -699,7 +789,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                     return perform_request()
                 end
                 if not ok then
-                    if should_retry(response_code) and attempts < max_attempts then
+                    if should_retry_response(response_code, response_body) and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
                         delay = ai_openai_client.compute_retry_delay(meta, delay)
                         if type(opts.on_retry) == "function" then
@@ -863,7 +953,7 @@ function ai_openai_client.request_json_schema(opts, callback)
                         perform_request()
                         return
                     end
-                    if should_retry(response.code) and attempts < max_attempts then
+                    if should_retry_response(response.code, response.content or "") and attempts < max_attempts then
                         local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
                         delay = ai_openai_client.compute_retry_delay(meta, delay)
                         if type(opts.on_retry) == "function" then

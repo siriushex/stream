@@ -27,6 +27,13 @@ assert_eq(ai_openai_client.compute_retry_delay({ rate_limits = { ["x-ratelimit-r
 -- Hard cap at 300s.
 assert_eq(ai_openai_client.compute_retry_delay({ rate_limits = { ["retry-after"] = "900s" } }, 1), 300, "cap")
 
+-- HTTP 429 without rate-limit headers should back off more aggressively.
+assert_eq(ai_openai_client.compute_retry_delay({ code = 429, attempts = 1 }, 1), 10, "429 min backoff (attempt 1)")
+assert_eq(ai_openai_client.compute_retry_delay({ code = 429, attempts = 2 }, 5), 30, "429 min backoff (attempt 2)")
+assert_eq(ai_openai_client.compute_retry_delay({ code = 429, attempts = 3 }, 15), 60, "429 min backoff (attempt 3)")
+
+-- Some proxies strip rate headers but keep retry hints in the message body.
+assert_eq(ai_openai_client.compute_retry_delay({ code = 429, error_detail = "Please try again in 12s." }, 1), 12, "429 retry hint parsing")
+
 print("ai_openai_retry_delay_unit: ok")
 astra.exit()
-

@@ -17643,7 +17643,7 @@ function startAiChatPolling(jobId) {
   if (elements.aiChatSend) elements.aiChatSend.disabled = true;
   if (elements.aiChatStop) elements.aiChatStop.disabled = false;
   const startMs = Date.now();
-  const deadlineMs = startMs + (90 * 1000);
+  const deadlineMs = startMs + (10 * 60 * 1000);
 
   const scheduleNext = (delayMs) => {
     state.aiChatPoll = setTimeout(() => pollOnce(), delayMs);
