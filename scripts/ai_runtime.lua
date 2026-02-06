@@ -697,7 +697,7 @@ local function schedule_openai_plan(job, prompt, context_opts)
     job.status = "running"
     job.request_id = req_id
     job.attempts = 0
-    job.max_attempts = 3
+    job.max_attempts = tonumber(ai_runtime.config.max_attempts) or 6
     ai_openai_client.request_json_schema({
         input = input,
         json_schema = build_json_schema(),
@@ -778,9 +778,18 @@ function ai_runtime.configure()
     cfg.model = setting_string("ai_model", "gpt-5.2")
     cfg.max_tokens = setting_number("ai_max_tokens", 512)
     cfg.temperature = setting_number("ai_temperature", 0.2)
+    cfg.max_attempts = setting_number("ai_max_attempts", 6)
     cfg.store = setting_bool("ai_store", false)
     cfg.allow_apply = setting_bool("ai_allow_apply", false)
     cfg.allowed_chat_ids = setting_list("ai_telegram_allowed_chat_ids")
+
+    cfg.max_attempts = math.floor(tonumber(cfg.max_attempts) or 6)
+    if cfg.max_attempts < 1 then
+        cfg.max_attempts = 1
+    end
+    if cfg.max_attempts > 10 then
+        cfg.max_attempts = 10
+    end
 
     local has_key = false
     if ai_openai_client and ai_openai_client.has_api_key then
