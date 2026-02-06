@@ -3343,61 +3343,95 @@
         </button>
       </div>
       <form id="softcam-form">
-        <label class="checkline">
-          <input type="checkbox" id="softcam-enabled" checked />
-          <span>Enable</span>
-        </label>
-        <label class="field">
-          <span>ID</span>
-          <input type="text" id="softcam-id" placeholder="cam_main" />
-        </label>
-        <label class="field">
-          <span>Name</span>
-          <input type="text" id="softcam-name" placeholder="Main softcam" />
-        </label>
-        <label class="field">
-          <span>Type</span>
-          <input type="text" id="softcam-type" placeholder="newcamd" />
-        </label>
-        <label class="field">
-          <span>Host</span>
-          <input type="text" id="softcam-host" placeholder="127.0.0.1" />
-        </label>
-        <label class="field">
-          <span>Port</span>
-          <input type="number" id="softcam-port" placeholder="10000" />
-        </label>
-        <label class="field">
-          <span>User</span>
-          <input type="text" id="softcam-user" placeholder="user" />
-        </label>
-        <label class="field">
-          <span>Password</span>
-          <input type="password" id="softcam-pass" placeholder="(leave empty to keep)" />
-          <small class="form-hint" id="softcam-pass-hint"></small>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="softcam-disable-emm" />
-          <span>Disable EMM</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="softcam-split-cam" />
-          <span>Split CAM</span>
-        </label>
-        <label class="field">
-          <span>Shift</span>
-          <input type="text" id="softcam-shift" placeholder="0" />
-        </label>
-        <label class="field">
-          <span>Comment</span>
-          <input type="text" id="softcam-comment" placeholder="Optional note" />
-        </label>
+        <!-- newcamd единственный поддерживаемый тип softcam, поэтому храним как hidden -->
+        <input type="hidden" id="softcam-type" value="newcamd" />
+
+        <div class="modal-body-scroll">
+          <label class="checkline">
+            <input type="checkbox" id="softcam-enabled" checked />
+            <span>Enable</span>
+          </label>
+
+          <div class="tabbar softcam-tabbar">
+            <button class="tab active" type="button" data-tab="general" data-tab-scope="softcam">General</button>
+            <button class="tab" type="button" data-tab="advanced" data-tab-scope="softcam">Advanced</button>
+          </div>
+
+          <div class="tab-content active" data-tab-content="general" data-tab-scope="softcam">
+            <div class="softcam-grid">
+              <label class="field">
+                <span>Name</span>
+                <input type="text" id="softcam-name" placeholder="AUBOX" />
+              </label>
+              <label class="field">
+                <span>ID</span>
+                <input type="text" id="softcam-id" placeholder="aubox" />
+              </label>
+              <label class="field">
+                <span>Host</span>
+                <input type="text" id="softcam-host" placeholder="127.0.0.1" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="number" id="softcam-port" placeholder="10000" />
+              </label>
+              <label class="field">
+                <span>User</span>
+                <input type="text" id="softcam-user" placeholder="user" />
+              </label>
+              <label class="field">
+                <span>Password</span>
+                <input type="password" id="softcam-pass" placeholder="(leave empty to keep)" />
+                <small class="form-hint" id="softcam-pass-hint"></small>
+              </label>
+            </div>
+          </div>
+
+          <div class="tab-content" data-tab-content="advanced" data-tab-scope="softcam">
+            <div class="softcam-grid">
+              <label class="field span-2">
+                <span>DES Key</span>
+                <input type="text" id="softcam-key" placeholder="0102030405060708091011121314" />
+                <small class="form-hint">Default: 0102030405060708091011121314</small>
+              </label>
+              <label class="field">
+                <span>CaID</span>
+                <input type="text" id="softcam-caid" placeholder="0500" />
+              </label>
+              <label class="field">
+                <span>Timeout</span>
+                <input type="number" id="softcam-timeout" placeholder="8" />
+                <small class="form-hint">Seconds (default: 8)</small>
+              </label>
+
+              <div class="checkline-row span-2">
+                <label class="checkline">
+                  <input type="checkbox" id="softcam-disable-emm" />
+                  <span>Disable EMM</span>
+                </label>
+                <label class="checkline">
+                  <input type="checkbox" id="softcam-split-cam" />
+                  <span>Split CAM</span>
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Shift</span>
+                <input type="text" id="softcam-shift" placeholder="0" />
+              </label>
+              <label class="field span-2">
+                <span>Comment</span>
+                <input type="text" id="softcam-comment" placeholder="Optional note" />
+              </label>
+            </div>
+          </div>
+        </div>
         <div class="modal-footer">
           <div class="footer-actions">
             <button class="btn" type="submit" id="softcam-save">Save</button>
             <button class="btn ghost" type="button" id="softcam-cancel">Cancel</button>
-            <div class="form-note" id="softcam-error"></div>
           </div>
+          <div class="form-note" id="softcam-error"></div>
         </div>
       </form>
     </div>
