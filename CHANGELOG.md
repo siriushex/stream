@@ -19,6 +19,11 @@
   - `contrib/ci/smoke_preview.sh`
 ### 2026-02-06
 - Changes:
+  - JSON: support `\\uXXXX` (incl. surrogate pairs) and `\\b`/`\\f` escapes, plus exponent numbers (improves OpenAI Responses parsing reliability).
+- Tests:
+  - `./astral scripts/tests/json_decode_unicode_unit.lua`
+### 2026-02-06
+- Changes:
   - AI: when the outer OpenAI Responses JSON is invalid, extract `output_text` directly from the raw body to keep chat working behind flaky proxies.
 - Tests:
   - `./astral scripts/tests/ai_openai_raw_output_extract_unit.lua`
