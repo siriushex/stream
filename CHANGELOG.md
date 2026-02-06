@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - UI: add `ui_polling_interval_sec` (Settings -> General: "Polling") to control Dashboard status/bitrate refresh; on page load it polls every ~2s for ~30s then ramps to the selected interval.
+  - UI: fix view naming defaults so polling follows the active tabs (`dashboard`, `logs`) without requiring a manual re-open.
+  - Transcode: improve late-joiner compatibility (repeat SPS/PPS on keyframes, resend TS headers, and set MP4 codec tags for DASH stream-copy).
+  - CI: add DASH ladder publish smoke (`contrib/ci/smoke_transcode_ladder_dash_publish.sh`).
+- Tests:
+  - Not run locally (covered by CI).
+### 2026-02-06
+- Changes:
   - AI Chat: add `delete all disable channel` command chip to purge all disabled streams (no OpenAI call).
   - AI Chat: command runs via API (no plan/apply) and refreshes the streams list after completion.
   - API: add admin endpoint `POST /api/v1/streams/purge-disabled` (snapshot-safe config change).
