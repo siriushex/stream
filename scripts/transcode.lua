@@ -48,6 +48,13 @@ local function ensure_list(value)
     return {}
 end
 
+local function ensure_array(value)
+    if type(value) == "table" then
+        return value
+    end
+    return {}
+end
+
 local function pick_input_entry(cfg, active_id, failover_enabled)
     local inputs = ensure_list(cfg and cfg.input)
     if #inputs == 0 then
