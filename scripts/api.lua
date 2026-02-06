@@ -698,7 +698,14 @@ local function start_stream_preview(server, client, request, stream_id)
     if not preview or not preview.start then
         return error_response(server, client, 501, "preview unavailable")
     end
-    local result, err, code = preview.start(stream_id)
+    local opts = {}
+    local q = request and request.query or {}
+    local vo = q.video_only or q.videoonly or q.vo or nil
+    if vo ~= nil then
+        local v = tostring(vo):lower()
+        opts.video_only = (v == "1" or v == "true" or v == "yes" or v == "on")
+    end
+    local result, err, code = preview.start(stream_id, opts)
     if not result then
         return error_response(server, client, code or 500, err or "preview failed")
     end

@@ -210,6 +210,7 @@ const state = {
   playerUrl: '',
   playerShareUrl: '',
   playerToken: null,
+  playerTriedVideoOnly: false,
   playerStartTimer: null,
   playerStarting: false,
   analyzeJobId: null,
@@ -14276,7 +14277,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206a`;
+  const src = `/vendor/hls.min.js?v=20260206b`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -15972,7 +15973,8 @@ async function startPlayer(stream, opts = {}) {
 
   if (!url) {
     try {
-      const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start`, { method: 'POST' });
+      const qs = opts.forceVideoOnly ? '?video_only=1' : '';
+      const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start${qs}`, { method: 'POST' });
       url = payload.url;
       token = payload.token;
       mode = payload.mode || (payload.token ? 'preview' : 'direct');
@@ -16011,6 +16013,7 @@ function openPlayer(stream) {
   state.playerUrl = '';
   state.playerShareUrl = getPlayUrl(stream) || '';
   state.playerToken = null;
+  state.playerTriedVideoOnly = false;
   if (elements.playerUrl) {
     elements.playerUrl.textContent = state.playerShareUrl || '-';
     elements.playerUrl.title = state.playerShareUrl || '';
@@ -16030,6 +16033,7 @@ async function closePlayer() {
   state.playerUrl = '';
   state.playerShareUrl = '';
   state.playerToken = null;
+  state.playerTriedVideoOnly = false;
   updatePlayerActions();
 }
 
@@ -18199,6 +18203,7 @@ function bindEvents() {
       const stream = getPlayerStream();
       if (!stream) return;
       await stopPlayerSession();
+      state.playerTriedVideoOnly = false;
       startPlayer(stream);
     });
   }
@@ -18214,8 +18219,23 @@ function bindEvents() {
     elements.playerVideo.addEventListener('waiting', () => {
       setPlayerLoading(true, 'Буферизация...');
     });
-    elements.playerVideo.addEventListener('error', () => {
-      const message = formatVideoError(elements.playerVideo.error);
+    elements.playerVideo.addEventListener('error', async () => {
+      const mediaErr = elements.playerVideo.error;
+      // Частый кейс: H.264 видео + MP2 аудио. Браузер не поддерживает MP2,
+      // поэтому HLS падает как "format not supported". В предпросмотре
+      // можно обойти это без транскодинга, отключив audio.
+      if (mediaErr && mediaErr.code === 4) {
+        const stream = getPlayerStream();
+        if (stream && !state.playerTriedVideoOnly) {
+          state.playerTriedVideoOnly = true;
+          setPlayerLoading(true, 'Запуск без аудио...');
+          clearPlayerError();
+          await stopPlayerSession();
+          startPlayer(stream, { forceVideoOnly: true });
+          return;
+        }
+      }
+      const message = formatVideoError(mediaErr);
       setPlayerError(message);
     });
   }
