@@ -828,6 +828,13 @@ const elements = {
   streamTranscodeLogMain: $('#stream-transcode-log-main'),
   streamTranscodeProcessPerOutput: $('#stream-transcode-process-per-output'),
   streamTranscodeSeamlessUdpProxy: $('#stream-transcode-seamless-udp-proxy'),
+  streamTranscodeLadderEnabled: $('#stream-transcode-ladder-enabled'),
+  streamTranscodeLadderBlock: $('#stream-transcode-ladder-block'),
+  streamTranscodeOutputsBlock: $('#stream-transcode-outputs-block'),
+  streamTranscodeLadderPreset2: $('#stream-transcode-ladder-preset-2'),
+  streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
+  streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
+  streamTranscodePublishJson: $('#stream-transcode-publish-json'),
   streamTranscodePreset: $('#stream-transcode-preset'),
   streamTranscodePresetApply: $('#stream-transcode-preset-apply'),
   streamTranscodeInputUrl: $('#stream-transcode-input-url'),
@@ -5562,6 +5569,110 @@ function updateSeamlessProxyToggle() {
   elements.streamTranscodeSeamlessUdpProxy.disabled = !enabled;
   if (!enabled) {
     elements.streamTranscodeSeamlessUdpProxy.checked = false;
+  }
+}
+
+function formatJson(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (err) {
+    return '';
+  }
+}
+
+function parseJsonValue(text, label) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const reason = err && err.message ? err.message : String(err);
+    throw new Error(`${label}: invalid JSON (${reason})`);
+  }
+}
+
+function getLadderPresetProfiles(mode) {
+  const fps = 25;
+  const base = [
+    {
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      fps,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3000,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 128,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    },
+    {
+      id: 'HDMedium',
+      name: '540p',
+      width: 960,
+      height: 540,
+      fps,
+      bitrate_kbps: 1000,
+      maxrate_kbps: 1500,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 128,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    },
+  ];
+  if (mode === '3') {
+    base.push({
+      id: 'SDHigh',
+      name: '360p',
+      width: 640,
+      height: 360,
+      fps,
+      bitrate_kbps: 700,
+      maxrate_kbps: 900,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 96,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    });
+  }
+  return base;
+}
+
+function getLadderPresetPublish(mode) {
+  const variants = mode === '3'
+    ? ['HDHigh', 'HDMedium', 'SDHigh']
+    : ['HDHigh', 'HDMedium'];
+
+  return [
+    { type: 'hls', enabled: true, variants },
+    { type: 'dash', enabled: false, variants },
+  ];
+}
+
+function applyTranscodeLadderPreset(mode) {
+  if (!elements.streamTranscodeLadderEnabled) return;
+  elements.streamTranscodeLadderEnabled.checked = true;
+  updateTranscodeLadderToggle();
+  if (elements.streamTranscodeProfilesJson) {
+    elements.streamTranscodeProfilesJson.value = formatJson(getLadderPresetProfiles(mode));
+  }
+  if (elements.streamTranscodePublishJson) {
+    elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
+  }
+}
+
+function updateTranscodeLadderToggle() {
+  if (!elements.streamTranscodeLadderEnabled) return;
+  const enabled = elements.streamTranscodeLadderEnabled.checked;
+  if (elements.streamTranscodeLadderBlock) {
+    elements.streamTranscodeLadderBlock.hidden = !enabled;
+  }
+  if (elements.streamTranscodeOutputsBlock) {
+    elements.streamTranscodeOutputsBlock.hidden = enabled;
   }
 }
 
@@ -11835,8 +11946,20 @@ function openEditor(stream, isNew) {
     if (elements.streamTranscodeSeamlessUdpProxy) {
       elements.streamTranscodeSeamlessUdpProxy.checked = tc.seamless_udp_proxy === true;
     }
+    if (elements.streamTranscodeLadderEnabled) {
+      const ladderEnabled = Array.isArray(tc.profiles) && tc.profiles.length > 0;
+      elements.streamTranscodeLadderEnabled.checked = ladderEnabled;
+      if (elements.streamTranscodeProfilesJson) {
+        elements.streamTranscodeProfilesJson.value = ladderEnabled ? formatJson(tc.profiles) : '';
+      }
+      if (elements.streamTranscodePublishJson) {
+        const publish = Array.isArray(tc.publish) ? tc.publish : [];
+        elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
+      }
+    }
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
+    updateTranscodeLadderToggle();
   }
 
   state.inputs = normalizeInputs(config.input || []);
@@ -12412,6 +12535,56 @@ function readStreamForm() {
     const commonArgs = linesToArgs(elements.streamTranscodeCommonArgs && elements.streamTranscodeCommonArgs.value);
     if (commonArgs.length) transcode.common_output_args = commonArgs;
 
+    const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
+    if (ladderEnabled) {
+      const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+        'Profiles (Transcode tab)');
+      if (!Array.isArray(profiles) || profiles.length === 0) {
+        throw new Error('Transcode ladder profiles are required (Transcode tab)');
+      }
+      const seen = new Set();
+      profiles.forEach((profile, index) => {
+        if (!profile || typeof profile !== 'object') {
+          throw new Error(`Profile #${index + 1}: must be an object (Transcode tab)`);
+        }
+        const pid = String(profile.id || '').trim();
+        if (!pid) {
+          throw new Error(`Profile #${index + 1}: id is required (Transcode tab)`);
+        }
+        if (!/^[A-Za-z0-9_-]+$/.test(pid)) {
+          throw new Error(`Profile #${index + 1}: id must be URL-safe (letters, numbers, _, -) (Transcode tab)`);
+        }
+        if (seen.has(pid)) {
+          throw new Error(`Profile #${index + 1}: duplicate id "${pid}" (Transcode tab)`);
+        }
+        seen.add(pid);
+        const width = toNumber(profile.width);
+        const height = toNumber(profile.height);
+        const bitrate = toNumber(profile.bitrate_kbps);
+        if (width === undefined || width <= 0) {
+          throw new Error(`Profile #${index + 1}: width must be > 0 (Transcode tab)`);
+        }
+        if (height === undefined || height <= 0) {
+          throw new Error(`Profile #${index + 1}: height must be > 0 (Transcode tab)`);
+        }
+        if (bitrate === undefined || bitrate <= 0) {
+          throw new Error(`Profile #${index + 1}: bitrate_kbps must be > 0 (Transcode tab)`);
+        }
+      });
+      transcode.profiles = profiles;
+
+      const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
+        'Publish targets (Transcode tab)');
+      if (publish !== null) {
+        if (!Array.isArray(publish)) {
+          throw new Error('Publish targets must be a JSON array (Transcode tab)');
+        }
+        if (publish.length) {
+          transcode.publish = publish;
+        }
+      }
+    }
+
     const baseWatchdog = state.transcodeWatchdogDefaults || normalizeOutputWatchdog(null, TRANSCODE_WATCHDOG_DEFAULTS);
     const tcOutputs = state.transcodeOutputs.map((output) => {
       const cleaned = {};
@@ -12440,12 +12613,16 @@ function readStreamForm() {
       cleaned.watchdog = watchdog;
 
       return cleaned;
-    });
-    tcOutputs.forEach(validateTranscodeOutput);
-    if (!tcOutputs.length) {
-      throw new Error('Transcode outputs are required (Transcode tab)');
+    }).filter((output) => output && output.url);
+    if (!ladderEnabled) {
+      tcOutputs.forEach(validateTranscodeOutput);
+      if (!tcOutputs.length) {
+        throw new Error('Transcode outputs are required (Transcode tab)');
+      }
     }
-    transcode.outputs = tcOutputs;
+    if (tcOutputs.length) {
+      transcode.outputs = tcOutputs;
+    }
 
     config.transcode = transcode;
   }
@@ -12929,9 +13106,11 @@ function updateEditorTranscodeStatus() {
     }
   }
   if (elements.streamTranscodeWorkers) {
+    const lines = [];
+
     const workers = Array.isArray(transcode.workers) ? transcode.workers : [];
     if (workers.length) {
-      const lines = [`Workers: ${workers.length}`];
+      lines.push(`Workers: ${workers.length}`);
       workers.forEach((worker) => {
         if (!worker) return;
         const index = Number.isFinite(worker.output_index) ? worker.output_index : '?';
@@ -12954,6 +13133,52 @@ function updateEditorTranscodeStatus() {
         }
         lines.push(parts.join(' | '));
       });
+    }
+
+    const profiles = Array.isArray(transcode.profiles_status) ? transcode.profiles_status : [];
+    if (profiles.length) {
+      lines.push(`Profiles: ${profiles.length}`);
+      profiles.forEach((profile) => {
+        if (!profile) return;
+        const pid = profile.profile_id || '?';
+        const state = profile.state || 'n/a';
+        const parts = [`${pid} ${state}`];
+        if (profile.pid) parts.push(`pid ${profile.pid}`);
+        if (profile.bus_enabled) {
+          const port = Number(profile.bus_listen_port) || 0;
+          parts.push(port ? `bus 127.0.0.1:${port}` : 'bus enabled');
+          const src = profile.bus_active_source || null;
+          if (src && src.addr && src.port) {
+            parts.push(`src ${src.addr}:${src.port}`);
+          }
+          if (Number.isFinite(profile.bus_senders_count)) {
+            parts.push(`senders ${profile.bus_senders_count}`);
+          }
+        }
+        if (profile.restart_reason_code) parts.push(`restart ${profile.restart_reason_code}`);
+        const cutoverHint = formatWorkerCutoverHint(profile.last_cutover);
+        if (cutoverHint) parts.push(cutoverHint);
+        lines.push(parts.join(' | '));
+      });
+    }
+
+    const publish = Array.isArray(transcode.publish_status) ? transcode.publish_status : [];
+    if (publish.length) {
+      lines.push(`Publish: ${publish.length}`);
+      publish.forEach((worker) => {
+        if (!worker) return;
+        const type = worker.type || 'publish';
+        const pid = worker.profile_id || '?';
+        const state = worker.state || 'n/a';
+        const parts = [`${type}:${pid} ${state}`];
+        if (worker.pid) parts.push(`pid ${worker.pid}`);
+        if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        if (worker.url) parts.push(worker.url);
+        lines.push(parts.join(' | '));
+      });
+    }
+
+    if (lines.length) {
       elements.streamTranscodeWorkers.textContent = lines.join('\n');
       if (transcodeState === 'ERROR') {
         elements.streamTranscodeWorkers.classList.add('is-error');
@@ -20063,6 +20288,19 @@ function bindEvents() {
   }
   if (elements.streamTranscodeProcessPerOutput && elements.streamTranscodeSeamlessUdpProxy) {
     elements.streamTranscodeProcessPerOutput.addEventListener('change', updateSeamlessProxyToggle);
+  }
+  if (elements.streamTranscodeLadderEnabled) {
+    elements.streamTranscodeLadderEnabled.addEventListener('change', updateTranscodeLadderToggle);
+  }
+  if (elements.streamTranscodeLadderPreset2) {
+    elements.streamTranscodeLadderPreset2.addEventListener('click', () => {
+      applyTranscodeLadderPreset('2');
+    });
+  }
+  if (elements.streamTranscodeLadderPreset3) {
+    elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
+      applyTranscodeLadderPreset('3');
+    });
   }
 
   if (elements.transcodeOutputClose) {
