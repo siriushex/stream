@@ -23,10 +23,20 @@
 
 #include "base.h"
 
+enum
+{
+    ASC_LOG_LEVEL_ERROR   = 0,
+    ASC_LOG_LEVEL_WARNING = 1,
+    ASC_LOG_LEVEL_INFO    = 2,
+    ASC_LOG_LEVEL_DEBUG   = 3,
+};
+
 void asc_log_set_stdout(bool);
 void asc_log_set_debug(bool);
+void asc_log_set_level(int);
 void asc_log_set_color(bool);
 void asc_log_set_file(const char *);
+void asc_log_set_rotate(size_t max_bytes, int keep);
 #ifndef _WIN32
 void asc_log_set_syslog(const char *);
 #endif

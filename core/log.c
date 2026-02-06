@@ -23,15 +23,20 @@
 #ifndef _WIN32
 #include <syslog.h>
 #endif
+#include <sys/stat.h>
 #include <stdarg.h>
 
 static struct
 {
     int fd;
     bool color;
-    bool debug;
+    int level;
     bool sout;
     char *filename;
+    size_t file_bytes;
+    size_t rotate_max_bytes;
+    int rotate_keep;
+    time_t rotate_fail_ts;
 #ifndef _WIN32
     char *syslog;
 #endif
@@ -39,9 +44,13 @@ static struct
 {
     0,
     false,
-    false,
+    ASC_LOG_LEVEL_INFO,
     true,
     NULL,
+    0,
+    0,
+    0,
+    0,
 #ifndef _WIN32
     NULL,
 #endif
@@ -81,9 +90,83 @@ static const char * _get_type_str(int type)
     }
 }
 
+static int _get_type_level(int type)
+{
+    switch(type & 0x000000FF)
+    {
+        case LOG_TYPE_ERROR: return ASC_LOG_LEVEL_ERROR;
+        case LOG_TYPE_WARNING: return ASC_LOG_LEVEL_WARNING;
+        case LOG_TYPE_INFO: return ASC_LOG_LEVEL_INFO;
+        case LOG_TYPE_DEBUG: return ASC_LOG_LEVEL_DEBUG;
+        default: return ASC_LOG_LEVEL_INFO;
+    }
+}
+
+static bool _log_rotate_try(void)
+{
+    if(!__log.filename || __log.fd <= 1)
+        return false;
+    if(__log.rotate_max_bytes == 0 || __log.rotate_keep <= 0)
+        return false;
+    if(__log.file_bytes < __log.rotate_max_bytes)
+        return false;
+
+    const time_t now = time(NULL);
+    if(__log.rotate_fail_ts && (now - __log.rotate_fail_ts) < 60)
+        return false;
+
+    // Close first so that next open/create is clean even if rename fails.
+    close(__log.fd);
+    __log.fd = 0;
+
+    // Rotate: <file> -> <file>.1 -> <file>.2 -> ... -> <file>.<keep>
+    const size_t base_len = strlen(__log.filename);
+    for(int i = __log.rotate_keep - 1; i >= 1; --i)
+    {
+        const size_t src_len = base_len + 1 + 20 + 1;
+        char *src = malloc(src_len);
+        char *dst = malloc(src_len);
+        if(!src || !dst)
+        {
+            free(src);
+            free(dst);
+            __log.rotate_fail_ts = now;
+            asc_log_hup();
+            return false;
+        }
+        snprintf(src, src_len, "%s.%d", __log.filename, i);
+        snprintf(dst, src_len, "%s.%d", __log.filename, i + 1);
+        if(rename(src, dst) == -1 && errno != ENOENT)
+            __log.rotate_fail_ts = now;
+        free(src);
+        free(dst);
+    }
+
+    const size_t first_len = base_len + 1 + 20 + 1;
+    char *first = malloc(first_len);
+    if(!first)
+    {
+        __log.rotate_fail_ts = now;
+        asc_log_hup();
+        return false;
+    }
+    snprintf(first, first_len, "%s.%d", __log.filename, 1);
+    if(rename(__log.filename, first) == -1 && errno != ENOENT)
+        __log.rotate_fail_ts = now;
+    free(first);
+
+    asc_log_hup();
+    if(__log.rotate_fail_ts != now)
+        __log.rotate_fail_ts = 0;
+    return __log.fd > 1;
+}
+
 __fmt_printf(2, 0)
 static void _log(int type, const char *msg, va_list ap)
 {
+    if(_get_type_level(type) > __log.level)
+        return;
+
     char buffer[4096];
 
     size_t len_1 = 0; // to skip time stamp
@@ -129,8 +212,22 @@ static void _log(int type, const char *msg, va_list ap)
             fprintf(stderr, "[log] failed to write to the stdout [%s]\n", strerror(errno));
     }
 
-    if(__log.fd && write(__log.fd, buffer, len_2) == -1)
-        fprintf(stderr, "[log] failed to write to the file [%s]\n", strerror(errno));
+    if(__log.fd > 1)
+    {
+        if(__log.rotate_max_bytes > 0 && __log.rotate_keep > 0)
+            _log_rotate_try();
+        if(__log.fd > 1)
+        {
+            if(write(__log.fd, buffer, len_2) == -1)
+            {
+                fprintf(stderr, "[log] failed to write to the file [%s]\n", strerror(errno));
+            }
+            else
+            {
+                __log.file_bytes += len_2;
+            }
+        }
+    }
 }
 
 void asc_log_info(const char *msg, ...)
@@ -159,9 +256,6 @@ void asc_log_warning(const char *msg, ...)
 
 void asc_log_debug(const char *msg, ...)
 {
-    if(!__log.debug)
-        return;
-
     va_list ap;
     va_start(ap, msg);
     _log(LOG_TYPE_DEBUG, msg, ap);
@@ -170,7 +264,7 @@ void asc_log_debug(const char *msg, ...)
 
 bool asc_log_is_debug(void)
 {
-    return __log.debug;
+    return __log.level >= ASC_LOG_LEVEL_DEBUG;
 }
 
 void asc_log_hup(void)
@@ -180,6 +274,7 @@ void asc_log_hup(void)
         close(__log.fd);
         __log.fd = 0;
     }
+    __log.file_bytes = 0;
 
     if(!__log.filename)
         return;
@@ -196,12 +291,17 @@ void asc_log_hup(void)
         __log.fd = 0;
         __log.sout = true;
         asc_log_error("[core/log] failed to open %s (%s)", __log.filename, strerror(errno));
+        return;
     }
+
+    struct stat st;
+    if(fstat(__log.fd, &st) == 0 && st.st_size > 0)
+        __log.file_bytes = (size_t)st.st_size;
 }
 
 void asc_log_core_destroy(void)
 {
-    if(__log.fd != 1)
+    if(__log.fd > 1)
     {
         close(__log.fd);
         __log.fd = 0;
@@ -217,7 +317,7 @@ void asc_log_core_destroy(void)
 #endif
 
     __log.color = false;
-    __log.debug = false;
+    __log.level = ASC_LOG_LEVEL_INFO;
     __log.sout = true;
     if(__log.filename)
     {
@@ -233,7 +333,24 @@ void asc_log_set_stdout(bool val)
 
 void asc_log_set_debug(bool val)
 {
-    __log.debug = val;
+    if(val)
+    {
+        __log.level = ASC_LOG_LEVEL_DEBUG;
+    }
+    else
+    {
+        if(__log.level == ASC_LOG_LEVEL_DEBUG)
+            __log.level = ASC_LOG_LEVEL_INFO;
+    }
+}
+
+void asc_log_set_level(int val)
+{
+    if(val < ASC_LOG_LEVEL_ERROR)
+        val = ASC_LOG_LEVEL_ERROR;
+    else if(val > ASC_LOG_LEVEL_DEBUG)
+        val = ASC_LOG_LEVEL_DEBUG;
+    __log.level = val;
 }
 
 void asc_log_set_color(bool val)
@@ -253,6 +370,16 @@ void asc_log_set_file(const char *val)
         __log.filename = strdup(val);
 
     asc_log_hup();
+}
+
+void asc_log_set_rotate(size_t max_bytes, int keep)
+{
+    __log.rotate_max_bytes = max_bytes;
+    __log.rotate_keep = keep;
+    if(__log.rotate_keep < 0)
+        __log.rotate_keep = 0;
+    if(__log.rotate_max_bytes == 0 || __log.rotate_keep == 0)
+        __log.rotate_fail_ts = 0;
 }
 
 #ifndef _WIN32
