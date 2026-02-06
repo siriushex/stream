@@ -1185,11 +1185,24 @@ local function build_failover_inputs(cfg, label)
         return astra and astra.features and astra.features.ssl
     end
     for idx, entry in ipairs(inputs) do
-        local url = get_input_url(entry)
-        if not url or url == "" then
+        local source_url = get_input_url(entry)
+        if not source_url or source_url == "" then
             invalid = true
         end
-        local parsed = url and parse_url(url) or nil
+        -- Failover probes must be able to read stream refs ("stream://id") because ladder mode uses /play fanout.
+        -- Convert stream refs to an internal /play URL so init_input_module + warmup/compat probes keep working.
+        local probe_url = source_url
+        do
+            local play_id = extract_play_id_from_input(entry)
+            if play_id then
+                local play_url = build_transcode_play_url(play_id)
+                if play_url and play_url ~= "" then
+                    probe_url = play_url
+                end
+            end
+        end
+
+        local parsed = probe_url and parse_url(probe_url) or nil
         if not parsed or not parsed.format or not init_input_module or not init_input_module[parsed.format] then
             invalid = true
         end
@@ -1201,7 +1214,8 @@ local function build_failover_inputs(cfg, label)
         end
         items[idx] = {
             config = parsed,
-            source_url = url,
+            source_url = source_url,
+            probe_url = probe_url,
             input = nil,
             analyze = nil,
             probing = nil,
@@ -1283,6 +1297,15 @@ local function build_switch_warmup_args(job, input_entry, warmup_sec)
         return nil, "ffmpeg not found", nil
     end
     local url = get_input_url(input_entry)
+    do
+        local play_id = extract_play_id_from_input(input_entry)
+        if play_id then
+            local play_url = build_transcode_play_url(play_id)
+            if play_url and play_url ~= "" then
+                url = play_url
+            end
+        end
+    end
     if not url or url == "" then
         return nil, "input url missing", nil
     end
@@ -1364,6 +1387,15 @@ local function ensure_warmup_keyframe_probe(job, warm, input_entry, now)
         return
     end
     local url = get_input_url(input_entry)
+    do
+        local play_id = extract_play_id_from_input(input_entry)
+        if play_id then
+            local play_url = build_transcode_play_url(play_id)
+            if play_url and play_url ~= "" then
+                url = play_url
+            end
+        end
+    end
     if not url or url == "" then
         warm.keyframe_error = "input url missing"
         return
@@ -1801,7 +1833,8 @@ local function ensure_failover_compat_probe(job, input_id, now)
         return
     end
     local input_data = fo.inputs and fo.inputs[input_id] or nil
-    if not input_data or not input_data.source_url then
+    local url = input_data and (input_data.probe_url or input_data.source_url) or nil
+    if not input_data or not url then
         return
     end
     if input_data.compat_probe then
@@ -1814,7 +1847,7 @@ local function ensure_failover_compat_probe(job, input_id, now)
         end
     end
     local ffprobe_bin = resolve_ffprobe_path(job.config.transcode)
-    local args = build_probe_args(input_data.source_url, fo.compat_probe_sec, false, nil, ffprobe_bin)
+    local args = build_probe_args(url, fo.compat_probe_sec, false, nil, ffprobe_bin)
     local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
     if not ok or not proc then
         input_data.compat = {
