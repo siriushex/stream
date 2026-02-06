@@ -226,6 +226,8 @@ const state = {
   playerTriedH264: false,
   playerStartTimer: null,
   playerVideoProbeTimer: null,
+  playerVideoFrameSeen: false,
+  playerVideoFrameArmed: false,
   playerStarting: false,
   analyzeJobId: null,
   analyzePoll: null,
@@ -16822,6 +16824,8 @@ function resetPlayerMedia() {
     clearTimeout(state.playerVideoProbeTimer);
     state.playerVideoProbeTimer = null;
   }
+  state.playerVideoFrameSeen = false;
+  state.playerVideoFrameArmed = false;
   setPlayerLoading(false);
   clearPlayerError();
 }
@@ -16861,6 +16865,21 @@ function schedulePlayerNoVideoFallback(attempt) {
   const visible = elements.playerOverlay && elements.playerOverlay.getAttribute('aria-hidden') === 'false';
   if (!visible) return;
 
+  // Safari/HTML5 video иногда "играет" только аудио без ошибок.
+  // Более надёжный сигнал "есть ли видео" - requestVideoFrameCallback (если доступен).
+  if (!state.playerVideoFrameArmed && elements.playerVideo && typeof elements.playerVideo.requestVideoFrameCallback === 'function') {
+    state.playerVideoFrameSeen = false;
+    state.playerVideoFrameArmed = true;
+    try {
+      elements.playerVideo.requestVideoFrameCallback(() => {
+        state.playerVideoFrameSeen = true;
+        state.playerVideoFrameArmed = false;
+      });
+    } catch (err) {
+      state.playerVideoFrameArmed = false;
+    }
+  }
+
   if (state.playerVideoProbeTimer) {
     clearTimeout(state.playerVideoProbeTimer);
     state.playerVideoProbeTimer = null;
@@ -16872,6 +16891,7 @@ function schedulePlayerNoVideoFallback(attempt) {
     if (!current || current.id !== stream.id) return;
     if (!elements.playerVideo) return;
     if (elements.playerVideo.paused || elements.playerVideo.ended) return;
+    if (state.playerVideoFrameSeen) return;
     const w = Number(elements.playerVideo.videoWidth) || 0;
     const h = Number(elements.playerVideo.videoHeight) || 0;
     if (w > 0 && h > 0) return;
