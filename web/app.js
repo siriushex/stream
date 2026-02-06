@@ -772,6 +772,7 @@ const elements = {
   mptsSptsWarning: $('#mpts-spts-warning'),
   mptsManual: $('#mpts-manual'),
   mptsEnabledStatus: $('#mpts-enabled-status'),
+  btnMptsManualToggle: $('#btn-mpts-manual-toggle'),
   btnMptsEnable: $('#btn-mpts-enable'),
   mptsCallout: $('#mpts-callout'),
   mptsCalloutText: $('#mpts-callout-text'),
@@ -7842,6 +7843,12 @@ function updateOutputAudioFixVisibility() {
   if (!elements.outputUdpAudioFixBlock) return;
   const isUdp = elements.outputType.value === 'udp';
   elements.outputUdpAudioFixBlock.classList.toggle('is-hidden', !isUdp);
+  if (!isUdp) {
+    elements.outputUdpAudioFixBlock.classList.remove('is-enabled');
+    return;
+  }
+  const enabled = elements.outputUdpAudioFixEnabled && elements.outputUdpAudioFixEnabled.checked;
+  elements.outputUdpAudioFixBlock.classList.toggle('is-enabled', enabled);
 }
 
 function openOutputModal(index) {
@@ -14561,7 +14568,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206c`;
+  const src = `/vendor/hls.min.js?v=20260206d`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -19002,6 +19009,18 @@ function bindEvents() {
       updateMptsFields();
     });
   }
+  if (elements.btnMptsManualToggle && elements.mptsManual) {
+    const syncMptsManualToggle = () => {
+      const collapsed = elements.mptsManual.classList.contains('is-collapsed');
+      elements.btnMptsManualToggle.textContent = collapsed ? 'Show manual' : 'Hide manual';
+      elements.btnMptsManualToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    };
+    syncMptsManualToggle();
+    elements.btnMptsManualToggle.addEventListener('click', () => {
+      elements.mptsManual.classList.toggle('is-collapsed');
+      syncMptsManualToggle();
+    });
+  }
   if (elements.btnMptsEnableCallout) {
     elements.btnMptsEnableCallout.addEventListener('click', () => {
       if (elements.btnMptsEnable && !elements.btnMptsEnable.disabled) {
@@ -19229,6 +19248,11 @@ function bindEvents() {
     setOutputGroup(type === 'rtp' ? 'udp' : type);
     updateOutputAudioFixVisibility();
   });
+  if (elements.outputUdpAudioFixEnabled) {
+    elements.outputUdpAudioFixEnabled.addEventListener('change', () => {
+      updateOutputAudioFixVisibility();
+    });
+  }
 
   if (elements.outputPresetApply && elements.outputPreset) {
     elements.outputPresetApply.addEventListener('click', () => {
