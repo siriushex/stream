@@ -2,7 +2,7 @@
 
 ## Scope
 - Testing and final verification must run on the server in `/home/hex`.
-- Connect with: `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.2`
+- Connect with: `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.6`
 - The server has no DVB support; do not test adapters or any DVB-related flows there.
 - Do not add secrets to the repo. Do not commit `.env` files or keys.
 - Follow the strict team workflow in `docs/engineering/TEAM_WORKFLOW.md` and ownership in `.github/CODEOWNERS`.
@@ -82,7 +82,7 @@
 ```sh
 rsync -az --delete --exclude '.git' --exclude 'astra' --exclude '*.o' --exclude '*.so' \
   -e "ssh -p 40242 -i ~/.ssh/root_blast" \
-  ./ root@178.212.236.2:/home/hex/astra/
+  ./ root@178.212.236.6:/home/hex/astra/
 ```
 
 ## Local sanity (optional)
