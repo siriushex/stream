@@ -3059,8 +3059,49 @@ select {
 
 .player-meta {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.player-link-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.player-link-toggle .seg {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.player-link-toggle .seg.active {
+  background: var(--panel);
+  color: var(--text);
+}
+
+.player-link-toggle .seg:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.player-url {
+  text-decoration: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 720px) {

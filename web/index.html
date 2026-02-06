@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260206b" />
-  <script defer src="/app.js?v=20260206b"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260206c" />
+  <script defer src="/app.js?v=20260206c"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260206b</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260206c</div>
       </div>
     </header>
 
@@ -3490,7 +3490,11 @@
           <div class="player-error" id="player-error" aria-hidden="true"></div>
         </div>
         <div class="player-meta">
-          <div class="pill" id="player-url">-</div>
+          <div class="player-link-toggle" role="tablist" aria-label="Link type">
+            <button class="seg active" type="button" id="player-link-play" data-kind="play" aria-selected="true">Play</button>
+            <button class="seg" type="button" id="player-link-hls" data-kind="hls" aria-selected="false">HLS</button>
+          </div>
+          <a class="pill player-url" id="player-url" href="#" target="_blank" rel="noopener">-</a>
           <button class="btn ghost" type="button" id="player-retry">Retry</button>
         </div>
       </div>
