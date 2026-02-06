@@ -12421,9 +12421,16 @@ function updateTileInputs(container, stats) {
   rows.forEach((ref, index) => {
     const input = inputs[index] || {};
     const stateValue = getInputState(input, index, activeIndex);
-    const stateClass = `tile-input-row state-${String(stateValue || '').toLowerCase()}`.trim();
-    if (ref.row.className !== stateClass) {
-      ref.row.className = stateClass;
+    const stateSuffix = String(stateValue || '').toLowerCase();
+    const nextStateClass = stateSuffix ? `state-${stateSuffix}` : '';
+    if (ref.stateClass !== nextStateClass) {
+      if (ref.stateClass) {
+        ref.row.classList.remove(ref.stateClass);
+      }
+      if (nextStateClass) {
+        ref.row.classList.add(nextStateClass);
+      }
+      ref.stateClass = nextStateClass;
     }
     ref.row.classList.toggle('is-active', index === activeIndex);
     if (ref.badge.textContent !== stateValue) {
