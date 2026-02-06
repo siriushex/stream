@@ -1807,6 +1807,16 @@ local function schedule_failover_restart(job, reason, meta)
                 and worker.proxy_switch
                 and is_udp_url(worker.output and worker.output.url)
             if can_cutover then
+                local from_sender = nil
+                do
+                    local ok_source, source = pcall(worker.proxy_switch.source, worker.proxy_switch)
+                    if ok_source and type(source) == "table" and source.addr and source.port then
+                        from_sender = {
+                            addr = source.addr,
+                            port = source.port,
+                        }
+                    end
+                end
                 worker.cutover = {
                     id = cutover_id,
                     target_input_id = job.active_input_id,
@@ -1816,6 +1826,7 @@ local function schedule_failover_restart(job, reason, meta)
                     deadline_ts = started_at + timeout_sec,
                     stable_sec = stable_sec,
                     min_out_time_ms = min_ms,
+                    from_sender = from_sender,
                 }
                 worker.last_cutover = {
                     id = cutover_id,
@@ -1827,6 +1838,7 @@ local function schedule_failover_restart(job, reason, meta)
                     timeout_sec = timeout_sec,
                     stable_sec = stable_sec,
                     min_out_time_ms = min_ms,
+                    from_sender = from_sender,
                 }
                 local ok = start_worker_standby and start_worker_standby(job, worker) or false
                 if not ok then
@@ -4107,12 +4119,28 @@ tick_worker = function(job, worker, now)
             if sw then
                 local ok_source, source = pcall(sw.source, sw)
                 local ok_senders, senders = pcall(sw.senders, sw)
-                if ok_senders and type(senders) == "table" then
-                    for _, s in ipairs(senders) do
-                        if not (ok_source and source) or s.addr ~= source.addr or s.port ~= source.port then
-                            sender = s
-                            break
+                if ok_senders and type(senders) == "table" and #senders > 0 then
+                    if ok_source and source then
+                        -- Prefer a sender that differs from the current proxy source (true warm-switch).
+                        for _, s in ipairs(senders) do
+                            if s.addr ~= source.addr or s.port ~= source.port then
+                                sender = s
+                                break
+                            end
                         end
+
+                        -- If we only have one sender, we can still cut over when the proxy did not have
+                        -- an established source prior to cutover (e.g., primary died before first packet).
+                        if not sender and #senders == 1 then
+                            local s = senders[1]
+                            local from = cut.from_sender
+                            if not from or s.addr ~= from.addr or s.port ~= from.port then
+                                sender = s
+                            end
+                        end
+                    else
+                        -- No active source, pick the first sender.
+                        sender = senders[1]
                     end
                 end
             end
