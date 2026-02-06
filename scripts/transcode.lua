@@ -825,6 +825,186 @@ local function normalize_outputs(outputs, base_watchdog)
     return normalized
 end
 
+local function normalize_profile_id(value)
+    if value == nil then
+        return nil
+    end
+    local id = tostring(value)
+    if id == "" then
+        return nil
+    end
+    -- Keep ids URL/path safe for publish endpoints: letters, numbers, _, -
+    if not id:match("^[%w%-%_]+$") then
+        return nil
+    end
+    return id
+end
+
+local function normalize_profiles_config(tc)
+    local profiles = ensure_array(tc and tc.profiles)
+    if #profiles == 0 then
+        return nil, nil
+    end
+    local out = {}
+    local errors = {}
+
+    local fps_locked = nil
+    local function push_err(msg)
+        table.insert(errors, msg)
+    end
+
+    for idx, raw in ipairs(profiles) do
+        if type(raw) ~= "table" then
+            push_err("profiles[" .. tostring(idx) .. "]: must be an object")
+        else
+            local id = normalize_profile_id(raw.id)
+            if not id then
+                push_err("profiles[" .. tostring(idx) .. "].id: required (allowed: [A-Za-z0-9_-])")
+            end
+            local width = tonumber(raw.width)
+            local height = tonumber(raw.height)
+            if not width or width <= 0 or not height or height <= 0 then
+                push_err("profiles[" .. tostring(idx) .. "]: width/height must be > 0")
+            end
+            local bitrate_kbps = tonumber(raw.bitrate_kbps)
+            if not bitrate_kbps or bitrate_kbps <= 0 then
+                push_err("profiles[" .. tostring(idx) .. "].bitrate_kbps: required and must be > 0")
+            end
+
+            local fps = raw.fps ~= nil and tonumber(raw.fps) or nil
+            if fps ~= nil and fps <= 0 then
+                push_err("profiles[" .. tostring(idx) .. "].fps: must be > 0")
+                fps = nil
+            end
+            if fps ~= nil then
+                if fps_locked == nil then
+                    fps_locked = fps
+                elseif fps_locked ~= fps then
+                    push_err("profiles[].fps: must be the same for all profiles (ABR sync)")
+                end
+            end
+
+            if id and width and height and bitrate_kbps then
+                local maxrate_kbps = tonumber(raw.maxrate_kbps)
+                if not maxrate_kbps or maxrate_kbps <= 0 then
+                    maxrate_kbps = math.floor(bitrate_kbps * 1.2)
+                end
+                local bufsize_kbps = tonumber(raw.bufsize_kbps)
+                if not bufsize_kbps or bufsize_kbps <= 0 then
+                    bufsize_kbps = math.floor(maxrate_kbps * 2)
+                end
+                local deinterlace = tostring(raw.deinterlace or "auto"):lower()
+                if deinterlace ~= "auto" and deinterlace ~= "off" and deinterlace ~= "yadif" then
+                    deinterlace = "auto"
+                end
+                local audio_mode = tostring(raw.audio_mode or "aac"):lower()
+                if audio_mode ~= "copy" and audio_mode ~= "aac" and audio_mode ~= "auto" then
+                    audio_mode = "aac"
+                end
+
+                local profile = {
+                    id = id,
+                    name = raw.name and tostring(raw.name) or nil,
+                    width = math.floor(width),
+                    height = math.floor(height),
+                    fps = fps,
+                    bitrate_kbps = math.floor(bitrate_kbps),
+                    maxrate_kbps = math.floor(maxrate_kbps),
+                    bufsize_kbps = math.floor(bufsize_kbps),
+                    deinterlace = deinterlace,
+                    video_codec = raw.video_codec and tostring(raw.video_codec) or nil,
+                    video_args = type(raw.video_args) == "table" and raw.video_args or nil,
+                    audio_mode = audio_mode,
+                    audio_bitrate_kbps = raw.audio_bitrate_kbps and math.floor(tonumber(raw.audio_bitrate_kbps) or 0) or nil,
+                    audio_sr = raw.audio_sr and math.floor(tonumber(raw.audio_sr) or 0) or nil,
+                    audio_channels = raw.audio_channels and math.floor(tonumber(raw.audio_channels) or 0) or nil,
+                }
+                table.insert(out, profile)
+            end
+        end
+    end
+
+    if #errors > 0 then
+        return nil, table.concat(errors, "; ")
+    end
+
+    -- Default fps: if not specified anywhere, pick 25 (deterministic) or tc.fps if present.
+    if fps_locked == nil then
+        local default_fps = tonumber(tc and tc.fps)
+        if not default_fps or default_fps <= 0 then
+            default_fps = 25
+        end
+        fps_locked = default_fps
+    end
+    for _, p in ipairs(out) do
+        if p.fps == nil then
+            p.fps = fps_locked
+        end
+    end
+
+    return out, nil
+end
+
+local function normalize_publish_config(tc, profiles)
+    local publish = ensure_array(tc and tc.publish)
+    if #publish == 0 then
+        return nil, nil
+    end
+    local known_profiles = {}
+    for _, p in ipairs(profiles or {}) do
+        known_profiles[p.id] = true
+    end
+    local out = {}
+    local errors = {}
+    local function push_err(msg)
+        table.insert(errors, msg)
+    end
+    for idx, raw in ipairs(publish) do
+        if type(raw) ~= "table" then
+            push_err("publish[" .. tostring(idx) .. "]: must be an object")
+        else
+            local t = tostring(raw.type or ""):lower()
+            if t == "" then
+                push_err("publish[" .. tostring(idx) .. "].type: required")
+            end
+            local enabled = normalize_bool(raw.enabled, true)
+            local entry = {
+                type = t,
+                enabled = enabled,
+                route = raw.route and tostring(raw.route) or nil,
+                storage = raw.storage and tostring(raw.storage) or nil,
+                url = raw.url and tostring(raw.url) or nil,
+                path = raw.path and tostring(raw.path) or nil,
+            }
+            if raw.profile ~= nil then
+                entry.profile = normalize_profile_id(raw.profile)
+                if entry.profile and not known_profiles[entry.profile] then
+                    push_err("publish[" .. tostring(idx) .. "].profile: unknown profile id")
+                end
+            end
+            if type(raw.variants) == "table" then
+                entry.variants = {}
+                for _, v in ipairs(raw.variants) do
+                    local pid = normalize_profile_id(v)
+                    if pid and known_profiles[pid] then
+                        table.insert(entry.variants, pid)
+                    else
+                        push_err("publish[" .. tostring(idx) .. "].variants: unknown profile id")
+                    end
+                end
+                if #entry.variants == 0 then
+                    entry.variants = nil
+                end
+            end
+            table.insert(out, entry)
+        end
+    end
+    if #errors > 0 then
+        return nil, table.concat(errors, "; ")
+    end
+    return out, nil
+end
+
 local request_stop
 local schedule_restart
 local schedule_worker_restart
@@ -4686,6 +4866,9 @@ function transcode.upsert(id, row, force)
     local tc = cfg.transcode or {}
     job.watchdog = normalize_watchdog_defaults(tc)
     job.log_file_path = tc.log_file
+    job.profiles, job.profiles_error = normalize_profiles_config(tc)
+    job.publish, job.publish_error = normalize_publish_config(tc, job.profiles or {})
+    job.ladder_enabled = job.profiles ~= nil
     job.outputs = normalize_outputs(tc.outputs, job.watchdog)
     job.process_per_output = normalize_bool(tc.process_per_output, false)
     job.seamless_udp_proxy = normalize_bool(tc.seamless_udp_proxy, false)
@@ -4722,7 +4905,15 @@ function transcode.upsert(id, row, force)
     end
     transcode.jobs[id] = job
 
-    if enabled then
+    if job.profiles_error or job.publish_error then
+        job.state = "ERROR"
+        record_alert(job, "TRANSCODE_CONFIG_ERROR", "invalid ladder/publish config", {
+            profiles_error = job.profiles_error,
+            publish_error = job.publish_error,
+        })
+    end
+
+    if enabled and job.state ~= "ERROR" then
         transcode.start(job)
     end
 
@@ -4887,6 +5078,11 @@ function transcode.get_status(id)
         pid = job.pid,
         process_per_output = job.process_per_output == true,
         seamless_udp_proxy = job.seamless_udp_proxy == true,
+        ladder_enabled = job.ladder_enabled == true,
+        profiles = job.profiles,
+        profiles_error = job.profiles_error,
+        publish = job.publish,
+        publish_error = job.publish_error,
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
