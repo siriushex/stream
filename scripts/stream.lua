@@ -3187,28 +3187,32 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-local function build_audio_fix_play_url(channel_data)
-    if not (channel_data and channel_data.config and channel_data.config.id) then
-        return nil
-    end
-    if not (config and config.get_setting) then
-        return nil
-    end
-    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
-    if not http_play_allow then
-        return nil
-    end
-    local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
-    if not port then
-        return nil
-    end
-    local stream_id = tostring(channel_data.config.id)
-    if stream_id == "" then
-        return nil
-    end
-    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id .. "?internal=1"
-end
+	local function build_audio_fix_play_url(channel_data)
+	    if not (channel_data and channel_data.config and channel_data.config.id) then
+	        return nil
+	    end
+	    if not (config and config.get_setting) then
+	        return nil
+	    end
+	    local http_port = tonumber(config.get_setting("http_port"))
+	    local play_port = tonumber(config.get_setting("http_play_port"))
+	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
+	    local http_play_enabled = http_play_allow or http_play_hls
+	    local port = http_port
+	    if http_play_enabled and play_port then
+	        port = play_port
+	    end
+	    if not port then
+	        return nil
+	    end
+	    local stream_id = tostring(channel_data.config.id)
+	    if stream_id == "" then
+	        return nil
+	    end
+	    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
+	    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id .. "?internal=1"
+	end
 
 local function resolve_audio_fix_input_url(channel_data, audio_fix)
     local play_url = build_audio_fix_play_url(channel_data)
@@ -3300,16 +3304,23 @@ end
 
 local function stop_audio_fix_process(channel_data, output_id, output_data, enable_passthrough)
     local audio_fix = output_data.audio_fix
-    if not audio_fix or not audio_fix.proc then
+    if not audio_fix then
         if enable_passthrough then
             set_udp_output_passthrough(channel_data, output_id, true)
         end
         return
     end
-    audio_fix.proc:terminate()
-    audio_fix.proc:kill()
-    audio_fix.proc:close()
-    audio_fix.proc = nil
+    if audio_fix.proc then
+        audio_fix.proc:terminate()
+        audio_fix.proc:kill()
+        audio_fix.proc:close()
+        audio_fix.proc = nil
+    end
+    -- Audio-fix may use a local UDP proxy (udp_switch + udp_output) to keep output pacing
+    -- consistent with udp_output settings (sync/cbr/socket_size/etc).
+    audio_fix.proxy_output = nil
+    audio_fix.proxy_switch = nil
+    audio_fix.proxy_listen_port = nil
     if enable_passthrough then
         set_udp_output_passthrough(channel_data, output_id, true)
     end
@@ -3391,8 +3402,8 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
         log.warning("[stream " .. get_stream_label(channel_data) .. "] audio-fix: " .. tostring(audio_fix.last_error))
         return false
     end
-    local output_url = format_udp_output_url(output_data.config, true)
-    if not output_url then
+    local dest_url = format_udp_output_url(output_data.config, true)
+    if not dest_url then
         audio_fix.last_error = "output url is required"
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: output url missing")
         return false
@@ -3412,6 +3423,46 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     end
     audio_fix.effective_mode = effective_mode
     audio_fix.silence_active = effective_mode == "silence"
+
+    -- Proxy output through udp_output so output pacing (sync) works the same way as normal udp outputs.
+    if not udp_switch or not udp_output then
+        audio_fix.last_error = "udp modules not available"
+        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: udp modules not available")
+        set_udp_output_passthrough(channel_data, output_id, true)
+        return false
+    end
+
+    local proxy_switch = udp_switch({
+        addr = "127.0.0.1",
+        port = 0,
+        socket_size = output_data.config.socket_size,
+    })
+    local listen_port = proxy_switch and proxy_switch:port() or nil
+    if not listen_port or listen_port <= 0 then
+        audio_fix.last_error = "udp_switch init failed"
+        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: udp_switch init failed")
+        set_udp_output_passthrough(channel_data, output_id, true)
+        return false
+    end
+
+    local localaddr = resolve_output_localaddr(output_data.config) or output_data.config.localaddr
+    local proxy_output = udp_output({
+        upstream = proxy_switch:stream(),
+        addr = output_data.config.addr,
+        port = output_data.config.port,
+        ttl = output_data.config.ttl,
+        localaddr = localaddr,
+        socket_size = output_data.config.socket_size,
+        rtp = (output_data.config.format == "rtp"),
+        sync = output_data.config.sync,
+        cbr = output_data.config.cbr,
+    })
+
+    audio_fix.proxy_switch = proxy_switch
+    audio_fix.proxy_output = proxy_output
+    audio_fix.proxy_listen_port = listen_port
+
+    local output_url = "udp://127.0.0.1:" .. tostring(listen_port) .. "?pkt_size=1316"
 
     local aac_profile = normalize_aac_profile(audio_fix.config.aac_profile)
     local args = {
@@ -3479,6 +3530,7 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     if not ok or not proc then
         audio_fix.last_error = "ffmpeg spawn failed"
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg spawn failed")
+        stop_audio_fix_process(channel_data, output_id, output_data, true)
         set_udp_output_passthrough(channel_data, output_id, true)
         return false
     end
@@ -3953,7 +4005,7 @@ local function tick_audio_fix_process(channel_data, output_id, output_data, now)
         audio_fix.last_exit_status = status
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg exited for output #" ..
             tostring(output_id) .. " (" .. tostring(audio_fix.last_error) .. ", status=" .. tostring(status) .. ")")
-        set_udp_output_passthrough(channel_data, output_id, true)
+        stop_audio_fix_process(channel_data, output_id, output_data, true)
     end
 end
 
