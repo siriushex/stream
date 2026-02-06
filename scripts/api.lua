@@ -869,8 +869,51 @@ local function upsert_adapter(server, client, id, request)
         return error_response(server, client, 400, "invalid json")
     end
 
-    local enabled = (body.enabled ~= false)
-    local cfg = body.config or body
+    local function config_is_empty(tbl)
+        if type(tbl) ~= "table" then
+            return true
+        end
+        return next(tbl) == nil
+    end
+
+    local function is_enabled_only_patch(payload)
+        if type(payload) ~= "table" then
+            return false
+        end
+        for k, _ in pairs(payload) do
+            if k ~= "enabled" and k ~= "id" and k ~= "config" then
+                return false
+            end
+        end
+        return true
+    end
+
+    local existing = nil
+    if config and config.get_adapter then
+        existing = config.get_adapter(id)
+    end
+
+    -- For updates, treat missing `enabled` as "keep current" (avoids accidental re-enable).
+    -- For new adapters, keep the historical default: enabled unless explicitly `false`.
+    local enabled = nil
+    if body.enabled == nil and existing then
+        enabled = (tonumber(existing.enabled) or 0) ~= 0
+    else
+        enabled = (body.enabled ~= false)
+    end
+
+    local cfg = nil
+    if not config_is_empty(body.config) then
+        cfg = body.config
+    elseif existing and is_enabled_only_patch(body) then
+        -- Allow enabled-only patches without requiring clients to re-send the full adapter config.
+        cfg = existing.config or {}
+    else
+        -- Legacy behavior: accept adapter config fields on the top-level object.
+        cfg = body
+        cfg.enabled = nil
+        cfg.config = nil
+    end
     cfg.id = id
 
     apply_config_change(server, client, request, {

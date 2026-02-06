@@ -3097,13 +3097,13 @@ function showDashboardNotice(message, ttl) {
 function setStreamEditorBusy(isBusy, label) {
   if (elements.btnApplyStream) {
     elements.btnApplyStream.disabled = isBusy;
-    elements.btnApplyStream.textContent = isBusy ? (label || 'Applying...') : 'Apply';
+    elements.btnApplyStream.textContent = isBusy ? (label || 'Saving...') : 'Save';
   }
   if (elements.btnDelete) elements.btnDelete.disabled = isBusy;
   if (elements.btnClone) elements.btnClone.disabled = isBusy;
   if (elements.btnAnalyze) elements.btnAnalyze.disabled = isBusy;
   if (isBusy && elements.editorError) {
-    elements.editorError.textContent = label || 'Applying...';
+    elements.editorError.textContent = label || 'Saving...';
   }
 }
 
@@ -15685,7 +15685,7 @@ async function loadStreams() {
 async function saveStream(event) {
   event.preventDefault();
   elements.editorError.textContent = '';
-  setStreamEditorBusy(true, 'Applying...');
+  setStreamEditorBusy(true, 'Saving...');
 
   try {
     const payload = readStreamForm();
