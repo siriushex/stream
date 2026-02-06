@@ -28,6 +28,11 @@
   - Not run (UI change only).
 ### 2026-02-06
 - Changes:
+  - API/UI: allow enabled-only stream updates (avoid wiping stream config when toggling Disable/Enable).
+- Tests:
+  - Not run.
+### 2026-02-06
+- Changes:
   - UI: add compact mode toggle for Settings -> General cards.
 - Tests:
   - Not run (UI change only).

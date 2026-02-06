@@ -15714,19 +15714,19 @@ async function saveStream(event) {
 }
 
 async function toggleStream(stream) {
+  const currentEnabled = stream && stream.enabled !== false;
+  const nextEnabled = !currentEnabled;
   const payload = {
-    id: stream.id,
-    enabled: !stream.enabled,
-    config: stream.config || {},
+    enabled: nextEnabled,
   };
   await apiJson(`/api/v1/streams/${stream.id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
   });
   const updated = {
-    id: payload.id,
-    enabled: payload.enabled,
-    config: payload.config,
+    id: stream.id,
+    enabled: nextEnabled,
+    config: stream.config || {},
   };
   upsertStreamInState(updated);
   applyStreamUpdate(updated);
