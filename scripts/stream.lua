@@ -1109,7 +1109,11 @@ function on_analyze_spts(channel_data, input_id, data)
         else
             if psi_debug_enabled() then
                 -- Debug-only: not actionable for most users, but useful while troubleshooting PSI parsing.
-                log.debug("[" .. input_data.config.name .. "] Unknown PSI: " .. tostring(data.psi))
+                -- TOT/TDT/NIT встречаются часто и не являются проблемой сами по себе, поэтому не шумим ими.
+                local psi = tostring(data.psi or "")
+                if not psi_debug_only[psi] then
+                    log.debug("[" .. input_data.config.name .. "] Unknown PSI: " .. psi)
+                end
             end
         end
 
