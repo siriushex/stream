@@ -4522,6 +4522,12 @@ local function build_publish_ffmpeg_argv(job, worker)
         if #variants == 0 then
             return nil, "publish variants required"
         end
+        if #variants > 1 and not normalize_bool(tc.dash_multi_variant, false) then
+            -- Multi-variant DASH requires tight ABR alignment (keyframe grid + timestamps).
+            -- In Phase 3 MVP we default to the first variant to keep DASH publish stable.
+            worker.variants_original = variants
+            variants = { variants[1] }
+        end
 
         local base = (config and config.data_dir) and config.data_dir or "./data"
         local out_dir = worker.dash_dir or (base .. "/dash/" .. tostring(job.id))
