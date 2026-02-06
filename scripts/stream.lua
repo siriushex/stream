@@ -1108,7 +1108,8 @@ function on_analyze_spts(channel_data, input_id, data)
             end
         else
             if psi_debug_enabled() then
-                log.info("[" .. input_data.config.name .. "] Unknown PSI: " .. data.psi)
+                -- Debug-only: not actionable for most users, but useful while troubleshooting PSI parsing.
+                log.debug("[" .. input_data.config.name .. "] Unknown PSI: " .. tostring(data.psi))
             end
         end
 

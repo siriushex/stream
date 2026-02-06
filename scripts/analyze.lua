@@ -226,7 +226,8 @@ function on_analyze(instance, data)
         if dump_psi_info[data.psi] then
             dump_psi_info[data.psi](data)
         else
-            log.error("Unknown PSI: " .. data.psi)
+            -- PSI tables may vary across providers; don't spam error logs for unknown tables.
+            log.debug("Unknown PSI: " .. tostring(data.psi))
         end
     elseif data.analyze then
         local bitrate = 0
