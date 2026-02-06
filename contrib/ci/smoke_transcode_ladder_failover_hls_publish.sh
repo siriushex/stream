@@ -224,8 +224,33 @@ fetch_live() {
   local out_file="$WORK_DIR/live_${profile_id}.ts"
   # Keep a small HTTP upstream buffer so the client starts receiving quickly.
   local live_url="http://127.0.0.1:${PORT}/live/${STREAM_ID}~${profile_id}.ts?internal=1&buf_kb=256&buf_fill_kb=16"
-  curl -fsS "$live_url" --max-time 3 --output "$out_file"
-  check_ts_file "$out_file"
+  # /live is an endless stream. curl may exit with 28 (timeout) even when it received data.
+  local ok=0
+  for _ in $(seq 1 25); do
+    rm -f "$out_file" 2>/dev/null || true
+    set +e
+    curl -fsS "$live_url" --max-time 3 --output "$out_file" 2>/dev/null
+    local code=$?
+    set -e
+
+    if [[ "$code" -ne 0 && "$code" -ne 28 ]]; then
+      sleep 0.5
+      continue
+    fi
+    if [[ -f "$out_file" ]]; then
+      if check_ts_file "$out_file"; then
+        ok=1
+        break
+      fi
+    fi
+    sleep 0.5
+  done
+
+  if [[ "$ok" -ne 1 ]]; then
+    echo "LIVE not ready ($profile_id): $live_url" >&2
+    dump_debug
+    return 1
+  fi
 }
 
 MASTER_URL="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/index.m3u8"
@@ -277,35 +302,38 @@ wait "$FEED_PRIMARY_PID" 2>/dev/null || true
 unset FEED_PRIMARY_PID
 
 CUTOVER_OK=0
-for _ in $(seq 1 40); do
-  ALERTS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/alerts?stream_id=${STREAM_ID}&code=TRANSCODE_CUTOVER_OK&limit=10" "${AUTH_ARGS[@]}")"
-  COUNT="$(ALERTS_JSON="$ALERTS_JSON" python3 - <<'PY'
+for _ in $(seq 1 80); do
+  STATUS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/transcode-status/${STREAM_ID}" "${AUTH_ARGS[@]}")"
+  RESULT="$(STATUS_JSON="$STATUS_JSON" python3 - <<'PY'
 import json, os
-rows = json.loads(os.environ.get("ALERTS_JSON") or "[]")
-print(len(rows))
+payload = os.environ.get("STATUS_JSON") or ""
+try:
+  info = json.loads(payload)
+except Exception:
+  print("ERR|0")
+  raise SystemExit(0)
+
+active = info.get("active_input_id")
+profiles = info.get("profiles_status") or []
+cut_ok = True
+for p in profiles:
+  c = p.get("last_cutover")
+  if not c or c.get("state") != "OK" or c.get("target_input_id") != 2:
+    cut_ok = False
+    break
+print(f"{active}|{1 if cut_ok else 0}")
 PY
 )"
-  if [[ "$COUNT" -gt 0 ]]; then
+  ACTIVE_ID="${RESULT%%|*}"
+  CUT_OK="${RESULT##*|}"
+  if [[ "${ACTIVE_ID:-}" == "2" && "${CUT_OK:-0}" == "1" ]]; then
     CUTOVER_OK=1
     break
   fi
   sleep 1
 done
 if [[ "$CUTOVER_OK" -ne 1 ]]; then
-  echo "Cutover OK alert not found (stream_id=$STREAM_ID)" >&2
-  dump_debug
-  exit 1
-fi
-
-# Ensure we switched to backup input (#2).
-ACTIVE_ID="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/transcode-status/${STREAM_ID}" "${AUTH_ARGS[@]}" | python3 - <<'PY'
-import json, sys
-info = json.load(sys.stdin)
-print(info.get("active_input_id") or "")
-PY
-)"
-if [[ "${ACTIVE_ID:-}" != "2" ]]; then
-  echo "Expected active_input_id=2 after cutover; got: ${ACTIVE_ID:-}" >&2
+  echo "Expected cutover to backup input (#2), but it did not complete in time." >&2
   dump_debug
   exit 1
 fi

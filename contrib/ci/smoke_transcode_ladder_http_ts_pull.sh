@@ -220,7 +220,8 @@ check_live_profile() {
     curl -fsS "$live_url" --max-time 2 --output "$out_file" 2>/dev/null
     code=$?
     set -e
-    if [[ "$code" -eq 0 ]]; then
+    # /live is an endless stream. curl may exit with 28 (timeout) even when it received data.
+    if [[ -f "$out_file" ]]; then
       if check_ts_file "$out_file" 2000; then
         ok=1
         break

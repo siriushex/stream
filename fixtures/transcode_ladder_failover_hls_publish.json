@@ -34,16 +34,16 @@
       "name": "Transcode Ladder Failover HLS Publish",
       "enable": true,
       "backup_type": "passive",
-      "backup_initial_delay": 0,
+      "backup_initial_delay": 10,
       "backup_start_delay": 0,
       "backup_return_delay": 0,
-      "backup_switch_warmup_sec": 1,
-      "backup_switch_pending_timeout_sec": 10,
-      "no_data_timeout_sec": 1,
+      "backup_switch_warmup_sec": 15,
+      "backup_switch_pending_timeout_sec": 90,
+      "no_data_timeout_sec": 20,
       "probe_interval_sec": 1,
-      "stable_ok_sec": 1,
-      "backup_switch_warmup_min_ms": 250,
-      "backup_switch_warmup_stable_sec": 0,
+      "stable_ok_sec": 2,
+      "backup_switch_warmup_min_ms": 500,
+      "backup_switch_warmup_stable_sec": 2,
       "backup_compat_check": false,
       "input": [
         "stream://src_udp_primary",
@@ -101,4 +101,3 @@
     }
   ]
 }
-
