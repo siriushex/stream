@@ -97,3 +97,7 @@ fi
 if [[ "${TRANSCODE_LADDER_ECONOMICAL_HLS_SMOKE:-0}" == "1" ]]; then
   PORT="${TRANSCODE_LADDER_ECONOMICAL_HLS_PORT:-9087}" contrib/ci/smoke_transcode_ladder_economical_hls_publish.sh
 fi
+
+if [[ "${TRANSCODE_LADDER_UDP_SMOKE:-0}" == "1" ]]; then
+  PORT="${TRANSCODE_LADDER_UDP_PORT:-9088}" contrib/ci/smoke_transcode_ladder_udp_publish.sh
+fi
