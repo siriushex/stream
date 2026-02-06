@@ -2944,6 +2944,118 @@ local function apply_log_settings_patch(body)
             })
         end
     end
+
+    -- Apply runtime log options (stdout/file/syslog) on-the-fly.
+    if body.runtime_log_dest ~= nil
+        or body.runtime_log_level ~= nil
+        or body.runtime_log_file ~= nil
+        or body.runtime_log_syslog ~= nil
+        or body.runtime_log_color ~= nil
+        or body.runtime_log_rotate_mb ~= nil
+        or body.runtime_log_rotate_keep ~= nil
+    then
+        if _G.runtime_log_baseline == nil and log and type(log.get) == "function" then
+            local ok, snap = pcall(log.get)
+            if ok and type(snap) == "table" then
+                _G.runtime_log_baseline = snap
+            end
+        end
+        local baseline = _G.runtime_log_baseline
+        local dest_raw = config.get_setting("runtime_log_dest")
+        local level_raw = config.get_setting("runtime_log_level")
+        local file_raw = config.get_setting("runtime_log_file")
+        local syslog_raw = config.get_setting("runtime_log_syslog")
+        local color_raw = config.get_setting("runtime_log_color")
+        local rotate_mb_raw = config.get_setting("runtime_log_rotate_mb")
+        local rotate_keep_raw = config.get_setting("runtime_log_rotate_keep")
+
+        local dest_mode = nil
+        if dest_raw ~= nil then
+            dest_mode = tostring(dest_raw or ""):lower()
+        end
+        local opts = {}
+        if dest_mode == "inherit" then
+            if type(baseline) == "table" then
+                opts.stdout = baseline.stdout == true
+                opts.filename = tostring(baseline.filename or "")
+                opts.syslog = tostring(baseline.syslog or "")
+                opts.color = baseline.color == true
+                opts.level = tostring(baseline.level or "")
+                opts.rotate_max_bytes = tonumber(baseline.rotate_max_bytes) or 0
+                opts.rotate_keep = tonumber(baseline.rotate_keep) or 0
+            else
+                opts.stdout = true
+                opts.filename = ""
+                opts.syslog = ""
+                opts.color = false
+                opts.level = "info"
+                opts.rotate_max_bytes = 0
+                opts.rotate_keep = 0
+            end
+        elseif dest_mode ~= nil and dest_mode ~= "inherit" then
+            local want_stdout = true
+            local want_file = false
+            local want_syslog = false
+            if dest_mode == "none" then
+                want_stdout = false
+            elseif dest_mode == "file" then
+                want_stdout = false
+                want_file = true
+            elseif dest_mode == "stdout_file" then
+                want_file = true
+            elseif dest_mode == "syslog" then
+                want_stdout = false
+                want_syslog = true
+            elseif dest_mode == "stdout_syslog" then
+                want_syslog = true
+            elseif dest_mode == "file_syslog" then
+                want_stdout = false
+                want_file = true
+                want_syslog = true
+            elseif dest_mode == "all" then
+                want_file = true
+                want_syslog = true
+            else
+                want_stdout = true
+            end
+
+            opts.stdout = want_stdout == true
+            opts.filename = want_file and tostring(file_raw or "") or ""
+            opts.syslog = want_syslog and tostring(syslog_raw or "") or ""
+        elseif dest_mode == nil then
+            if file_raw ~= nil then
+                opts.filename = tostring(file_raw or "")
+            end
+            if syslog_raw ~= nil then
+                opts.syslog = tostring(syslog_raw or "")
+            end
+        end
+
+        if level_raw ~= nil then
+            local level = tostring(level_raw or ""):lower()
+            if level ~= "" and level ~= "inherit" then
+                opts.level = level
+            end
+        end
+        if color_raw ~= nil and dest_mode ~= "inherit" then
+            local enabled = (color_raw == true or color_raw == 1 or color_raw == "1" or color_raw == "true")
+            opts.color = enabled == true
+        end
+        if rotate_mb_raw ~= nil and dest_mode ~= "inherit" then
+            local mb = tonumber(rotate_mb_raw) or 0
+            if mb < 0 then mb = 0 end
+            opts.rotate_max_bytes = math.floor(mb) * 1024 * 1024
+        end
+        if rotate_keep_raw ~= nil and dest_mode ~= "inherit" then
+            local keep = tonumber(rotate_keep_raw) or 0
+            if keep < 0 then keep = 0 end
+            opts.rotate_keep = math.floor(keep)
+        end
+
+        if next(opts) ~= nil then
+            log.set(opts)
+        end
+    end
 end
 
 local function set_settings(server, client, request)
