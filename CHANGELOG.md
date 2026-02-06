@@ -17,6 +17,13 @@
   - `./astral scripts/tests/ai_openai_proxy_bodyfile_unit.lua`
 ### 2026-02-06
 - Changes:
+  - AI: switch default OpenAI model to `gpt-5-nano` (lower cost) with auto fallback to `gpt-5-mini`, `gpt-4.1` when unavailable/unsupported.
+  - AI: normalize common versioned aliases (`gpt-5.2-mini`, `gpt-5.2-nano`, etc) to family names to avoid 400 `model_not_found`.
+  - UI/Docs: update AstralAI model hints to reflect the new default.
+- Tests:
+  - `./astral scripts/tests/ai_openai_model_alias_unit.lua`
+### 2026-02-06
+- Changes:
   - AI: switch default OpenAI model to `gpt-5-mini` (lower cost) and keep auto fallback to `gpt-5.2`, `gpt-4.1` when a model is unavailable/unsupported.
   - AI: omit `temperature` for older GPT-5 models (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) to avoid OpenAI parameter-compatibility 400s.
   - UI/Docs: update AstralAI model hints to reflect the new default.
