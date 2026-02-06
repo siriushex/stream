@@ -861,6 +861,60 @@ local function delete_stream(server, client, id, request)
     })
 end
 
+local function purge_disabled_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+
+    local rows = config.list_streams()
+    local ids = {}
+    for _, row in ipairs(rows) do
+        if (tonumber(row.enabled) or 0) == 0 then
+            table.insert(ids, row.id)
+        end
+    end
+    if #ids == 0 then
+        return json_response(server, client, 200, { status = "ok", deleted = 0 })
+    end
+    table.sort(ids)
+
+    apply_config_change(server, client, request, {
+        actor = admin.username,
+        comment = "purge disabled streams",
+        apply = function()
+            for _, id in ipairs(ids) do
+                config.delete_stream(id)
+            end
+            return { deleted = #ids }
+        end,
+        runtime_apply = function()
+            if not runtime or not runtime.apply_stream_row then
+                return false, "runtime apply not available"
+            end
+            for _, id in ipairs(ids) do
+                local ok, err = runtime.apply_stream_row({ id = id, enabled = 0, config = {} }, true)
+                if ok == false then
+                    return false, err or ("runtime delete failed: " .. id)
+                end
+            end
+            return true
+        end,
+        after = function()
+            if epg and epg.export_all then
+                epg.export_all("stream purge disabled")
+            end
+        end,
+        success_builder = function(res, revision_id)
+            return {
+                status = "ok",
+                deleted = res and (tonumber(res.deleted) or 0) or 0,
+                revision_id = revision_id,
+            }
+        end,
+    })
+end
+
 local function list_adapters(server, client)
     local rows = config.list_adapters()
     local result = {}
@@ -4730,6 +4784,9 @@ function api.handle_request(server, client, request)
             return error_response(server, client, 400, "stream id required")
         end
         return upsert_stream(server, client, body.id, request)
+    end
+    if path == "/api/v1/streams/purge-disabled" and method == "POST" then
+        return purge_disabled_streams(server, client, request)
     end
 
     local stream_id = path:match("^/api/v1/streams/([%w%-%_]+)$")
