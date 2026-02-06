@@ -1450,6 +1450,7 @@
               <div class="help-bubble">error ch</div>
               <div class="help-bubble">make mpts</div>
               <div class="help-bubble">delete all disable channel</div>
+              <div class="help-bubble">transcode all stream</div>
             </div>
 
             <h4>AstralAI Chat</h4>
@@ -3530,13 +3531,17 @@
             <div class="player-loading-text">Подключение...</div>
           </div>
           <div class="player-error" id="player-error" aria-hidden="true"></div>
-        </div>
-        <div class="player-meta">
-          <div class="player-link-toggle" role="tablist" aria-label="Link type">
-            <button class="seg active" type="button" id="player-link-play" data-kind="play" aria-selected="true">Play</button>
-            <button class="seg" type="button" id="player-link-hls" data-kind="hls" aria-selected="false">HLS</button>
-          </div>
-          <a class="pill player-url" id="player-url" href="#" target="_blank" rel="noopener">-</a>
+	        </div>
+	        <div class="player-meta">
+	          <div class="player-link-toggle" role="tablist" aria-label="Playback mode">
+	            <button class="seg active" type="button" id="player-mode-auto" data-mode="auto" aria-selected="true">Auto</button>
+	            <button class="seg" type="button" id="player-mode-h264" data-mode="h264" aria-selected="false">H.264/AAC</button>
+	          </div>
+	          <div class="player-link-toggle" role="tablist" aria-label="Link type">
+	            <button class="seg active" type="button" id="player-link-play" data-kind="play" aria-selected="true">Play</button>
+	            <button class="seg" type="button" id="player-link-hls" data-kind="hls" aria-selected="false">HLS</button>
+	          </div>
+	          <a class="pill player-url" id="player-url" href="#" target="_blank" rel="noopener">-</a>
           <button class="btn ghost" type="button" id="player-retry">Retry</button>
         </div>
       </div>
