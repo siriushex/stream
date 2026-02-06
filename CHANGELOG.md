@@ -12,6 +12,20 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI Chat: make prompt chips clickable (ChatGPT-style) and hide Diff/Apply when the plan has no config changes.
+  - AI Chat: add local commands `error ch` (list problematic channels) and `transcode all stream` (create disabled transcode ladder streams without calling OpenAI).
+  - API: add admin endpoint `POST /api/v1/streams/transcode-all` to generate default transcode ladder (HLS publish) streams for all enabled non-transcode channels (disabled by default for safety).
+  - Stream validation: allow `stream://<id>` inputs for transcode streams and accept ladder configs (profiles+publish) without requiring `transcode.outputs`.
+  - Transcode: defer starting ffmpeg jobs until the HTTP server is listening (prevents early /play connect failures during boot).
+  - CI: add ladder smoke fixtures/scripts for failover HLS publish and HTTP TS pull.
+- Tests:
+  - Local smoke: start server, login, import one stream, run `POST /api/v1/streams/transcode-all`.
+  - `bash -n contrib/ci/smoke_transcode_ladder_failover_hls_publish.sh`
+  - `bash -n contrib/ci/smoke_transcode_ladder_http_ts_pull.sh`
+  - `python3 -m json.tool fixtures/transcode_ladder_failover_hls_publish.json`
+  - `python3 -m json.tool fixtures/transcode_ladder_http_ts_pull.json`
+### 2026-02-06
+- Changes:
   - Auth: cache `auth_session_ttl_sec` lookup to avoid extra settings DB query on each authenticated request.
 - Tests:
   - Not run locally.
