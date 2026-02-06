@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI: switch default OpenAI model to `gpt-5-mini` (lower cost) and keep auto fallback to `gpt-5.2`, `gpt-4.1` when a model is unavailable/unsupported.
+  - AI: omit `temperature` for older GPT-5 models (`gpt-5`, `gpt-5-mini`, `gpt-5-nano`) to avoid OpenAI parameter-compatibility 400s.
+  - UI/Docs: update AstralAI model hints to reflect the new default.
+- Tests:
+  - `./astral scripts/tests/ai_openai_fallback_unit.lua`
+  - `./astral scripts/tests/ai_openai_strict_schema_unit.lua`
+### 2026-02-06
+- Changes:
   - AI: harden OpenAI 429 handling (use retry hints in error messages, safer backoff when headers are stripped, and avoid retry loops on quota errors).
   - AI: add `ai_max_attempts` (default 6) so chat jobs can survive transient rate limits without user re-submits.
   - UI: extend AstralAI chat polling timeout to 10 minutes to allow longer backoffs.

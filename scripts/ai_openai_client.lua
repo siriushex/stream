@@ -448,6 +448,18 @@ local function detect_quota_exceeded_429(body)
     return false
 end
 
+local function model_supports_temperature(model)
+    if type(model) ~= "string" or model == "" then
+        return true
+    end
+    -- OpenAI API rejects temperature/top_p for older GPT-5 models (gpt-5, gpt-5-mini, gpt-5-nano).
+    -- Keep requests compatible by omitting these params for those models.
+    if model == "gpt-5" or model == "gpt-5-mini" or model == "gpt-5-nano" then
+        return false
+    end
+    return true
+end
+
 local function should_retry_response(code, body)
     if not should_retry(code) then
         return false
@@ -680,12 +692,16 @@ function ai_openai_client.request_json_schema(opts, callback)
     local models = {}
     local primary_model = opts.model
     if type(primary_model) ~= "string" or primary_model == "" then
-        primary_model = "gpt-5.2"
+        primary_model = "gpt-5-mini"
     end
     table.insert(models, primary_model)
     local fallbacks = opts.model_fallbacks or opts.fallback_models
     if type(fallbacks) ~= "table" then
-        fallbacks = { "gpt-5-mini", "gpt-4.1" }
+        if primary_model == "gpt-5.2" or primary_model == "gpt-5.1" then
+            fallbacks = { "gpt-5-mini", "gpt-4.1" }
+        else
+            fallbacks = { "gpt-5.2", "gpt-4.1" }
+        end
     end
     for _, name in ipairs(fallbacks) do
         if type(name) == "string" and name ~= "" and name ~= primary_model then
@@ -709,7 +725,6 @@ function ai_openai_client.request_json_schema(opts, callback)
             model = models[model_index],
             input = payload_input,
             max_output_tokens = opts.max_output_tokens or 512,
-            temperature = opts.temperature or 0,
             store = opts.store == true,
             parallel_tool_calls = false,
             text = {
@@ -721,6 +736,9 @@ function ai_openai_client.request_json_schema(opts, callback)
                 },
             },
         }
+        if opts.temperature ~= nil and model_supports_temperature(models[model_index]) then
+            payload.temperature = opts.temperature
+        end
         local body = json.encode(payload)
         local scrubbed = 0
         body, scrubbed = scrub_json_body(body)
