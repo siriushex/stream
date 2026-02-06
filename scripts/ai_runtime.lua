@@ -776,7 +776,7 @@ function ai_runtime.configure()
     local cfg = ai_runtime.config
     cfg.enabled = setting_bool("ai_enabled", false)
     -- Default to a cost-effective GPT-5 family model. Users can override via Settings.
-    cfg.model = setting_string("ai_model", "gpt-5-mini")
+    cfg.model = setting_string("ai_model", "gpt-5-nano")
     cfg.max_tokens = setting_number("ai_max_tokens", 512)
     cfg.temperature = setting_number("ai_temperature", 0.2)
     cfg.max_attempts = setting_number("ai_max_attempts", 6)

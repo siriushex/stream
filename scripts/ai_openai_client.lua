@@ -227,6 +227,24 @@ local function write_temp_body(body)
     return path
 end
 
+local function normalize_model_name(value)
+    if type(value) ~= "string" then
+        return value
+    end
+    local name = value:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then
+        return ""
+    end
+    -- Users often try versioned aliases (e.g. gpt-5.2-mini). The API expects family names.
+    if name == "gpt-5.2-mini" or name == "gpt-5.1-mini" then
+        return "gpt-5-mini"
+    end
+    if name == "gpt-5.2-nano" or name == "gpt-5.1-nano" then
+        return "gpt-5-nano"
+    end
+    return name
+end
+
 local function extract_error_message(body)
     if type(body) ~= "string" or body == "" then
         return nil
@@ -692,20 +710,28 @@ function ai_openai_client.request_json_schema(opts, callback)
     local models = {}
     local primary_model = opts.model
     if type(primary_model) ~= "string" or primary_model == "" then
-        primary_model = "gpt-5-mini"
+        primary_model = "gpt-5-nano"
     end
+    primary_model = normalize_model_name(primary_model)
     table.insert(models, primary_model)
     local fallbacks = opts.model_fallbacks or opts.fallback_models
     if type(fallbacks) ~= "table" then
-        if primary_model == "gpt-5.2" or primary_model == "gpt-5.1" then
+        if primary_model == "gpt-5-nano" then
             fallbacks = { "gpt-5-mini", "gpt-4.1" }
+        elseif primary_model == "gpt-5-mini" then
+            fallbacks = { "gpt-5-nano", "gpt-4.1" }
+        elseif primary_model == "gpt-5.2" or primary_model == "gpt-5.1" then
+            fallbacks = { "gpt-5-mini", "gpt-5-nano", "gpt-4.1" }
         else
-            fallbacks = { "gpt-5.2", "gpt-4.1" }
+            fallbacks = { "gpt-5-mini", "gpt-5-nano", "gpt-4.1" }
         end
     end
     for _, name in ipairs(fallbacks) do
-        if type(name) == "string" and name ~= "" and name ~= primary_model then
-            table.insert(models, name)
+        if type(name) == "string" and name ~= "" then
+            local normalized = normalize_model_name(name)
+            if normalized ~= "" and normalized ~= primary_model then
+                table.insert(models, normalized)
+            end
         end
     end
     local model_index = 1

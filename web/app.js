@@ -2132,7 +2132,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'ai_model',
             level: 'advanced',
-            placeholder: 'gpt-5-mini',
+            placeholder: 'gpt-5-nano',
             hintId: 'settings-ai-model-hint',
           },
           {
@@ -14521,6 +14521,14 @@ function getPlayUrl(stream) {
   return `${base}/play/${encodeURIComponent(stream.id)}`;
 }
 
+function getHlsUrl(stream) {
+  const configured = getPlaylistUrl(stream);
+  if (configured) return configured;
+  if (!stream || !stream.id) return '';
+  const base = getPlayBaseUrl();
+  return `${base}/hls/${encodeURIComponent(stream.id)}/index.m3u8`;
+}
+
 function canPlayMpegTs() {
   if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
   const result = elements.playerVideo.canPlayType('video/mp2t');
@@ -14845,7 +14853,7 @@ function applySettingsToUI() {
     elements.settingsAiModel.value = getSettingString('ai_model', '');
   }
   if (elements.settingsAiModelHint) {
-    elements.settingsAiModelHint.textContent = 'Default: gpt-5-mini (auto fallback to gpt-5.2, gpt-4.1 if unavailable).';
+    elements.settingsAiModelHint.textContent = 'Default: gpt-5-nano (auto fallback to gpt-5-mini, gpt-4.1 if unavailable).';
   }
   if (elements.settingsAiChartMode) {
     elements.settingsAiChartMode.value = 'spec';
@@ -14868,7 +14876,7 @@ function applySettingsToUI() {
   if (elements.aiChatStatus) {
     const enabled = getSettingBool('ai_enabled', false);
     const model = getSettingString('ai_model', '');
-    const effectiveModel = model || 'gpt-5-mini';
+    const effectiveModel = model || 'gpt-5-nano';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
       elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
@@ -16122,7 +16130,7 @@ function resolveAbsoluteUrl(url, base) {
 
 function getPlayerShareUrls(stream) {
   const play = getPlayUrl(stream) || '';
-  const hls = getPlaylistUrl(stream) || '';
+  const hls = getHlsUrl(stream) || '';
   return {
     play,
     // HLS URL обычно доступен на основном HTTP порту (порт UI), поэтому резолвим от origin.
@@ -16174,6 +16182,11 @@ function updatePlayerShareUi(stream) {
       elements.playerUrl.href = state.playerShareUrl || '#';
     }
   }
+  if (elements.playerInput) {
+    const kind = state.playerShareKind === 'hls' ? 'HLS' : 'Play';
+    elements.playerInput.textContent = state.playerShareUrl ? `${kind}: ${state.playerShareUrl}` : `${kind}: -`;
+    elements.playerInput.title = state.playerShareUrl || '';
+  }
 
   if (elements.playerLinkPlay) {
     const active = state.playerShareKind !== 'hls';
@@ -16203,15 +16216,6 @@ function updatePlayerMeta(stream) {
     elements.playerStatus.classList.toggle('ok', onAir);
     elements.playerStatus.classList.toggle('warn', !onAir);
     elements.playerStatus.title = enabled ? '' : 'Stream disabled';
-  }
-  if (elements.playerInput) {
-    const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
-    const activeIndex = getActiveInputIndex(stats);
-    const label = getActiveInputLabel(inputs, activeIndex);
-    const activeInput = inputs[Number.isFinite(activeIndex) ? activeIndex : -1];
-    const url = activeInput && activeInput.url ? activeInput.url : '';
-    elements.playerInput.textContent = label ? `Active input: ${label}` : 'Active input: -';
-    elements.playerInput.title = url || '';
   }
 
   updatePlayerShareUi(target);
@@ -16284,8 +16288,8 @@ function formatPreviewError(err) {
 function formatVideoError(err) {
   if (!err) return 'Ошибка воспроизведения.';
   if (err.code === 2) return 'Сетевая ошибка. Проверьте доступ к потоку.';
-  if (err.code === 3) return 'Нет видео дорожки или формат не поддерживается.';
-  if (err.code === 4) return 'Формат не поддерживается браузером.';
+  if (err.code === 3) return 'Ошибка декодирования. Проверьте кодеки/дорожки или откройте Play в VLC.';
+  if (err.code === 4) return 'Формат не поддерживается браузером. Откройте HLS или используйте Play в VLC.';
   return 'Ошибка воспроизведения.';
 }
 
@@ -18935,7 +18939,7 @@ function bindEvents() {
       // Частый кейс: H.264 видео + MP2 аудио. Браузер не поддерживает MP2,
       // поэтому HLS падает как "format not supported". В предпросмотре
       // можно обойти это без транскодинга, отключив audio.
-      if (mediaErr && mediaErr.code === 4) {
+      if (mediaErr && (mediaErr.code === 4 || mediaErr.code === 3)) {
         const stream = getPlayerStream();
         if (stream && !state.playerTriedVideoOnly) {
           state.playerTriedVideoOnly = true;
