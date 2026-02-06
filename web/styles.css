@@ -1689,6 +1689,11 @@ select {
 .splitter-config-body {
   display: grid;
   gap: 8px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
 }
 
 .splitter-config-preview {
@@ -2302,6 +2307,14 @@ select {
   padding-right: 6px;
 }
 
+.modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
+}
+
 .tab {
   background: transparent;
   border: none;
@@ -2853,6 +2866,15 @@ select {
   background: var(--panel-2);
 }
 
+.modal.scan .scan-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 6px;
+  max-height: none;
+}
+
 .footer-actions {
   display: flex;
   gap: 8px;
@@ -2901,6 +2923,12 @@ select {
 
 .player-modal {
   max-width: 980px;
+}
+
+.player-modal .player {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .player-header {
