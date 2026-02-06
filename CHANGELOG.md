@@ -25,6 +25,12 @@
   - `contrib/ci/smoke_mpts_cat_multisection.sh`
 ### 2026-02-06
 - Changes:
+  - UI: warn when HTTP Play HLS is enabled but HLS storage is set to disk (common source of high disk I/O); add one-click preset to switch to memfd + on-demand defaults.
+  - Streams: log a one-time warning when `http_play_hls=true` uses disk storage (suggest `hls_storage=memfd`) to reduce disk I/O surprises.
+- Tests:
+  - Not run (UI/Lua change only).
+### 2026-02-06
+- Changes:
   - Transcode: seamless UDP proxy cutover can complete even when only standby sender exists (prevents cutover timeouts when primary dies early).
 - Tests:
   - `contrib/ci/smoke_transcode_seamless_failover.sh` (Ubuntu servers).

@@ -208,9 +208,20 @@ local function resolve_hls_output_config(channel_data, conf)
     end
 end
 
+local warned_disk_hls_storage = false
+
 local function ensure_auto_hls_output(channel_config)
     if not setting_bool("http_play_hls", false) then
         return
+    end
+
+    if not warned_disk_hls_storage then
+        local storage = setting_string("hls_storage", "disk")
+        if storage ~= "memfd" then
+            warned_disk_hls_storage = true
+            log.warning("[hls] http_play_hls=true with hls_storage=disk: will write segments to disk. " ..
+                "For zero disk I/O use hls_storage=memfd.")
+        end
     end
 
     if channel_config.output == nil then
@@ -893,6 +904,13 @@ local function normalize_audio_fix_config(conf)
     if drift_threshold_ms < 0 then drift_threshold_ms = 0 end
     local drift_fail_count = tonumber(conf.drift_fail_count) or AUDIO_FIX_DRIFT_FAIL_COUNT_DEFAULT
     if drift_fail_count < 1 then drift_fail_count = 1 end
+    local input_url = nil
+    if type(conf.input_url) == "string" then
+        input_url = conf.input_url:match("^%s*(.-)%s*$") or ""
+        if input_url == "" then
+            input_url = nil
+        end
+    end
     return {
         enabled = enabled,
         force_on = force_on,
@@ -919,6 +937,7 @@ local function normalize_audio_fix_config(conf)
         drift_fail_count = drift_fail_count,
         restart_on_drift = conf.restart_on_drift == true,
         auto_copy_require_lc = conf.auto_copy_require_lc == true,
+        input_url = input_url,
     }
 end
 
@@ -951,7 +970,7 @@ local function parse_analyze_audio_type(line)
     if not line or line == "" then
         return nil
     end
-    local value = line:match("[Aa][Uu][Dd][Ii][Oo]%s*:?%s*pid:%d+%s*type:%s*0x([0-9A-Fa-f]+)")
+    local value = line:match("[Aa][Uu][Dd][Ii][Oo]%s*:?%s*pid:%s*%d+%s*type:%s*0x([0-9A-Fa-f]+)")
     if not value then
         return nil
     end
@@ -2996,6 +3015,102 @@ local function get_active_input_source_url(channel_data)
     return nil
 end
 
+local function strip_url_hash(url)
+    if not url or url == "" then
+        return url
+    end
+    local hash = tostring(url):find("#")
+    if hash then
+        return tostring(url):sub(1, hash - 1)
+    end
+    return tostring(url)
+end
+
+local function normalize_setting_bool(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true then
+        return true
+    end
+    if value == false then
+        return false
+    end
+    local s = tostring(value):lower():gsub("%s+", "")
+    if s == "1" or s == "true" or s == "yes" or s == "on" then
+        return true
+    end
+    if s == "0" or s == "false" or s == "no" or s == "off" then
+        return false
+    end
+    return fallback
+end
+
+local function is_ffmpeg_url_supported(url)
+    if not url or url == "" then
+        return false
+    end
+    local u = strip_url_hash(url):lower()
+    if u:find("^http://") == 1 or u:find("^https://") == 1 then
+        return true
+    end
+    if u:find("^udp://") == 1 or u:find("^rtp://") == 1 or u:find("^srt://") == 1 or u:find("^tcp://") == 1 then
+        return true
+    end
+    if u:find("^file:") == 1 then
+        return true
+    end
+    if u:find("^/") == 1 then
+        return true
+    end
+    return false
+end
+
+local function build_audio_fix_play_url(channel_data)
+    if not (channel_data and channel_data.config and channel_data.config.id) then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+    if not http_play_allow then
+        return nil
+    end
+    local http_auth_enabled = normalize_setting_bool(config.get_setting("http_auth_enabled"), false)
+    if http_auth_enabled then
+        -- Internal ffmpeg input cannot provide Basic auth credentials (unless user overrides input_url).
+        return nil
+    end
+    local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
+    if not port then
+        return nil
+    end
+    local stream_id = tostring(channel_data.config.id)
+    if stream_id == "" then
+        return nil
+    end
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id
+end
+
+local function resolve_audio_fix_input_url(channel_data, audio_fix)
+    if audio_fix and audio_fix.config and audio_fix.config.input_url and audio_fix.config.input_url ~= "" then
+        return strip_url_hash(audio_fix.config.input_url), nil
+    end
+    local active = get_active_input_source_url(channel_data)
+    if active and is_ffmpeg_url_supported(active) then
+        return strip_url_hash(active), nil
+    end
+    local play_url = build_audio_fix_play_url(channel_data)
+    if play_url then
+        return play_url, nil
+    end
+    if active and active ~= "" then
+        return nil, "no ffmpeg-compatible input url (active=" .. tostring(active) .. ")"
+    end
+    return nil, "active input url is required"
+end
+
 local function set_udp_output_passthrough(channel_data, output_id, enabled)
     local output_data = channel_data.output[output_id]
     if not output_data then
@@ -3151,10 +3266,10 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: process module not available")
         return false
     end
-    local input_url = get_active_input_source_url(channel_data)
+    local input_url, input_err = resolve_audio_fix_input_url(channel_data, audio_fix)
     if not input_url or input_url == "" then
-        audio_fix.last_error = "active input url is required"
-        log.warning("[stream " .. get_stream_label(channel_data) .. "] audio-fix: active input url missing")
+        audio_fix.last_error = input_err or "active input url is required"
+        log.warning("[stream " .. get_stream_label(channel_data) .. "] audio-fix: " .. tostring(audio_fix.last_error))
         return false
     end
     local output_url = format_udp_output_url(output_data.config, true)
@@ -3313,9 +3428,9 @@ local function start_audio_fix_input_probe(channel_data, output_id, output_data)
         audio_fix.input_probe_error = "process module not available"
         return
     end
-    local input_url = get_active_input_source_url(channel_data)
+    local input_url, input_err = resolve_audio_fix_input_url(channel_data, audio_fix)
     if not input_url or input_url == "" then
-        audio_fix.input_probe_error = "active input url is required"
+        audio_fix.input_probe_error = input_err or "active input url is required"
         return
     end
     local ffprobe_bin = resolve_ffprobe_bin()
