@@ -4187,6 +4187,36 @@ local function build_ladder_output(job, profile, bus_port)
             table.insert(v_args, "0")
         end
     end
+
+    -- Many publish consumers (DASH packagers, RTMP/RTSP pushers, etc.) are "late joiners"
+    -- that connect to the TS stream mid-flight. Ensure SPS/PPS are re-sent on keyframes
+    -- so decoders can lock without requiring a full encoder restart.
+    if tostring(vcodec):find("x264") and normalize_bool(tc.x264_repeat_headers, true) then
+        local found = false
+        for i = 1, #v_args - 1 do
+            if v_args[i] == "-x264-params" then
+                found = true
+                local params = tostring(v_args[i + 1] or "")
+                if not params:find("repeat%-headers=") then
+                    if params == "" then
+                        params = "repeat-headers=1"
+                    else
+                        params = params .. ":repeat-headers=1"
+                    end
+                    v_args[i + 1] = params
+                end
+                break
+            end
+        end
+        if not found then
+            table.insert(v_args, "-x264-params")
+            table.insert(v_args, "repeat-headers=1")
+        end
+    elseif normalize_bool(tc.mpegts_dump_extra, true) and tostring(vcodec):find("264") then
+        -- Fallback for non-x264 encoders: inject codec extradata on keyframes when possible.
+        table.insert(v_args, "-bsf:v")
+        table.insert(v_args, "dump_extra")
+    end
     if type(profile.video_args) == "table" then
         append_args(v_args, profile.video_args)
     end
@@ -4208,6 +4238,12 @@ local function build_ladder_output(job, profile, bus_port)
         table.insert(a_args, "aac_low")
     end
 
+    local format_args = { "-f", "mpegts" }
+    if normalize_bool(tc.mpegts_resend_headers, true) then
+        -- Repeat PSI (PAT/PMT) on keyframes to help late-joining TS consumers.
+        format_args = { "-f", "mpegts", "-mpegts_flags", "+resend_headers" }
+    end
+
     return {
         name = profile.id,
         vf = build_ladder_vf(profile),
@@ -4215,7 +4251,7 @@ local function build_ladder_output(job, profile, bus_port)
         v_args = v_args,
         acodec = acodec,
         a_args = a_args,
-        format_args = { "-f", "mpegts" },
+        format_args = format_args,
         url = "udp://127.0.0.1:" .. tostring(bus_port) .. "?pkt_size=1316",
     }
 end
@@ -4503,6 +4539,24 @@ local function build_publish_ffmpeg_argv(job, worker)
             local input_url = build_transcode_live_url(job.id, pid)
             if not input_url then
                 return nil, "http_port unknown (cannot build /live url)"
+            end
+            -- DASH packagers are "late joiners" reading live TS. Increase probing so ffmpeg
+            -- can observe SPS/PPS (and keyframes) before attempting to write the MPD header.
+            local probesize = tonumber(worker.dash_input_probesize)
+                or tonumber(tc.dash_input_probesize)
+                or tonumber(tc.publish_input_probesize)
+                or (2 * 1024 * 1024)
+            if probesize and probesize > 0 then
+                table.insert(argv, "-probesize")
+                table.insert(argv, tostring(math.floor(probesize)))
+            end
+            local analyzeduration = tonumber(worker.dash_input_analyzeduration_us)
+                or tonumber(tc.dash_input_analyzeduration_us)
+                or tonumber(tc.publish_input_analyzeduration_us)
+                or 5000000
+            if analyzeduration and analyzeduration > 0 then
+                table.insert(argv, "-analyzeduration")
+                table.insert(argv, tostring(math.floor(analyzeduration)))
             end
             table.insert(argv, "-i")
             table.insert(argv, input_url)
