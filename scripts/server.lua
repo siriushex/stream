@@ -991,6 +991,7 @@ function main()
     local http_play_playlist_name = setting_string("http_play_playlist_name", "playlist.m3u8")
     local http_play_arrange = setting_string("http_play_arrange", "tv")
     local http_play_buffer_kb = setting_number("http_play_buffer_kb", 4000)
+    local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 128)
     local http_play_m3u_header = setting_string("http_play_m3u_header", "")
     local http_play_xspf_title = setting_string("http_play_xspf_title", "Playlist")
     local http_play_no_tls = setting_bool("http_play_no_tls", false)
@@ -1289,12 +1290,21 @@ function main()
 
             local buffer_size = math.max(128, http_play_buffer_kb)
             local buffer_fill = math.floor(buffer_size / 4)
+            -- Cap buffer_fill so /play is less bursty. This matters for:
+            -- - players that expect near-realtime delivery
+            -- - Astra http inputs with sync=0 (event-driven) which can time out on long gaps.
+            if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+            end
             local query = request and request.query or nil
             if query then
                 local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
                 if qbuf and qbuf > 0 then
                     buffer_size = math.max(128, math.floor(qbuf))
                     buffer_fill = math.floor(buffer_size / 4)
+                    if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                        buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                    end
                 end
                 local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
                 if qfill and qfill > 0 then
