@@ -1819,12 +1819,12 @@ local function stream_analyze_finish(job, status, err)
         job.error = err
     end
     dvb_scan_build_channels(job)
+    local program_count = 0
+    for _ in pairs(job.programs or {}) do
+        program_count = program_count + 1
+    end
     job.summary = {
-        programs = job.programs and tostring(#(function()
-            local count = 0
-            for _ in pairs(job.programs or {}) do count = count + 1 end
-            return { count = count }
-        end)().count) or 0,
+        programs = program_count,
         channels = job.channels and #job.channels or 0,
         bitrate = job.totals and job.totals.bitrate or nil,
         cc_errors = job.totals and job.totals.cc_errors or nil,
