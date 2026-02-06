@@ -14569,7 +14569,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206e`;
+  const src = `/vendor/hls.min.js?v=20260206f`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -16307,6 +16307,22 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (canPlayHlsNatively()) {
+    // Safari (native HLS) может падать на первых запросах, если /hls/* включён on-demand
+    // и плейлист ещё не успел появиться. Немного подождём манифест.
+    try {
+      const abs = resolveAbsoluteUrl(url, window.location.origin);
+      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
+      if (sameOrigin) {
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
+          if (res.ok) break;
+          if (res.status !== 503) break;
+          await delay(250);
+        }
+      }
+    } catch (err) {
+    }
     elements.playerVideo.src = url;
     return;
   }
@@ -16321,10 +16337,29 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
-    const hls = new window.Hls({ lowLatencyMode: true });
+    const hls = new window.Hls({
+      lowLatencyMode: true,
+      // /hls/* может быть on-demand и на первых запросах отдавать 503, поэтому даём hls.js
+      // шанс ретраить манифест/сегменты без ручного Retry.
+      manifestLoadingMaxRetry: 6,
+      manifestLoadingRetryDelay: 500,
+      levelLoadingMaxRetry: 6,
+      levelLoadingRetryDelay: 500,
+      fragLoadingMaxRetry: 6,
+      fragLoadingRetryDelay: 500,
+    });
     hls.on(window.Hls.Events.ERROR, (_event, data) => {
       if (data && data.fatal) {
-        setPlayerError('Ошибка HLS-потока. Проверьте источник.');
+        const code = data && data.response ? (data.response.code || data.response.status) : 0;
+        let msg = 'Ошибка HLS-потока. Проверьте источник.';
+        if (code === 503) {
+          msg = 'HLS ещё не готов. Подождите пару секунд и нажмите Retry.';
+        } else if (code === 401 || code === 403) {
+          msg = 'Нет доступа к HLS (auth). Войдите заново или откройте Play в VLC.';
+        } else if (code === 404) {
+          msg = 'HLS не найден. Проверьте настройки HLS или используйте Play в VLC.';
+        }
+        setPlayerError(msg);
         hls.destroy();
         state.player = null;
       }
