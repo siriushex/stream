@@ -216,6 +216,7 @@ const state = {
   analyzeJobId: null,
   analyzePoll: null,
   analyzeStreamId: null,
+  analyzeCopyText: '',
   statusTimer: null,
   adapterTimer: null,
   dvbTimer: null,
@@ -1097,6 +1098,7 @@ const elements = {
   adapterAtscFrequency: $('#adapter-atsc-frequency'),
   analyzeOverlay: $('#analyze-overlay'),
   analyzeRestart: $('#analyze-restart'),
+  analyzeCopy: $('#analyze-copy'),
   analyzeClose: $('#analyze-close'),
   analyzeBody: $('#analyze-body'),
   analyzeRate: $('#analyze-rate'),
@@ -16385,6 +16387,12 @@ function formatHexByte(value) {
   return `0x${num.toString(16).toUpperCase().padStart(2, '0')}`;
 }
 
+function formatCrc32(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 'n/a';
+  return `0x${num.toString(16).toUpperCase().padStart(8, '0')}`;
+}
+
 function formatCasList(items) {
   if (!Array.isArray(items) || items.length === 0) return '';
   return items.map((entry) => {
@@ -16417,23 +16425,152 @@ function updateAnalyzeHeaderFromTotals(totals, onAir) {
 
 function renderAnalyzeSections(sections) {
   elements.analyzeBody.innerHTML = '';
-  sections.forEach((section) => {
-    const block = document.createElement('div');
-    block.className = 'analyze-section';
-    const title = document.createElement('strong');
-    title.textContent = section.title;
-    block.appendChild(title);
-    section.items.forEach((item) => {
-      if (item && item.nodeType) {
-        block.appendChild(item);
+  const copyLines = [];
+  const pushCopy = (text, indent = 0) => {
+    if (!text) return;
+    const prefix = indent > 0 ? ' '.repeat(indent) : '';
+    copyLines.push(`${prefix}${text}`);
+  };
+  const addCopyItems = (items, indent = 2) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      if (!item) return;
+      if (item.nodeType) return;
+      if (typeof item === 'string') {
+        pushCopy(`- ${item}`, indent);
         return;
       }
-      const line = document.createElement('div');
-      line.textContent = `- ${item}`;
-      block.appendChild(line);
+      if (typeof item === 'object') {
+        if (item.text) {
+          pushCopy(`- ${item.text}`, indent);
+        }
+        const subs = item.sub || item.subs;
+        if (subs) {
+          const list = Array.isArray(subs) ? subs : [subs];
+          list.forEach((subline) => {
+            if (subline) pushCopy(String(subline), indent + 2);
+          });
+        }
+      }
     });
+  };
+  sections.forEach((section) => {
+    if (!section) return;
+    const block = document.createElement('div');
+    block.className = 'analyze-section';
+    if (section.title) {
+      const title = document.createElement('div');
+      title.className = 'analyze-title';
+      title.textContent = section.title;
+      block.appendChild(title);
+      pushCopy(section.title, 0);
+    }
+    if (section.meta) {
+      const meta = document.createElement('div');
+      meta.className = 'analyze-meta';
+      meta.textContent = section.meta;
+      block.appendChild(meta);
+      pushCopy(section.meta, 2);
+    }
+    if (section.body && section.body.nodeType) {
+      block.appendChild(section.body);
+    }
+    const items = Array.isArray(section.items) ? section.items : [];
+    const listItems = [];
+    const nodeItems = [];
+    items.forEach((item) => {
+      if (item && item.nodeType) {
+        nodeItems.push(item);
+      } else {
+        listItems.push(item);
+      }
+    });
+    if (listItems.length) {
+      const list = document.createElement('ul');
+      list.className = 'analyze-list';
+      listItems.forEach((item) => {
+        if (!item) return;
+        const li = document.createElement('li');
+        li.className = 'analyze-item';
+        if (typeof item === 'string') {
+          li.textContent = item;
+        } else if (typeof item === 'object') {
+          li.textContent = item.text || '';
+          const subs = item.sub || item.subs;
+          if (subs) {
+            const subList = Array.isArray(subs) ? subs : [subs];
+            subList.forEach((subline) => {
+              if (!subline) return;
+              const sub = document.createElement('div');
+              sub.className = 'analyze-subline';
+              sub.textContent = subline;
+              li.appendChild(sub);
+            });
+          }
+        }
+        list.appendChild(li);
+      });
+      block.appendChild(list);
+      addCopyItems(listItems, 2);
+    }
+    nodeItems.forEach((node) => {
+      block.appendChild(node);
+    });
+    const subsections = Array.isArray(section.subsections) ? section.subsections : [];
+    if (subsections.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'analyze-subsections';
+      subsections.forEach((sub) => {
+        if (!sub) return;
+        const subBlock = document.createElement('div');
+        subBlock.className = 'analyze-subsection';
+        if (sub.title) {
+          const subtitle = document.createElement('div');
+          subtitle.className = 'analyze-subtitle';
+          subtitle.textContent = sub.title;
+          subBlock.appendChild(subtitle);
+          pushCopy(sub.title, 2);
+        }
+        const subItems = Array.isArray(sub.items) ? sub.items : [];
+        if (subItems.length) {
+          const subList = document.createElement('ul');
+          subList.className = 'analyze-list';
+          subItems.forEach((item) => {
+            if (!item) return;
+            const li = document.createElement('li');
+            li.className = 'analyze-item';
+            if (typeof item === 'string') {
+              li.textContent = item;
+            } else if (typeof item === 'object') {
+              li.textContent = item.text || '';
+              const subs = item.sub || item.subs;
+              if (subs) {
+                const subLines = Array.isArray(subs) ? subs : [subs];
+                subLines.forEach((subline) => {
+                  if (!subline) return;
+                  const subEl = document.createElement('div');
+                  subEl.className = 'analyze-subline';
+                  subEl.textContent = subline;
+                  li.appendChild(subEl);
+                });
+              }
+            }
+            subList.appendChild(li);
+          });
+          subBlock.appendChild(subList);
+          addCopyItems(subItems, 4);
+        }
+        wrap.appendChild(subBlock);
+      });
+      block.appendChild(wrap);
+    }
     elements.analyzeBody.appendChild(block);
   });
+  const copyText = copyLines.join('\n').trim();
+  state.analyzeCopyText = copyText;
+  if (elements.analyzeCopy) {
+    elements.analyzeCopy.disabled = !copyText;
+  }
 }
 
 function buildAnalyzeBaseSections(stream, stats) {
@@ -16583,6 +16720,164 @@ function buildAnalyzePidLines(pids, programs) {
   });
 }
 
+function normalizeAnalyzePrograms(job) {
+  const programs = job && job.programs;
+  const list = [];
+  if (Array.isArray(programs)) {
+    programs.forEach((entry) => {
+      if (entry) list.push(entry);
+    });
+  } else if (programs && typeof programs === 'object') {
+    Object.keys(programs).forEach((key) => {
+      const entry = programs[key];
+      if (!entry) return;
+      if (entry.pnr == null) {
+        const pnr = Number(key);
+        if (Number.isFinite(pnr)) entry.pnr = pnr;
+      }
+      list.push(entry);
+    });
+  }
+  if (list.length === 0 && Array.isArray(job && job.program_list)) {
+    job.program_list.forEach((entry) => {
+      if (!entry) return;
+      list.push({
+        pnr: entry.pnr,
+        pmt_pid: entry.pmt_pid,
+        pcr: entry.pcr,
+        streams: [],
+      });
+    });
+  }
+  list.forEach((entry) => {
+    entry.pnr = Number.isFinite(Number(entry.pnr)) ? Number(entry.pnr) : entry.pnr;
+    entry.pmt_pid = Number.isFinite(Number(entry.pmt_pid)) ? Number(entry.pmt_pid) : entry.pmt_pid;
+    entry.pcr = Number.isFinite(Number(entry.pcr)) ? Number(entry.pcr) : entry.pcr;
+    entry.streams = Array.isArray(entry.streams) ? entry.streams : [];
+  });
+  list.sort((a, b) => (Number(a.pnr) || 0) - (Number(b.pnr) || 0));
+  return list;
+}
+
+function buildAnalyzeServiceMap(job) {
+  const map = {};
+  const channels = Array.isArray(job && job.channels) ? job.channels : [];
+  channels.forEach((item) => {
+    if (!item || item.pnr == null) return;
+    map[item.pnr] = item;
+  });
+  const programs = Array.isArray(job && job.program_list) ? job.program_list : [];
+  programs.forEach((item) => {
+    if (!item || item.pnr == null) return;
+    if (!map[item.pnr]) map[item.pnr] = item;
+  });
+  return map;
+}
+
+function getAnalyzeStreamLabel(stream) {
+  const name = String(stream && stream.type_name ? stream.type_name : '');
+  const lower = name.toLowerCase();
+  if (lower.includes('video')) return 'VIDEO';
+  if (lower.includes('audio')) return 'AUDIO';
+  if (lower.includes('subtitle') || lower.includes('sub') || lower.includes('teletext')) return 'SUB';
+  return 'PID';
+}
+
+function buildAnalyzePatSection(job, programs) {
+  const tsid = job && job.pat_tsid != null ? job.pat_tsid : 'n/a';
+  const crc = job && job.pat_crc32 != null ? formatCrc32(job.pat_crc32) : '';
+  const meta = crc ? `CRC32: ${crc}` : '';
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return {
+      title: `PAT TSID:${tsid}`,
+      meta,
+      items: ['No PAT data collected.'],
+    };
+  }
+  const items = programs.map((program) => {
+    const pnr = program && program.pnr != null ? program.pnr : 'n/a';
+    const pid = program && program.pmt_pid != null ? program.pmt_pid : 'n/a';
+    return `PNR:${pnr} PID:${pid}`;
+  });
+  return {
+    title: `PAT TSID:${tsid}`,
+    meta,
+    items,
+  };
+}
+
+function buildAnalyzePmtSections(job, programs, serviceMap) {
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return [{
+      title: 'PMT',
+      items: ['No PMT data collected.'],
+    }];
+  }
+  return programs.map((program) => {
+    const pnr = program && program.pnr != null ? program.pnr : 'n/a';
+    const service = (serviceMap && serviceMap[pnr]) || {};
+    const metaParts = [];
+    if (service.name) metaParts.push(`Service: ${service.name}`);
+    if (service.provider) metaParts.push(`Provider: ${service.provider}`);
+    if (program.crc32 != null) metaParts.push(`CRC32: ${formatCrc32(program.crc32)}`);
+    const items = [];
+    const pcr = program && program.pcr != null ? program.pcr : 'n/a';
+    items.push(`PCR PID:${pcr}`);
+    const streams = Array.isArray(program && program.streams) ? program.streams : [];
+    if (!streams.length) {
+      items.push('Streams: n/a');
+    } else {
+      streams.forEach((stream) => {
+        if (!stream) return;
+        const label = getAnalyzeStreamLabel(stream);
+        const pid = stream.pid != null ? stream.pid : 'n/a';
+        const typeId = formatHexByte(stream.type_id);
+        const typeName = stream.type_name ? ` ${stream.type_name}` : '';
+        const line = `${label} PID:${pid} TYPE:${typeId}${typeName}`;
+        const sub = [];
+        if (stream.lang) sub.push(`Language: ${stream.lang}`);
+        const cas = formatCasList(stream.cas);
+        if (cas) sub.push(`CAS: ${cas}`);
+        items.push(sub.length ? { text: line, sub } : line);
+      });
+    }
+    return {
+      title: `PMT PNR:${pnr}`,
+      meta: metaParts.join(' · '),
+      items,
+    };
+  });
+}
+
+function buildAnalyzeSdtSection(job, programs, serviceMap) {
+  const tsid = job && job.sdt_tsid != null
+    ? job.sdt_tsid
+    : (job && job.pat_tsid != null ? job.pat_tsid : 'n/a');
+  const crc = job && job.sdt_crc32 != null ? formatCrc32(job.sdt_crc32) : '';
+  const meta = crc ? `CRC32: ${crc}` : '';
+  if (!Array.isArray(programs) || programs.length === 0) {
+    return {
+      title: `SDT TSID:${tsid}`,
+      meta,
+      items: ['No SDT data collected.'],
+    };
+  }
+  const items = programs.map((program) => {
+    const pnr = program && program.pnr != null ? program.pnr : 'n/a';
+    const service = (serviceMap && serviceMap[pnr]) || {};
+    const subs = [
+      `Provider: ${service.provider || 'n/a'}`,
+      `Service: ${service.name || 'n/a'}`,
+    ];
+    return { text: `PNR:${pnr}`, sub: subs };
+  });
+  return {
+    title: `SDT TSID:${tsid}`,
+    meta,
+    items,
+  };
+}
+
 function buildAnalyzeJobSections(job) {
   if (!job) {
     return [{
@@ -16598,6 +16893,10 @@ function buildAnalyzeJobSections(job) {
   }
   const totals = job.totals || {};
   const summary = job.summary || {};
+  const programs = normalizeAnalyzePrograms(job);
+  const serviceMap = buildAnalyzeServiceMap(job);
+  const programCount = summary.programs || programs.length || 'n/a';
+  const channelCount = summary.channels || (Array.isArray(job.channels) ? job.channels.length : 'n/a');
   const sections = [{
     title: 'Analyze summary',
     items: [
@@ -16608,19 +16907,22 @@ function buildAnalyzeJobSections(job) {
       `CC errors: ${summary.cc_errors || totals.cc_errors || 0}`,
       `PES errors: ${summary.pes_errors || totals.pes_errors || 0}`,
       `Scrambled: ${totals.scrambled ? 'Yes' : 'No'}`,
-      `Programs: ${summary.programs || 'n/a'}`,
-      `Channels: ${summary.channels || 'n/a'}`,
+      `Programs: ${programCount}`,
+      `Channels: ${channelCount}`,
     ],
   }];
 
-  sections.push({
-    title: 'Programs',
-    items: buildAnalyzeProgramLines(job.program_list || []),
+  sections.push(buildAnalyzePatSection(job, programs));
+  buildAnalyzePmtSections(job, programs, serviceMap).forEach((section) => {
+    sections.push(section);
   });
-  sections.push({
-    title: 'PID details',
-    items: buildAnalyzePidLines(job.pids || [], job.program_list || []),
-  });
+  sections.push(buildAnalyzeSdtSection(job, programs, serviceMap));
+  if (Array.isArray(job.pids) && job.pids.length) {
+    sections.push({
+      title: 'PID details',
+      items: buildAnalyzePidLines(job.pids || [], programs || []),
+    });
+  }
   return sections;
 }
 
@@ -16712,6 +17014,10 @@ function openAnalyze(stream) {
 
   clearAnalyzePoll();
   state.analyzeStreamId = null;
+  state.analyzeCopyText = '';
+  if (elements.analyzeCopy) {
+    elements.analyzeCopy.disabled = true;
+  }
 
   if (isTranscode) {
     const inputRate = formatMaybeBitrate(transcode && transcode.input_bitrate_kbps);
@@ -16951,6 +17257,10 @@ function closeAnalyze() {
   state.activeAnalyzeId = null;
   clearAnalyzePoll();
   state.analyzeStreamId = null;
+  state.analyzeCopyText = '';
+  if (elements.analyzeCopy) {
+    elements.analyzeCopy.disabled = true;
+  }
   setOverlay(elements.analyzeOverlay, false);
 }
 
@@ -18520,6 +18830,13 @@ function bindEvents() {
   }
   elements.analyzeClose.addEventListener('click', closeAnalyze);
   elements.analyzeRestart.addEventListener('click', restartAnalyzeTranscode);
+  if (elements.analyzeCopy) {
+    elements.analyzeCopy.addEventListener('click', () => {
+      if (state.analyzeCopyText) {
+        copyText(state.analyzeCopyText);
+      }
+    });
+  }
   if (elements.streamType) {
     elements.streamType.addEventListener('change', () => {
       const value = elements.streamType.value.trim();
