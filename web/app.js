@@ -226,6 +226,8 @@ const state = {
   playerTriedH264: false,
   playerStartTimer: null,
   playerVideoProbeTimer: null,
+  playerVideoFrameSeen: false,
+  playerVideoFrameArmed: false,
   playerStarting: false,
   analyzeJobId: null,
   analyzePoll: null,
@@ -575,6 +577,9 @@ const elements = {
   softcamUser: $('#softcam-user'),
   softcamPass: $('#softcam-pass'),
   softcamPassHint: $('#softcam-pass-hint'),
+  softcamKey: $('#softcam-key'),
+  softcamCaid: $('#softcam-caid'),
+  softcamTimeout: $('#softcam-timeout'),
   softcamDisableEmm: $('#softcam-disable-emm'),
   softcamSplitCam: $('#softcam-split-cam'),
   softcamShift: $('#softcam-shift'),
@@ -3584,21 +3589,25 @@ function normalizeSoftcams(value) {
     const idRaw = String(entry.id || '').trim();
     const nameRaw = String(entry.name || '').trim();
     const typeRaw = String(entry.type || '').trim();
+    const type = typeRaw || 'newcamd';
     const hostRaw = String(entry.host || '').trim();
     if (!idRaw && !nameRaw && !hostRaw) return;
-    const id = idRaw || slugifySoftcamId(nameRaw || hostRaw || typeRaw || 'softcam');
+    const id = idRaw || slugifySoftcamId(nameRaw || hostRaw || type || 'softcam');
     const name = nameRaw || id;
     const port = entry.port !== undefined ? Number(entry.port) : undefined;
     const enableVal = entry.enable !== undefined ? entry.enable : entry.enabled;
     const enabled = enableVal === undefined ? true : (enableVal === true || enableVal === 1 || enableVal === '1');
     const disableEmm = entry.disable_emm === true || entry.disable_emm === 1 || entry.disable_emm === '1';
     const splitCam = entry.split_cam === true || entry.split_cam === 1 || entry.split_cam === '1';
+    const key = entry.key ? String(entry.key) : '';
+    const caid = entry.caid ? String(entry.caid) : '';
+    const timeout = entry.timeout !== undefined ? Number(entry.timeout) : undefined;
     const shift = entry.shift !== undefined && entry.shift !== null ? String(entry.shift) : '';
     const comment = entry.comment ? String(entry.comment) : '';
     out.push({
       id,
       name,
-      type: typeRaw,
+      type,
       host: hostRaw,
       port: Number.isFinite(port) ? port : undefined,
       user: entry.user || '',
@@ -3606,6 +3615,9 @@ function normalizeSoftcams(value) {
       enable: enabled,
       disable_emm: disableEmm,
       split_cam: splitCam,
+      key,
+      caid,
+      timeout: Number.isFinite(timeout) ? timeout : undefined,
       shift,
       comment,
     });
@@ -3879,16 +3891,24 @@ function openSoftcamModal(softcam) {
   if (elements.softcamTitle) {
     elements.softcamTitle.textContent = softcam ? 'Edit softcam' : 'New softcam';
   }
+  // При открытии всегда начинаем с General, чтобы пользователь видел главное.
+  setTab('general', 'softcam');
   if (elements.softcamEnabled) elements.softcamEnabled.checked = softcam ? softcam.enable !== false : true;
   if (elements.softcamId) elements.softcamId.value = softcam ? softcam.id || '' : '';
   if (elements.softcamName) elements.softcamName.value = softcam ? softcam.name || '' : '';
-  if (elements.softcamType) elements.softcamType.value = softcam ? softcam.type || '' : '';
+  // newcamd сейчас единственный поддерживаемый тип softcam в backend.
+  if (elements.softcamType) elements.softcamType.value = 'newcamd';
   if (elements.softcamHost) elements.softcamHost.value = softcam ? softcam.host || '' : '';
   if (elements.softcamPort) elements.softcamPort.value = softcam && softcam.port ? String(softcam.port) : '';
   if (elements.softcamUser) elements.softcamUser.value = softcam ? softcam.user || '' : '';
   if (elements.softcamPass) elements.softcamPass.value = '';
   if (elements.softcamPassHint) {
     elements.softcamPassHint.textContent = softcam && softcam.pass ? 'Password set (stored)' : 'Password not set';
+  }
+  if (elements.softcamKey) elements.softcamKey.value = softcam ? (softcam.key || '') : '';
+  if (elements.softcamCaid) elements.softcamCaid.value = softcam ? (softcam.caid || '') : '';
+  if (elements.softcamTimeout) {
+    elements.softcamTimeout.value = (softcam && Number.isFinite(Number(softcam.timeout))) ? String(softcam.timeout) : '';
   }
   if (elements.softcamDisableEmm) elements.softcamDisableEmm.checked = softcam ? !!softcam.disable_emm : false;
   if (elements.softcamSplitCam) elements.softcamSplitCam.checked = softcam ? !!softcam.split_cam : false;
@@ -4279,11 +4299,14 @@ function handleSoftcamNameInput() {
 async function saveSoftcam() {
   const id = elements.softcamId ? elements.softcamId.value.trim() : '';
   const name = elements.softcamName ? elements.softcamName.value.trim() : '';
-  const type = elements.softcamType ? elements.softcamType.value.trim() : '';
+  const type = 'newcamd';
   const host = elements.softcamHost ? elements.softcamHost.value.trim() : '';
   const port = toNumber(elements.softcamPort && elements.softcamPort.value);
   const user = elements.softcamUser ? elements.softcamUser.value.trim() : '';
   const pass = elements.softcamPass ? elements.softcamPass.value : '';
+  const keyRaw = elements.softcamKey ? elements.softcamKey.value.trim().replace(/\s+/g, '') : '';
+  const caidRaw = elements.softcamCaid ? elements.softcamCaid.value.trim() : '';
+  const timeoutRaw = toNumber(elements.softcamTimeout && elements.softcamTimeout.value);
   const enable = elements.softcamEnabled ? elements.softcamEnabled.checked : true;
   const disableEmm = elements.softcamDisableEmm ? elements.softcamDisableEmm.checked : false;
   const splitCam = elements.softcamSplitCam ? elements.softcamSplitCam.checked : false;
@@ -4291,7 +4314,27 @@ async function saveSoftcam() {
   const comment = elements.softcamComment ? elements.softcamComment.value.trim() : '';
 
   if (!id) throw new Error('Softcam id is required');
-  if (!type) throw new Error('Softcam type is required');
+
+  let key = keyRaw || undefined;
+  if (keyRaw) {
+    if (!/^[0-9a-fA-F]{28}$/.test(keyRaw)) {
+      throw new Error('DES Key must be 28 hex chars (example: 0102030405060708091011121314)');
+    }
+    key = keyRaw.toLowerCase();
+  }
+
+  let caid = caidRaw || undefined;
+  if (caidRaw) {
+    let v = caidRaw;
+    if (/^0x/i.test(v)) v = v.slice(2);
+    v = v.trim();
+    if (!/^[0-9a-fA-F]{4}$/.test(v)) {
+      throw new Error('CaID must be 4 hex chars (example: 0500)');
+    }
+    caid = v.toUpperCase();
+  }
+
+  const timeout = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.floor(timeoutRaw) : undefined;
 
   const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
   const existingIdx = softcams.findIndex((s) => s && s.id === id);
@@ -4303,6 +4346,9 @@ async function saveSoftcam() {
     port,
     user,
     pass,
+    key,
+    caid,
+    timeout,
     enable,
     disable_emm: disableEmm,
     split_cam: splitCam,
@@ -4320,6 +4366,9 @@ async function saveSoftcam() {
       softcams[currentIdx] = {
         ...payload,
         pass: pass || (existing && existing.pass) || '',
+        key: keyRaw ? key : (existing && existing.key),
+        caid: caidRaw ? caid : (existing && existing.caid),
+        timeout: timeout !== undefined ? timeout : (existing && existing.timeout),
       };
     } else {
       softcams.push(payload);
@@ -4334,6 +4383,9 @@ async function saveSoftcam() {
     softcams[existingIdx] = {
       ...payload,
       pass: pass || (existing && existing.pass) || '',
+      key: keyRaw ? key : (existing && existing.key),
+      caid: caidRaw ? caid : (existing && existing.caid),
+      timeout: timeout !== undefined ? timeout : (existing && existing.timeout),
     };
   }
 
@@ -16995,6 +17047,8 @@ function resetPlayerMedia() {
     clearTimeout(state.playerVideoProbeTimer);
     state.playerVideoProbeTimer = null;
   }
+  state.playerVideoFrameSeen = false;
+  state.playerVideoFrameArmed = false;
   setPlayerLoading(false);
   clearPlayerError();
 }
@@ -17034,6 +17088,21 @@ function schedulePlayerNoVideoFallback(attempt) {
   const visible = elements.playerOverlay && elements.playerOverlay.getAttribute('aria-hidden') === 'false';
   if (!visible) return;
 
+  // Safari/HTML5 video иногда "играет" только аудио без ошибок.
+  // Более надёжный сигнал "есть ли видео" - requestVideoFrameCallback (если доступен).
+  if (!state.playerVideoFrameArmed && elements.playerVideo && typeof elements.playerVideo.requestVideoFrameCallback === 'function') {
+    state.playerVideoFrameSeen = false;
+    state.playerVideoFrameArmed = true;
+    try {
+      elements.playerVideo.requestVideoFrameCallback(() => {
+        state.playerVideoFrameSeen = true;
+        state.playerVideoFrameArmed = false;
+      });
+    } catch (err) {
+      state.playerVideoFrameArmed = false;
+    }
+  }
+
   if (state.playerVideoProbeTimer) {
     clearTimeout(state.playerVideoProbeTimer);
     state.playerVideoProbeTimer = null;
@@ -17045,6 +17114,7 @@ function schedulePlayerNoVideoFallback(attempt) {
     if (!current || current.id !== stream.id) return;
     if (!elements.playerVideo) return;
     if (elements.playerVideo.paused || elements.playerVideo.ended) return;
+    if (state.playerVideoFrameSeen) return;
     const w = Number(elements.playerVideo.videoWidth) || 0;
     const h = Number(elements.playerVideo.videoHeight) || 0;
     if (w > 0 && h > 0) return;
@@ -17068,6 +17138,53 @@ function schedulePlayerNoVideoFallback(attempt) {
   }, tryIndex === 0 ? 2500 : 1500);
 }
 
+function isPreviewHlsUrl(url) {
+  const text = String(url || '');
+  return text.includes('/preview/');
+}
+
+async function waitForHlsManifestReady(url, opts = {}) {
+  if (!url) return;
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 2500;
+  const requireSegments = opts.requireSegments === true;
+  const abs = resolveAbsoluteUrl(url, window.location.origin);
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
+  } catch (err) {
+    sameOrigin = false;
+  }
+  if (!sameOrigin) return;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let res = null;
+    try {
+      res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
+    } catch (err) {
+      break;
+    }
+    if (res.status === 503) {
+      await delay(250);
+      continue;
+    }
+    if (!res.ok) {
+      break;
+    }
+    if (requireSegments && abs.endsWith('.m3u8')) {
+      try {
+        const text = await res.text();
+        if (!text || !text.includes('#EXTINF')) {
+          await delay(250);
+          continue;
+        }
+      } catch (err) {
+      }
+    }
+    break;
+  }
+}
+
 async function attachPlayerSource(url, opts = {}) {
   resetPlayerMedia();
   if (!url) {
@@ -17076,6 +17193,8 @@ async function attachPlayerSource(url, opts = {}) {
   }
   clearPlayerError();
   setPlayerLoading(true, 'Подключение...');
+  const isPreview = isPreviewHlsUrl(url);
+  const startTimeoutMs = isPreview ? 20000 : 12000;
   state.playerStartTimer = setTimeout(async () => {
     state.playerStartTimer = null;
     const stream = getPlayerStream();
@@ -17117,7 +17236,7 @@ async function attachPlayerSource(url, opts = {}) {
     }
 
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
-  }, 12000);
+  }, startTimeoutMs);
 
   if (opts.mode === 'mpegts') {
     elements.playerVideo.src = url;
@@ -17125,20 +17244,13 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (canPlayHlsNatively()) {
-    // Safari (native HLS) может падать на первых запросах, если /hls/* включён on-demand
-    // и плейлист ещё не успел появиться. Немного подождём манифест.
+    // Safari (native HLS): ждём манифест/первые сегменты.
+    // Для preview (ffmpeg) это особенно важно: "пустой" index.m3u8 может зависнуть без ретраев.
     try {
-      const abs = resolveAbsoluteUrl(url, window.location.origin);
-      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
-      if (sameOrigin) {
-        const deadline = Date.now() + 2500;
-        while (Date.now() < deadline) {
-          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
-          if (res.ok) break;
-          if (res.status !== 503) break;
-          await delay(250);
-        }
-      }
+      await waitForHlsManifestReady(url, {
+        timeoutMs: isPreview ? 9000 : 2500,
+        requireSegments: isPreview,
+      });
     } catch (err) {
     }
     elements.playerVideo.src = url;
@@ -17156,19 +17268,12 @@ async function attachPlayerSource(url, opts = {}) {
 
   if (window.Hls && window.Hls.isSupported()) {
     // Для on-demand /hls/* манифест может быть 503 первые секунды.
-    // Перед запуском hls.js чуть подождём, чтобы уменьшить шанс фатальной ошибки.
+    // Для preview (ffmpeg) дополнительно ждём появления первых сегментов.
     try {
-      const abs = resolveAbsoluteUrl(url, window.location.origin);
-      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
-      if (sameOrigin) {
-        const deadline = Date.now() + 2500;
-        while (Date.now() < deadline) {
-          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
-          if (res.ok) break;
-          if (res.status !== 503) break;
-          await delay(250);
-        }
-      }
+      await waitForHlsManifestReady(url, {
+        timeoutMs: isPreview ? 9000 : 2500,
+        requireSegments: isPreview,
+      });
     } catch (err) {
     }
 

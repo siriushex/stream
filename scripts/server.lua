@@ -1056,14 +1056,16 @@ function main()
         m4s = "video/iso.segment",
         mp4 = "video/mp4",
     }
-    mime[hls_ts_extension] = hls_ts_mime
-    if hls_ts_extension ~= "ts" then
-        mime.ts = hls_ts_mime
-    end
-
-    local dash_route = normalize_route(setting_string("dash_route", "/dash"))
-    local dash_dir = setting_string("dash_dir", opt.data_dir .. "/dash")
-    ensure_dir(dash_dir)
+	    mime[hls_ts_extension] = hls_ts_mime
+	    if hls_ts_extension ~= "ts" then
+	        mime.ts = hls_ts_mime
+	    end
+	
+	    local dash_route = normalize_route(setting_string("dash_route", "/dash"))
+	    local dash_dir = setting_string("dash_dir", opt.data_dir .. "/dash")
+	    ensure_dir(dash_dir)
+	
+	    local embed_route = normalize_route(setting_string("embed_route", "/embed"))
 
     local hls_static = nil
     if hls_needs_disk then
@@ -1700,19 +1702,48 @@ function main()
                     return nil
                 end
                 local file_path = join_path(s.base_path, rel)
+                local ext = rel:match("%.([%w]+)$") or ""
+                local content_type = mime[ext] or "application/octet-stream"
+                local function send_not_ready()
+                    server:send(client, {
+                        code = 503,
+                        headers = {
+                            "Content-Type: " .. content_type,
+                            "Cache-Control: no-store",
+                            "Pragma: no-cache",
+                            "Retry-After: 1",
+                            "Connection: close",
+                        },
+                        content = "",
+                    })
+                end
                 local fp = io.open(file_path, "rb")
                 if not fp then
+                    -- ffmpeg preview может ещё не успеть записать плейлист. Для HLS клиентов
+                    -- корректнее 503 (как в on-demand memfd), чем 404.
+                    if ext == "m3u8" then
+                        send_not_ready()
+                        return nil
+                    end
                     server:abort(client, 404)
                     return nil
                 end
                 local content = fp:read("*a")
                 fp:close()
                 if not content then
+                    if ext == "m3u8" then
+                        send_not_ready()
+                        return nil
+                    end
                     server:abort(client, 404)
                     return nil
                 end
-                local ext = rel:match("%.([%w]+)$") or ""
-                local content_type = mime[ext] or "application/octet-stream"
+                -- Заглушка index.m3u8 кладётся сразу, но сегментов может ещё не быть.
+                -- Не отдаём "пустой" плейлист 200, иначе Safari может зависнуть без ретраев.
+                if ext == "m3u8" and not content:find("#EXTINF", 1, true) then
+                    send_not_ready()
+                    return nil
+                end
                 server:send(client, {
                     code = 200,
                     headers = {
@@ -2021,11 +2052,11 @@ function main()
         end)
     end
 
-    local function dash_route_handler(server, client, request)
-        local client_data = server:data(client)
-        if request and not ensure_http_auth(server, client, request) then
-            return nil
-        end
+	    local function dash_route_handler(server, client, request)
+	        local client_data = server:data(client)
+	        if request and not ensure_http_auth(server, client, request) then
+	            return nil
+	        end
         if not request then
             if client_data.dash_static then
                 dash_static(server, client, request)
@@ -2058,17 +2089,159 @@ function main()
         end
 
         local token = auth and auth.get_token and auth.get_token(request) or nil
-        ensure_token_auth(server, client, request, {
-            stream_id = stream_id,
-            stream_name = job.name or stream_id,
-            stream_cfg = nil,
-            proto = "dash",
-            token = token,
-        }, function(_session)
-            dash_static(server, client, request)
-            client_data.dash_static = true
-        end)
-    end
+	        ensure_token_auth(server, client, request, {
+	            stream_id = stream_id,
+	            stream_name = job.name or stream_id,
+	            stream_cfg = nil,
+	            proto = "dash",
+	            token = token,
+	        }, function(_session)
+	            dash_static(server, client, request)
+	            client_data.dash_static = true
+	        end)
+	    end
+	
+	    local function embed_route_handler(server, client, request)
+	        if request and not ensure_http_auth(server, client, request) then
+	            return nil
+	        end
+	        if not request then
+	            return nil
+	        end
+	        if request.method ~= "GET" then
+	            server:abort(client, 405)
+	            return nil
+	        end
+	
+	        local prefix = embed_route .. "/"
+	        if request.path:sub(1, #prefix) ~= prefix then
+	            server:abort(client, 404)
+	            return nil
+	        end
+	        local rest = request.path:sub(#prefix + 1)
+	        local stream_id = rest:match("^([^/]+)/?$")
+	        if not stream_id or stream_id == "" then
+	            server:abort(client, 404)
+	            return nil
+	        end
+	
+	        local job = transcode and transcode.jobs and transcode.jobs[stream_id] or nil
+	        if not job then
+	            server:abort(client, 404)
+	            return nil
+	        end
+	
+	        local token = auth and auth.get_token and auth.get_token(request) or nil
+	        ensure_token_auth(server, client, request, {
+	            stream_id = stream_id,
+	            stream_name = job.name or stream_id,
+	            stream_cfg = nil,
+	            proto = "embed",
+	            token = token,
+	        }, function(_session)
+	            local has_hls = false
+	            if job and job.ladder_enabled == true and type(job.publish) == "table" then
+	                for _, pub in ipairs(job.publish) do
+	                    if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
+	                        and type(pub.variants) == "table" and #pub.variants > 0 then
+	                        has_hls = true
+	                        break
+	                    end
+	                end
+	            end
+	
+	            local hls_url = has_hls and (opt.hls_route .. "/" .. tostring(stream_id) .. "/index.m3u8") or ""
+	            local dash_url = dash_route .. "/" .. tostring(stream_id) .. "/manifest.mpd"
+	            local first_profile = job and job.profiles and job.profiles[1] and job.profiles[1].id or nil
+	            local live_url = (first_profile and ("/live/" .. tostring(stream_id) .. "~" .. tostring(first_profile) .. ".ts")) or ""
+	
+	            local title = escape_html(job.name or stream_id)
+	            local payload = [[<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>]] .. title .. [[</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Arial, sans-serif; background: #0f1115; color: #e9eef6; }
+    .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+    h1 { margin: 0 0 12px; font-size: 18px; font-weight: 600; }
+    .card { background: #151924; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 14px; }
+    video { width: 100%; height: auto; background: #000; border-radius: 10px; }
+    .meta { margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; font-size: 13px; opacity: 0.9; }
+    .meta a { color: #9bdcff; text-decoration: none; }
+    .meta a:hover { text-decoration: underline; }
+    .note { margin-top: 10px; font-size: 13px; opacity: 0.85; }
+    .err { color: #ffb2b2; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>]] .. title .. [[</h1>
+    <div class="card">
+      <video id="video" controls playsinline></video>
+      <div class="meta">
+        <a href="]] .. escape_html(hls_url) .. [[">HLS</a>
+        <a href="]] .. escape_html(dash_url) .. [[">DASH</a>
+        <a href="]] .. escape_html(live_url) .. [[">HTTP-TS</a>
+      </div>
+      <div id="msg" class="note"></div>
+    </div>
+  </div>
+  <script src="/vendor/hls.min.js"></script>
+  <script>
+    (function () {
+      var video = document.getElementById('video');
+      var msg = document.getElementById('msg');
+      var src = ]] .. string.format("%q", hls_url) .. [[;
+      function setMsg(text, isErr) {
+        msg.textContent = text || '';
+        msg.className = isErr ? 'note err' : 'note';
+      }
+      if (!src) {
+        setMsg('HLS publish is not enabled for this stream. Enable publish type \"hls\" to use embed playback.', true);
+        return;
+      }
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src;
+        video.play().catch(function () {});
+        return;
+      }
+      if (window.Hls && window.Hls.isSupported()) {
+        var hls = new window.Hls({
+          liveSyncDurationCount: 3,
+          maxLiveSyncPlaybackRate: 1.02
+        });
+        hls.attachMedia(video);
+        hls.on(window.Hls.Events.MEDIA_ATTACHED, function () {
+          hls.loadSource(src);
+        });
+        hls.on(window.Hls.Events.ERROR, function (_evt, data) {
+          if (!data || !data.fatal) return;
+          setMsg('HLS playback error: ' + (data.type || 'unknown') + ' (' + (data.details || '') + ')', true);
+        });
+        video.play().catch(function () {});
+        return;
+      }
+      setMsg('HLS is not supported in this browser (no native HLS and no hls.js).', true);
+    })();
+  </script>
+</body>
+</html>
+]]
+	            server:send(client, {
+	                code = 200,
+	                headers = {
+	                    "Content-Type: text/html; charset=utf-8",
+	                    "Cache-Control: no-store",
+	                    "Pragma: no-cache",
+	                    "Connection: close",
+	                },
+	                content = payload,
+	            })
+	        end)
+	    end
 
     local function build_http_play_routes(include_redirect, include_hls_route, include_web)
         local routes = {}
@@ -2118,11 +2291,12 @@ function main()
 	        table.insert(main_routes, { "/play/*", upstream })
 	    end
 
-    table.insert(main_routes, { "/preview/*", preview_route_handler })
-    table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
-    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
-    table.insert(main_routes, { "/", web_index })
-    table.insert(main_routes, { "/*", web_index })
+	    table.insert(main_routes, { "/preview/*", preview_route_handler })
+	    table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
+	    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
+	    table.insert(main_routes, { embed_route .. "/*", embed_route_handler })
+	    table.insert(main_routes, { "/", web_index })
+	    table.insert(main_routes, { "/*", web_index })
 
     http_server({
         addr = opt.addr,

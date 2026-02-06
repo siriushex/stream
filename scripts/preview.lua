@@ -475,6 +475,9 @@ local function start_ffmpeg_hls_h264_aac(token, stream_id)
     local ffmpeg = resolve_ffmpeg_bin()
 
     -- Полный "browser compatible" профиль: H.264 + AAC (наиболее предсказуемо для HTML5 video).
+    -- Для быстрого старта (особенно в Safari) делаем "лёгкий" предпросмотр:
+    -- - ultrafast preset
+    -- - ограничение разрешения (не апскейлим)
     -- bitrate держим минимальным (~1 Mbit), чтобы предпросмотр был дешёвым по сети/CPU.
     local args = {
         ffmpeg,
@@ -492,18 +495,20 @@ local function start_ffmpeg_hls_h264_aac(token, stream_id)
         "0:a:0?",
         "-sn",
         "-dn",
+        "-vf",
+        "scale='min(854,iw)':-2",
         "-c:v",
         "libx264",
         "-preset",
-        "veryfast",
+        "ultrafast",
         "-tune",
         "zerolatency",
         "-pix_fmt",
         "yuv420p",
         "-profile:v",
-        "main",
+        "baseline",
         "-level",
-        "4.0",
+        "3.1",
         "-b:v",
         "1000k",
         "-maxrate",

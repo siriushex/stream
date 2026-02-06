@@ -50,6 +50,7 @@
 - `dash` (ffmpeg packager, пишет в `data-dir/dash/<stream_id>`)
 - `rtmp`, `rtsp` (ffmpeg `-c copy` push)
 - `udp`, `rtp` (in-process udp_output от внутренней шины)
+- `embed` (включает удобную страницу `/embed/<stream_id>`; для воспроизведения требуется `hls`)
 
 Пример:
 
@@ -81,6 +82,8 @@
   - variant: `/hls/<stream_id>~<profile_id>/index.m3u8`
 - **DASH**:
   - `/dash/<stream_id>/manifest.mpd`
+- **EMBED** (страница-плеер):
+  - `/embed/<stream_id>`
 
 ## Seamless failover (warm-switch)
 
@@ -97,4 +100,3 @@
 - `/live/<id>~<profile>.ts?internal=1` (input для publish packagers/pushers)
 
 Это позволяет использовать token auth для внешних клиентов, не ломая локальные пайплайны.
-
