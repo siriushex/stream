@@ -1584,6 +1584,90 @@ function main()
                 and auth.get_hls_rewrite_enabled()
                 and auth.rewrite_m3u8
             local needs_cookie = (token and token ~= "") or (session and session.session_id)
+
+            local is_master_index = (profile_id == nil)
+                and (rest == (tostring(base_id) .. "/index.m3u8") or rest == (tostring(base_id) .. "/index.m3u"))
+
+            -- Serve ladder master playlist even when auth rewrite is disabled.
+            if is_playlist and is_master_index and not (can_rewrite or needs_cookie) then
+                local payload = nil
+                local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
+                if job and job.ladder_enabled == true and type(job.publish) == "table" then
+                    local variant_set = {}
+                    for _, pub in ipairs(job.publish) do
+                        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
+                            and type(pub.variants) == "table" then
+                            for _, pid in ipairs(pub.variants) do
+                                if pid and pid ~= "" then
+                                    variant_set[tostring(pid)] = true
+                                end
+                            end
+                        end
+                    end
+                    local variants = {}
+                    for pid, _ in pairs(variant_set) do
+                        variants[#variants + 1] = pid
+                    end
+                    if #variants > 0 then
+                        local profiles_by_id = {}
+                        for _, p in ipairs(job.profiles or {}) do
+                            if p and p.id then
+                                profiles_by_id[tostring(p.id)] = p
+                            end
+                        end
+                        table.sort(variants, function(a, b)
+                            local pa = profiles_by_id[a] or {}
+                            local pb = profiles_by_id[b] or {}
+                            local ba = tonumber(pa.bitrate_kbps) or 0
+                            local bb = tonumber(pb.bitrate_kbps) or 0
+                            if ba ~= bb then
+                                return ba > bb
+                            end
+                            local ha = tonumber(pa.height) or 0
+                            local hb = tonumber(pb.height) or 0
+                            if ha ~= hb then
+                                return ha > hb
+                            end
+                            return tostring(a) < tostring(b)
+                        end)
+                        local lines = {
+                            "#EXTM3U",
+                            "#EXT-X-VERSION:3",
+                            "#EXT-X-INDEPENDENT-SEGMENTS",
+                        }
+                        for _, pid in ipairs(variants) do
+                            local p = profiles_by_id[pid] or {}
+                            local bw = tonumber(p.bitrate_kbps) or 0
+                            if bw < 1 then bw = 1 end
+                            bw = math.floor(bw * 1000)
+                            local inf = "BANDWIDTH=" .. tostring(bw)
+                            local w = tonumber(p.width)
+                            local h = tonumber(p.height)
+                            if w and h and w > 0 and h > 0 then
+                                inf = inf .. ",RESOLUTION=" .. tostring(math.floor(w)) .. "x" .. tostring(math.floor(h))
+                            end
+                            table.insert(lines, "#EXT-X-STREAM-INF:" .. inf)
+                            table.insert(lines, opt.hls_route .. "/" .. tostring(base_id) .. "~" .. tostring(pid) .. "/index.m3u8")
+                        end
+                        payload = table.concat(lines, "\n") .. "\n"
+                    end
+                end
+
+                if payload then
+                    local headers = {
+                        "Content-Type: application/vnd.apple.mpegurl",
+                        "Connection: close",
+                    }
+                    if m3u_headers then
+                        for _, header in ipairs(m3u_headers) do
+                            table.insert(headers, header)
+                        end
+                    end
+                    server:send(client, { code = 200, headers = headers, content = payload })
+                    return
+                end
+            end
+
             if is_playlist and (can_rewrite or needs_cookie) then
                 local rel = rest
                 if rel:find("%.%.") then
@@ -1591,9 +1675,6 @@ function main()
                     return
                 end
                 local payload = nil
-
-                local is_master_index = (profile_id == nil)
-                    and (rest == (tostring(base_id) .. "/index.m3u8") or rest == (tostring(base_id) .. "/index.m3u"))
                 if is_master_index then
                     local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
                     if job and job.ladder_enabled == true and type(job.publish) == "table" then
