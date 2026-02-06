@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - Settings/Logs: add runtime logging controls (stdout/file/syslog, log level, file rotation) and apply them live via `PUT /api/v1/settings`.
+- Tests:
+  - `./configure.sh && make`
+### 2026-02-06
+- Changes:
   - UI: speed up initial load and dashboard updates for large configs (refresh only the active view first, background-load the rest; reduce per-poll DOM work by caching tile refs and updating details only when expanded).
 - Tests:
   - Not run locally.

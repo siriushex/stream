@@ -1552,15 +1552,112 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'advanced',
             placeholder: '0 (unlimited)',
           },
+          {
+            type: 'note',
+            text: 'Runtime logs: куда писать логи процесса (stdout/file/syslog), уровень и ротация. Не влияет на Log retention выше (это лимиты веб-буфера).',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-runtime-log-dest',
+            label: 'Runtime log destination',
+            type: 'select',
+            key: 'runtime_log_dest',
+            level: 'advanced',
+            options: [
+              { value: 'inherit', label: 'Inherit (systemd/CLI)' },
+              { value: 'stdout', label: 'Stdout (default)' },
+              { value: 'file', label: 'File' },
+              { value: 'stdout_file', label: 'Stdout + File' },
+              { value: 'syslog', label: 'Syslog' },
+              { value: 'stdout_syslog', label: 'Stdout + Syslog' },
+              { value: 'file_syslog', label: 'File + Syslog' },
+              { value: 'all', label: 'Stdout + File + Syslog' },
+              { value: 'none', label: 'Disabled' },
+            ],
+          },
+          {
+            id: 'settings-runtime-log-level',
+            label: 'Runtime log level',
+            type: 'select',
+            key: 'runtime_log_level',
+            level: 'advanced',
+            options: [
+              { value: 'inherit', label: 'Inherit (default)' },
+              { value: 'error', label: 'Error' },
+              { value: 'warning', label: 'Warning' },
+              { value: 'info', label: 'Info (default)' },
+              { value: 'debug', label: 'Debug' },
+            ],
+          },
+          {
+            id: 'settings-runtime-log-color',
+            label: 'Colored stdout',
+            type: 'switch',
+            key: 'runtime_log_color',
+            level: 'advanced',
+            dependsOn: () => ['stdout', 'stdout_file', 'stdout_syslog', 'all'].includes(
+              readStringValue('settings-runtime-log-dest', 'inherit'),
+            ),
+          },
+          {
+            id: 'settings-runtime-log-file',
+            label: 'Runtime log file path',
+            type: 'input',
+            inputType: 'text',
+            key: 'runtime_log_file',
+            level: 'advanced',
+            placeholder: '/var/log/astral/astral.log',
+            dependsOn: () => ['file', 'stdout_file', 'file_syslog', 'all'].includes(
+              readStringValue('settings-runtime-log-dest', 'inherit'),
+            ),
+          },
+          {
+            id: 'settings-runtime-log-rotate-mb',
+            label: 'File rotation size (MB)',
+            type: 'input',
+            inputType: 'number',
+            key: 'runtime_log_rotate_mb',
+            level: 'advanced',
+            placeholder: '0 (disabled)',
+            dependsOn: () => ['file', 'stdout_file', 'file_syslog', 'all'].includes(
+              readStringValue('settings-runtime-log-dest', 'inherit'),
+            ),
+          },
+          {
+            id: 'settings-runtime-log-rotate-keep',
+            label: 'File rotation keep (files)',
+            type: 'input',
+            inputType: 'number',
+            key: 'runtime_log_rotate_keep',
+            level: 'advanced',
+            placeholder: '0 (disabled)',
+            dependsOn: () => ['file', 'stdout_file', 'file_syslog', 'all'].includes(
+              readStringValue('settings-runtime-log-dest', 'inherit'),
+            ),
+          },
+          {
+            id: 'settings-runtime-log-syslog',
+            label: 'Syslog ident',
+            type: 'input',
+            inputType: 'text',
+            key: 'runtime_log_syslog',
+            level: 'advanced',
+            placeholder: 'astral',
+            dependsOn: () => ['syslog', 'stdout_syslog', 'file_syslog', 'all'].includes(
+              readStringValue('settings-runtime-log-dest', 'inherit'),
+            ),
+          },
         ],
         summary: () => {
           const webhook = readStringValue('settings-event-request', '');
           const logMax = readNumberValue('settings-log-max-entries', 0);
           const accessMax = readNumberValue('settings-access-log-max-entries', 0);
+          const dest = readStringValue('settings-runtime-log-dest', 'inherit');
+          const level = readStringValue('settings-runtime-log-level', 'inherit');
           const webhookText = webhook ? 'Webhook: задан' : 'Webhook: нет';
           const logsText = `Logs: ${formatOptionalNumber(logMax, '', '∞')}`;
           const accessText = `Access: ${formatOptionalNumber(accessMax, '', '∞')}`;
-          return `${webhookText} · ${logsText} · ${accessText}`;
+          return `${webhookText} · ${logsText} · ${accessText} · Runtime: ${level}/${dest}`;
         },
       },
       {
@@ -2695,6 +2792,13 @@ function bindGeneralElements() {
     settingsLogRetentionSec: 'settings-log-retention-sec',
     settingsAccessLogMaxEntries: 'settings-access-log-max-entries',
     settingsAccessLogRetentionSec: 'settings-access-log-retention-sec',
+    settingsRuntimeLogDest: 'settings-runtime-log-dest',
+    settingsRuntimeLogLevel: 'settings-runtime-log-level',
+    settingsRuntimeLogColor: 'settings-runtime-log-color',
+    settingsRuntimeLogFile: 'settings-runtime-log-file',
+    settingsRuntimeLogRotateMb: 'settings-runtime-log-rotate-mb',
+    settingsRuntimeLogRotateKeep: 'settings-runtime-log-rotate-keep',
+    settingsRuntimeLogSyslog: 'settings-runtime-log-syslog',
     settingsObservabilityEnabled: 'settings-observability-enabled',
     settingsObservabilityLogsDays: 'settings-observability-logs-days',
     settingsObservabilityMetricsDays: 'settings-observability-metrics-days',
@@ -15000,6 +15104,27 @@ function applySettingsToUI() {
   if (elements.settingsAccessLogRetentionSec) {
     elements.settingsAccessLogRetentionSec.value = getSettingNumber('access_log_retention_sec', '');
   }
+  if (elements.settingsRuntimeLogDest) {
+    setSelectValue(elements.settingsRuntimeLogDest, getSettingString('runtime_log_dest', 'inherit'), 'inherit');
+  }
+  if (elements.settingsRuntimeLogLevel) {
+    setSelectValue(elements.settingsRuntimeLogLevel, getSettingString('runtime_log_level', 'inherit'), 'inherit');
+  }
+  if (elements.settingsRuntimeLogColor) {
+    elements.settingsRuntimeLogColor.checked = getSettingBool('runtime_log_color', false);
+  }
+  if (elements.settingsRuntimeLogFile) {
+    elements.settingsRuntimeLogFile.value = getSettingString('runtime_log_file', '');
+  }
+  if (elements.settingsRuntimeLogRotateMb) {
+    elements.settingsRuntimeLogRotateMb.value = getSettingNumber('runtime_log_rotate_mb', 0);
+  }
+  if (elements.settingsRuntimeLogRotateKeep) {
+    elements.settingsRuntimeLogRotateKeep.value = getSettingNumber('runtime_log_rotate_keep', 0);
+  }
+  if (elements.settingsRuntimeLogSyslog) {
+    elements.settingsRuntimeLogSyslog.value = getSettingString('runtime_log_syslog', '');
+  }
   if (elements.settingsObservabilityEnabled) {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
@@ -15501,6 +15626,39 @@ function collectGeneralSettings() {
   if (accessLogRetention !== undefined && accessLogRetention < 0) {
     throw new Error('Access log retention must be >= 0');
   }
+  const runtimeLogDest = elements.settingsRuntimeLogDest && String(elements.settingsRuntimeLogDest.value || '').trim();
+  const runtimeLogLevel = elements.settingsRuntimeLogLevel && String(elements.settingsRuntimeLogLevel.value || '').trim();
+  const runtimeLogFile = elements.settingsRuntimeLogFile && elements.settingsRuntimeLogFile.value.trim();
+  const runtimeLogSyslog = elements.settingsRuntimeLogSyslog && elements.settingsRuntimeLogSyslog.value.trim();
+  const rotateMbRaw = elements.settingsRuntimeLogRotateMb ? String(elements.settingsRuntimeLogRotateMb.value || '').trim() : '';
+  const rotateKeepRaw = elements.settingsRuntimeLogRotateKeep ? String(elements.settingsRuntimeLogRotateKeep.value || '').trim() : '';
+  const runtimeLogRotateMb = rotateMbRaw === '' ? 0 : toNumber(rotateMbRaw);
+  if (runtimeLogRotateMb === undefined || runtimeLogRotateMb < 0) {
+    throw new Error('Log rotation size must be >= 0');
+  }
+  const runtimeLogRotateKeep = rotateKeepRaw === '' ? 0 : toNumber(rotateKeepRaw);
+  if (runtimeLogRotateKeep === undefined || runtimeLogRotateKeep < 0) {
+    throw new Error('Log rotation keep must be >= 0');
+  }
+  const allowedLogDest = ['inherit', 'stdout', 'file', 'stdout_file', 'syslog', 'stdout_syslog', 'file_syslog', 'all', 'none'];
+  if (runtimeLogDest && !allowedLogDest.includes(runtimeLogDest)) {
+    throw new Error('Runtime log destination is invalid');
+  }
+  const allowedLogLevel = ['inherit', 'error', 'warning', 'info', 'debug'];
+  if (runtimeLogLevel && !allowedLogLevel.includes(runtimeLogLevel)) {
+    throw new Error('Runtime log level is invalid');
+  }
+  const needsFile = ['file', 'stdout_file', 'file_syslog', 'all'].includes(runtimeLogDest);
+  if (needsFile && !runtimeLogFile) {
+    throw new Error('Runtime log file path is required for file destination');
+  }
+  const needsSyslog = ['syslog', 'stdout_syslog', 'file_syslog', 'all'].includes(runtimeLogDest);
+  if (needsSyslog && !runtimeLogSyslog) {
+    throw new Error('Syslog ident is required for syslog destination');
+  }
+  if (needsFile && runtimeLogRotateMb > 0 && runtimeLogRotateKeep < 1) {
+    throw new Error('Log rotation keep must be >= 1 when rotation is enabled');
+  }
   const observabilityEnabled = elements.settingsObservabilityEnabled && elements.settingsObservabilityEnabled.checked;
   const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
@@ -15728,6 +15886,31 @@ function collectGeneralSettings() {
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
   if (accessLogMax !== undefined) payload.access_log_max_entries = accessLogMax;
   if (accessLogRetention !== undefined) payload.access_log_retention_sec = accessLogRetention;
+  const hadRuntimeDest = getSettingString('runtime_log_dest', '') !== '';
+  const hadRuntimeLevel = getSettingString('runtime_log_level', '') !== '';
+  if (elements.settingsRuntimeLogDest && (runtimeLogDest !== 'inherit' || hadRuntimeDest)) {
+    payload.runtime_log_dest = runtimeLogDest || 'inherit';
+  }
+  if (elements.settingsRuntimeLogLevel && (runtimeLogLevel !== 'inherit' || hadRuntimeLevel)) {
+    payload.runtime_log_level = runtimeLogLevel || 'inherit';
+  }
+  if (runtimeLogDest && runtimeLogDest !== 'inherit') {
+    if (elements.settingsRuntimeLogColor && ['stdout', 'stdout_file', 'stdout_syslog', 'all'].includes(runtimeLogDest)) {
+      payload.runtime_log_color = !!elements.settingsRuntimeLogColor.checked;
+    }
+    if (elements.settingsRuntimeLogFile && ['file', 'stdout_file', 'file_syslog', 'all'].includes(runtimeLogDest)) {
+      payload.runtime_log_file = runtimeLogFile || '';
+    }
+    if (elements.settingsRuntimeLogRotateMb && ['file', 'stdout_file', 'file_syslog', 'all'].includes(runtimeLogDest)) {
+      payload.runtime_log_rotate_mb = Math.floor(runtimeLogRotateMb);
+    }
+    if (elements.settingsRuntimeLogRotateKeep && ['file', 'stdout_file', 'file_syslog', 'all'].includes(runtimeLogDest)) {
+      payload.runtime_log_rotate_keep = Math.floor(runtimeLogRotateKeep);
+    }
+    if (elements.settingsRuntimeLogSyslog && ['syslog', 'stdout_syslog', 'file_syslog', 'all'].includes(runtimeLogDest)) {
+      payload.runtime_log_syslog = runtimeLogSyslog || '';
+    }
+  }
   if (elements.settingsObservabilityEnabled) {
     if (observabilityEnabled) {
       payload.ai_logs_retention_days = observabilityLogsDays || 7;
