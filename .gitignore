@@ -8,4 +8,4 @@
 *.sublime-workspace
 /modules/inscript/inscript.h
 /contrib/build
-
+.DS_Store
