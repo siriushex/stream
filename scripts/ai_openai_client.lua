@@ -579,18 +579,83 @@ local function extract_output_json(response)
     if type(response) ~= "table" then
         return nil, "invalid response"
     end
-    if type(response.output) ~= "table" then
+    -- Some clients/models include a top-level convenience field.
+    if type(response.output_text) == "string" and response.output_text ~= "" then
+        return response.output_text
+    end
+
+    local output = response.output
+    if type(output) ~= "table" then
         return nil, "missing output"
     end
-    for _, item in ipairs(response.output) do
-        if item.type == "message" and type(item.content) == "table" then
-            for _, chunk in ipairs(item.content) do
-                if chunk.type == "output_text" and chunk.text and chunk.text ~= "" then
-                    return chunk.text
+
+    local refusal = nil
+    local candidates = {}
+
+    local function push_candidate(value)
+        if type(value) ~= "string" then
+            return
+        end
+        local text = value:gsub("^%s+", ""):gsub("%s+$", "")
+        if text ~= "" then
+            table.insert(candidates, text)
+        end
+    end
+
+    for _, item in ipairs(output) do
+        if type(item) == "table" then
+            -- In some responses, output items are direct text chunks.
+            if (item.type == "output_text" or item.type == "text") then
+                if type(item.text) == "string" then
+                    push_candidate(item.text)
+                elseif type(item.text) == "table" and type(item.text.value) == "string" then
+                    push_candidate(item.text.value)
+                end
+            end
+
+            if item.type == "message" then
+                if type(item.content) == "string" then
+                    push_candidate(item.content)
+                elseif type(item.content) == "table" then
+                    for _, chunk in ipairs(item.content) do
+                        if type(chunk) == "table" then
+                            if chunk.type == "refusal" and type(chunk.refusal) == "string" and chunk.refusal ~= "" then
+                                refusal = chunk.refusal
+                            end
+                            if (chunk.type == "output_text" or chunk.type == "text") then
+                                if type(chunk.text) == "string" then
+                                    push_candidate(chunk.text)
+                                elseif type(chunk.text) == "table" and type(chunk.text.value) == "string" then
+                                    push_candidate(chunk.text.value)
+                                end
+                            elseif type(chunk.text) == "string" then
+                                push_candidate(chunk.text)
+                            elseif type(chunk.value) == "string" then
+                                push_candidate(chunk.value)
+                            end
+                        end
+                    end
                 end
             end
         end
     end
+
+    if refusal then
+        return nil, "refusal: " .. refusal
+    end
+
+    -- Prefer the first candidate that parses as an object, to reduce invalid-json noise.
+    for _, text in ipairs(candidates) do
+        local ok, parsed = pcall(json.decode, text)
+        if ok and type(parsed) == "table" then
+            return text
+        end
+    end
+
+    if #candidates > 0 then
+        return candidates[1]
+    end
+
     return nil, "output text missing"
 end
 
@@ -860,10 +925,20 @@ function ai_openai_client.request_json_schema(opts, callback)
                 end
                 local text, err = extract_output_json(decoded)
                 if not text then
+                    -- Some models/proxies may return a response object without output_text.
+                    -- Treat this as a model-compat issue and fall back if possible.
+                    if model_index < #models and type(err) == "string" and not err:match("^refusal:") then
+                        model_index = model_index + 1
+                        return perform_request()
+                    end
                     return callback(false, err or "missing output", meta)
                 end
                 local parsed_out = json.decode(text)
                 if type(parsed_out) ~= "table" then
+                    if model_index < #models then
+                        model_index = model_index + 1
+                        return perform_request()
+                    end
                     return callback(false, "invalid output json", meta)
                 end
                 return callback(true, parsed_out, meta)
@@ -1030,10 +1105,20 @@ function ai_openai_client.request_json_schema(opts, callback)
                 end
                 local text, err = extract_output_json(decoded)
                 if not text then
+                    if model_index < #models and type(err) == "string" and not err:match("^refusal:") then
+                        model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
                     return callback(false, err or "missing output", meta)
                 end
                 local parsed_out = json.decode(text)
                 if type(parsed_out) ~= "table" then
+                    if model_index < #models then
+                        model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
                     return callback(false, "invalid output json", meta)
                 end
                 return callback(true, parsed_out, meta)
