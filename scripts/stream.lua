@@ -869,6 +869,7 @@ local AUDIO_FIX_DRIFT_PROBE_DURATION_DEFAULT = 2
 local AUDIO_FIX_DRIFT_THRESHOLD_MS_DEFAULT = 800
 local AUDIO_FIX_DRIFT_FAIL_COUNT_DEFAULT = 3
 local AUDIO_FIX_ANALYZE_MAX_DEFAULT = 4
+local AUDIO_FIX_PLAY_BUFFER_KB_DEFAULT = 512
 local audio_fix_analyze_active = 0
 
 local function format_audio_type_hex(value)
@@ -991,6 +992,20 @@ local function normalize_audio_fix_config(conf)
             input_url = nil
         end
     end
+    local play_buffer_kb = conf.play_buffer_kb
+    if play_buffer_kb == nil then
+        play_buffer_kb = conf.input_play_buffer_kb
+    end
+    local has_play_buffer = play_buffer_kb ~= nil
+    if play_buffer_kb ~= nil then
+        play_buffer_kb = tonumber(play_buffer_kb)
+        if not play_buffer_kb or play_buffer_kb <= 0 then
+            play_buffer_kb = nil
+        end
+    end
+    if not has_play_buffer then
+        play_buffer_kb = AUDIO_FIX_PLAY_BUFFER_KB_DEFAULT
+    end
     return {
         enabled = enabled,
         force_on = force_on,
@@ -1017,6 +1032,7 @@ local function normalize_audio_fix_config(conf)
         drift_fail_count = drift_fail_count,
         restart_on_drift = conf.restart_on_drift == true,
         auto_copy_require_lc = conf.auto_copy_require_lc == true,
+        play_buffer_kb = play_buffer_kb,
         input_url = input_url,
     }
 end
@@ -3111,6 +3127,21 @@ local function strip_url_hash(url)
     return tostring(url)
 end
 
+local function append_play_buffer(url, buffer_kb)
+    if not url or url == "" then
+        return url
+    end
+    local value = tonumber(buffer_kb)
+    if not value or value <= 0 then
+        return url
+    end
+    local suffix = "buf_kb=" .. tostring(math.floor(value))
+    if tostring(url):find("?", 1, true) then
+        return tostring(url) .. "&" .. suffix
+    end
+    return tostring(url) .. "?" .. suffix
+end
+
 local function normalize_setting_bool(value, fallback)
     if value == nil then
         return fallback
@@ -3181,6 +3212,8 @@ end
 local function resolve_audio_fix_input_url(channel_data, audio_fix)
     local play_url = build_audio_fix_play_url(channel_data)
     if play_url then
+        local play_buffer_kb = audio_fix and audio_fix.config and audio_fix.config.play_buffer_kb or nil
+        play_url = append_play_buffer(play_url, play_buffer_kb)
         return play_url, nil
     end
     if audio_fix and audio_fix.config and audio_fix.config.input_url and audio_fix.config.input_url ~= "" then
