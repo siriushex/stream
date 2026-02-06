@@ -952,6 +952,13 @@ function main()
 
     apply_softcam_settings()
 
+    -- Transcode/audio-fix may use /play as a local HTTP input. During boot we must avoid
+    -- starting ffmpeg before the HTTP server starts listening, otherwise ffmpeg may hang
+    -- or fail to connect and never recover.
+    if transcode then
+        transcode.defer_start = true
+    end
+
     if runtime.refresh_adapters then
         runtime.refresh_adapters()
     end
@@ -2132,6 +2139,13 @@ function main()
             route = build_http_play_routes(true, true, true),
         })
         log.info("[server] http play on " .. opt.addr .. ":" .. http_play_port)
+    end
+
+    if transcode then
+        transcode.defer_start = false
+        if transcode.start_deferred then
+            transcode.start_deferred()
+        end
     end
 
     log.info("[server] web ui on " .. opt.addr .. ":" .. opt.port)

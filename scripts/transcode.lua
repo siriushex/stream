@@ -3,6 +3,7 @@
 transcode = {
     jobs = {},
     analyze_active = 0,
+    defer_start = false,
 }
 
 local error_patterns = {
@@ -6474,8 +6475,13 @@ function transcode.upsert(id, row, force)
     local hash = row.config_json or ""
     if job and job.hash == hash and not force then
         if enabled and job.state == "STOPPED" then
-            transcode.start(job)
+            if transcode.defer_start == true then
+                job.deferred_start = true
+            else
+                transcode.start(job)
+            end
         elseif not enabled and job.state ~= "STOPPED" then
+            job.deferred_start = nil
             transcode.stop(job)
         end
         job.enabled = enabled
@@ -6570,7 +6576,11 @@ function transcode.upsert(id, row, force)
     end
 
     if enabled and job.state ~= "ERROR" then
-        transcode.start(job)
+        if transcode.defer_start == true then
+            job.deferred_start = true
+        else
+            transcode.start(job)
+        end
     end
 
     return job
@@ -6583,6 +6593,20 @@ function transcode.delete(id)
     end
     transcode.stop(job)
     transcode.jobs[id] = nil
+end
+
+function transcode.start_deferred()
+    if transcode.defer_start == true then
+        return false
+    end
+    local started = false
+    for _, job in pairs(transcode.jobs) do
+        if job and job.deferred_start == true and job.enabled and job.state == "STOPPED" then
+            job.deferred_start = nil
+            started = transcode.start(job) or started
+        end
+    end
+    return started
 end
 
 function transcode.list_status()
