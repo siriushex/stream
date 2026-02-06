@@ -4,18 +4,20 @@
 
 ## Что реализовано
 - Полноценный MPTS mux с PAT/PMT/SDT/NIT/TDT/TOT и CAT (пустой по умолчанию, CA_descriptors из `mpts_config.ca`, либо pass‑through при `pass_cat`).
+- TOT можно отключить отдельно (`advanced.disable_tot`), а DST задать явно (`general.dst.time_of_change/next_offset_minutes`).
 - Auto-remap PID по умолчанию; строгий режим при `disable_auto_remap=true`.
 - CBR с null stuffing по `advanced.target_bitrate`.
 - `strict_pnr` и `spts_only` для контроля multi‑PAT.
 - PCR restamp + EWMA‑сглаживание (`pcr_smoothing`).
-- Pass‑through EIT/CAT из выбранного источника.
+- Pass‑through EIT/CAT из выбранного источника + фильтр EIT по `table_id` (`advanced.eit_table_ids`).
 - LCN tags configurable (`nit.lcn_descriptor_tag` / `nit.lcn_descriptor_tags`).
 - Экспорт MPTS метрик (bitrate/null%/PSI interval) в статус и Prometheus.
-- UI для параметров MPTS + массовые операции по сервисам.
+- UI для параметров MPTS + массовые операции по сервисам + быстрые инструменты “Convert inputs” / “Add from streams”.
 - Auto-probe сервисов из UDP/RTP входа при пустом `mpts_services` (`advanced.auto_probe`).
 
 ## Ограничения
 - Delivery поддерживается для DVB‑C/DVB‑T/DVB‑S (NIT delivery descriptor).
+- `general.codepage` поддерживает ограниченный набор DVB charset marker: `utf-8`, `iso-8859-1` (default), `iso-8859-2/4/5/7/8/9`.
 - `advanced.si_interval_ms` < 50 игнорируется.
 - `advanced.target_bitrate <= 0` отключает CBR (игнорируется).
 - `mpts_config.nit.lcn_version` действует как alias для `advanced.nit_version` (если он не задан).

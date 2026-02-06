@@ -41,6 +41,7 @@ EXPECT_PMT_CAS="${EXPECT_PMT_CAS:-}"
 EXPECT_BITRATE_KBIT="${EXPECT_BITRATE_KBIT:-}"
 EXPECT_BITRATE_TOL_PCT="${EXPECT_BITRATE_TOL_PCT:-10}"
 EXPECT_LOG="${EXPECT_LOG:-}"
+EXPECT_NO_TOT="${EXPECT_NO_TOT:-0}"
 
 LOG_FILE="$(mktemp)"
 
@@ -523,6 +524,11 @@ if ! grep -q "TOT:" "$LOG_FILE"; then
     exit 1
   fi
   echo "TOT not found (optional)"
+else
+  if [[ "${EXPECT_NO_TOT}" == "1" ]]; then
+    echo "TOT found but EXPECT_NO_TOT=1"
+    exit 1
+  fi
 fi
 
 echo "OK"

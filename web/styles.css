@@ -2510,6 +2510,32 @@ select {
   margin-bottom: 16px;
 }
 
+.mpts-callout {
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mpts-callout.is-hidden {
+  display: none;
+}
+
+.mpts-callout-text {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mpts-manual.is-attention {
+  outline: 2px solid rgba(255, 193, 7, 0.35);
+  box-shadow: 0 0 0 6px rgba(255, 193, 7, 0.08);
+}
+
 .mpts-runtime-grid {
   display: grid;
   gap: 8px;
@@ -2551,6 +2577,21 @@ select {
 
 .mpts-pass-warning.is-hidden {
   display: none;
+}
+
+.mpts-streams-list {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px;
+  max-height: 340px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+
+.mpts-stream-row {
+  margin: 0;
 }
 
 .output-inline.is-invalid {

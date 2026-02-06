@@ -713,6 +713,8 @@ const elements = {
   streamEpgCodepage: $('#stream-epg-codepage'),
   mptsCountry: $('#mpts-country'),
   mptsUtcOffset: $('#mpts-utc-offset'),
+  mptsDstTimeOfChange: $('#mpts-dst-time-of-change'),
+  mptsDstNextOffset: $('#mpts-dst-next-offset'),
   mptsNetworkId: $('#mpts-network-id'),
   mptsNetworkName: $('#mpts-network-name'),
   mptsProviderName: $('#mpts-provider-name'),
@@ -753,7 +755,9 @@ const elements = {
   mptsPassEit: $('#mpts-pass-eit'),
   mptsPassCat: $('#mpts-pass-cat'),
   mptsPassTdt: $('#mpts-pass-tdt'),
+  mptsDisableTot: $('#mpts-disable-tot'),
   mptsEitSource: $('#mpts-eit-source'),
+  mptsEitTableIds: $('#mpts-eit-table-ids'),
   mptsCatSource: $('#mpts-cat-source'),
   mptsStrictPnr: $('#mpts-strict-pnr'),
   mptsSptsOnly: $('#mpts-spts-only'),
@@ -766,11 +770,22 @@ const elements = {
   mptsManual: $('#mpts-manual'),
   mptsEnabledStatus: $('#mpts-enabled-status'),
   btnMptsEnable: $('#btn-mpts-enable'),
+  mptsCallout: $('#mpts-callout'),
+  mptsCalloutText: $('#mpts-callout-text'),
+  btnMptsEnableCallout: $('#btn-mpts-enable-callout'),
   mptsRuntime: $('#mpts-runtime'),
   mptsRuntimeBitrate: $('#mpts-runtime-bitrate'),
   mptsRuntimeNull: $('#mpts-runtime-null'),
   mptsRuntimePsi: $('#mpts-runtime-psi'),
   mptsRuntimeNote: $('#mpts-runtime-note'),
+  btnMptsConvertInputs: $('#btn-mpts-convert-inputs'),
+  btnMptsAddStreams: $('#btn-mpts-add-streams'),
+  mptsStreamsOverlay: $('#mpts-streams-overlay'),
+  mptsStreamsClose: $('#mpts-streams-close'),
+  mptsStreamsCancel: $('#mpts-streams-cancel'),
+  mptsStreamsAdd: $('#mpts-streams-add'),
+  mptsStreamsSearch: $('#mpts-streams-search'),
+  mptsStreamsList: $('#mpts-streams-list'),
   streamTimeout: $('#stream-timeout'),
   streamHttpKeep: $('#stream-http-keep-active'),
   streamNoSdt: $('#stream-no-sdt'),
@@ -4756,6 +4771,12 @@ function updateMptsFields() {
   if (elements.btnMptsEnable) {
     elements.btnMptsEnable.disabled = enabled;
   }
+  if (elements.mptsCallout) {
+    elements.mptsCallout.classList.toggle('is-hidden', enabled);
+  }
+  if (elements.btnMptsEnableCallout) {
+    elements.btnMptsEnableCallout.disabled = enabled;
+  }
   updateMptsPassWarning();
   updateMptsAutoremapWarning();
   updateMptsPnrWarning();
@@ -4764,6 +4785,26 @@ function updateMptsFields() {
   updateMptsLcnTagsWarning();
   updateMptsLcnVersionWarning();
   updateEditorMptsStatus();
+}
+
+function focusMptsManual(message) {
+  if (message) {
+    setStatus(message);
+  }
+  if (elements.mptsManual) {
+    elements.mptsManual.classList.add('is-attention');
+    try {
+      elements.mptsManual.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (err) {
+      elements.mptsManual.scrollIntoView(true);
+    }
+    window.setTimeout(() => {
+      elements.mptsManual.classList.remove('is-attention');
+    }, 1200);
+  }
+  if (elements.btnMptsEnable && !elements.btnMptsEnable.disabled) {
+    elements.btnMptsEnable.focus();
+  }
 }
 
 function truncateText(text, max) {
@@ -7103,6 +7144,170 @@ function renderMptsCaList() {
 
     elements.mptsCaList.appendChild(row);
   });
+}
+
+function isMptsServiceEffectivelyEmpty(service) {
+  if (!service) return true;
+  const input = String(service.input || '').trim();
+  const name = String(service.service_name || '').trim();
+  const provider = String(service.service_provider || '').trim();
+  const pnr = String(service.pnr || '').trim();
+  const lcn = String(service.lcn || '').trim();
+  const st = String(service.service_type_id || '').trim();
+  const hasScrambled = service.scrambled === true;
+  return !input && !name && !provider && !pnr && !lcn && !st && !hasScrambled;
+}
+
+function normalizeMptsServicesList() {
+  if (!Array.isArray(state.mptsServices)) {
+    state.mptsServices = [];
+  }
+  if (state.mptsServices.length === 1 && isMptsServiceEffectivelyEmpty(state.mptsServices[0])) {
+    state.mptsServices = [];
+  }
+}
+
+function convertInputsToMptsServices() {
+  normalizeMptsServicesList();
+  const inputs = collectInputs().map((value) => String(value || '').trim()).filter(Boolean);
+  if (!inputs.length) {
+    setStatus('No inputs to convert');
+    return;
+  }
+
+  const hasExisting = (state.mptsServices || []).some((svc) => !isMptsServiceEffectivelyEmpty(svc));
+  if (hasExisting) {
+    const proceed = window.confirm('Replace current MPTS service list with INPUT LIST?');
+    if (!proceed) return;
+  }
+
+  const pnrStart = toNumber(elements.mptsBulkPnrStart && elements.mptsBulkPnrStart.value);
+  const pnrStep = toNumber(elements.mptsBulkPnrStep && elements.mptsBulkPnrStep.value) || 1;
+  const lcnStart = toNumber(elements.mptsBulkLcnStart && elements.mptsBulkLcnStart.value);
+  const lcnStep = toNumber(elements.mptsBulkLcnStep && elements.mptsBulkLcnStep.value) || 1;
+  const bulkProvider = (elements.mptsBulkProvider && elements.mptsBulkProvider.value || '').trim();
+  const serviceTypeId = toNumber(elements.mptsBulkServiceType && elements.mptsBulkServiceType.value);
+
+  state.mptsServices = inputs.map((url, idx) => {
+    const svc = { input: url };
+    if (bulkProvider) svc.service_provider = bulkProvider;
+    if (Number.isFinite(pnrStart)) svc.pnr = String(pnrStart + idx * pnrStep);
+    if (Number.isFinite(lcnStart)) svc.lcn = String(lcnStart + idx * lcnStep);
+    if (Number.isFinite(serviceTypeId)) svc.service_type_id = String(serviceTypeId);
+    return svc;
+  });
+
+  renderMptsServiceList();
+  setStatus(`Converted ${inputs.length} input(s) to services`);
+}
+
+function renderMptsStreamsModal() {
+  if (!elements.mptsStreamsList) return;
+  const modal = state.mptsStreamsModal || { selected: new Set(), search: '' };
+  const search = String(modal.search || '').trim().toLowerCase();
+
+  elements.mptsStreamsList.innerHTML = '';
+
+  const currentId = state.editing && state.editing.stream ? state.editing.stream.id : '';
+  const streams = Array.isArray(state.streams) ? state.streams.slice() : [];
+  const filtered = streams
+    .filter((stream) => stream && stream.id && stream.id !== currentId)
+    .filter((stream) => {
+      if (!search) return true;
+      const id = String(stream.id || '').toLowerCase();
+      const name = String((stream.config && stream.config.name) || '').toLowerCase();
+      return id.includes(search) || name.includes(search);
+    })
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  if (!filtered.length) {
+    const empty = document.createElement('div');
+    empty.className = 'form-hint';
+    empty.textContent = search ? 'No streams matched the filter.' : 'No streams found.';
+    elements.mptsStreamsList.appendChild(empty);
+  } else {
+    filtered.forEach((stream) => {
+      const id = String(stream.id || '');
+      const cfg = stream.config || {};
+      const name = String(cfg.name || '');
+
+      const row = document.createElement('label');
+      row.className = 'checkline mpts-stream-row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = modal.selected.has(id);
+      cb.addEventListener('change', () => {
+        if (cb.checked) modal.selected.add(id);
+        else modal.selected.delete(id);
+        state.mptsStreamsModal = modal;
+        if (elements.mptsStreamsAdd) {
+          elements.mptsStreamsAdd.disabled = modal.selected.size === 0;
+        }
+      });
+
+      const text = document.createElement('span');
+      text.textContent = name ? `${id} (${name})` : id;
+
+      row.appendChild(cb);
+      row.appendChild(text);
+      elements.mptsStreamsList.appendChild(row);
+    });
+  }
+
+  if (elements.mptsStreamsAdd) {
+    elements.mptsStreamsAdd.disabled = modal.selected.size === 0;
+  }
+}
+
+function openMptsStreamsModal() {
+  if (!elements.mptsStreamsOverlay) return;
+  state.mptsStreamsModal = { selected: new Set(), search: '' };
+  if (elements.mptsStreamsSearch) elements.mptsStreamsSearch.value = '';
+  renderMptsStreamsModal();
+  setOverlay(elements.mptsStreamsOverlay, true);
+  if (elements.mptsStreamsSearch) elements.mptsStreamsSearch.focus();
+}
+
+function closeMptsStreamsModal() {
+  if (!elements.mptsStreamsOverlay) return;
+  setOverlay(elements.mptsStreamsOverlay, false);
+}
+
+function addMptsServicesFromSelectedStreams() {
+  const modal = state.mptsStreamsModal;
+  if (!modal || !modal.selected || modal.selected.size === 0) {
+    closeMptsStreamsModal();
+    return;
+  }
+
+  normalizeMptsServicesList();
+  const existing = new Set((state.mptsServices || []).map((svc) => String(svc.input || '').trim().toLowerCase()));
+  const added = [];
+
+  modal.selected.forEach((id) => {
+    const input = `stream://${id}`;
+    const normalized = input.toLowerCase();
+    if (existing.has(normalized)) return;
+    existing.add(normalized);
+
+    const stream = (state.streams || []).find((s) => s && s.id === id);
+    const cfg = stream && stream.config ? stream.config : {};
+    const serviceName = (cfg && (cfg.service_name || cfg.name)) ? String(cfg.service_name || cfg.name) : '';
+    const providerName = cfg && cfg.service_provider ? String(cfg.service_provider) : '';
+    const typeId = cfg && cfg.service_type_id !== undefined ? toNumber(cfg.service_type_id) : undefined;
+
+    const svc = { input };
+    if (serviceName) svc.service_name = serviceName;
+    if (providerName) svc.service_provider = providerName;
+    if (Number.isFinite(typeId)) svc.service_type_id = String(typeId);
+    state.mptsServices.push(svc);
+    added.push(id);
+  });
+
+  closeMptsStreamsModal();
+  renderMptsServiceList();
+  setStatus(added.length ? `Added ${added.length} stream(s) to services` : 'No new streams were added');
 }
 
 function renderMptsServiceList() {
@@ -11129,6 +11334,15 @@ function openEditor(stream, isNew) {
   if (elements.mptsUtcOffset) {
     elements.mptsUtcOffset.value = mptsGeneral.utc_offset || '';
   }
+  const mptsDst = (mptsGeneral && typeof mptsGeneral.dst === 'object' && mptsGeneral.dst) ? mptsGeneral.dst : {};
+  if (elements.mptsDstTimeOfChange) {
+    elements.mptsDstTimeOfChange.value = mptsDst.time_of_change || '';
+  }
+  if (elements.mptsDstNextOffset) {
+    elements.mptsDstNextOffset.value = (mptsDst.next_offset_minutes !== undefined && mptsDst.next_offset_minutes !== null)
+      ? mptsDst.next_offset_minutes
+      : '';
+  }
   if (elements.mptsNetworkId) {
     elements.mptsNetworkId.value = mptsGeneral.network_id || '';
   }
@@ -11248,8 +11462,18 @@ function openEditor(stream, isNew) {
   if (elements.mptsPassTdt) {
     elements.mptsPassTdt.checked = mptsAdv.pass_tdt === true;
   }
+  if (elements.mptsDisableTot) {
+    elements.mptsDisableTot.checked = mptsAdv.disable_tot === true;
+  }
   if (elements.mptsEitSource) {
     elements.mptsEitSource.value = mptsAdv.eit_source || '';
+  }
+  if (elements.mptsEitTableIds) {
+    if (Array.isArray(mptsAdv.eit_table_ids)) {
+      elements.mptsEitTableIds.value = mptsAdv.eit_table_ids.join(',');
+    } else {
+      elements.mptsEitTableIds.value = mptsAdv.eit_table_ids || '';
+    }
   }
   if (elements.mptsCatSource) {
     elements.mptsCatSource.value = mptsAdv.cat_source || '';
@@ -11674,6 +11898,13 @@ function readStreamForm() {
   if (country) mptsGeneral.country = country;
   const utcOffset = toNumber(elements.mptsUtcOffset && elements.mptsUtcOffset.value);
   if (utcOffset !== undefined) mptsGeneral.utc_offset = utcOffset;
+  const dstTimeOfChange = (elements.mptsDstTimeOfChange && elements.mptsDstTimeOfChange.value || '').trim();
+  const dstNextOffset = toNumber(elements.mptsDstNextOffset && elements.mptsDstNextOffset.value);
+  if (dstTimeOfChange || dstNextOffset !== undefined) {
+    mptsGeneral.dst = {};
+    if (dstTimeOfChange) mptsGeneral.dst.time_of_change = dstTimeOfChange;
+    if (dstNextOffset !== undefined) mptsGeneral.dst.next_offset_minutes = dstNextOffset;
+  }
   const networkId = toNumber(elements.mptsNetworkId && elements.mptsNetworkId.value);
   if (networkId !== undefined) mptsGeneral.network_id = networkId;
   const networkName = (elements.mptsNetworkName && elements.mptsNetworkName.value || '').trim();
@@ -11794,12 +12025,19 @@ function readStreamForm() {
   if (elements.mptsPassTdt && elements.mptsPassTdt.checked) {
     mptsAdv.pass_tdt = true;
   }
+  if (elements.mptsDisableTot && elements.mptsDisableTot.checked) {
+    mptsAdv.disable_tot = true;
+  }
   const eitSource = toNumber(elements.mptsEitSource && elements.mptsEitSource.value);
   if (eitSource !== undefined) {
     if (eitSource < 1) {
       throw new Error('EIT source must be >= 1 (MPTS tab)');
     }
     mptsAdv.eit_source = eitSource;
+  }
+  const eitTableIds = (elements.mptsEitTableIds && elements.mptsEitTableIds.value || '').trim();
+  if (eitTableIds) {
+    mptsAdv.eit_table_ids = eitTableIds;
   }
   const catSource = toNumber(elements.mptsCatSource && elements.mptsCatSource.value);
   if (catSource !== undefined) {
@@ -18291,6 +18529,45 @@ function bindEvents() {
       updateMptsFields();
     });
   }
+  if (elements.btnMptsEnableCallout) {
+    elements.btnMptsEnableCallout.addEventListener('click', () => {
+      if (elements.btnMptsEnable && !elements.btnMptsEnable.disabled) {
+        elements.btnMptsEnable.click();
+        return;
+      }
+      if (elements.streamMpts) {
+        elements.streamMpts.checked = true;
+        updateMptsFields();
+      }
+    });
+  }
+  if (elements.btnMptsConvertInputs) {
+    elements.btnMptsConvertInputs.addEventListener('click', () => {
+      convertInputsToMptsServices();
+    });
+  }
+  if (elements.btnMptsAddStreams) {
+    elements.btnMptsAddStreams.addEventListener('click', () => {
+      openMptsStreamsModal();
+    });
+  }
+  if (elements.mptsStreamsClose) {
+    elements.mptsStreamsClose.addEventListener('click', closeMptsStreamsModal);
+  }
+  if (elements.mptsStreamsCancel) {
+    elements.mptsStreamsCancel.addEventListener('click', closeMptsStreamsModal);
+  }
+  if (elements.mptsStreamsAdd) {
+    elements.mptsStreamsAdd.addEventListener('click', addMptsServicesFromSelectedStreams);
+  }
+  if (elements.mptsStreamsSearch) {
+    elements.mptsStreamsSearch.addEventListener('input', () => {
+      const modal = state.mptsStreamsModal || { selected: new Set(), search: '' };
+      modal.search = elements.mptsStreamsSearch.value || '';
+      state.mptsStreamsModal = modal;
+      renderMptsStreamsModal();
+    });
+  }
   if (elements.btnMptsBulkApply) {
     elements.btnMptsBulkApply.addEventListener('click', () => {
       applyMptsBulkActions();
@@ -18378,6 +18655,16 @@ function bindEvents() {
   }
 
   bindMptsWarningHandlers();
+  document.addEventListener('click', (event) => {
+    if (!elements.streamMpts || elements.streamMpts.checked) return;
+    const inEditor = elements.editorOverlay && elements.editorOverlay.classList.contains('active');
+    if (!inEditor) return;
+    const content = event.target.closest('[data-tab-content="mpts"][data-tab-scope="stream-editor"]');
+    if (!content) return;
+    const section = event.target.closest('.mpts-section');
+    if (!section) return;
+    focusMptsManual('Enable MPTS to unlock settings.');
+  }, true);
 
   elements.btnAddOutput.addEventListener('click', () => {
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));

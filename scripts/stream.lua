@@ -525,6 +525,17 @@ local function build_mpts_mux_options(channel_config)
     if general.codepage ~= nil then opts.codepage = tostring(general.codepage) end
     if general.country ~= nil then opts.country = tostring(general.country) end
     if general.utc_offset ~= nil then opts.utc_offset = tonumber(general.utc_offset) end
+    if type(general.dst) == "table" then
+        local dst = general.dst
+        if dst.time_of_change ~= nil and tostring(dst.time_of_change) ~= "" then
+            -- dst_time_of_change может быть epoch (seconds) или ISO-8601 UTC.
+            -- На C-стороне парсим строку (чтобы не зависеть от типа в UI/JSON).
+            opts.dst_time_of_change = tostring(dst.time_of_change)
+        end
+        if dst.next_offset_minutes ~= nil then
+            opts.dst_next_offset_minutes = tonumber(dst.next_offset_minutes)
+        end
+    end
 
     if nit.delivery ~= nil then opts.delivery = tostring(nit.delivery) end
     if nit.frequency ~= nil then opts.frequency = tonumber(nit.frequency) end
@@ -601,6 +612,7 @@ local function build_mpts_mux_options(channel_config)
     if adv.pass_sdt then opts.pass_sdt = true end
     if adv.pass_eit then opts.pass_eit = true end
     if adv.pass_tdt then opts.pass_tdt = true end
+    if adv.disable_tot then opts.disable_tot = true end
     if adv.pass_cat then opts.pass_cat = true end
     if adv.pcr_restamp then opts.pcr_restamp = true end
     if adv.pcr_smoothing then opts.pcr_smoothing = true end
@@ -614,6 +626,25 @@ local function build_mpts_mux_options(channel_config)
     if adv.spts_only == false then opts.spts_only = false end
     if adv.spts_only == true then opts.spts_only = true end
     if adv.eit_source ~= nil then opts.eit_source = tonumber(adv.eit_source) end
+    if adv.eit_table_ids ~= nil then
+        if type(adv.eit_table_ids) == "table" then
+            local parts = {}
+            for _, value in ipairs(adv.eit_table_ids) do
+                if value ~= nil and tostring(value) ~= "" then
+                    table.insert(parts, tostring(value))
+                end
+            end
+            if #parts > 0 then
+                opts.eit_table_ids = table.concat(parts, ",")
+            end
+        elseif type(adv.eit_table_ids) == "string" then
+            if adv.eit_table_ids ~= "" then
+                opts.eit_table_ids = tostring(adv.eit_table_ids)
+            end
+        else
+            opts.eit_table_ids = tostring(adv.eit_table_ids)
+        end
+    end
     if adv.cat_source ~= nil then opts.cat_source = tonumber(adv.cat_source) end
     if adv.target_bitrate ~= nil then
         local bitrate = tonumber(adv.target_bitrate)

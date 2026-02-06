@@ -31,7 +31,11 @@
       "tsid": 1,
       "onid": 1,
       "country": "RUS",
-      "utc_offset": 3
+      "utc_offset": 180,
+      "dst": {
+        "time_of_change": "2026-03-29T01:00:00Z",
+        "next_offset_minutes": 240
+      }
     },
     "nit": {
       "delivery": "cable",
@@ -68,7 +72,9 @@
       "pass_eit": false,
       "pass_cat": false,
       "pass_tdt": false,
+      "disable_tot": false,
       "eit_source": 1,
+      "eit_table_ids": "0x4E,0x50-0x5F",
       "cat_source": 1,
       "disable_auto_remap": false,
       "target_bitrate": 50000000
@@ -102,8 +108,11 @@
 - NIT (Actual): network_name + service_list + delivery descriptor (DVB‑C/DVB‑T/DVB‑S)
 - LCN: если задан `mpts_services[].lcn`, добавляется logical_channel_descriptor (0x83) в NIT
 - TDT/TOT: UTC время; TOT с local_time_offset_descriptor при задании country/utc_offset
+- `advanced.disable_tot=true` выключает TOT (TDT остаётся).
+- `general.dst` позволяет явно задать `time_of_change` и `next_offset_minutes` в TOT.
 - CAT: генерируется и может содержать CA_descriptors из `mpts_config.ca`, либо pass‑through при `pass_cat`
 - EIT: pass‑through при `pass_eit` из одного источника, фильтруется по service_id
+- `advanced.eit_table_ids` позволяет отфильтровать pass-through EIT по table_id (например, только `0x4E`).
 
 ## CBR режим
 - `advanced.target_bitrate` (бит/с)
@@ -136,7 +145,8 @@
   (используется только если `advanced.nit_version` не задан).
 - `mpts_config.nit.lcn_descriptor_tag` задаёт tag LCN (0x83/0x87/custom).
 - `mpts_config.nit.lcn_descriptor_tags` задаёт несколько LCN тегов (comma‑list или массив).
-- `general.codepage` поддерживает только UTF-8 (маркер 0x15 в дескрипторах).
+- `general.codepage` задаёт DVB charset marker в SDT/NIT (ограниченный набор: `utf-8`, `iso-8859-1` (default), `iso-8859-2/4/5/7/8/9`).
+  Если кодировка не распознана, строка передаётся как есть (обычно приёмник интерпретирует как ISO-8859-1).
 - `mpts_services[].service_type_id` допускает значения 1..255 (пусто = 1).
 - `advanced.strict_pnr=true` запрещает использовать входные PAT с несколькими программами без явного `pnr`.
 - `advanced.spts_only=true` запрещает входы с multi-PAT даже при заданном `pnr`.
@@ -145,6 +155,7 @@
 - Повторяющиеся `mpts_services[].input` используют общий сокет (один UDP вход на несколько сервисов).
 - `advanced.auto_probe=true` работает только когда `mpts_services` пустой и input — UDP/RTP.
 - `timeout` в системе желателен, но auto-probe может работать и без него.
+- `general.utc_offset` задаётся в минутах. Для обратной совместимости значения `-24..24` трактуются как часы.
 
 ## Быстрая проверка
 ```bash

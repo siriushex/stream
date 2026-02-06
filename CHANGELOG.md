@@ -12,6 +12,19 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - MPTS: UI: make MPTS tab actionable when disabled (callout + click-to-manual) and add tools to build service list faster (Convert inputs / Add from streams).
+  - MPTS: DVB hardening: CAT multi-section (large CA lists no longer truncate).
+  - MPTS: TOT: add `advanced.disable_tot` (TDT only), `general.dst.*` (time_of_change/next_offset) and treat `general.utc_offset` as minutes with hours compatibility.
+  - MPTS: EIT pass-through: add `advanced.eit_table_ids` filter (table_id allowlist/ranges).
+  - MPTS: SDT/NIT: add DVB charset marker prefixes for `general.codepage` (limited ISO-8859 set + UTF-8).
+  - Tools/CI: extend `tools/gen_spts.py` to emit multiple EIT table_ids; add `EXPECT_NO_TOT` to verifier; add new MPTS smokes.
+- Tests:
+  - `./configure.sh && make`
+  - `contrib/ci/smoke_mpts_tot_disable.sh`
+  - `contrib/ci/smoke_mpts_eit_mask.sh`
+  - `contrib/ci/smoke_mpts_cat_multisection.sh`
+### 2026-02-06
+- Changes:
   - Transcode: seamless UDP proxy cutover can complete even when only standby sender exists (prevents cutover timeouts when primary dies early).
 - Tests:
   - `contrib/ci/smoke_transcode_seamless_failover.sh` (Ubuntu servers).
