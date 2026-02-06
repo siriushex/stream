@@ -1047,10 +1047,14 @@ local schedule_restart
 local schedule_worker_restart
 local ensure_workers
 local ensure_profile_workers
+local ensure_ladder_encoder
 local start_worker
 local start_worker_standby
+local start_ladder_encoder
+local start_ladder_encoder_standby
 local tick_worker
 local tick_ladder
+local tick_ladder_encoder
 local build_probe_args
 local parse_probe_json
 local record_alert
@@ -2183,6 +2187,99 @@ local function schedule_failover_restart(job, reason, meta)
             ensure_profile_workers(job)
         end
         workers = job.profile_workers or {}
+        if job.ladder_single_process == true then
+            ensure_ladder_encoder(job)
+            local encoder = job.ladder_encoder
+
+            local tc = job.config and job.config.transcode or {}
+            local timeout_sec = tonumber(tc.seamless_cutover_timeout_sec) or 10
+            if timeout_sec < 1 then timeout_sec = 1 end
+            local stable_sec = tonumber(tc.seamless_cutover_min_stable_sec)
+            if stable_sec == nil then
+                stable_sec = job.failover and tonumber(job.failover.switch_warmup_stable_sec) or 1
+            end
+            if stable_sec < 0 then stable_sec = 0 end
+            local min_ms = job.failover and tonumber(job.failover.switch_warmup_min_ms) or 500
+            if min_ms < 0 then min_ms = 0 end
+
+            local cutover_id = (job.cutover_seq or 0) + 1
+            job.cutover_seq = cutover_id
+            local any = false
+            local any_cutover = false
+            local started_at = os.time()
+
+            if encoder and encoder.state ~= "ERROR" then
+                local from_senders = {}
+                local can_cutover = false
+                for _, worker in ipairs(workers) do
+                    local sw = worker.bus_switch
+                    if worker.bus_enabled == true and sw ~= nil and is_udp_url(worker.output and worker.output.url) then
+                        can_cutover = true
+                        local ok_source, source = pcall(sw.source, sw)
+                        if ok_source and type(source) == "table" and source.addr and source.port then
+                            from_senders[worker.profile_id] = {
+                                addr = source.addr,
+                                port = source.port,
+                            }
+                        end
+                    end
+                end
+                if can_cutover then
+                    encoder.cutover = {
+                        id = cutover_id,
+                        target_input_id = job.active_input_id,
+                        reason = reason,
+                        meta = meta,
+                        started_at = started_at,
+                        deadline_ts = started_at + timeout_sec,
+                        stable_sec = stable_sec,
+                        min_out_time_ms = min_ms,
+                        from_senders = from_senders,
+                    }
+                    encoder.last_cutover = {
+                        id = cutover_id,
+                        state = "STARTED",
+                        started_at = started_at,
+                        reason = reason,
+                        output_index = 0,
+                        target_input_id = job.active_input_id,
+                        timeout_sec = timeout_sec,
+                        stable_sec = stable_sec,
+                        min_out_time_ms = min_ms,
+                        from_senders = from_senders,
+                    }
+                    local ok = start_ladder_encoder_standby and start_ladder_encoder_standby(job, encoder) or false
+                    if not ok then
+                        encoder.cutover = nil
+                        any = schedule_worker_restart(job, encoder, "INPUT_NO_DATA", reason or "input failover", meta) or any
+                    else
+                        any_cutover = true
+                        any = true
+                    end
+                else
+                    any = schedule_worker_restart(job, encoder, "INPUT_NO_DATA", reason or "input failover", meta) or any
+                end
+            end
+
+            if any_cutover and config and config.add_alert then
+                config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_START", reason or "cutover start", {
+                    cutover_id = cutover_id,
+                    input_index = job.active_input_id and (job.active_input_id - 1) or nil,
+                    reason = reason,
+                    timeout_sec = timeout_sec,
+                    stable_sec = stable_sec,
+                    min_out_time_ms = min_ms,
+                })
+            end
+            if any_cutover then
+                job.last_alert = {
+                    code = "TRANSCODE_CUTOVER_START",
+                    message = reason or "cutover start",
+                    ts = started_at,
+                }
+            end
+            return any
+        end
     elseif job.process_per_output == true then
         ensure_workers(job)
         workers = job.workers or {}
@@ -3969,6 +4066,56 @@ tick_ladder = function(job, now)
         return
     end
     ensure_profile_workers(job)
+    if job.ladder_single_process == true then
+        ensure_ladder_encoder(job)
+        if tick_ladder_encoder then
+            tick_ladder_encoder(job, now)
+        end
+        if tick_publish_workers then
+            tick_publish_workers(job, now)
+        end
+
+        local enc = job.ladder_encoder
+        if enc then
+            -- Mirror encoder status into per-profile rows so the UI stays useful.
+            for _, worker in ipairs(job.profile_workers or {}) do
+                worker.pid = enc.pid
+                worker.state = enc.state
+                worker.restart_reason_code = enc.restart_reason_code
+                worker.restart_reason_meta = enc.restart_reason_meta
+                worker.last_progress = enc.last_progress
+                worker.last_progress_ts = enc.last_progress_ts
+                worker.last_error_line = enc.last_error_line
+                worker.last_error_ts = enc.last_error_ts
+                worker.stderr_tail = enc.stderr_tail
+                worker.ffmpeg_exit_code = enc.ffmpeg_exit_code
+                worker.ffmpeg_exit_signal = enc.ffmpeg_exit_signal
+                worker.output_bitrate_kbps = enc.output_bitrate_kbps
+                worker.last_out_time_ms = enc.last_out_time_ms
+                worker.last_out_time_ts = enc.last_out_time_ts
+                worker.last_cutover = enc.last_cutover
+            end
+
+            job.pid = enc.pid
+            job.last_progress = enc.last_progress
+            job.last_progress_ts = enc.last_progress_ts
+            job.last_error_line = enc.last_error_line
+            job.last_error_ts = enc.last_error_ts
+            job.stderr_tail = enc.stderr_tail
+            job.output_bitrate_kbps = enc.output_bitrate_kbps
+            job.last_out_time_ms = enc.last_out_time_ms
+            job.last_out_time_ts = enc.last_out_time_ts
+            job.ffmpeg_exit_code = enc.ffmpeg_exit_code
+            job.ffmpeg_exit_signal = enc.ffmpeg_exit_signal
+        else
+            job.pid = nil
+        end
+
+        if job.enabled and enc and enc.state == "ERROR" then
+            job.state = "ERROR"
+        end
+        return
+    end
     for _, worker in ipairs(job.profile_workers or {}) do
         tick_worker(job, worker, now)
     end
@@ -4008,6 +4155,9 @@ local function job_has_any_proc(job)
         return false
     end
     if job.proc then
+        return true
+    end
+    if job.ladder_encoder and job.ladder_encoder.proc then
         return true
     end
     if type(job.workers) == "table" then
@@ -4332,6 +4482,25 @@ ensure_profile_workers = function(job)
         job.profile_workers[index] = worker
         job.profile_workers_by_id[profile.id] = worker
     end
+end
+
+ensure_ladder_encoder = function(job)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    if job.ladder_encoder then
+        return
+    end
+    job.ladder_encoder = {
+        kind = "ladder_encoder",
+        index = 0,
+        watchdog = job.watchdog,
+        state = "STOPPED",
+        restart_history = {},
+        error_events = {},
+        stderr_tail = {},
+        last_progress = {},
+    }
 end
 
 local function ensure_ladder_publish(job)
@@ -5092,6 +5261,110 @@ local function build_worker_ffmpeg_args(job, worker)
     return argv, err, selected_url, bin_info
 end
 
+local function build_ladder_encoder_ffmpeg_args(job)
+    if not job or job.ladder_enabled ~= true then
+        return nil, "not a ladder job"
+    end
+    ensure_profile_workers(job)
+    local outputs_override = {}
+    for _, w in ipairs(job.profile_workers or {}) do
+        if w and w.output then
+            table.insert(outputs_override, w.output)
+        end
+    end
+    if #outputs_override == 0 then
+        return nil, "no ladder outputs"
+    end
+    local play_input_url = resolve_job_input_url(job)
+    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
+        active_input_id = job.active_input_id,
+        gpu_device = job.gpu_device,
+        outputs_override = outputs_override,
+        play_input_url = play_input_url,
+    })
+    return argv, err, selected_url, bin_info
+end
+
+start_ladder_encoder = function(job, worker)
+    if not job or job.ladder_enabled ~= true then
+        return false
+    end
+    worker = worker or (job and job.ladder_encoder) or nil
+    if not worker or worker.proc or worker.state == "ERROR" then
+        return false
+    end
+
+    local argv, err, selected_url, bin_info = build_ladder_encoder_ffmpeg_args(job)
+    if not argv then
+        record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
+        worker.state = "ERROR"
+        return false
+    end
+    job.ffmpeg_input_url = selected_url
+    if bin_info then
+        job.ffmpeg_path_resolved = bin_info.path
+        job.ffmpeg_path_source = bin_info.source
+        job.ffmpeg_path_exists = bin_info.exists
+        job.ffmpeg_bundled = bin_info.bundled
+    end
+
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg ladder encoder", nil)
+        worker.state = "ERROR"
+        return false
+    end
+
+    worker.proc = proc
+    worker.pid = proc:pid()
+    worker.term_sent_ts = nil
+    worker.kill_due_ts = nil
+    worker.kill_attempts = nil
+    reset_worker_runtime(worker, os.time())
+    worker.state = "RUNNING"
+    return true
+end
+
+start_ladder_encoder_standby = function(job, worker)
+    if not job or job.ladder_enabled ~= true then
+        return false
+    end
+    worker = worker or (job and job.ladder_encoder) or nil
+    if not worker then
+        return false
+    end
+    if worker.standby and worker.standby.proc then
+        return true
+    end
+
+    local argv, err = build_ladder_encoder_ffmpeg_args(job)
+    if not argv then
+        record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
+        return false
+    end
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg ladder encoder standby", nil)
+        return false
+    end
+    local standby = {
+        kind = "ladder_encoder_standby",
+        index = worker.index,
+        proc = proc,
+        pid = proc:pid(),
+        watchdog = worker.watchdog,
+        state = "WARMING",
+        error_events = {},
+        stderr_tail = {},
+        last_progress = {},
+        stdout_buf = "",
+        stderr_buf = "",
+    }
+    reset_worker_runtime(standby, os.time())
+    worker.standby = standby
+    return true
+end
+
 local function read_worker_output(job, worker)
     if not worker.proc then
         return
@@ -5471,6 +5744,305 @@ tick_worker = function(job, worker, now)
     end
 end
 
+tick_ladder_encoder = function(job, now)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    ensure_ladder_encoder(job)
+    local worker = job.ladder_encoder
+    if not worker then
+        return
+    end
+
+    -- Tick retiring encoder process (after cutover) to ensure it exits.
+    if worker.retire and worker.retire.proc then
+        local status = worker.retire.proc:poll()
+        if status then
+            finalize_process_exit(worker.retire, status)
+            worker.retire = nil
+        elseif worker.retire.term_sent_ts and now >= (worker.retire.kill_due_ts or 0) then
+            worker.retire.kill_attempts = (worker.retire.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.retire.proc.kill_tree) == "function" then
+                local ok = pcall(worker.retire.proc.kill_tree, worker.retire.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.retire.proc:kill()
+            end
+            worker.retire.kill_due_ts = now + 1
+        end
+    end
+
+    -- Tick standby encoder process (during cutover).
+    local standby = worker.standby
+    if standby and standby.proc then
+        read_worker_output(job, standby)
+        local status = standby.proc:poll()
+        if status then
+            finalize_process_exit(standby, status)
+        elseif standby.term_sent_ts and now >= (standby.kill_due_ts or 0) then
+            standby.kill_attempts = (standby.kill_attempts or 0) + 1
+            local killed = false
+            if type(standby.proc.kill_tree) == "function" then
+                local ok = pcall(standby.proc.kill_tree, standby.proc)
+                killed = ok
+            end
+            if not killed then
+                standby.proc:kill()
+            end
+            standby.kill_due_ts = now + 1
+        end
+        prune_time_list(standby.error_events, now - 60)
+    end
+
+    -- Tick active encoder process.
+    read_worker_output(job, worker)
+    if worker.proc then
+        local status = worker.proc:poll()
+        if status then
+            finalize_process_exit(worker, status)
+            if worker.state == "RUNNING" and not worker.cutover then
+                schedule_worker_restart(job, worker, "EXIT_UNEXPECTED", "ffmpeg exited unexpectedly", {
+                    exit = status,
+                })
+            end
+        elseif worker.term_sent_ts and now >= (worker.kill_due_ts or 0) then
+            worker.kill_attempts = (worker.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.proc.kill_tree) == "function" then
+                local ok = pcall(worker.proc.kill_tree, worker.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.proc:kill()
+            end
+            worker.kill_due_ts = now + 1
+        end
+    end
+
+    prune_time_list(worker.error_events, now - 60)
+
+    if worker.state == "RUNNING" and not worker.cutover then
+        local wd = worker.watchdog
+        if wd and wd.no_progress_timeout_sec > 0 then
+            local last_ts = worker.last_out_time_ts or worker.last_progress_ts or worker.start_ts
+            if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
+                schedule_worker_restart(job, worker, "NO_PROGRESS", "no progress detected", {
+                    timeout_sec = wd.no_progress_timeout_sec,
+                })
+            end
+        end
+        if wd and wd.max_error_lines_per_min > 0 and #worker.error_events >= wd.max_error_lines_per_min then
+            schedule_worker_restart(job, worker, "ERROR_RATE", "ffmpeg errors rate exceeded", {
+                count = #worker.error_events,
+            })
+        end
+    end
+
+    -- Cutover evaluation for single-process ladder: switch all profile buses together.
+    if worker.cutover then
+        local cut = worker.cutover
+        local deadline = cut.deadline_ts or 0
+
+        if not standby or not standby.proc then
+            record_alert(job, "TRANSCODE_CUTOVER_FAIL", "standby not running", {
+                cutover_id = cut.id,
+                reason = cut.reason,
+            })
+            if worker.last_cutover and worker.last_cutover.id == cut.id then
+                worker.last_cutover.state = "FAIL"
+                worker.last_cutover.failed_at = now
+                worker.last_cutover.error = "standby_not_running"
+                worker.last_cutover.duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+            end
+            worker.cutover = nil
+            worker.standby = nil
+        elseif deadline > 0 and now >= deadline then
+            standby.proc:kill()
+            standby.proc:close()
+            worker.standby = nil
+            worker.cutover = nil
+            record_alert(job, "TRANSCODE_CUTOVER_FAIL", "cutover timeout", {
+                cutover_id = cut.id,
+                reason = cut.reason,
+                timeout_sec = (deadline - (cut.started_at or (deadline - 1))),
+            })
+            if worker.last_cutover and worker.last_cutover.id == cut.id then
+                worker.last_cutover.state = "FAIL"
+                worker.last_cutover.failed_at = now
+                worker.last_cutover.error = "timeout"
+                worker.last_cutover.duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+            end
+        else
+            local min_ms = tonumber(cut.min_out_time_ms) or 500
+            local stable_sec = tonumber(cut.stable_sec) or 1
+            if min_ms < 0 then min_ms = 0 end
+            if stable_sec < 0 then stable_sec = 0 end
+
+            if not standby.ready_ts and standby.last_out_time_ms and standby.last_out_time_ms >= min_ms then
+                standby.ready_ts = now
+                cut.ready_at = now
+                if worker.last_cutover and worker.last_cutover.id == cut.id then
+                    worker.last_cutover.ready_at = now
+                end
+            end
+
+            local stable_ok = false
+            if standby.ready_ts then
+                if stable_sec <= 0 then
+                    stable_ok = true
+                else
+                    local ready_age = now - standby.ready_ts
+                    if ready_age >= stable_sec then
+                        local last_progress = standby.last_progress_ts or standby.ready_ts
+                        if not last_progress or (now - last_progress) <= math.max(1, stable_sec) then
+                            stable_ok = true
+                        end
+                    end
+                end
+            end
+            if stable_ok and not cut.stable_ok_at then
+                cut.stable_ok_at = now
+                if worker.last_cutover and worker.last_cutover.id == cut.id then
+                    worker.last_cutover.stable_ok_at = now
+                end
+            end
+
+            local active_missing = not worker.proc
+            local all_ready = (stable_ok or active_missing)
+            local senders_by_profile = {}
+            if all_ready then
+                for _, pw in ipairs(job.profile_workers or {}) do
+                    local sw = pw.bus_switch
+                    if not (pw.bus_enabled == true and sw) then
+                        all_ready = false
+                        break
+                    end
+
+                    local from = cut.from_senders and cut.from_senders[pw.profile_id] or nil
+                    local sender = nil
+
+                    local ok_source, source = pcall(sw.source, sw)
+                    local ok_senders, senders = pcall(sw.senders, sw)
+                    if ok_senders and type(senders) == "table" and #senders > 0 then
+                        if ok_source and source then
+                            -- Prefer a sender that differs from the current bus source (true warm-switch).
+                            for _, s in ipairs(senders) do
+                                if s.addr ~= source.addr or s.port ~= source.port then
+                                    sender = s
+                                    break
+                                end
+                            end
+                            if not sender and #senders == 1 then
+                                local s = senders[1]
+                                if not from or s.addr ~= from.addr or s.port ~= from.port then
+                                    sender = s
+                                end
+                            end
+                        else
+                            sender = senders[1]
+                        end
+                    end
+
+                    if not sender then
+                        all_ready = false
+                        break
+                    end
+                    senders_by_profile[pw.profile_id] = sender
+                end
+            end
+
+            if all_ready and next(senders_by_profile) ~= nil then
+                local ok_all = true
+                for _, pw in ipairs(job.profile_workers or {}) do
+                    local sw = pw.bus_switch
+                    local sender = senders_by_profile[pw.profile_id]
+                    if not (sw and sender) then
+                        ok_all = false
+                        break
+                    end
+                    local ok_set = pcall(sw.set_source, sw, sender.addr, sender.port)
+                    if not ok_set then
+                        ok_all = false
+                        break
+                    end
+                end
+
+                if ok_all then
+                    local duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+                    local ready_sec = (cut.started_at and cut.ready_at) and (cut.ready_at - cut.started_at) or nil
+                    local stable_ok_sec = (cut.started_at and cut.stable_ok_at) and (cut.stable_ok_at - cut.started_at) or nil
+                    if config and config.add_alert then
+                        config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_OK", cut.reason or "cutover ok", {
+                            cutover_id = cut.id,
+                            input_index = cut.target_input_id and (cut.target_input_id - 1) or nil,
+                            profiles = senders_by_profile,
+                            duration_sec = duration_sec,
+                            ready_sec = ready_sec,
+                            stable_ok_sec = stable_ok_sec,
+                        })
+                    end
+                    job.last_alert = {
+                        code = "TRANSCODE_CUTOVER_OK",
+                        message = cut.reason or "cutover ok",
+                        ts = now,
+                    }
+                    if worker.last_cutover and worker.last_cutover.id == cut.id then
+                        worker.last_cutover.state = "OK"
+                        worker.last_cutover.switched_at = now
+                        worker.last_cutover.duration_sec = duration_sec
+                        worker.last_cutover.ready_sec = ready_sec
+                        worker.last_cutover.stable_ok_sec = stable_ok_sec
+                        worker.last_cutover.profiles = senders_by_profile
+                    end
+                    worker.last_cutover = worker.last_cutover or {
+                        id = cut.id,
+                        state = "OK",
+                        switched_at = now,
+                        profiles = senders_by_profile,
+                    }
+
+                    if worker.proc then
+                        worker.retire = {
+                            proc = worker.proc,
+                            pid = worker.pid,
+                            watchdog = worker.watchdog,
+                            cutover_id = cut.id,
+                        }
+                        request_stop(worker.retire)
+                    end
+
+                    worker.proc = standby.proc
+                    worker.pid = standby.pid
+                    worker.term_sent_ts = nil
+                    worker.kill_due_ts = nil
+                    worker.kill_attempts = nil
+                    worker.last_progress = standby.last_progress
+                    worker.last_progress_ts = standby.last_progress_ts
+                    worker.last_out_time_ms = standby.last_out_time_ms
+                    worker.last_out_time_ts = standby.last_out_time_ts
+                    worker.stderr_tail = standby.stderr_tail
+                    worker.stdout_buf = standby.stdout_buf or ""
+                    worker.stderr_buf = standby.stderr_buf or ""
+                    worker.error_events = standby.error_events or {}
+                    worker.start_ts = standby.start_ts or worker.start_ts
+                    worker.state = "RUNNING"
+                    worker.standby = nil
+                    worker.cutover = nil
+                end
+            end
+        end
+    end
+
+    if not worker.cutover and worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
+        if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
+            worker.restart_due_ts = nil
+            start_ladder_encoder(job, worker)
+        end
+    end
+end
+
 function transcode.start(job, opts)
     opts = opts or {}
     if job.state == "ERROR" then
@@ -5552,21 +6124,38 @@ function transcode.start(job, opts)
             job.failover.base_profile = nil
         end
 
-        for _, worker in ipairs(job.profile_workers or {}) do
-            worker.state = "STARTING"
-        end
         local any_ok = false
-        for _, worker in ipairs(job.profile_workers or {}) do
-            local ok = start_worker(job, worker)
-            any_ok = any_ok or ok
-        end
-        if not any_ok then
-            job.state = "ERROR"
-            return false
+        if job.ladder_single_process == true then
+            ensure_ladder_encoder(job)
+            local enc = job.ladder_encoder
+            if enc then
+                enc.state = "STARTING"
+            end
+            for _, w in ipairs(job.profile_workers or {}) do
+                w.state = "STARTING"
+            end
+            any_ok = start_ladder_encoder(job, enc)
+            if not any_ok then
+                job.state = "ERROR"
+                return false
+            end
+            job.pid = enc and enc.pid or nil
+        else
+            for _, worker in ipairs(job.profile_workers or {}) do
+                worker.state = "STARTING"
+            end
+            for _, worker in ipairs(job.profile_workers or {}) do
+                local ok = start_worker(job, worker)
+                any_ok = any_ok or ok
+            end
+            if not any_ok then
+                job.state = "ERROR"
+                return false
+            end
+            job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
         end
         job.preprobe_pending = false
         job.state = "RUNNING"
-        job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
 
         -- Ladder publish (MVP): create HLS variant outputs fed from per-profile internal bus.
         ensure_ladder_publish(job)
@@ -5692,6 +6281,28 @@ end
 function transcode.stop(job)
     if job.ladder_enabled == true then
         ensure_profile_workers(job)
+        if job.ladder_single_process == true then
+            ensure_ladder_encoder(job)
+            local enc = job.ladder_encoder
+            if enc then
+                enc.restart_due_ts = nil
+                enc.state = "STOPPED"
+                enc.cutover = nil
+                if enc.standby and enc.standby.proc then
+                    enc.standby.proc:kill()
+                    enc.standby.proc:close()
+                end
+                enc.standby = nil
+                if enc.retire and enc.retire.proc then
+                    enc.retire.proc:kill()
+                    enc.retire.proc:close()
+                end
+                enc.retire = nil
+                if enc.proc then
+                    request_stop(enc)
+                end
+            end
+        end
         for _, worker in ipairs(job.profile_workers or {}) do
             worker.restart_due_ts = nil
             worker.state = "STOPPED"
@@ -5776,13 +6387,24 @@ function transcode.restart(job, reason)
     end
     if job.ladder_enabled == true then
         ensure_profile_workers(job)
-        local any = false
-        for _, worker in ipairs(job.profile_workers or {}) do
-            any = schedule_worker_restart(job, worker, "RESTART_REQUEST", reason or "manual restart", {
+        if job.ladder_single_process == true then
+            ensure_ladder_encoder(job)
+            local enc = job.ladder_encoder
+            if not enc then
+                return false
+            end
+            return schedule_worker_restart(job, enc, "RESTART_REQUEST", reason or "manual restart", {
                 reason = reason,
-            }) or any
+            })
+        else
+            local any = false
+            for _, worker in ipairs(job.profile_workers or {}) do
+                any = schedule_worker_restart(job, worker, "RESTART_REQUEST", reason or "manual restart", {
+                    reason = reason,
+                }) or any
+            end
+            return any
         end
-        return any
     end
     if job.process_per_output == true then
         ensure_workers(job)
@@ -5861,6 +6483,11 @@ function transcode.upsert(id, row, force)
     job.profiles, job.profiles_error = normalize_profiles_config(tc)
     job.publish, job.publish_error = normalize_publish_config(tc, job.profiles or {})
     job.ladder_enabled = job.profiles ~= nil
+    -- Ladder economical mode is opt-in for now:
+    -- process_per_output=true  -> reliable (one encoder per profile)
+    -- process_per_output=false -> economical (single encoder for all profiles)
+    -- When the key is omitted (nil), keep the current reliable behavior for backward compatibility.
+    job.ladder_single_process = job.ladder_enabled == true and (tc.process_per_output == false)
     job.outputs = normalize_outputs(tc.outputs, job.watchdog)
     job.process_per_output = normalize_bool(tc.process_per_output, false)
     job.seamless_udp_proxy = normalize_bool(tc.seamless_udp_proxy, false)
@@ -6148,6 +6775,7 @@ function transcode.get_status(id)
         process_per_output = job.process_per_output == true,
         seamless_udp_proxy = job.seamless_udp_proxy == true,
         ladder_enabled = job.ladder_enabled == true,
+        ladder_single_process = job.ladder_single_process == true,
         profiles = job.profiles,
         profiles_error = job.profiles_error,
         publish = job.publish,
