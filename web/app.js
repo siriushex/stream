@@ -209,6 +209,7 @@ const state = {
   playerMode: null,
   playerUrl: '',
   playerShareUrl: '',
+  playerShareKind: 'play',
   playerToken: null,
   playerTriedVideoOnly: false,
   playerStartTimer: null,
@@ -1115,6 +1116,8 @@ const elements = {
   playerInput: $('#player-input'),
   playerOpenTab: $('#player-open-tab'),
   playerCopyLink: $('#player-copy-link'),
+  playerLinkPlay: $('#player-link-play'),
+  playerLinkHls: $('#player-link-hls'),
   playerRetry: $('#player-retry'),
   playerError: $('#player-error'),
   playerLoading: $('#player-loading'),
@@ -14558,7 +14561,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206b`;
+  const src = `/vendor/hls.min.js?v=20260206c`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -16100,20 +16103,83 @@ function getPlayerStream() {
     || null;
 }
 
-function getPlayerLink() {
-  const link = state.playerShareUrl || state.playerUrl;
-  if (!link) return '';
+function resolveAbsoluteUrl(url, base) {
+  if (!url) return '';
   try {
-    return new URL(link, window.location.origin).toString();
+    return new URL(url, base || window.location.origin).toString();
   } catch (err) {
-    return link;
+    return String(url || '');
   }
 }
 
+function getPlayerShareUrls(stream) {
+  const play = getPlayUrl(stream) || '';
+  const hls = getPlaylistUrl(stream) || '';
+  return {
+    play,
+    // HLS URL обычно доступен на основном HTTP порту (порт UI), поэтому резолвим от origin.
+    hls: hls ? resolveAbsoluteUrl(hls, window.location.origin) : '',
+  };
+}
+
+function getSelectedPlayerShareUrl(stream) {
+  const target = stream || getPlayerStream();
+  if (!target) return '';
+  const urls = getPlayerShareUrls(target);
+  if (state.playerShareKind === 'hls') {
+    return urls.hls || urls.play || '';
+  }
+  return urls.play || urls.hls || '';
+}
+
+function getPlayerLink() {
+  const link = getSelectedPlayerShareUrl() || state.playerUrl;
+  if (!link) return '';
+  return resolveAbsoluteUrl(link, window.location.origin);
+}
+
 function updatePlayerActions() {
-  const hasUrl = !!(state.playerShareUrl || state.playerUrl);
+  const hasUrl = !!getPlayerLink();
   if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasUrl;
   if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasUrl;
+}
+
+function updatePlayerShareUi(stream) {
+  const target = stream || getPlayerStream();
+  if (!target) return;
+  const urls = getPlayerShareUrls(target);
+  const hasHls = !!urls.hls;
+
+  if (state.playerShareKind === 'hls' && !hasHls) {
+    state.playerShareKind = 'play';
+  }
+
+  const selected = state.playerShareKind === 'hls'
+    ? (urls.hls || urls.play || '')
+    : (urls.play || urls.hls || '');
+
+  state.playerShareUrl = selected;
+  if (elements.playerUrl) {
+    elements.playerUrl.textContent = state.playerShareUrl || '-';
+    elements.playerUrl.title = state.playerShareUrl || '';
+    if (elements.playerUrl.tagName === 'A') {
+      elements.playerUrl.href = state.playerShareUrl || '#';
+    }
+  }
+
+  if (elements.playerLinkPlay) {
+    const active = state.playerShareKind !== 'hls';
+    elements.playerLinkPlay.classList.toggle('active', active);
+    elements.playerLinkPlay.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  if (elements.playerLinkHls) {
+    elements.playerLinkHls.disabled = !hasHls;
+    const active = state.playerShareKind === 'hls';
+    elements.playerLinkHls.classList.toggle('active', active);
+    elements.playerLinkHls.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+
+  updatePlayerActions();
 }
 
 function updatePlayerMeta(stream) {
@@ -16139,6 +16205,8 @@ function updatePlayerMeta(stream) {
     elements.playerInput.textContent = label ? `Active input: ${label}` : 'Active input: -';
     elements.playerInput.title = url || '';
   }
+
+  updatePlayerShareUi(target);
 }
 
 function setPlayerLoading(active, text) {
@@ -16275,14 +16343,13 @@ async function startPlayer(stream, opts = {}) {
   setPlayerLoading(true, 'Подключение...');
   clearPlayerError();
 
-  const shareUrl = getPlayUrl(stream) || '';
   let url = null;
   let mode = 'direct';
   let token = null;
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
-  url = getPlaylistUrl(stream);
+  url = opts.forceVideoOnly ? null : getPlaylistUrl(stream);
 
   if (!url) {
     try {
@@ -16301,12 +16368,7 @@ async function startPlayer(stream, opts = {}) {
   state.playerMode = (mode === 'preview') ? 'preview' : 'direct';
   state.playerToken = token;
   state.playerUrl = url || '';
-  state.playerShareUrl = shareUrl || url || '';
-  if (elements.playerUrl) {
-    elements.playerUrl.textContent = state.playerShareUrl || '-';
-    elements.playerUrl.title = state.playerShareUrl || '';
-  }
-  updatePlayerActions();
+  updatePlayerShareUi(stream);
   await attachPlayerSource(url, { mode: 'hls' });
   state.playerStarting = false;
 
@@ -16324,15 +16386,11 @@ function openPlayer(stream) {
   state.playerStreamId = stream.id;
   state.playerMode = null;
   state.playerUrl = '';
-  state.playerShareUrl = getPlayUrl(stream) || '';
+  state.playerShareUrl = '';
+  state.playerShareKind = 'play';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
-  if (elements.playerUrl) {
-    elements.playerUrl.textContent = state.playerShareUrl || '-';
-    elements.playerUrl.title = state.playerShareUrl || '';
-  }
   updatePlayerMeta(stream);
-  updatePlayerActions();
   setOverlay(elements.playerOverlay, true);
   startPlayer(stream);
 }
@@ -16345,6 +16403,7 @@ async function closePlayer() {
   state.playerMode = null;
   state.playerUrl = '';
   state.playerShareUrl = '';
+  state.playerShareKind = 'play';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
   updatePlayerActions();
@@ -18827,6 +18886,18 @@ function bindEvents() {
     elements.playerCopyLink.addEventListener('click', () => {
       const link = getPlayerLink();
       if (link) copyText(link);
+    });
+  }
+  if (elements.playerLinkPlay) {
+    elements.playerLinkPlay.addEventListener('click', () => {
+      state.playerShareKind = 'play';
+      updatePlayerShareUi();
+    });
+  }
+  if (elements.playerLinkHls) {
+    elements.playerLinkHls.addEventListener('click', () => {
+      state.playerShareKind = 'hls';
+      updatePlayerShareUi();
     });
   }
   if (elements.playerRetry) {
