@@ -135,6 +135,14 @@ done
 [[ "${#SEGMENTS[@]}" -gt 0 ]] || die "playlist not ready (see $ASTRA_LOG)"
 echo "Playlist ok; segments: ${SEGMENTS[*]}" >&2
 
+echo "Validating EXTINF durations..." >&2
+grep -q '^#EXTINF:' "$WORKDIR/index.m3u8" \
+  || die "playlist missing EXTINF lines: $PLAYLIST_URL"
+if grep '^#EXTINF:' "$WORKDIR/index.m3u8" \
+  | grep -Evq '^#EXTINF:[[:space:]]*[0-9]+(\.[0-9]+)?,[[:space:]]*$'; then
+  die "playlist has invalid EXTINF format (expected numeric duration): $PLAYLIST_URL"
+fi
+
 echo "Checking playlist caching headers..." >&2
 hdr_code="$(curl -s -D "$WORKDIR/index.headers" -o /dev/null -w '%{http_code}' "$PLAYLIST_URL" || true)"
 [[ "$hdr_code" == "200" ]] || die "playlist headers request failed ($hdr_code): $PLAYLIST_URL"

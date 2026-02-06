@@ -12,6 +12,12 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - HLS memfd: fix invalid `#EXTINF` duration formatting in playlists (was emitting `.3f` due to limited formatter).
+  - Tools: HLS memfd smoke now validates EXTINF duration format (regression guard).
+- Tests:
+  - Not run locally (covered in CI: `tools/hls_memfd_smoke.sh`).
+### 2026-02-06
+- Changes:
   - MPTS: UI: make MPTS tab actionable when disabled (callout + click-to-manual) and add tools to build service list faster (Convert inputs / Add from streams).
   - MPTS: DVB hardening: CAT multi-section (large CA lists no longer truncate).
   - MPTS: TOT: add `advanced.disable_tot` (TDT only), `general.dst.*` (time_of_change/next_offset) and treat `general.utc_offset` as minutes with hours compatibility.

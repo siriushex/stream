@@ -599,7 +599,19 @@ static void hls_write_playlist(module_data_t *mod)
 
             if(seg->discontinuity)
                 string_buffer_addfstring(buf, "#EXT-X-DISCONTINUITY\n");
-            string_buffer_addfstring(buf, "#EXTINF:%.3f,\n", seg->duration);
+            /* string_buffer_addfstring() is a limited formatter (no %f / precision support).
+             * Format EXTINF with snprintf() to keep HLS playlists valid in memfd mode. */
+            {
+                char extinf[64];
+                const int n = snprintf(extinf, sizeof(extinf), "#EXTINF:%.3f,\n", seg->duration);
+                if(n > 0)
+                {
+                    size_t len = (size_t)n;
+                    if(len >= sizeof(extinf))
+                        len = sizeof(extinf) - 1;
+                    string_buffer_addlstring(buf, extinf, len);
+                }
+            }
             if(mod->base_url && mod->base_url[0] != '\0')
             {
                 const size_t base_len = strlen(mod->base_url);
