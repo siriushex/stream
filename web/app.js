@@ -221,12 +221,14 @@ const state = {
   analyzeStreamId: null,
   analyzeCopyText: '',
   statusTimer: null,
+  statusPollStartMs: 0,
+  statusPollInFlight: false,
   adapterTimer: null,
   dvbTimer: null,
   adapterScanJobId: null,
   adapterScanPoll: null,
   adapterScanResults: null,
-  currentView: 'streams',
+  currentView: 'dashboard',
   sessionTimer: null,
   accessLogTimer: null,
   logTimer: null,
@@ -282,7 +284,10 @@ const state = {
   streamCompactRows: {},
 };
 
-const POLL_STATUS_MS = 5000;
+const POLL_STATUS_DEFAULT_MS = 4000;
+const POLL_STATUS_WARMUP_MS = 2000;
+const POLL_STATUS_WARMUP_WINDOW_MS = 30000;
+const POLL_STATUS_RAMP_WINDOW_MS = 20000;
 const POLL_ADAPTER_MS = 5000;
 const POLL_SESSION_MS = 10000;
 const POLL_ACCESS_MS = 8000;
@@ -1324,6 +1329,20 @@ const SETTINGS_GENERAL_SECTIONS = [
             placeholder: '0 (disabled)',
             dependsOn: { id: 'settings-show-epg', value: true },
           },
+          {
+            id: 'settings-ui-polling-interval',
+            label: 'Polling (sec)',
+            type: 'select',
+            key: 'ui_polling_interval_sec',
+            level: 'basic',
+            options: [
+              { value: '2', label: '2 (fast)' },
+              { value: '4', label: '4 (default)' },
+              { value: '6', label: '6' },
+              { value: '8', label: '8' },
+              { value: '10', label: '10 (low CPU)' },
+            ],
+          },
         ],
         summary: () => {
           const splitter = readBoolValue('settings-show-splitter', false);
@@ -1331,8 +1350,9 @@ const SETTINGS_GENERAL_SECTIONS = [
           const access = readBoolValue('settings-show-access', true);
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
+          const polling = readNumberValue('settings-ui-polling-interval', 4);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText}`;
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)}`;
         },
       },
     ],
@@ -2665,6 +2685,7 @@ function bindGeneralElements() {
     settingsShowAccess: 'settings-show-access',
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
+    settingsUiPollingInterval: 'settings-ui-polling-interval',
     settingsEventRequest: 'settings-event-request',
     settingsMonitorAnalyzeMax: 'settings-monitor-analyze-max',
     settingsPreviewMaxSessions: 'settings-preview-max-sessions',
@@ -3273,7 +3294,7 @@ function applyFeatureVisibility() {
       || (!helpEnabled && activeId === 'view-help')
       || (!showObservability && activeId === 'view-observability')
     ) {
-      setView('streams');
+      setView('dashboard');
     }
   }
 }
@@ -3965,7 +3986,7 @@ async function pullServerStreams(id) {
   });
   setStatus('Streams pulled');
   await refreshAll();
-  setView('streams');
+  setView('dashboard');
 }
 
 async function importServerConfig(id) {
@@ -3979,7 +4000,7 @@ async function importServerConfig(id) {
   });
   setStatus('Config imported');
   await refreshAll();
-  setView('streams');
+  setView('dashboard');
 }
 
 function syncServerIdFromName() {
@@ -9106,7 +9127,7 @@ async function createStreamsFromScan(adapterId) {
     setStatus(message);
     if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
     closeAdapterScanModal();
-    setView('streams');
+    setView('dashboard');
     return;
   }
   const skippedLabel = skipped.length ? `, skipped ${skipped.length} existing (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})` : '';
@@ -12858,19 +12879,69 @@ async function loadStreamStatus() {
   }
 }
 
-function startStatusPolling() {
-  if (state.statusTimer) {
-    clearInterval(state.statusTimer);
+function getUiPollingIntervalSec() {
+  const allowed = [2, 4, 6, 8, 10];
+  const raw = Number(state.settings && state.settings.ui_polling_interval_sec);
+  if (Number.isFinite(raw) && allowed.includes(raw)) return raw;
+  return Math.round(POLL_STATUS_DEFAULT_MS / 1000);
+}
+
+function computeStatusPollDelayMs() {
+  const baseMs = Math.max(1000, getUiPollingIntervalSec() * 1000);
+  const fastMs = Math.min(baseMs, POLL_STATUS_WARMUP_MS);
+  const started = Number(state.statusPollStartMs) || 0;
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const elapsed = started ? Math.max(0, now - started) : POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS;
+
+  if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS) {
+    return fastMs;
   }
-  state.statusTimer = setInterval(loadStreamStatus, POLL_STATUS_MS);
-  loadStreamStatus();
+  if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS) {
+    const p = (elapsed - POLL_STATUS_WARMUP_WINDOW_MS) / POLL_STATUS_RAMP_WINDOW_MS;
+    return Math.round(fastMs + (baseMs - fastMs) * p);
+  }
+  return baseMs;
+}
+
+function scheduleNextStatusPoll(delayMs) {
+  if (state.statusTimer) {
+    clearTimeout(state.statusTimer);
+  }
+  const delay = Math.max(250, Number(delayMs) || 0);
+  state.statusTimer = setTimeout(() => {
+    tickStatusPolling().catch(() => {});
+  }, delay);
+}
+
+async function tickStatusPolling() {
+  // Таймер мог быть остановлен между scheduleNextStatusPoll() и tick.
+  if (!state.statusTimer) return;
+  if (state.statusPollInFlight) {
+    scheduleNextStatusPoll(computeStatusPollDelayMs());
+    return;
+  }
+  state.statusPollInFlight = true;
+  try {
+    await loadStreamStatus();
+  } finally {
+    state.statusPollInFlight = false;
+  }
+  scheduleNextStatusPoll(computeStatusPollDelayMs());
+}
+
+function startStatusPolling() {
+  stopStatusPolling();
+  state.statusPollStartMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  scheduleNextStatusPoll(0);
 }
 
 function stopStatusPolling() {
   if (state.statusTimer) {
-    clearInterval(state.statusTimer);
+    clearTimeout(state.statusTimer);
     state.statusTimer = null;
   }
+  state.statusPollStartMs = 0;
+  state.statusPollInFlight = false;
 }
 
 function buildStreamModel(stream) {
@@ -14296,7 +14367,7 @@ function syncPollingForView() {
   } else {
     stopSessionPolling();
   }
-  if (state.currentView === 'log') {
+  if (state.currentView === 'logs') {
     startLogPolling();
   } else {
     stopLogPolling();
@@ -14773,6 +14844,9 @@ function applySettingsToUI() {
   }
   if (elements.settingsEpgInterval) {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
+  }
+  if (elements.settingsUiPollingInterval) {
+    setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
   }
   if (elements.settingsEventRequest) {
     elements.settingsEventRequest.value = getSettingString('event_request', '');
@@ -15263,6 +15337,13 @@ function collectGeneralSettings() {
   if (epgInterval !== undefined && epgInterval < 0) {
     throw new Error('EPG export interval must be >= 0');
   }
+  const uiPolling = toNumber(elements.settingsUiPollingInterval && elements.settingsUiPollingInterval.value);
+  if (uiPolling !== undefined) {
+    const allowed = [2, 4, 6, 8, 10];
+    if (!allowed.includes(uiPolling)) {
+      throw new Error('Polling interval must be one of: 2, 4, 6, 8, 10');
+    }
+  }
   const monitorMax = toNumber(elements.settingsMonitorAnalyzeMax && elements.settingsMonitorAnalyzeMax.value);
   if (monitorMax !== undefined && monitorMax < 1) {
     throw new Error('Analyze concurrency limit must be >= 1');
@@ -15472,6 +15553,7 @@ function collectGeneralSettings() {
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
     ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
+    ui_polling_interval_sec: uiPolling || 4,
   };
   if (elements.settingsEventRequest) {
     payload.event_request = elements.settingsEventRequest.value.trim();
