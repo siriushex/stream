@@ -187,28 +187,28 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-	local function build_transcode_play_url(stream_id)
-	    if not stream_id or stream_id == "" then
-	        return nil
-	    end
-	    if not (config and config.get_setting) then
-	        return nil
-	    end
-	    local http_port = tonumber(config.get_setting("http_port"))
-	    local play_port = tonumber(config.get_setting("http_play_port"))
-	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
-	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
-	    local http_play_enabled = http_play_allow or http_play_hls
-	    local port = http_port
-	    if http_play_enabled and play_port then
-	        port = play_port
-	    end
-	    if not port then
-	        return nil
-	    end
-	    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-	    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
-	end
+local function build_transcode_play_url(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local http_port = tonumber(config.get_setting("http_port"))
+    local play_port = tonumber(config.get_setting("http_play_port"))
+    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
+    local http_play_enabled = http_play_allow or http_play_hls
+    local port = http_port
+    if http_play_enabled and play_port then
+        port = play_port
+    end
+    if not port then
+        return nil
+    end
+    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
+end
 
 local function build_transcode_live_url(stream_id, profile_id)
     if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
@@ -224,6 +224,79 @@ local function build_transcode_live_url(stream_id, profile_id)
     -- Pass internal=1 so localhost ffmpeg publishers can bypass http/token auth for /live.
     return "http://127.0.0.1:" .. tostring(port)
         .. "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts?internal=1"
+end
+
+local function normalize_route_path(value, fallback)
+    local text = value ~= nil and tostring(value) or ""
+    if text == "" then
+        text = tostring(fallback or "")
+    end
+    if text == "" then
+        text = "/"
+    end
+    if text:sub(1, 1) ~= "/" then
+        text = "/" .. text
+    end
+    if #text > 1 and text:sub(-1) == "/" then
+        text = text:sub(1, -2)
+    end
+    return text
+end
+
+local function resolve_hls_route()
+    if config and config.get_setting then
+        return normalize_route_path(config.get_setting("hls_base_url") or config.get_setting("hls_route"), "/hls")
+    end
+    return "/hls"
+end
+
+local function resolve_dash_route()
+    if config and config.get_setting then
+        return normalize_route_path(config.get_setting("dash_route"), "/dash")
+    end
+    return "/dash"
+end
+
+local function resolve_embed_route()
+    if config and config.get_setting then
+        return normalize_route_path(config.get_setting("embed_route"), "/embed")
+    end
+    return "/embed"
+end
+
+local function build_public_live_path(stream_id, profile_id)
+    if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
+        return nil
+    end
+    return "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts"
+end
+
+local function build_public_hls_master_path(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    return resolve_hls_route() .. "/" .. tostring(stream_id) .. "/index.m3u8"
+end
+
+local function build_public_hls_variant_path(stream_id, profile_id)
+    if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
+        return nil
+    end
+    return resolve_hls_route() .. "/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. "/index.m3u8"
+end
+
+local function build_public_dash_mpd_path(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    return resolve_dash_route() .. "/" .. tostring(stream_id) .. "/manifest.mpd"
+end
+
+local function build_public_embed_path(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    return resolve_embed_route() .. "/" .. tostring(stream_id)
 end
 
 local function extract_play_id_from_input(entry)
@@ -6757,22 +6830,165 @@ function transcode.get_status(id)
     local publish_status = nil
     if job.ladder_enabled == true and type(job.publish) == "table" then
         publish_status = {}
+        local workers_by_key = {}
         if type(job.publish_workers) == "table" then
             for _, worker in ipairs(job.publish_workers) do
-                publish_status[#publish_status + 1] = {
-                    type = worker.publish_type,
-                    profile_id = worker.profile_id,
-                    url = worker.publish_url,
-                    state = worker.state,
-                    pid = worker.pid,
-                    restart_reason_code = worker.restart_reason_code,
-                    restart_reason_meta = worker.restart_reason_meta,
-                    last_progress = worker.last_progress,
-                    last_progress_ts = worker.last_progress_ts,
-                    stderr_tail = worker.stderr_tail or {},
-                    ffmpeg_exit_code = worker.ffmpeg_exit_code,
-                    ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
-                }
+                if worker then
+                    local key = tostring(worker.publish_type or "") .. ":" .. tostring(worker.profile_id or "")
+                    workers_by_key[key] = worker
+                end
+            end
+        end
+
+        local function append_worker_fields(dst, worker)
+            if not dst or not worker then
+                return
+            end
+            dst.pid = worker.pid
+            dst.state = worker.state
+            dst.restart_reason_code = worker.restart_reason_code
+            dst.restart_reason_meta = worker.restart_reason_meta
+            dst.last_progress = worker.last_progress
+            dst.last_progress_ts = worker.last_progress_ts
+            dst.stderr_tail = worker.stderr_tail or {}
+            dst.ffmpeg_exit_code = worker.ffmpeg_exit_code
+            dst.ffmpeg_exit_signal = worker.ffmpeg_exit_signal
+        end
+
+        local function push(entry)
+            publish_status[#publish_status + 1] = entry
+        end
+
+        for _, pub in ipairs(job.publish or {}) do
+            if type(pub) == "table" then
+                local t = tostring(pub.type or ""):lower()
+                local enabled = pub.enabled == true
+
+                if t == "udp" or t == "rtp" then
+                    local pid = pub.profile
+                    local state = "STOPPED"
+                    if enabled then
+                        state = (type(job.publish_udp_outputs) == "table" and pid and job.publish_udp_outputs[pid]) and "RUNNING" or "STOPPED"
+                    end
+                    push({
+                        type = t,
+                        enabled = enabled,
+                        profile_id = pid,
+                        url = pub.url,
+                        state = state,
+                    })
+                elseif t == "hls" then
+                    local variants = type(pub.variants) == "table" and pub.variants or {}
+                    local state = enabled and "RUNNING" or "STOPPED"
+                    if enabled and not hls_output then
+                        state = "ERROR"
+                    end
+                    local variant_urls = {}
+                    for _, pid in ipairs(variants) do
+                        local u = build_public_hls_variant_path(job.id, pid)
+                        if u then
+                            variant_urls[pid] = u
+                        end
+                    end
+                    push({
+                        type = "hls",
+                        enabled = enabled,
+                        profile_id = #variants > 0 and table.concat(variants, "+") or nil,
+                        url = build_public_hls_master_path(job.id),
+                        variants = variants,
+                        variant_urls = variant_urls,
+                        state = state,
+                    })
+                elseif t == "http-ts" then
+                    local ids = {}
+                    if pub.profile and pub.profile ~= "" then
+                        ids = { pub.profile }
+                    elseif type(pub.variants) == "table" and #pub.variants > 0 then
+                        ids = pub.variants
+                    else
+                        for _, p in ipairs(job.profiles or {}) do
+                            if p and p.id then
+                                table.insert(ids, p.id)
+                            end
+                        end
+                    end
+                    for _, pid in ipairs(ids) do
+                        push({
+                            type = "http-ts",
+                            enabled = enabled,
+                            profile_id = pid,
+                            url = build_public_live_path(job.id, pid),
+                            state = enabled and "AVAILABLE" or "STOPPED",
+                        })
+                    end
+                elseif t == "dash" then
+                    local variants = type(pub.variants) == "table" and pub.variants or {}
+                    local key = "dash:" .. table.concat(variants, "+")
+                    local worker = workers_by_key[key]
+                    local entry = {
+                        type = "dash",
+                        enabled = enabled,
+                        profile_id = #variants > 0 and table.concat(variants, "+") or nil,
+                        url = build_public_dash_mpd_path(job.id),
+                        state = enabled and "STOPPED" or "STOPPED",
+                    }
+                    if enabled and not worker and type(job.publish_workers) == "table" then
+                        -- Fallback: DASH worker key may be normalized to a single variant.
+                        for _, w in ipairs(job.publish_workers) do
+                            if w and w.publish_type == "dash" then
+                                worker = w
+                                break
+                            end
+                        end
+                    end
+                    if enabled and worker then
+                        append_worker_fields(entry, worker)
+                    end
+                    if enabled and not worker then
+                        entry.state = "STOPPED"
+                    end
+                    push(entry)
+                elseif t == "rtmp" or t == "rtsp" then
+                    local pid = pub.profile
+                    local key = t .. ":" .. tostring(pid or "")
+                    local worker = workers_by_key[key]
+                    local entry = {
+                        type = t,
+                        enabled = enabled,
+                        profile_id = pid,
+                        url = pub.url,
+                        state = enabled and "STOPPED" or "STOPPED",
+                    }
+                    if enabled and worker then
+                        append_worker_fields(entry, worker)
+                    end
+                    push(entry)
+                elseif t == "embed" then
+                    push({
+                        type = "embed",
+                        enabled = enabled,
+                        profile_id = nil,
+                        url = build_public_embed_path(job.id),
+                        state = enabled and "AVAILABLE" or "STOPPED",
+                    })
+                elseif t == "llhls" or t == "mss" or t == "m4f" then
+                    push({
+                        type = t,
+                        enabled = enabled,
+                        profile_id = pub.profile,
+                        url = nil,
+                        state = enabled and "EXPERIMENTAL_DISABLED" or "STOPPED",
+                        reason = "not_implemented",
+                    })
+                else
+                    push({
+                        type = t,
+                        enabled = enabled,
+                        profile_id = pub.profile,
+                        url = pub.url,
+                        state = enabled and "UNSUPPORTED" or "STOPPED",
+                    })
+                end
             end
         end
     end
