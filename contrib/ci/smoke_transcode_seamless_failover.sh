@@ -93,7 +93,20 @@ else
   "${SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
 fi
 SERVER_PID=$!
-sleep 2
+
+SERVER_READY=0
+for _ in $(seq 1 40); do
+  if curl -fsS "http://127.0.0.1:${PORT}/index.html" >/dev/null 2>&1; then
+    SERVER_READY=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "$SERVER_READY" -ne 1 ]]; then
+  echo "Server did not start (port=$PORT)" >&2
+  tail -n 200 "$LOG_FILE" >&2 || true
+  exit 1
+fi
 
 # Try login (ok even if auth disabled)
 AUTH_ARGS=()
