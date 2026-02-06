@@ -4253,6 +4253,87 @@ ensure_profile_workers = function(job)
     end
 end
 
+local function ensure_ladder_publish(job)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    if type(job.publish) ~= "table" or #job.publish == 0 then
+        return
+    end
+    if not hls_output then
+        return
+    end
+
+    local variants = {}
+    local storage = nil
+    for _, pub in ipairs(job.publish) do
+        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls" then
+            storage = pub.storage or storage
+            if type(pub.variants) == "table" then
+                for _, pid in ipairs(pub.variants) do
+                    if pid and pid ~= "" then
+                        variants[pid] = true
+                    end
+                end
+            end
+        end
+    end
+
+    local has_any = false
+    for _ in pairs(variants) do
+        has_any = true
+        break
+    end
+    if not has_any then
+        return
+    end
+
+    local target_duration = tonumber(config and config.get_setting and config.get_setting("hls_duration")) or 6
+    local window = tonumber(config and config.get_setting and config.get_setting("hls_quantity")) or 5
+    local cleanup = tonumber(config and config.get_setting and config.get_setting("hls_cleanup")) or (window * 2)
+    local on_demand = normalize_setting_bool(config and config.get_setting and config.get_setting("hls_on_demand"), true)
+    local idle_timeout_sec = tonumber(config and config.get_setting and config.get_setting("hls_idle_timeout_sec")) or 30
+
+    local resolved_storage = tostring(storage or (config and config.get_setting and config.get_setting("hls_storage")) or "memfd")
+    if resolved_storage ~= "memfd" then
+        -- Disk mode requires a path; keep MVP simple (memfd-only for transcode publish).
+        resolved_storage = "memfd"
+    end
+
+    job.publish_hls_outputs = job.publish_hls_outputs or {}
+
+    for pid in pairs(variants) do
+        if not job.publish_hls_outputs[pid] then
+            local bus = job.profile_buses and job.profile_buses[pid] or nil
+            if bus and bus.switch then
+                local ok, out = pcall(hls_output, {
+                    upstream = bus.switch:stream(),
+                    storage = resolved_storage,
+                    stream_id = tostring(job.id) .. "~" .. tostring(pid),
+                    on_demand = on_demand,
+                    idle_timeout_sec = idle_timeout_sec,
+                    target_duration = target_duration,
+                    window = window,
+                    cleanup = cleanup,
+                })
+                if ok and out then
+                    job.publish_hls_outputs[pid] = out
+                else
+                    record_alert(job, "PUBLISH_FAILED", "hls_output init failed", {
+                        type = "hls",
+                        profile_id = pid,
+                    })
+                end
+            else
+                record_alert(job, "PUBLISH_CONFIG_ERROR", "profile bus missing", {
+                    type = "hls",
+                    profile_id = pid,
+                })
+            end
+        end
+    end
+end
+
 local function reset_worker_runtime(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
@@ -4913,6 +4994,10 @@ function transcode.start(job, opts)
         job.preprobe_pending = false
         job.state = "RUNNING"
         job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
+
+        -- Ladder publish (MVP): create HLS variant outputs fed from per-profile internal bus.
+        ensure_ladder_publish(job)
+
         ensure_timer(job)
         return true
     end
@@ -5048,6 +5133,8 @@ function transcode.stop(job)
                 request_stop(worker)
             end
         end
+        -- Drop publish outputs so memfd streams are released.
+        job.publish_hls_outputs = nil
     elseif job.process_per_output == true then
         ensure_workers(job)
         for _, worker in ipairs(job.workers or {}) do
