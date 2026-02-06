@@ -567,6 +567,9 @@ const elements = {
   softcamUser: $('#softcam-user'),
   softcamPass: $('#softcam-pass'),
   softcamPassHint: $('#softcam-pass-hint'),
+  softcamKey: $('#softcam-key'),
+  softcamCaid: $('#softcam-caid'),
+  softcamTimeout: $('#softcam-timeout'),
   softcamDisableEmm: $('#softcam-disable-emm'),
   softcamSplitCam: $('#softcam-split-cam'),
   softcamShift: $('#softcam-shift'),
@@ -3567,21 +3570,25 @@ function normalizeSoftcams(value) {
     const idRaw = String(entry.id || '').trim();
     const nameRaw = String(entry.name || '').trim();
     const typeRaw = String(entry.type || '').trim();
+    const type = typeRaw || 'newcamd';
     const hostRaw = String(entry.host || '').trim();
     if (!idRaw && !nameRaw && !hostRaw) return;
-    const id = idRaw || slugifySoftcamId(nameRaw || hostRaw || typeRaw || 'softcam');
+    const id = idRaw || slugifySoftcamId(nameRaw || hostRaw || type || 'softcam');
     const name = nameRaw || id;
     const port = entry.port !== undefined ? Number(entry.port) : undefined;
     const enableVal = entry.enable !== undefined ? entry.enable : entry.enabled;
     const enabled = enableVal === undefined ? true : (enableVal === true || enableVal === 1 || enableVal === '1');
     const disableEmm = entry.disable_emm === true || entry.disable_emm === 1 || entry.disable_emm === '1';
     const splitCam = entry.split_cam === true || entry.split_cam === 1 || entry.split_cam === '1';
+    const key = entry.key ? String(entry.key) : '';
+    const caid = entry.caid ? String(entry.caid) : '';
+    const timeout = entry.timeout !== undefined ? Number(entry.timeout) : undefined;
     const shift = entry.shift !== undefined && entry.shift !== null ? String(entry.shift) : '';
     const comment = entry.comment ? String(entry.comment) : '';
     out.push({
       id,
       name,
-      type: typeRaw,
+      type,
       host: hostRaw,
       port: Number.isFinite(port) ? port : undefined,
       user: entry.user || '',
@@ -3589,6 +3596,9 @@ function normalizeSoftcams(value) {
       enable: enabled,
       disable_emm: disableEmm,
       split_cam: splitCam,
+      key,
+      caid,
+      timeout: Number.isFinite(timeout) ? timeout : undefined,
       shift,
       comment,
     });
@@ -3862,16 +3872,24 @@ function openSoftcamModal(softcam) {
   if (elements.softcamTitle) {
     elements.softcamTitle.textContent = softcam ? 'Edit softcam' : 'New softcam';
   }
+  // При открытии всегда начинаем с General, чтобы пользователь видел главное.
+  setTab('general', 'softcam');
   if (elements.softcamEnabled) elements.softcamEnabled.checked = softcam ? softcam.enable !== false : true;
   if (elements.softcamId) elements.softcamId.value = softcam ? softcam.id || '' : '';
   if (elements.softcamName) elements.softcamName.value = softcam ? softcam.name || '' : '';
-  if (elements.softcamType) elements.softcamType.value = softcam ? softcam.type || '' : '';
+  // newcamd сейчас единственный поддерживаемый тип softcam в backend.
+  if (elements.softcamType) elements.softcamType.value = 'newcamd';
   if (elements.softcamHost) elements.softcamHost.value = softcam ? softcam.host || '' : '';
   if (elements.softcamPort) elements.softcamPort.value = softcam && softcam.port ? String(softcam.port) : '';
   if (elements.softcamUser) elements.softcamUser.value = softcam ? softcam.user || '' : '';
   if (elements.softcamPass) elements.softcamPass.value = '';
   if (elements.softcamPassHint) {
     elements.softcamPassHint.textContent = softcam && softcam.pass ? 'Password set (stored)' : 'Password not set';
+  }
+  if (elements.softcamKey) elements.softcamKey.value = softcam ? (softcam.key || '') : '';
+  if (elements.softcamCaid) elements.softcamCaid.value = softcam ? (softcam.caid || '') : '';
+  if (elements.softcamTimeout) {
+    elements.softcamTimeout.value = (softcam && Number.isFinite(Number(softcam.timeout))) ? String(softcam.timeout) : '';
   }
   if (elements.softcamDisableEmm) elements.softcamDisableEmm.checked = softcam ? !!softcam.disable_emm : false;
   if (elements.softcamSplitCam) elements.softcamSplitCam.checked = softcam ? !!softcam.split_cam : false;
@@ -4262,11 +4280,14 @@ function handleSoftcamNameInput() {
 async function saveSoftcam() {
   const id = elements.softcamId ? elements.softcamId.value.trim() : '';
   const name = elements.softcamName ? elements.softcamName.value.trim() : '';
-  const type = elements.softcamType ? elements.softcamType.value.trim() : '';
+  const type = 'newcamd';
   const host = elements.softcamHost ? elements.softcamHost.value.trim() : '';
   const port = toNumber(elements.softcamPort && elements.softcamPort.value);
   const user = elements.softcamUser ? elements.softcamUser.value.trim() : '';
   const pass = elements.softcamPass ? elements.softcamPass.value : '';
+  const keyRaw = elements.softcamKey ? elements.softcamKey.value.trim().replace(/\s+/g, '') : '';
+  const caidRaw = elements.softcamCaid ? elements.softcamCaid.value.trim() : '';
+  const timeoutRaw = toNumber(elements.softcamTimeout && elements.softcamTimeout.value);
   const enable = elements.softcamEnabled ? elements.softcamEnabled.checked : true;
   const disableEmm = elements.softcamDisableEmm ? elements.softcamDisableEmm.checked : false;
   const splitCam = elements.softcamSplitCam ? elements.softcamSplitCam.checked : false;
@@ -4274,7 +4295,27 @@ async function saveSoftcam() {
   const comment = elements.softcamComment ? elements.softcamComment.value.trim() : '';
 
   if (!id) throw new Error('Softcam id is required');
-  if (!type) throw new Error('Softcam type is required');
+
+  let key = keyRaw || undefined;
+  if (keyRaw) {
+    if (!/^[0-9a-fA-F]{28}$/.test(keyRaw)) {
+      throw new Error('DES Key must be 28 hex chars (example: 0102030405060708091011121314)');
+    }
+    key = keyRaw.toLowerCase();
+  }
+
+  let caid = caidRaw || undefined;
+  if (caidRaw) {
+    let v = caidRaw;
+    if (/^0x/i.test(v)) v = v.slice(2);
+    v = v.trim();
+    if (!/^[0-9a-fA-F]{4}$/.test(v)) {
+      throw new Error('CaID must be 4 hex chars (example: 0500)');
+    }
+    caid = v.toUpperCase();
+  }
+
+  const timeout = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.floor(timeoutRaw) : undefined;
 
   const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
   const existingIdx = softcams.findIndex((s) => s && s.id === id);
@@ -4286,6 +4327,9 @@ async function saveSoftcam() {
     port,
     user,
     pass,
+    key,
+    caid,
+    timeout,
     enable,
     disable_emm: disableEmm,
     split_cam: splitCam,
@@ -4303,6 +4347,9 @@ async function saveSoftcam() {
       softcams[currentIdx] = {
         ...payload,
         pass: pass || (existing && existing.pass) || '',
+        key: keyRaw ? key : (existing && existing.key),
+        caid: caidRaw ? caid : (existing && existing.caid),
+        timeout: timeout !== undefined ? timeout : (existing && existing.timeout),
       };
     } else {
       softcams.push(payload);
@@ -4317,6 +4364,9 @@ async function saveSoftcam() {
     softcams[existingIdx] = {
       ...payload,
       pass: pass || (existing && existing.pass) || '',
+      key: keyRaw ? key : (existing && existing.key),
+      caid: caidRaw ? caid : (existing && existing.caid),
+      timeout: timeout !== undefined ? timeout : (existing && existing.timeout),
     };
   }
 
