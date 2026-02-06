@@ -93,3 +93,7 @@ fi
 if [[ "${TRANSCODE_LADDER_DASH_SMOKE:-0}" == "1" ]]; then
   PORT="${TRANSCODE_LADDER_DASH_PORT:-9086}" contrib/ci/smoke_transcode_ladder_dash_publish.sh
 fi
+
+if [[ "${TRANSCODE_LADDER_ECONOMICAL_HLS_SMOKE:-0}" == "1" ]]; then
+  PORT="${TRANSCODE_LADDER_ECONOMICAL_HLS_PORT:-9087}" contrib/ci/smoke_transcode_ladder_economical_hls_publish.sh
+fi

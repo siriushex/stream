@@ -1,0 +1,82 @@
+{
+  "settings": {
+    "http_play_allow": 1,
+    "hls_storage": "memfd",
+    "hls_duration": 2,
+    "hls_quantity": 4,
+    "hls_cleanup": 8,
+    "hls_on_demand": 1
+  },
+  "make_stream": [
+    {
+      "id": "src_udp",
+      "name": "Source UDP",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12120?reuse=1"
+      ],
+      "output": []
+    },
+    {
+      "id": "transcode_ladder_economical_hls_publish",
+      "type": "transcode",
+      "name": "Transcode Ladder Economical HLS Publish",
+      "enable": true,
+      "input": [
+        "stream://src_udp"
+      ],
+      "transcode": {
+        "engine": "cpu",
+        "ffmpeg_global_args": [
+          "-fflags",
+          "+genpts"
+        ],
+        "process_per_output": false,
+        "profiles": [
+          {
+            "id": "HDHigh",
+            "name": "720p",
+            "width": 1280,
+            "height": 720,
+            "fps": 25,
+            "bitrate_kbps": 2500,
+            "maxrate_kbps": 3000
+          },
+          {
+            "id": "HDMed",
+            "name": "540p",
+            "width": 960,
+            "height": 540,
+            "fps": 25,
+            "bitrate_kbps": 1000,
+            "maxrate_kbps": 1500
+          }
+        ],
+        "publish": [
+          {
+            "type": "hls",
+            "enabled": true,
+            "variants": [
+              "HDHigh",
+              "HDMed"
+            ],
+            "storage": "memfd"
+          }
+        ],
+        "watchdog": {
+          "restart_delay_sec": 1,
+          "restart_jitter_sec": 1,
+          "restart_backoff_base_sec": 1,
+          "restart_backoff_max_sec": 10,
+          "no_progress_timeout_sec": 30,
+          "max_error_lines_per_min": 200,
+          "probe_interval_sec": 0,
+          "max_restarts_per_10min": 10,
+          "restart_cooldown_sec": 0
+        }
+      }
+    }
+  ]
+}
+
