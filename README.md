@@ -327,6 +327,12 @@ Low latency:
 - Exclusive output: the normal UDP writer is disabled while the audio-fix ffmpeg
   is running (no double publish).
 - Restarts on active input switches (failover/return/manual).
+- Optional: set `force_on=true` (or `mode=auto`) to always run the ffmpeg pass and
+  keep output audio parameters stable across primary/backup.
+- Optional: `mode=auto` will copy audio (`-c:a copy`) only when the active input is
+  already AAC and matches the target sample rate/channels; otherwise it transcodes
+  to AAC.
+- Optional: `silence_fallback=true` injects silence when input audio is missing.
 
 Per-output config (UDP only):
 ```json
@@ -336,10 +342,18 @@ Per-output config (UDP only):
   "port": 1234,
   "audio_fix": {
     "enabled": true,
+    "force_on": false,
+    "mode": "aac",
     "probe_interval_sec": 30,
     "probe_duration_sec": 2,
     "mismatch_hold_sec": 10,
-    "restart_cooldown_sec": 1200
+    "restart_cooldown_sec": 1200,
+    "aac_bitrate_kbps": 128,
+    "aac_sample_rate": 48000,
+    "aac_channels": 2,
+    "aac_profile": "",
+    "aresample_async": 1,
+    "silence_fallback": false
   }
 }
 ```
