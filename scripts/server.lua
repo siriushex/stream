@@ -1397,6 +1397,31 @@ function main()
             return nil
         end
 
+        local function is_internal_live_request(req)
+            if not req or not req.query then
+                return false
+            end
+            local flag = req.query.internal or req.query._internal
+            if flag == nil then
+                return false
+            end
+            local text = tostring(flag):lower()
+            if not (text == "1" or text == "true" or text == "yes" or text == "on") then
+                return false
+            end
+            local ip = tostring(req.addr or "")
+            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+                local headers = req.headers or {}
+                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                    or headers["forwarded"] or headers["Forwarded"]
+                    or headers["x-real-ip"] or headers["X-Real-IP"] then
+                    return false
+                end
+                return true
+            end
+            return false
+        end
+
         local stream_id, profile_id = http_live_stream_ids(request.path)
         if not stream_id or not profile_id then
             server:abort(client, 404)
@@ -1439,11 +1464,32 @@ function main()
             end
         end
 
-        server:send(client, {
-            upstream = bus.switch:stream(),
-            buffer_size = buffer_size,
-            buffer_fill = buffer_fill,
-        }, "video/MP2T")
+        local function allow_stream(_session)
+            server:send(client, {
+                upstream = bus.switch:stream(),
+                buffer_size = buffer_size,
+                buffer_fill = buffer_fill,
+            }, "video/MP2T")
+        end
+
+        -- /live is used both by external clients and by internal publishers (ffmpeg -c copy).
+        -- External access should follow the same token auth rules as /play, but internal publishers
+        -- must work even when tokens are required.
+        if is_internal_live_request(request) then
+            allow_stream(nil)
+            return nil
+        end
+
+        local token = auth and auth.get_token and auth.get_token(request) or nil
+        ensure_token_auth(server, client, request, {
+            stream_id = stream_id,
+            stream_name = job and job.name or stream_id,
+            proto = "http_ts",
+            token = token,
+        }, function(session)
+            allow_stream(session)
+        end)
+        return nil
     end
 
     local function preview_route_handler(server, client, request)
