@@ -1,0 +1,103 @@
+{
+  "settings": {
+    "http_play_allow": 1,
+    "hls_storage": "memfd",
+    "hls_duration": 2,
+    "hls_quantity": 4,
+    "hls_cleanup": 8,
+    "hls_on_demand": 1
+  },
+  "make_stream": [
+    {
+      "id": "src_udp_primary",
+      "name": "Source UDP Primary",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12120?reuse=1"
+      ],
+      "output": []
+    },
+    {
+      "id": "src_udp_backup",
+      "name": "Source UDP Backup",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12121?reuse=1"
+      ],
+      "output": []
+    },
+    {
+      "id": "transcode_ladder_failover_hls_publish",
+      "type": "transcode",
+      "name": "Transcode Ladder Failover HLS Publish",
+      "enable": true,
+      "backup_type": "passive",
+      "backup_initial_delay": 10,
+      "backup_start_delay": 0,
+      "backup_return_delay": 0,
+      "backup_switch_warmup_sec": 15,
+      "backup_switch_pending_timeout_sec": 90,
+      "no_data_timeout_sec": 20,
+      "probe_interval_sec": 1,
+      "stable_ok_sec": 2,
+      "backup_switch_warmup_min_ms": 500,
+      "backup_switch_warmup_stable_sec": 2,
+      "backup_compat_check": false,
+      "input": [
+        "stream://src_udp_primary",
+        "stream://src_udp_backup"
+      ],
+      "transcode": {
+        "engine": "cpu",
+        "ffmpeg_global_args": [
+          "-fflags",
+          "+genpts"
+        ],
+        "profiles": [
+          {
+            "id": "HDHigh",
+            "name": "720p",
+            "width": 1280,
+            "height": 720,
+            "fps": 25,
+            "bitrate_kbps": 2500,
+            "maxrate_kbps": 3000
+          },
+          {
+            "id": "HDMed",
+            "name": "540p",
+            "width": 960,
+            "height": 540,
+            "fps": 25,
+            "bitrate_kbps": 1000,
+            "maxrate_kbps": 1500
+          }
+        ],
+        "publish": [
+          {
+            "type": "hls",
+            "enabled": true,
+            "variants": [
+              "HDHigh",
+              "HDMed"
+            ],
+            "storage": "memfd"
+          }
+        ],
+        "watchdog": {
+          "restart_delay_sec": 1,
+          "restart_jitter_sec": 1,
+          "restart_backoff_base_sec": 1,
+          "restart_backoff_max_sec": 10,
+          "no_progress_timeout_sec": 30,
+          "max_error_lines_per_min": 200,
+          "probe_interval_sec": 0,
+          "max_restarts_per_10min": 10,
+          "restart_cooldown_sec": 0
+        }
+      }
+    }
+  ]
+}

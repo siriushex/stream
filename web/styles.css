@@ -1498,6 +1498,13 @@ select {
   padding-top: 10px;
 }
 
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .btn {
   background: transparent;
   border: 1px solid var(--accent);
