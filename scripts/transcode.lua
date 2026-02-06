@@ -71,6 +71,9 @@ local function get_input_url(entry)
         if entry.url and entry.url ~= "" then
             return tostring(entry.url)
         end
+        if entry.input and tostring(entry.input) ~= "" then
+            return tostring(entry.input)
+        end
         return nil
     end
     local text = tostring(entry)
@@ -187,15 +190,12 @@ local function build_transcode_play_url(stream_id)
     if not http_play_allow then
         return nil
     end
-    local http_auth_enabled = normalize_setting_bool(config.get_setting("http_auth_enabled"), false)
-    if http_auth_enabled then
-        return nil
-    end
     local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
     if not port then
         return nil
     end
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id)
+    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
 end
 
 local function extract_play_id_from_input(entry)
@@ -206,7 +206,9 @@ local function extract_play_id_from_input(entry)
         if entry.stream_id and tostring(entry.stream_id) ~= "" then
             return tostring(entry.stream_id)
         end
-        if entry.url and tostring(entry.url) ~= "" then
+        if entry.input and tostring(entry.input) ~= "" then
+            entry = entry.input
+        elseif entry.url and tostring(entry.url) ~= "" then
             entry = entry.url
         else
             return nil

@@ -3194,11 +3194,6 @@ local function build_audio_fix_play_url(channel_data)
     if not http_play_allow then
         return nil
     end
-    local http_auth_enabled = normalize_setting_bool(config.get_setting("http_auth_enabled"), false)
-    if http_auth_enabled then
-        -- Internal ffmpeg input cannot provide Basic auth credentials (unless user overrides input_url).
-        return nil
-    end
     local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
     if not port then
         return nil
@@ -3207,7 +3202,8 @@ local function build_audio_fix_play_url(channel_data)
     if stream_id == "" then
         return nil
     end
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id
+    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id .. "?internal=1"
 end
 
 local function resolve_audio_fix_input_url(channel_data, audio_fix)

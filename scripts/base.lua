@@ -483,6 +483,30 @@ local function http_auth_realm()
     return tostring(value)
 end
 
+local function is_loopback_ip(ip)
+    if not ip or ip == "" then
+        return false
+    end
+    ip = tostring(ip)
+    if ip == "127.0.0.1" or ip == "::1" then
+        return true
+    end
+    -- Treat full 127/8 as loopback.
+    if ip:match("^127%.") then
+        return true
+    end
+    return false
+end
+
+local function has_forwarded_headers(headers)
+    if not headers then
+        return false
+    end
+    return headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+        or headers["forwarded"] or headers["Forwarded"]
+        or headers["x-real-ip"] or headers["X-Real-IP"]
+end
+
 function http_auth_check(request)
     if not config or not config.get_setting then
         return true, {}
@@ -507,6 +531,26 @@ function http_auth_check(request)
 
     if not enabled then
         return true, info
+    end
+
+    -- Allow internal ffmpeg consumers (transcode/audio-fix) to read /play without credentials.
+    -- This is constrained to:
+    -- - loopback source IP
+    -- - no forwarded headers (avoid accidental reverse-proxy bypass)
+    -- - explicit query flag (?internal=1)
+    -- - /play/* only
+    local path = request and request.path or ""
+    if path:sub(1, 6) == "/play/" then
+        local ip = request and request.addr or ""
+        local headers = request and request.headers or {}
+        local query = request and request.query or nil
+        local flag = query and (query.internal or query._internal) or nil
+        if is_loopback_ip(ip) and not has_forwarded_headers(headers) and flag ~= nil then
+            local text = tostring(flag):lower()
+            if text == "1" or text == "true" or text == "yes" or text == "on" then
+                return true, info
+            end
+        end
     end
 
     local headers = request and request.headers or {}
