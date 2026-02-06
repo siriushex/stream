@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PORT="${PORT:-9072}"
+PORT="${PORT:-}"
+if [[ -z "${PORT}" ]]; then
+  PORT="$((45000 + (RANDOM % 10000)))"
+fi
 WEB_DIR="${WEB_DIR:-$ROOT_DIR/web}"
 STREAM_ID="${STREAM_ID:-transcode_seamless_failover}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-$ROOT_DIR/fixtures/transcode_seamless_failover.json}"

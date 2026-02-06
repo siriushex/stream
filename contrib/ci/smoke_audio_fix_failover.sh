@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PORT="${PORT:-9077}"
+PORT="${PORT:-}"
+if [[ -z "${PORT}" ]]; then
+  PORT="$((46000 + (RANDOM % 10000)))"
+fi
 WEB_DIR="${WEB_DIR:-$ROOT_DIR/web}"
 STREAM_ID="${STREAM_ID:-audio_fix_failover}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-$ROOT_DIR/fixtures/audio_fix_failover.json}"
