@@ -19053,6 +19053,14 @@ function bindEvents() {
       // можно обойти это без транскодинга, отключив audio.
       if (mediaErr && (mediaErr.code === 4 || mediaErr.code === 3)) {
         const stream = getPlayerStream();
+        if (stream && !state.playerTriedAudioAac) {
+          state.playerTriedAudioAac = true;
+          setPlayerLoading(true, 'Запуск с AAC аудио...');
+          clearPlayerError();
+          await stopPlayerSession();
+          startPlayer(stream, { forceAudioAac: true });
+          return;
+        }
         if (stream && !state.playerTriedVideoOnly) {
           state.playerTriedVideoOnly = true;
           setPlayerLoading(true, 'Запуск без аудио...');
