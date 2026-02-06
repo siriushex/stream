@@ -1016,9 +1016,11 @@ local request_stop
 local schedule_restart
 local schedule_worker_restart
 local ensure_workers
+local ensure_profile_workers
 local start_worker
 local start_worker_standby
 local tick_worker
+local tick_ladder
 local build_probe_args
 local parse_probe_json
 local record_alert
@@ -2138,8 +2140,20 @@ local function schedule_failover_restart(job, reason, meta)
     if not job or job.state == "ERROR" then
         return false
     end
-    if job.process_per_output == true then
+    local workers = nil
+    local cutover_via_bus = false
+    if job.ladder_enabled == true then
+        cutover_via_bus = true
+        if ensure_profile_workers then
+            ensure_profile_workers(job)
+        end
+        workers = job.profile_workers or {}
+    elseif job.process_per_output == true then
         ensure_workers(job)
+        workers = job.workers or {}
+    end
+
+    if type(workers) == "table" and #workers > 0 then
         local tc = job.config and job.config.transcode or {}
         local timeout_sec = tonumber(tc.seamless_cutover_timeout_sec) or 10
         if timeout_sec < 1 then timeout_sec = 1 end
@@ -2156,15 +2170,23 @@ local function schedule_failover_restart(job, reason, meta)
         local any = false
         local any_cutover = false
         local started_at = os.time()
-        for _, worker in ipairs(job.workers or {}) do
-            local can_cutover = job.seamless_udp_proxy == true
-                and worker.proxy_enabled == true
-                and worker.proxy_switch
-                and is_udp_url(worker.output and worker.output.url)
+        for _, worker in ipairs(workers) do
+            local sw = nil
+            local can_cutover = false
+            if cutover_via_bus == true then
+                sw = worker.bus_switch
+                can_cutover = worker.bus_enabled == true and sw ~= nil and is_udp_url(worker.output and worker.output.url)
+            else
+                sw = worker.proxy_switch
+                can_cutover = job.seamless_udp_proxy == true
+                    and worker.proxy_enabled == true
+                    and sw ~= nil
+                    and is_udp_url(worker.output and worker.output.url)
+            end
             if can_cutover then
                 local from_sender = nil
                 do
-                    local ok_source, source = pcall(worker.proxy_switch.source, worker.proxy_switch)
+                    local ok_source, source = pcall(sw.source, sw)
                     if ok_source and type(source) == "table" and source.addr and source.port then
                         from_sender = {
                             addr = source.addr,
@@ -2182,6 +2204,7 @@ local function schedule_failover_restart(job, reason, meta)
                     stable_sec = stable_sec,
                     min_out_time_ms = min_ms,
                     from_sender = from_sender,
+                    switch = sw,
                 }
                 worker.last_cutover = {
                     id = cutover_id,
@@ -3778,7 +3801,11 @@ end
 
 local function tick_job(job)
     local now = os.time()
-    if job.process_per_output == true then
+    if job.ladder_enabled == true then
+        if tick_ladder then
+            tick_ladder(job, now)
+        end
+    elseif job.process_per_output == true then
         ensure_workers(job)
         for _, worker in ipairs(job.workers or {}) do
             tick_worker(job, worker, now)
@@ -3843,7 +3870,7 @@ local function tick_job(job)
         for _, output_state in ipairs(job.output_monitors or {}) do
             local wd = output_state.watchdog
             if wd then
-                if job.process_per_output ~= true then
+                if job.process_per_output ~= true and job.ladder_enabled ~= true then
                     if wd.no_progress_timeout_sec > 0 then
                         local last_ts = job.last_out_time_ts or job.last_progress_ts or job.start_ts
                         if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
@@ -3896,9 +3923,45 @@ local function tick_job(job)
         transcode.start(job, { skip_preprobe = true })
     end
 
-    if job.process_per_output ~= true and job.state == "RESTARTING" and (not job.proc) and job.restart_due_ts and now >= job.restart_due_ts then
+    if job.ladder_enabled ~= true and job.process_per_output ~= true and job.state == "RESTARTING" and (not job.proc) and job.restart_due_ts and now >= job.restart_due_ts then
         job.restart_due_ts = nil
         transcode.start(job)
+    end
+end
+
+tick_ladder = function(job, now)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    ensure_profile_workers(job)
+    for _, worker in ipairs(job.profile_workers or {}) do
+        tick_worker(job, worker, now)
+    end
+    job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
+    local primary = job.profile_workers and job.profile_workers[1] or nil
+    if primary then
+        job.last_progress = primary.last_progress
+        job.last_progress_ts = primary.last_progress_ts
+        job.last_error_line = primary.last_error_line
+        job.last_error_ts = primary.last_error_ts
+        job.stderr_tail = primary.stderr_tail
+        job.output_bitrate_kbps = primary.output_bitrate_kbps
+        job.last_out_time_ms = primary.last_out_time_ms
+        job.last_out_time_ts = primary.last_out_time_ts
+        job.ffmpeg_exit_code = primary.ffmpeg_exit_code
+        job.ffmpeg_exit_signal = primary.ffmpeg_exit_signal
+    end
+    if job.enabled and type(job.profile_workers) == "table" and #job.profile_workers > 0 then
+        local all_error = true
+        for _, worker in ipairs(job.profile_workers) do
+            if worker and worker.state ~= "ERROR" then
+                all_error = false
+                break
+            end
+        end
+        if all_error then
+            job.state = "ERROR"
+        end
     end
 end
 
@@ -3911,6 +3974,13 @@ local function job_has_any_proc(job)
     end
     if type(job.workers) == "table" then
         for _, worker in ipairs(job.workers) do
+            if worker and worker.proc then
+                return true
+            end
+        end
+    end
+    if type(job.profile_workers) == "table" then
+        for _, worker in ipairs(job.profile_workers) do
             if worker and worker.proc then
                 return true
             end
@@ -4010,6 +4080,176 @@ ensure_workers = function(job)
             output_state.worker = worker
             output_state.restart_history = worker.restart_history
         end
+    end
+end
+
+local function build_ladder_vf(profile)
+    local filters = {}
+    local deint = tostring(profile.deinterlace or "auto"):lower()
+    if deint == "auto" or deint == "yadif" then
+        -- Deinterlace only when input is interlaced; safe for progressive sources.
+        table.insert(filters, "yadif=deint=interlaced")
+    end
+    if profile.width and profile.height then
+        table.insert(filters, "scale=" .. tostring(profile.width) .. ":" .. tostring(profile.height))
+    end
+    if profile.fps then
+        table.insert(filters, "fps=" .. tostring(profile.fps))
+    end
+    if #filters == 0 then
+        return nil
+    end
+    return table.concat(filters, ",")
+end
+
+local function build_ladder_output(job, profile, bus_port)
+    local tc = job and job.config and job.config.transcode or {}
+    local engine = normalize_engine(tc)
+    local default_vcodec = engine == "nvidia" and "h264_nvenc" or "libx264"
+    local vcodec = profile.video_codec or default_vcodec
+
+    local gop_sec = tonumber(tc.gop_sec) or 3
+    if gop_sec <= 0 then gop_sec = 3 end
+    local fps = tonumber(profile.fps)
+    local gop = fps and math.floor(fps * gop_sec) or nil
+
+    local v_args = {}
+    if profile.bitrate_kbps then
+        table.insert(v_args, "-b:v")
+        table.insert(v_args, tostring(profile.bitrate_kbps) .. "k")
+    end
+    if profile.maxrate_kbps then
+        table.insert(v_args, "-maxrate")
+        table.insert(v_args, tostring(profile.maxrate_kbps) .. "k")
+    end
+    if profile.bufsize_kbps then
+        table.insert(v_args, "-bufsize")
+        table.insert(v_args, tostring(profile.bufsize_kbps) .. "k")
+    end
+    if gop then
+        table.insert(v_args, "-g")
+        table.insert(v_args, tostring(gop))
+        if tostring(vcodec):find("264") and not tostring(vcodec):find("nvenc") then
+            table.insert(v_args, "-keyint_min")
+            table.insert(v_args, tostring(gop))
+        end
+        if normalize_bool(tc.abr_force_keyframes, true) then
+            table.insert(v_args, "-force_key_frames")
+            table.insert(v_args, "expr:gte(t,n_forced*" .. tostring(gop_sec) .. ")")
+        end
+        if normalize_bool(tc.abr_disable_scenecut, true) and tostring(vcodec):find("x264") then
+            table.insert(v_args, "-sc_threshold")
+            table.insert(v_args, "0")
+        end
+    end
+    if type(profile.video_args) == "table" then
+        append_args(v_args, profile.video_args)
+    end
+
+    local audio_mode = tostring(profile.audio_mode or "aac"):lower()
+    local acodec = audio_mode == "copy" and "copy" or "aac"
+    local a_args = {}
+    if acodec ~= "copy" then
+        local abr = tonumber(profile.audio_bitrate_kbps) or 128
+        local sr = tonumber(profile.audio_sr) or 48000
+        local ch = tonumber(profile.audio_channels) or 2
+        table.insert(a_args, "-b:a")
+        table.insert(a_args, tostring(abr) .. "k")
+        table.insert(a_args, "-ar")
+        table.insert(a_args, tostring(sr))
+        table.insert(a_args, "-ac")
+        table.insert(a_args, tostring(ch))
+        table.insert(a_args, "-profile:a")
+        table.insert(a_args, "aac_low")
+    end
+
+    return {
+        name = profile.id,
+        vf = build_ladder_vf(profile),
+        vcodec = vcodec,
+        v_args = v_args,
+        acodec = acodec,
+        a_args = a_args,
+        format_args = { "-f", "mpegts" },
+        url = "udp://127.0.0.1:" .. tostring(bus_port) .. "?pkt_size=1316",
+    }
+end
+
+ensure_profile_workers = function(job)
+    if not job or job.ladder_enabled ~= true or type(job.profiles) ~= "table" then
+        return
+    end
+    local cur = job.profile_workers
+    if type(cur) == "table" and type(job.profiles) == "table" and #cur == #job.profiles then
+        local ok_match = true
+        for idx, p in ipairs(job.profiles) do
+            if not cur[idx] or cur[idx].profile_id ~= p.id then
+                ok_match = false
+                break
+            end
+        end
+        if ok_match then
+            return
+        end
+    end
+
+    job.profile_buses = job.profile_buses or {}
+    job.profile_workers = {}
+    job.profile_workers_by_id = {}
+
+    for index, profile in ipairs(job.profiles) do
+        local bus = job.profile_buses[profile.id]
+        if not bus then
+            if not udp_switch then
+                record_alert(job, "TRANSCODE_BUS_UNAVAILABLE", "udp_switch module missing", {
+                    profile_id = profile.id,
+                })
+            else
+                local ok, sw = pcall(udp_switch, { addr = "127.0.0.1", port = 0 })
+                if ok and sw then
+                    local port = sw:port()
+                    if port and port > 0 then
+                        bus = {
+                            profile_id = profile.id,
+                            switch = sw,
+                            port = port,
+                        }
+                        job.profile_buses[profile.id] = bus
+                    else
+                        record_alert(job, "TRANSCODE_BUS_FAILED", "udp_switch port unavailable", {
+                            profile_id = profile.id,
+                        })
+                    end
+                else
+                    record_alert(job, "TRANSCODE_BUS_FAILED", "udp_switch init failed", {
+                        profile_id = profile.id,
+                    })
+                end
+            end
+        end
+
+        local output = nil
+        if bus and bus.port then
+            output = build_ladder_output(job, profile, bus.port)
+        end
+        local worker = {
+            kind = "profile",
+            index = index,
+            profile_id = profile.id,
+            profile = profile,
+            output = output or { url = "" },
+            watchdog = job.watchdog,
+            state = "STOPPED",
+            restart_history = {},
+            error_events = {},
+            stderr_tail = {},
+            last_progress = {},
+            bus_enabled = bus ~= nil,
+            bus_switch = bus and bus.switch or nil,
+            bus_listen_port = bus and bus.port or nil,
+        }
+        job.profile_workers[index] = worker
+        job.profile_workers_by_id[profile.id] = worker
     end
 end
 
@@ -4169,6 +4409,9 @@ local function ensure_udp_proxy(job, worker)
 end
 
 local function build_worker_output_override(job, worker)
+    if job and job.ladder_enabled == true then
+        return worker.output
+    end
     if job and job.seamless_udp_proxy == true and is_udp_url(worker.output and worker.output.url) then
         if ensure_udp_proxy(job, worker) and worker.proxy_listen_port then
             local out = {}
@@ -4400,10 +4643,10 @@ tick_worker = function(job, worker, now)
         end
     end
 
-    -- Cutover evaluation (UDP proxy).
+    -- Cutover evaluation (UDP switch: output proxy or internal bus).
     if worker.cutover then
         local cut = worker.cutover
-        local sw = worker.proxy_switch
+        local sw = cut.switch or worker.proxy_switch or worker.bus_switch
         local deadline = cut.deadline_ts or 0
 
         if not standby or not standby.proc then
@@ -4636,6 +4879,44 @@ function transcode.start(job, opts)
         end
     end
 
+    if job.ladder_enabled == true then
+        ensure_profile_workers(job)
+
+        close_log_file(job)
+        open_log_file(job, job.log_file_path)
+
+        job.start_ts = os.time()
+        job.stderr_tail = {}
+        if job.failover then
+            job.failover.started_at = job.start_ts
+            job.failover.next_probe_ts = job.start_ts
+            job.failover.inactive_since = nil
+            job.failover.global_state = "RUNNING"
+            job.failover.switch_pending = nil
+            job.failover.return_pending = nil
+            job.failover.switch_warmup = nil
+            job.failover.base_profile = nil
+        end
+
+        for _, worker in ipairs(job.profile_workers or {}) do
+            worker.state = "STARTING"
+        end
+        local any_ok = false
+        for _, worker in ipairs(job.profile_workers or {}) do
+            local ok = start_worker(job, worker)
+            any_ok = any_ok or ok
+        end
+        if not any_ok then
+            job.state = "ERROR"
+            return false
+        end
+        job.preprobe_pending = false
+        job.state = "RUNNING"
+        job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
+        ensure_timer(job)
+        return true
+    end
+
     if job.process_per_output == true then
         ensure_workers(job)
 
@@ -4747,7 +5028,27 @@ function transcode.start(job, opts)
 end
 
 function transcode.stop(job)
-    if job.process_per_output == true then
+    if job.ladder_enabled == true then
+        ensure_profile_workers(job)
+        for _, worker in ipairs(job.profile_workers or {}) do
+            worker.restart_due_ts = nil
+            worker.state = "STOPPED"
+            worker.cutover = nil
+            if worker.standby and worker.standby.proc then
+                worker.standby.proc:kill()
+                worker.standby.proc:close()
+            end
+            worker.standby = nil
+            if worker.retire and worker.retire.proc then
+                worker.retire.proc:kill()
+                worker.retire.proc:close()
+            end
+            worker.retire = nil
+            if worker.proc then
+                request_stop(worker)
+            end
+        end
+    elseif job.process_per_output == true then
         ensure_workers(job)
         for _, worker in ipairs(job.workers or {}) do
             worker.restart_due_ts = nil
@@ -4798,6 +5099,16 @@ end
 function transcode.restart(job, reason)
     if job.state == "ERROR" then
         return false
+    end
+    if job.ladder_enabled == true then
+        ensure_profile_workers(job)
+        local any = false
+        for _, worker in ipairs(job.profile_workers or {}) do
+            any = schedule_worker_restart(job, worker, "RESTART_REQUEST", reason or "manual restart", {
+                reason = reason,
+            }) or any
+        end
+        return any
     end
     if job.process_per_output == true then
         ensure_workers(job)
@@ -5034,6 +5345,52 @@ function transcode.get_status(id)
             }
         end
     end
+
+    local profiles_status = nil
+    if job.ladder_enabled == true and type(job.profile_workers) == "table" then
+        profiles_status = {}
+        for _, worker in ipairs(job.profile_workers) do
+            local bus_active_source = nil
+            local bus_senders = nil
+            if worker.bus_enabled == true and worker.bus_switch then
+                local ok_source, source = pcall(worker.bus_switch.source, worker.bus_switch)
+                if ok_source then
+                    bus_active_source = source
+                end
+                local ok_senders, senders = pcall(worker.bus_switch.senders, worker.bus_switch)
+                if ok_senders then
+                    bus_senders = senders
+                end
+            end
+            local p = worker.profile
+            profiles_status[#profiles_status + 1] = {
+                profile_id = worker.profile_id,
+                name = p and p.name or nil,
+                width = p and p.width or nil,
+                height = p and p.height or nil,
+                fps = p and p.fps or nil,
+                bitrate_kbps = p and p.bitrate_kbps or nil,
+                maxrate_kbps = p and p.maxrate_kbps or nil,
+                pid = worker.pid,
+                state = worker.state,
+                restart_reason_code = worker.restart_reason_code,
+                restart_reason_meta = worker.restart_reason_meta,
+                last_progress = worker.last_progress,
+                last_progress_ts = worker.last_progress_ts,
+                stderr_tail = worker.stderr_tail or {},
+                ffmpeg_exit_code = worker.ffmpeg_exit_code,
+                ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
+                output_bitrate_kbps = worker.output_bitrate_kbps,
+                last_out_time_ms = worker.last_out_time_ms,
+                last_cutover = worker.last_cutover,
+                bus_enabled = worker.bus_enabled == true,
+                bus_listen_port = worker.bus_listen_port,
+                bus_active_source = bus_active_source,
+                bus_senders = bus_senders,
+                bus_senders_count = type(bus_senders) == "table" and #bus_senders or 0,
+            }
+        end
+    end
     local inputs = collect_failover_input_stats(job)
     local fo = job.failover
     local active_input_url = get_active_input_url(job.config, job.active_input_id, true)
@@ -5090,6 +5447,7 @@ function transcode.get_status(id)
         profiles_error = job.profiles_error,
         publish = job.publish,
         publish_error = job.publish_error,
+        profiles_status = profiles_status,
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
