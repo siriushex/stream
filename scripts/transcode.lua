@@ -205,6 +205,22 @@ local function build_transcode_play_url(stream_id)
     return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
 end
 
+local function build_transcode_live_url(stream_id, profile_id)
+    if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local port = tonumber(config.get_setting("http_port"))
+    if not port then
+        return nil
+    end
+    -- Pass internal=1 so localhost ffmpeg publishers can bypass http/token auth for /live.
+    return "http://127.0.0.1:" .. tostring(port)
+        .. "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts?internal=1"
+end
+
 local function extract_play_id_from_input(entry)
     if not entry then
         return nil
@@ -431,6 +447,20 @@ local function stat_exists(path)
         return true
     end
     return false
+end
+
+local function sh_quote(path)
+    local text = tostring(path or "")
+    -- POSIX shell single-quote escaping: ' -> '\''.
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+local function ensure_dir(path)
+    if not path or path == "" then
+        return false
+    end
+    os.execute("mkdir -p " .. sh_quote(path))
+    return true
 end
 
 local function check_nvidia_support()
@@ -1025,6 +1055,11 @@ local build_probe_args
 local parse_probe_json
 local record_alert
 local extract_exit_info
+local parse_udp_output_url
+
+local ensure_publish_workers
+local start_publish_worker
+local tick_publish_workers
 
 local function resolve_primary_format(cfg)
     local entry = pick_input_entry(cfg, 1, true)
@@ -3937,6 +3972,9 @@ tick_ladder = function(job, now)
     for _, worker in ipairs(job.profile_workers or {}) do
         tick_worker(job, worker, now)
     end
+    if tick_publish_workers then
+        tick_publish_workers(job, now)
+    end
     job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
     local primary = job.profile_workers and job.profile_workers[1] or nil
     if primary then
@@ -3981,6 +4019,13 @@ local function job_has_any_proc(job)
     end
     if type(job.profile_workers) == "table" then
         for _, worker in ipairs(job.profile_workers) do
+            if worker and worker.proc then
+                return true
+            end
+        end
+    end
+    if type(job.publish_workers) == "table" then
+        for _, worker in ipairs(job.publish_workers) do
             if worker and worker.proc then
                 return true
             end
@@ -4142,6 +4187,36 @@ local function build_ladder_output(job, profile, bus_port)
             table.insert(v_args, "0")
         end
     end
+
+    -- Many publish consumers (DASH packagers, RTMP/RTSP pushers, etc.) are "late joiners"
+    -- that connect to the TS stream mid-flight. Ensure SPS/PPS are re-sent on keyframes
+    -- so decoders can lock without requiring a full encoder restart.
+    if tostring(vcodec):find("x264") and normalize_bool(tc.x264_repeat_headers, true) then
+        local found = false
+        for i = 1, #v_args - 1 do
+            if v_args[i] == "-x264-params" then
+                found = true
+                local params = tostring(v_args[i + 1] or "")
+                if not params:find("repeat%-headers=") then
+                    if params == "" then
+                        params = "repeat-headers=1"
+                    else
+                        params = params .. ":repeat-headers=1"
+                    end
+                    v_args[i + 1] = params
+                end
+                break
+            end
+        end
+        if not found then
+            table.insert(v_args, "-x264-params")
+            table.insert(v_args, "repeat-headers=1")
+        end
+    elseif normalize_bool(tc.mpegts_dump_extra, true) and tostring(vcodec):find("264") then
+        -- Fallback for non-x264 encoders: inject codec extradata on keyframes when possible.
+        table.insert(v_args, "-bsf:v")
+        table.insert(v_args, "dump_extra")
+    end
     if type(profile.video_args) == "table" then
         append_args(v_args, profile.video_args)
     end
@@ -4163,6 +4238,12 @@ local function build_ladder_output(job, profile, bus_port)
         table.insert(a_args, "aac_low")
     end
 
+    local format_args = { "-f", "mpegts" }
+    if normalize_bool(tc.mpegts_resend_headers, true) then
+        -- Repeat PSI (PAT/PMT) on keyframes to help late-joining TS consumers.
+        format_args = { "-f", "mpegts", "-mpegts_flags", "+resend_headers" }
+    end
+
     return {
         name = profile.id,
         vf = build_ladder_vf(profile),
@@ -4170,7 +4251,7 @@ local function build_ladder_output(job, profile, bus_port)
         v_args = v_args,
         acodec = acodec,
         a_args = a_args,
-        format_args = { "-f", "mpegts" },
+        format_args = format_args,
         url = "udp://127.0.0.1:" .. tostring(bus_port) .. "?pkt_size=1316",
     }
 end
@@ -4253,6 +4334,573 @@ ensure_profile_workers = function(job)
     end
 end
 
+local function ensure_ladder_publish(job)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    if type(job.publish) ~= "table" or #job.publish == 0 then
+        return
+    end
+    local variants = {}
+    local storage = nil
+    local udp_targets = {}
+    for _, pub in ipairs(job.publish) do
+        if pub and pub.enabled == true then
+            local t = tostring(pub.type or ""):lower()
+            if t == "hls" then
+                storage = pub.storage or storage
+                if type(pub.variants) == "table" then
+                    for _, pid in ipairs(pub.variants) do
+                        if pid and pid ~= "" then
+                            variants[pid] = true
+                        end
+                    end
+                end
+            elseif t == "udp" or t == "rtp" then
+                local pid = pub.profile
+                local url = pub.url
+                if pid and pid ~= "" and url and url ~= "" then
+                    udp_targets[pid] = url
+                end
+            end
+        end
+    end
+
+    -- UDP/RTP publish from per-profile bus.
+    if udp_output and udp_switch then
+        job.publish_udp_outputs = job.publish_udp_outputs or {}
+        for pid, url in pairs(udp_targets) do
+            if not job.publish_udp_outputs[pid] then
+                local bus = job.profile_buses and job.profile_buses[pid] or nil
+                local parsed = parse_udp_output_url(url)
+                if not bus or not bus.switch then
+                    record_alert(job, "PUBLISH_CONFIG_ERROR", "profile bus missing", {
+                        type = "udp",
+                        profile_id = pid,
+                        url = url,
+                    })
+                elseif not parsed then
+                    record_alert(job, "PUBLISH_CONFIG_ERROR", "invalid udp/rtp url", {
+                        type = "udp",
+                        profile_id = pid,
+                        url = url,
+                    })
+                else
+                    local opts = {
+                        upstream = bus.switch:stream(),
+                        addr = parsed.addr,
+                        port = parsed.port,
+                        rtp = parsed.scheme == "rtp",
+                    }
+                    if parsed.localaddr and parsed.localaddr ~= "" then
+                        opts.localaddr = parsed.localaddr
+                    end
+                    if parsed.query then
+                        local ttl = tonumber(parsed.query.ttl)
+                        if ttl and ttl > 0 then opts.ttl = ttl end
+                        local socket_size = tonumber(parsed.query.socket_size or parsed.query.sock)
+                        if socket_size and socket_size > 0 then opts.socket_size = socket_size end
+                        if parsed.query.sync ~= nil then opts.sync = normalize_bool(parsed.query.sync, nil) end
+                        if parsed.query.cbr ~= nil then opts.cbr = normalize_bool(parsed.query.cbr, nil) end
+                    end
+                    local ok_out, out = pcall(udp_output, opts)
+                    if ok_out and out then
+                        job.publish_udp_outputs[pid] = out
+                    else
+                        record_alert(job, "PUBLISH_FAILED", "udp_output init failed", {
+                            type = parsed.scheme,
+                            profile_id = pid,
+                            url = url,
+                        })
+                    end
+                end
+            end
+        end
+    elseif next(udp_targets) ~= nil then
+        record_alert(job, "PUBLISH_UNSUPPORTED", "udp_output module missing", {
+            type = "udp",
+        })
+    end
+
+    -- HLS publish variants.
+    if not hls_output then
+        return
+    end
+
+    local has_any_variant = false
+    for _ in pairs(variants) do
+        has_any_variant = true
+        break
+    end
+    if not has_any_variant then
+        return
+    end
+
+    local target_duration = tonumber(config and config.get_setting and config.get_setting("hls_duration")) or 6
+    local window = tonumber(config and config.get_setting and config.get_setting("hls_quantity")) or 5
+    local cleanup = tonumber(config and config.get_setting and config.get_setting("hls_cleanup")) or (window * 2)
+    local on_demand = normalize_setting_bool(config and config.get_setting and config.get_setting("hls_on_demand"), true)
+    local idle_timeout_sec = tonumber(config and config.get_setting and config.get_setting("hls_idle_timeout_sec")) or 30
+
+    local resolved_storage = tostring(storage or (config and config.get_setting and config.get_setting("hls_storage")) or "memfd")
+    if resolved_storage ~= "memfd" then
+        -- Disk mode requires a path; keep MVP simple (memfd-only for transcode publish).
+        resolved_storage = "memfd"
+    end
+
+    job.publish_hls_outputs = job.publish_hls_outputs or {}
+
+    for pid in pairs(variants) do
+        if not job.publish_hls_outputs[pid] then
+            local bus = job.profile_buses and job.profile_buses[pid] or nil
+            if bus and bus.switch then
+                local ok, out = pcall(hls_output, {
+                    upstream = bus.switch:stream(),
+                    storage = resolved_storage,
+                    stream_id = tostring(job.id) .. "~" .. tostring(pid),
+                    on_demand = on_demand,
+                    idle_timeout_sec = idle_timeout_sec,
+                    target_duration = target_duration,
+                    window = window,
+                    cleanup = cleanup,
+                })
+                if ok and out then
+                    job.publish_hls_outputs[pid] = out
+                else
+                    record_alert(job, "PUBLISH_FAILED", "hls_output init failed", {
+                        type = "hls",
+                        profile_id = pid,
+                    })
+                end
+            else
+                record_alert(job, "PUBLISH_CONFIG_ERROR", "profile bus missing", {
+                    type = "hls",
+                    profile_id = pid,
+                })
+            end
+        end
+    end
+end
+
+local function reset_publish_runtime(worker, now)
+    worker.start_ts = now
+    worker.stderr_tail = {}
+    worker.last_progress = {}
+    worker.last_progress_ts = now
+    worker.last_out_time_ts = now
+    worker.last_out_time_ms = 0
+    worker.stdout_buf = ""
+    worker.stderr_buf = ""
+    worker.error_events = {}
+    worker.last_error_line = nil
+    worker.last_error_ts = nil
+    worker.ffmpeg_exit_code = nil
+    worker.ffmpeg_exit_signal = nil
+end
+
+local function build_publish_ffmpeg_argv(job, worker)
+    if not job or not worker then
+        return nil, "invalid args"
+    end
+    local tc = job.config and job.config.transcode or {}
+    local bin, bin_source, bin_exists, bin_bundled = resolve_ffmpeg_path(tc)
+    if not bin or bin == "" then
+        return nil, "ffmpeg not found"
+    end
+
+    local t = tostring(worker.publish_type or ""):lower()
+    local argv = {
+        bin,
+        "-hide_banner",
+        "-progress", "pipe:1",
+        "-nostats",
+        "-loglevel", "warning",
+    }
+
+    if t == "dash" then
+        local variants = type(worker.variants) == "table" and worker.variants or {}
+        if #variants == 0 then
+            return nil, "publish variants required"
+        end
+
+        local base = (config and config.data_dir) and config.data_dir or "./data"
+        local out_dir = worker.dash_dir or (base .. "/dash/" .. tostring(job.id))
+        ensure_dir(out_dir)
+        local mpd_path = worker.dash_mpd_path or (out_dir .. "/manifest.mpd")
+        worker.dash_dir = out_dir
+        worker.dash_mpd_path = mpd_path
+        worker.publish_url = mpd_path
+        if not worker.profile_id or worker.profile_id == "" then
+            worker.profile_id = table.concat(variants, "+")
+        end
+
+        local input_urls = {}
+        for _, pid in ipairs(variants) do
+            local input_url = build_transcode_live_url(job.id, pid)
+            if not input_url then
+                return nil, "http_port unknown (cannot build /live url)"
+            end
+            -- DASH packagers are "late joiners" reading live TS. Increase probing so ffmpeg
+            -- can observe SPS/PPS (and keyframes) before attempting to write the MPD header.
+            local probesize = tonumber(worker.dash_input_probesize)
+                or tonumber(tc.dash_input_probesize)
+                or tonumber(tc.publish_input_probesize)
+                or (2 * 1024 * 1024)
+            if probesize and probesize > 0 then
+                table.insert(argv, "-probesize")
+                table.insert(argv, tostring(math.floor(probesize)))
+            end
+            local analyzeduration = tonumber(worker.dash_input_analyzeduration_us)
+                or tonumber(tc.dash_input_analyzeduration_us)
+                or tonumber(tc.publish_input_analyzeduration_us)
+                or 5000000
+            if analyzeduration and analyzeduration > 0 then
+                table.insert(argv, "-analyzeduration")
+                table.insert(argv, tostring(math.floor(analyzeduration)))
+            end
+            table.insert(argv, "-i")
+            table.insert(argv, input_url)
+            table.insert(input_urls, input_url)
+        end
+        worker.input_urls = input_urls
+        worker.input_url = input_urls[1]
+
+        for idx = 0, (#variants - 1) do
+            table.insert(argv, "-map")
+            table.insert(argv, tostring(idx) .. ":v:0?")
+        end
+        table.insert(argv, "-map")
+        table.insert(argv, "0:a:0?")
+
+        table.insert(argv, "-c")
+        table.insert(argv, "copy")
+        -- Unlike plain MP4 muxing, DASH (fragmented MP4) is strict about codec tags.
+        -- Explicitly set MP4-compatible tags so stream-copy from MPEG-TS works reliably.
+        table.insert(argv, "-tag:v")
+        table.insert(argv, "avc1")
+        table.insert(argv, "-tag:a")
+        table.insert(argv, "mp4a")
+
+        -- Live DASH (MVP): mpd + fMP4 segments on disk.
+        table.insert(argv, "-f")
+        table.insert(argv, "dash")
+        table.insert(argv, "-streaming")
+        table.insert(argv, "1")
+        table.insert(argv, "-use_template")
+        table.insert(argv, "1")
+        table.insert(argv, "-use_timeline")
+        table.insert(argv, "0")
+        table.insert(argv, "-adaptation_sets")
+        table.insert(argv, "id=0,streams=v id=1,streams=a")
+        local seg = tonumber(worker.dash_seg_duration) or tonumber(tc.dash_seg_duration) or 2
+        if not seg or seg < 1 then seg = 2 end
+        table.insert(argv, "-seg_duration")
+        table.insert(argv, tostring(seg))
+        local window = tonumber(worker.dash_window_size) or tonumber(tc.dash_window_size) or 10
+        if not window or window < 5 then window = 10 end
+        table.insert(argv, "-window_size")
+        table.insert(argv, tostring(math.floor(window)))
+        table.insert(argv, "-extra_window_size")
+        table.insert(argv, tostring(math.floor(window)))
+        table.insert(argv, mpd_path)
+    elseif t == "rtmp" or t == "rtsp" then
+        local pid = worker.profile_id
+        local url = worker.publish_url
+        if not pid or pid == "" then
+            return nil, "publish profile_id required"
+        end
+        if not url or url == "" then
+            return nil, "publish url required"
+        end
+
+        local input_url = build_transcode_live_url(job.id, pid)
+        if not input_url then
+            return nil, "http_port unknown (cannot build /live url)"
+        end
+        worker.input_url = input_url
+
+        table.insert(argv, "-i")
+        table.insert(argv, input_url)
+
+        -- Be tolerant to missing tracks (e.g., audio missing). Copy only.
+        table.insert(argv, "-map")
+        table.insert(argv, "0:v:0?")
+        table.insert(argv, "-map")
+        table.insert(argv, "0:a:0?")
+        table.insert(argv, "-c")
+        table.insert(argv, "copy")
+
+        if t == "rtmp" then
+            table.insert(argv, "-f")
+            table.insert(argv, "flv")
+            table.insert(argv, tostring(url))
+        else
+            table.insert(argv, "-f")
+            table.insert(argv, "rtsp")
+            table.insert(argv, "-rtsp_transport")
+            table.insert(argv, "tcp")
+            table.insert(argv, tostring(url))
+        end
+    else
+        return nil, "unsupported publish type: " .. tostring(t)
+    end
+
+    worker.ffmpeg_path_resolved = bin
+    worker.ffmpeg_path_source = bin_source
+    worker.ffmpeg_path_exists = bin_exists
+    worker.ffmpeg_bundled = bin_bundled
+    return argv, nil
+end
+
+local function read_publish_output(job, worker)
+    if not worker.proc then
+        return
+    end
+    local tc = job.config and job.config.transcode or nil
+    local log_mode = get_log_to_main_mode(tc)
+    local label = tostring(worker.publish_type or "publish") .. ":" .. tostring(worker.profile_id or "?")
+
+    local out_chunk = worker.proc:read_stdout()
+    consume_lines(worker, "stdout_buf", out_chunk, function(line)
+        update_progress(worker, line)
+    end)
+
+    local err_chunk = worker.proc:read_stderr()
+    consume_lines(worker, "stderr_buf", err_chunk, function(line)
+        update_progress(worker, line)
+        local is_error = match_error_line(line)
+        if is_error then
+            mark_error_line(worker, line)
+        end
+        append_stderr_tail(worker, line)
+        if log_mode == "all" then
+            log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        elseif log_mode == "errors" and is_error then
+            log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        end
+        if job.log_file_handle then
+            job.log_file_handle:write("[publish " .. label .. "] " .. line .. "\n")
+            job.log_file_handle:flush()
+        end
+    end)
+end
+
+local function schedule_publish_restart(job, worker, code, message, meta)
+    if not job or not worker then
+        return false
+    end
+    if worker.state == "ERROR" or worker.state == "RESTARTING" then
+        return false
+    end
+    local watchdog = worker.watchdog or job.watchdog
+    if not watchdog then
+        return false
+    end
+    local now = os.time()
+    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    if cooldown > 0 and worker.last_restart_ts then
+        local note = now - worker.last_restart_ts
+        if note < cooldown then
+            log.warning("[publish " .. tostring(job.id) .. "] restart suppressed (cooldown) " ..
+                tostring(worker.publish_type) .. ":" .. tostring(worker.profile_id))
+            return false
+        end
+    end
+
+    local reason_code = resolve_restart_reason_code(code)
+    local payload = normalize_restart_meta(meta)
+    payload.publish_type = worker.publish_type
+    payload.profile_id = worker.profile_id
+    payload.publish_url = worker.publish_url
+    payload.input_url = worker.input_url
+    local alert_message = tostring(worker.publish_type) .. ":" .. tostring(worker.profile_id) .. ": " ..
+        tostring(message or "")
+
+    record_alert(job, reason_code, alert_message, payload)
+    local ok, history = restart_allowed_worker(job, worker, watchdog)
+    if not ok then
+        worker.state = "ERROR"
+        return false
+    end
+    table.insert(history, now)
+
+    worker.last_restart_ts = now
+    worker.last_restart_reason = reason_code
+    worker.state = "RESTARTING"
+    worker.restart_due_ts = now + compute_restart_delay(watchdog, history)
+    worker.restart_reason_code = reason_code
+    worker.restart_reason_meta = payload
+    request_stop(worker)
+    return true
+end
+
+start_publish_worker = function(job, worker)
+    if not job or not worker then
+        return false
+    end
+    if worker.proc or worker.state == "ERROR" then
+        return false
+    end
+    local argv, err = build_publish_ffmpeg_argv(job, worker)
+    if not argv then
+        record_alert(job, "PUBLISH_CONFIG_ERROR", err or "invalid publish config", {
+            publish_type = worker.publish_type,
+            profile_id = worker.profile_id,
+            publish_url = worker.publish_url,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "PUBLISH_SPAWN_FAILED", "failed to start publisher ffmpeg", {
+            publish_type = worker.publish_type,
+            profile_id = worker.profile_id,
+            publish_url = worker.publish_url,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+    worker.proc = proc
+    worker.pid = proc:pid()
+    worker.term_sent_ts = nil
+    worker.kill_due_ts = nil
+    worker.kill_attempts = nil
+    reset_publish_runtime(worker, os.time())
+    worker.state = "RUNNING"
+    return true
+end
+
+local function tick_publish_worker(job, worker, now)
+    if not job or not worker then
+        return
+    end
+    read_publish_output(job, worker)
+    if worker.proc then
+        local status = worker.proc:poll()
+        if status then
+            finalize_process_exit(worker, status)
+            if worker.state == "RUNNING" then
+                schedule_publish_restart(job, worker, "PUBLISH_EXIT_UNEXPECTED", "publisher exited unexpectedly", {
+                    exit = status,
+                })
+            end
+        elseif worker.term_sent_ts and now >= (worker.kill_due_ts or 0) then
+            worker.kill_attempts = (worker.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.proc.kill_tree) == "function" then
+                local ok = pcall(worker.proc.kill_tree, worker.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.proc:kill()
+            end
+            worker.kill_due_ts = now + 1
+        end
+    end
+
+    prune_time_list(worker.error_events, now - 60)
+    if worker.state == "RUNNING" then
+        local wd = worker.watchdog or job.watchdog
+        if wd and wd.no_progress_timeout_sec > 0 then
+            local last_ts = worker.last_out_time_ts or worker.last_progress_ts or worker.start_ts
+            if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
+                schedule_publish_restart(job, worker, "PUBLISH_NO_PROGRESS", "no progress detected", {
+                    timeout_sec = wd.no_progress_timeout_sec,
+                })
+            end
+        end
+        if wd and wd.max_error_lines_per_min > 0 and #worker.error_events >= wd.max_error_lines_per_min then
+            schedule_publish_restart(job, worker, "PUBLISH_ERROR_RATE", "ffmpeg errors rate exceeded", {
+                count = #worker.error_events,
+            })
+        end
+    end
+
+    if worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
+        if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
+            worker.restart_due_ts = nil
+            start_publish_worker(job, worker)
+        end
+    end
+end
+
+tick_publish_workers = function(job, now)
+    if not job or type(job.publish_workers) ~= "table" then
+        return
+    end
+    for _, worker in ipairs(job.publish_workers) do
+        tick_publish_worker(job, worker, now)
+    end
+end
+
+ensure_publish_workers = function(job)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    if type(job.publish) ~= "table" or #job.publish == 0 then
+        job.publish_workers = nil
+        return
+    end
+    job.publish_workers = job.publish_workers or {}
+    job.publish_workers_by_key = job.publish_workers_by_key or {}
+
+    local desired = {}
+    for _, pub in ipairs(job.publish) do
+        if pub and pub.enabled == true then
+            local t = tostring(pub.type or ""):lower()
+            if t == "rtmp" or t == "rtsp" then
+                local pid = pub.profile
+                local url = pub.url
+                if pid and pid ~= "" and url and url ~= "" then
+                    local key = t .. ":" .. pid
+                    desired[key] = { type = t, profile_id = pid, url = url }
+                end
+            elseif t == "dash" then
+                local variants = type(pub.variants) == "table" and pub.variants or nil
+                if variants and #variants > 0 then
+                    local key = t .. ":" .. table.concat(variants, "+")
+                    desired[key] = { type = t, variants = variants, path = pub.path }
+                end
+            end
+        end
+    end
+
+    for key, spec in pairs(desired) do
+        if not job.publish_workers_by_key[key] then
+            local worker = {
+                kind = "publish",
+                publish_type = spec.type,
+                profile_id = spec.profile_id,
+                publish_url = spec.url,
+                variants = spec.variants,
+                watchdog = job.watchdog,
+                state = "STOPPED",
+                restart_history = {},
+                error_events = {},
+                stderr_tail = {},
+                last_progress = {},
+            }
+            if spec.type == "dash" then
+                worker.profile_id = table.concat(spec.variants or {}, "+")
+                if spec.path and spec.path ~= "" then
+                    local mpd = tostring(spec.path)
+                    if mpd:match("%.mpd$") then
+                        worker.dash_mpd_path = mpd
+                        worker.dash_dir = mpd:match("^(.*)/[^/]+$") or nil
+                    else
+                        worker.dash_dir = mpd
+                        worker.dash_mpd_path = mpd .. "/manifest.mpd"
+                    end
+                    worker.publish_url = worker.dash_mpd_path
+                end
+            end
+            job.publish_workers_by_key[key] = worker
+            table.insert(job.publish_workers, worker)
+        end
+    end
+end
+
 local function reset_worker_runtime(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
@@ -4286,7 +4934,7 @@ local function parse_query_params(query)
     return out
 end
 
-local function parse_udp_output_url(url)
+parse_udp_output_url = function(url)
     if not url or url == "" then
         return nil
     end
@@ -4913,6 +5561,14 @@ function transcode.start(job, opts)
         job.preprobe_pending = false
         job.state = "RUNNING"
         job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
+
+        -- Ladder publish (MVP): create HLS variant outputs fed from per-profile internal bus.
+        ensure_ladder_publish(job)
+        ensure_publish_workers(job)
+        for _, pub in ipairs(job.publish_workers or {}) do
+            start_publish_worker(job, pub)
+        end
+
         ensure_timer(job)
         return true
     end
@@ -5046,6 +5702,18 @@ function transcode.stop(job)
             worker.retire = nil
             if worker.proc then
                 request_stop(worker)
+            end
+        end
+        -- Drop publish outputs so memfd streams are released.
+        job.publish_hls_outputs = nil
+        job.publish_udp_outputs = nil
+        if type(job.publish_workers) == "table" then
+            for _, pub in ipairs(job.publish_workers) do
+                pub.restart_due_ts = nil
+                pub.state = "STOPPED"
+                if pub.proc then
+                    request_stop(pub)
+                end
             end
         end
     elseif job.process_per_output == true then
@@ -5392,6 +6060,28 @@ function transcode.get_status(id)
         end
     end
 
+    local publish_status = nil
+    if job.ladder_enabled == true and type(job.publish) == "table" then
+        publish_status = {}
+        if type(job.publish_workers) == "table" then
+            for _, worker in ipairs(job.publish_workers) do
+                publish_status[#publish_status + 1] = {
+                    type = worker.publish_type,
+                    profile_id = worker.profile_id,
+                    url = worker.publish_url,
+                    state = worker.state,
+                    pid = worker.pid,
+                    restart_reason_code = worker.restart_reason_code,
+                    restart_reason_meta = worker.restart_reason_meta,
+                    last_progress = worker.last_progress,
+                    last_progress_ts = worker.last_progress_ts,
+                    stderr_tail = worker.stderr_tail or {},
+                    ffmpeg_exit_code = worker.ffmpeg_exit_code,
+                    ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
+                }
+            end
+        end
+    end
     local publish_hls_variants = nil
     if type(job.publish_hls_outputs) == "table" then
         publish_hls_variants = {}
@@ -5456,6 +6146,7 @@ function transcode.get_status(id)
         profiles_error = job.profiles_error,
         publish = job.publish,
         publish_error = job.publish_error,
+        publish_status = publish_status,
         profiles_status = profiles_status,
         publish_hls_variants = publish_hls_variants,
         restarts_10min = #job.restart_history,

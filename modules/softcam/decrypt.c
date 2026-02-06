@@ -928,6 +928,7 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         return; /* after stream_reload */
 
     bool is_keys_ok = false;
+    bool is_cw_checksum_ok = false;
     do
     {
         if(!module_cas_check_keys(mod->__decrypt.cas, data))
@@ -936,19 +937,23 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         if(data[2] != 16)
             break;
 
+        /*
+         * DVB-CSA control words often include "check" bytes (sum of previous 3 bytes)
+         * at positions 3 and 7. Some CAM servers/implementations don't enforce this.
+         * We treat checksum mismatch as non-fatal to maximize compatibility.
+         */
         const uint8_t ck1 = (data[3] + data[4] + data[5]) & 0xFF;
-        if(ck1 != data[6])
-            break;
-
         const uint8_t ck2 = (data[7] + data[8] + data[9]) & 0xFF;
-        if(ck2 != data[10])
-            break;
+        is_cw_checksum_ok = (ck1 == data[6] && ck2 == data[10]);
 
         is_keys_ok = true;
     } while(0);
 
     if(is_keys_ok)
     {
+        if(!is_cw_checksum_ok && asc_log_is_debug())
+            asc_log_debug(MSG("ECM CW checksum mismatch (accepting keys anyway)"));
+
         // Set keys
         if(ca_stream->new_key[11] == data[14] && ca_stream->new_key[15] == data[18])
         {

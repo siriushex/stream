@@ -46,6 +46,12 @@ echo "[preview-smoke] build" >&2
 ./configure.sh
 make
 
+echo "[preview-smoke] unit: preview_audio_aac_unit" >&2
+./astra scripts/tests/preview_audio_aac_unit.lua >/dev/null
+
+echo "[preview-smoke] unit: preview_offline_unit" >&2
+./astra scripts/tests/preview_offline_unit.lua >/dev/null
+
 echo "[preview-smoke] start server on :${PORT}" >&2
 ./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!

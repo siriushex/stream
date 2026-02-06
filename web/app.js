@@ -210,8 +210,10 @@ const state = {
   playerUrl: '',
   playerShareUrl: '',
   playerShareKind: 'play',
+  playerAutoOpen: null,
   playerToken: null,
   playerTriedVideoOnly: false,
+  playerTriedAudioAac: false,
   playerStartTimer: null,
   playerStarting: false,
   analyzeJobId: null,
@@ -219,12 +221,14 @@ const state = {
   analyzeStreamId: null,
   analyzeCopyText: '',
   statusTimer: null,
+  statusPollStartMs: 0,
+  statusPollInFlight: false,
   adapterTimer: null,
   dvbTimer: null,
   adapterScanJobId: null,
   adapterScanPoll: null,
   adapterScanResults: null,
-  currentView: 'streams',
+  currentView: 'dashboard',
   sessionTimer: null,
   accessLogTimer: null,
   logTimer: null,
@@ -280,7 +284,10 @@ const state = {
   streamCompactRows: {},
 };
 
-const POLL_STATUS_MS = 5000;
+const POLL_STATUS_DEFAULT_MS = 4000;
+const POLL_STATUS_WARMUP_MS = 2000;
+const POLL_STATUS_WARMUP_WINDOW_MS = 30000;
+const POLL_STATUS_RAMP_WINDOW_MS = 20000;
 const POLL_ADAPTER_MS = 5000;
 const POLL_SESSION_MS = 10000;
 const POLL_ACCESS_MS = 8000;
@@ -1322,6 +1329,20 @@ const SETTINGS_GENERAL_SECTIONS = [
             placeholder: '0 (disabled)',
             dependsOn: { id: 'settings-show-epg', value: true },
           },
+          {
+            id: 'settings-ui-polling-interval',
+            label: 'Polling (sec)',
+            type: 'select',
+            key: 'ui_polling_interval_sec',
+            level: 'basic',
+            options: [
+              { value: '2', label: '2 (fast)' },
+              { value: '4', label: '4 (default)' },
+              { value: '6', label: '6' },
+              { value: '8', label: '8' },
+              { value: '10', label: '10 (low CPU)' },
+            ],
+          },
         ],
         summary: () => {
           const splitter = readBoolValue('settings-show-splitter', false);
@@ -1329,8 +1350,9 @@ const SETTINGS_GENERAL_SECTIONS = [
           const access = readBoolValue('settings-show-access', true);
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
+          const polling = readNumberValue('settings-ui-polling-interval', 4);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText}`;
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)}`;
         },
       },
     ],
@@ -2663,6 +2685,7 @@ function bindGeneralElements() {
     settingsShowAccess: 'settings-show-access',
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
+    settingsUiPollingInterval: 'settings-ui-polling-interval',
     settingsEventRequest: 'settings-event-request',
     settingsMonitorAnalyzeMax: 'settings-monitor-analyze-max',
     settingsPreviewMaxSessions: 'settings-preview-max-sessions',
@@ -3271,7 +3294,7 @@ function applyFeatureVisibility() {
       || (!helpEnabled && activeId === 'view-help')
       || (!showObservability && activeId === 'view-observability')
     ) {
-      setView('streams');
+      setView('dashboard');
     }
   }
 }
@@ -3963,7 +3986,7 @@ async function pullServerStreams(id) {
   });
   setStatus('Streams pulled');
   await refreshAll();
-  setView('streams');
+  setView('dashboard');
 }
 
 async function importServerConfig(id) {
@@ -3977,7 +4000,7 @@ async function importServerConfig(id) {
   });
   setStatus('Config imported');
   await refreshAll();
-  setView('streams');
+  setView('dashboard');
 }
 
 function syncServerIdFromName() {
@@ -9104,7 +9127,7 @@ async function createStreamsFromScan(adapterId) {
     setStatus(message);
     if (elements.adapterScanStatus) elements.adapterScanStatus.textContent = message;
     closeAdapterScanModal();
-    setView('streams');
+    setView('dashboard');
     return;
   }
   const skippedLabel = skipped.length ? `, skipped ${skipped.length} existing (PNR: ${skipped.slice(0, 10).join(', ')}${skipped.length > 10 ? '…' : ''})` : '';
@@ -12856,19 +12879,69 @@ async function loadStreamStatus() {
   }
 }
 
-function startStatusPolling() {
-  if (state.statusTimer) {
-    clearInterval(state.statusTimer);
+function getUiPollingIntervalSec() {
+  const allowed = [2, 4, 6, 8, 10];
+  const raw = Number(state.settings && state.settings.ui_polling_interval_sec);
+  if (Number.isFinite(raw) && allowed.includes(raw)) return raw;
+  return Math.round(POLL_STATUS_DEFAULT_MS / 1000);
+}
+
+function computeStatusPollDelayMs() {
+  const baseMs = Math.max(1000, getUiPollingIntervalSec() * 1000);
+  const fastMs = Math.min(baseMs, POLL_STATUS_WARMUP_MS);
+  const started = Number(state.statusPollStartMs) || 0;
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  const elapsed = started ? Math.max(0, now - started) : POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS;
+
+  if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS) {
+    return fastMs;
   }
-  state.statusTimer = setInterval(loadStreamStatus, POLL_STATUS_MS);
-  loadStreamStatus();
+  if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS) {
+    const p = (elapsed - POLL_STATUS_WARMUP_WINDOW_MS) / POLL_STATUS_RAMP_WINDOW_MS;
+    return Math.round(fastMs + (baseMs - fastMs) * p);
+  }
+  return baseMs;
+}
+
+function scheduleNextStatusPoll(delayMs) {
+  if (state.statusTimer) {
+    clearTimeout(state.statusTimer);
+  }
+  const delay = Math.max(250, Number(delayMs) || 0);
+  state.statusTimer = setTimeout(() => {
+    tickStatusPolling().catch(() => {});
+  }, delay);
+}
+
+async function tickStatusPolling() {
+  // Таймер мог быть остановлен между scheduleNextStatusPoll() и tick.
+  if (!state.statusTimer) return;
+  if (state.statusPollInFlight) {
+    scheduleNextStatusPoll(computeStatusPollDelayMs());
+    return;
+  }
+  state.statusPollInFlight = true;
+  try {
+    await loadStreamStatus();
+  } finally {
+    state.statusPollInFlight = false;
+  }
+  scheduleNextStatusPoll(computeStatusPollDelayMs());
+}
+
+function startStatusPolling() {
+  stopStatusPolling();
+  state.statusPollStartMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  scheduleNextStatusPoll(0);
 }
 
 function stopStatusPolling() {
   if (state.statusTimer) {
-    clearInterval(state.statusTimer);
+    clearTimeout(state.statusTimer);
     state.statusTimer = null;
   }
+  state.statusPollStartMs = 0;
+  state.statusPollInFlight = false;
 }
 
 function buildStreamModel(stream) {
@@ -14294,7 +14367,7 @@ function syncPollingForView() {
   } else {
     stopSessionPolling();
   }
-  if (state.currentView === 'log') {
+  if (state.currentView === 'logs') {
     startLogPolling();
   } else {
     stopLogPolling();
@@ -14613,7 +14686,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206f`;
+  const src = `/vendor/hls.min.js?v=20260206g`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -14771,6 +14844,9 @@ function applySettingsToUI() {
   }
   if (elements.settingsEpgInterval) {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
+  }
+  if (elements.settingsUiPollingInterval) {
+    setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
   }
   if (elements.settingsEventRequest) {
     elements.settingsEventRequest.value = getSettingString('event_request', '');
@@ -15261,6 +15337,13 @@ function collectGeneralSettings() {
   if (epgInterval !== undefined && epgInterval < 0) {
     throw new Error('EPG export interval must be >= 0');
   }
+  const uiPolling = toNumber(elements.settingsUiPollingInterval && elements.settingsUiPollingInterval.value);
+  if (uiPolling !== undefined) {
+    const allowed = [2, 4, 6, 8, 10];
+    if (!allowed.includes(uiPolling)) {
+      throw new Error('Polling interval must be one of: 2, 4, 6, 8, 10');
+    }
+  }
   const monitorMax = toNumber(elements.settingsMonitorAnalyzeMax && elements.settingsMonitorAnalyzeMax.value);
   if (monitorMax !== undefined && monitorMax < 1) {
     throw new Error('Analyze concurrency limit must be >= 1');
@@ -15470,6 +15553,7 @@ function collectGeneralSettings() {
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
     ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
+    ui_polling_interval_sec: uiPolling || 4,
   };
   if (elements.settingsEventRequest) {
     payload.event_request = elements.settingsEventRequest.value.trim();
@@ -16190,10 +16274,39 @@ function getPlayerLink() {
   return resolveAbsoluteUrl(link, window.location.origin);
 }
 
+function getPlayerPageUrl(stream) {
+  const target = stream || getPlayerStream();
+  if (!target) return '';
+  const params = new URLSearchParams();
+  params.set('player', target.id);
+  params.set('kind', state.playerShareKind === 'hls' ? 'hls' : 'play');
+  params.set('autoplay', '1');
+  return `${window.location.origin}/index.html#${params.toString()}`;
+}
+
+function parsePlayerAutoOpenFromHash() {
+  const raw = String(window.location.hash || '');
+  if (!raw || raw === '#') return null;
+  const query = raw.startsWith('#') ? raw.slice(1) : raw;
+  let params = null;
+  try {
+    params = new URLSearchParams(query);
+  } catch (err) {
+    return null;
+  }
+  const id = params.get('player') || '';
+  if (!id) return null;
+  const kindRaw = (params.get('kind') || '').toLowerCase();
+  const kind = (kindRaw === 'play') ? 'play' : 'hls';
+  const autoplay = params.get('autoplay') !== '0';
+  return { id, kind, autoplay };
+}
+
 function updatePlayerActions() {
-  const hasUrl = !!getPlayerLink();
-  if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasUrl;
-  if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasUrl;
+  const hasCopyUrl = !!getPlayerLink();
+  const hasPageUrl = !!getPlayerPageUrl();
+  if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasPageUrl;
+  if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasCopyUrl;
 }
 
 function updatePlayerShareUi(stream) {
@@ -16337,9 +16450,34 @@ async function attachPlayerSource(url, opts = {}) {
   }
   clearPlayerError();
   setPlayerLoading(true, 'Подключение...');
-  state.playerStartTimer = setTimeout(() => {
+  state.playerStartTimer = setTimeout(async () => {
+    state.playerStartTimer = null;
+    const stream = getPlayerStream();
+    // Если модалка уже закрыта, ничего не делаем.
+    if (!stream || !state.playerStreamId) {
+      return;
+    }
+
+    // Фолбэки: сначала пробуем перекодировать аудио в AAC (video copy), затем без аудио.
+    if (!state.playerTriedAudioAac) {
+      state.playerTriedAudioAac = true;
+      setPlayerLoading(true, 'Запуск с AAC аудио...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(stream, { forceAudioAac: true });
+      return;
+    }
+    if (!state.playerTriedVideoOnly) {
+      state.playerTriedVideoOnly = true;
+      setPlayerLoading(true, 'Запуск без аудио...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(stream, { forceVideoOnly: true });
+      return;
+    }
+
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
-  }, 10000);
+  }, 12000);
 
   if (opts.mode === 'mpegts') {
     elements.playerVideo.src = url;
@@ -16377,6 +16515,23 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
+    // Для on-demand /hls/* манифест может быть 503 первые секунды.
+    // Перед запуском hls.js чуть подождём, чтобы уменьшить шанс фатальной ошибки.
+    try {
+      const abs = resolveAbsoluteUrl(url, window.location.origin);
+      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
+      if (sameOrigin) {
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
+          if (res.ok) break;
+          if (res.status !== 503) break;
+          await delay(250);
+        }
+      }
+    } catch (err) {
+    }
+
     const hls = new window.Hls({
       lowLatencyMode: true,
       // /hls/* может быть on-demand и на первых запросах отдавать 503, поэтому даём hls.js
@@ -16429,14 +16584,16 @@ async function startPlayer(stream, opts = {}) {
   let url = null;
   let mode = 'direct';
   let token = null;
+  const forceVideoOnly = opts.forceVideoOnly === true;
+  const forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
-  url = opts.forceVideoOnly ? null : getPlaylistUrl(stream);
+  url = (forceVideoOnly || forceAudioAac) ? null : getPlaylistUrl(stream);
 
   if (!url) {
     try {
-      const qs = opts.forceVideoOnly ? '?video_only=1' : '';
+      const qs = forceVideoOnly ? '?video_only=1' : (forceAudioAac ? '?audio_aac=1' : '');
       const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start${qs}`, { method: 'POST' });
       url = payload.url;
       token = payload.token;
@@ -16461,7 +16618,7 @@ async function startPlayer(stream, opts = {}) {
   }
 }
 
-function openPlayer(stream) {
+function openPlayer(stream, opts = {}) {
   if (!stream) return;
   if (state.playerMode === 'preview' && state.playerStreamId && state.playerStreamId !== stream.id) {
     apiJson(`/api/v1/streams/${state.playerStreamId}/preview/stop`, { method: 'POST' }).catch(() => {});
@@ -16470,9 +16627,10 @@ function openPlayer(stream) {
   state.playerMode = null;
   state.playerUrl = '';
   state.playerShareUrl = '';
-  state.playerShareKind = 'play';
+  state.playerShareKind = (opts && opts.shareKind === 'play') ? 'play' : 'hls';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
+  state.playerTriedAudioAac = false;
   updatePlayerMeta(stream);
   setOverlay(elements.playerOverlay, true);
   startPlayer(stream);
@@ -16486,9 +16644,10 @@ async function closePlayer() {
   state.playerMode = null;
   state.playerUrl = '';
   state.playerShareUrl = '';
-  state.playerShareKind = 'play';
+  state.playerShareKind = 'hls';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
+  state.playerTriedAudioAac = false;
   updatePlayerActions();
 }
 
@@ -17135,22 +17294,16 @@ function pollAnalyzeJob(stream, stats, jobId, attempt) {
   if (state.analyzeStreamId !== stream.id) return;
   apiJson(`/api/v1/streams/analyze/${jobId}`).then((job) => {
     if (state.analyzeStreamId !== stream.id) return;
-    if (job.status === 'running' && attempt < maxAttempts) {
-      const base = buildAnalyzeBaseSections(stream, stats);
-      const sections = base.concat([{
-        title: 'Analyze details',
-        items: ['Analyzing...'],
-      }]);
-      renderAnalyzeSections(sections);
-      state.analyzePoll = setTimeout(() => {
-        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
-      }, 500);
-      return;
-    }
+    // Показываем частичные результаты во время анализа (PAT/PMT/SDT и bitrate появляются сразу).
     updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
     const base = buildAnalyzeBaseSections(stream, stats);
     const sections = base.concat(buildAnalyzeJobSections(job));
     renderAnalyzeSections(sections);
+    if (job.status === 'running' && attempt < maxAttempts) {
+      state.analyzePoll = setTimeout(() => {
+        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
+      }, 500);
+    }
   }).catch((err) => {
     if (state.analyzeStreamId !== stream.id) return;
     const base = buildAnalyzeBaseSections(stream, stats);
@@ -17587,6 +17740,7 @@ function getAiHelpHints() {
     'help',
     'error ch',
     'make mpts',
+    'delete all disable channel',
   ];
 }
 
@@ -17891,6 +18045,42 @@ async function sendAiChatMessage() {
     }
     return;
   }
+  if (
+    normalized === 'delete all disable channel' ||
+    normalized === 'delete all disabled channel' ||
+    normalized === 'delete all disabled channels'
+  ) {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    const ok = window.confirm('Delete all disabled streams from config? This can be restored via Config History, but it will remove streams now.');
+    if (!ok) {
+      appendAiChatMessage('system', 'Cancelled.');
+      return;
+    }
+    state.aiChatBusy = true;
+    if (elements.aiChatSend) elements.aiChatSend.disabled = true;
+    setAiChatStatus('Purging disabled streams...');
+    try {
+      const res = await apiJson('/api/v1/streams/purge-disabled', { method: 'POST' });
+      const deletedRaw = res && res.deleted != null ? Number(res.deleted) : 0;
+      const deleted = Number.isFinite(deletedRaw) ? deletedRaw : 0;
+      const rev = res && res.revision_id ? ` (revision ${res.revision_id})` : '';
+      appendAiChatMessage('assistant', `Deleted ${deleted} disabled stream(s)${rev}.`);
+      await loadStreams();
+    } catch (err) {
+      appendAiChatMessage('system', buildAiErrorNode(`Purge failed: ${formatNetworkError(err) || err.message}`));
+    } finally {
+      state.aiChatBusy = false;
+      if (elements.aiChatSend) elements.aiChatSend.disabled = false;
+      setAiChatStatus('');
+    }
+    return;
+  }
   const attachments = await collectAiChatAttachments();
   elements.aiChatInput.value = '';
   appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
@@ -17980,6 +18170,19 @@ async function refreshAll() {
     if (state.currentView === 'observability') {
       await loadObservability(false);
     }
+
+    // Поддержка "открыть плеер в новой вкладке": index.html#player=<id>&kind=hls|play
+    if (state.playerAutoOpen && state.playerAutoOpen.id) {
+      const request = state.playerAutoOpen;
+      state.playerAutoOpen = null;
+      const stream = state.streamIndex[request.id];
+      if (stream) {
+        openPlayer(stream, { shareKind: request.kind });
+      } else {
+        setStatus(`Stream not found: ${request.id}`);
+      }
+    }
+
     setOverlay(elements.loginOverlay, false);
     resumeAllPolling();
   } catch (err) {
@@ -18977,7 +19180,7 @@ function bindEvents() {
   }
   if (elements.playerOpenTab) {
     elements.playerOpenTab.addEventListener('click', () => {
-      const link = getPlayerLink();
+      const link = getPlayerPageUrl();
       if (link) window.open(link, '_blank', 'noopener');
     });
   }
@@ -19006,6 +19209,7 @@ function bindEvents() {
       if (!stream) return;
       await stopPlayerSession();
       state.playerTriedVideoOnly = false;
+      state.playerTriedAudioAac = false;
       startPlayer(stream);
     });
   }
@@ -19028,6 +19232,14 @@ function bindEvents() {
       // можно обойти это без транскодинга, отключив audio.
       if (mediaErr && (mediaErr.code === 4 || mediaErr.code === 3)) {
         const stream = getPlayerStream();
+        if (stream && !state.playerTriedAudioAac) {
+          state.playerTriedAudioAac = true;
+          setPlayerLoading(true, 'Запуск с AAC аудио...');
+          clearPlayerError();
+          await stopPlayerSession();
+          startPlayer(stream, { forceAudioAac: true });
+          return;
+        }
         if (stream && !state.playerTriedVideoOnly) {
           state.playerTriedVideoOnly = true;
           setPlayerLoading(true, 'Запуск без аудио...');
@@ -20014,4 +20226,5 @@ setViewMode(state.viewMode, { persist: false, render: false });
 setThemeMode(state.themeMode, { persist: false });
 setSettingsSection(state.settingsSection);
 applyTilesUiState();
+state.playerAutoOpen = parsePlayerAutoOpenFromHash();
 refreshAll();
