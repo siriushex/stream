@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - Auth: keep web sessions alive for active users (sliding TTL) and set persistent session cookie (`Max-Age`, `SameSite=Lax`) on login.
+- Tests:
+  - Not run locally.
+### 2026-02-06
+- Changes:
   - Settings/Logs: add runtime logging controls (stdout/file/syslog, log level, file rotation) and apply them live via `PUT /api/v1/settings`.
 - Tests:
   - `./configure.sh && make`
