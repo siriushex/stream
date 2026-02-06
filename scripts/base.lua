@@ -974,6 +974,12 @@ init_input_module.http = function(conf)
             -- makes consumption stable for downstream pipelines.
             sync = 1
         end
+        local timeout = conf.timeout
+        if timeout == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
+            -- /play can be bursty on low-bitrate streams; keep a higher receive timeout by default
+            -- so we don't reconnect on normal gaps.
+            timeout = 60
+        end
 
         local http_conf = {
             host = conf.host,
@@ -982,7 +988,7 @@ init_input_module.http = function(conf)
             stream = true,
             sync = sync,
             buffer_size = conf.buffer_size,
-            timeout = conf.timeout,
+            timeout = timeout,
             sctp = conf.sctp,
             headers = {
                 "User-Agent: " .. (conf.user_agent or http_user_agent),
@@ -1081,6 +1087,10 @@ local function init_input_module_https_direct(conf)
         if sync == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
             sync = 1
         end
+        local timeout = conf.timeout
+        if timeout == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
+            timeout = 60
+        end
 
         local http_conf = {
             host = conf.host,
@@ -1089,7 +1099,7 @@ local function init_input_module_https_direct(conf)
             stream = true,
             sync = sync,
             buffer_size = conf.buffer_size,
-            timeout = conf.timeout,
+            timeout = timeout,
             sctp = conf.sctp,
             ssl = true,
             tls_verify = conf.tls_verify,
