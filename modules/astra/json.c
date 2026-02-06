@@ -19,6 +19,7 @@
  */
 
 #include <astra.h>
+#include <stdint.h>
 
 /*
  * ooooooooooo oooo   oooo  oooooooo8   ooooooo  ooooooooo  ooooooooooo
@@ -28,6 +29,43 @@
  * o888ooo8888 o88o    88  888oooo88    88ooo88  o888ooo88  o888ooo8888
  *
  */
+
+static int hex_nibble(const char c)
+{
+    if(c >= '0' && c <= '9')
+        return c - '0';
+    if(c >= 'a' && c <= 'f')
+        return 10 + (c - 'a');
+    if(c >= 'A' && c <= 'F')
+        return 10 + (c - 'A');
+    return -1;
+}
+
+static void add_utf8(luaL_Buffer *b, const uint32_t cp)
+{
+    if(cp <= 0x7F)
+    {
+        luaL_addchar(b, (char)cp);
+    }
+    else if(cp <= 0x7FF)
+    {
+        luaL_addchar(b, (char)(0xC0 | ((cp >> 6) & 0x1F)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    }
+    else if(cp <= 0xFFFF)
+    {
+        luaL_addchar(b, (char)(0xE0 | ((cp >> 12) & 0x0F)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    }
+    else
+    {
+        luaL_addchar(b, (char)(0xF0 | ((cp >> 18) & 0x07)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 12) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        luaL_addchar(b, (char)(0x80 | (cp & 0x3F)));
+    }
+}
 
 static void walk_table(lua_State *L, string_buffer_t *buffer);
 
@@ -222,6 +260,12 @@ static int scan_string(lua_State *L, const char *str, int pos)
                 case '"':
                     luaL_addchar(&b, '"');
                     break;
+                case 'b':
+                    luaL_addchar(&b, '\b');
+                    break;
+                case 'f':
+                    luaL_addchar(&b, '\f');
+                    break;
                 case 't':
                     luaL_addchar(&b, '\t');
                     break;
@@ -231,6 +275,43 @@ static int scan_string(lua_State *L, const char *str, int pos)
                 case 'n':
                     luaL_addchar(&b, '\n');
                     break;
+                case 'u':
+                {
+                    const int h1 = hex_nibble(str[pos + 1]);
+                    const int h2 = hex_nibble(str[pos + 2]);
+                    const int h3 = hex_nibble(str[pos + 3]);
+                    const int h4 = hex_nibble(str[pos + 4]);
+                    if(h1 < 0 || h2 < 0 || h3 < 0 || h4 < 0)
+                        return -1;
+                    uint32_t cp = ((uint32_t)h1 << 12) | ((uint32_t)h2 << 8)
+                                | ((uint32_t)h3 << 4)  | (uint32_t)h4;
+                    pos += 4; /* consume hex digits */
+
+                    /* Surrogate pairs: \uD800-\uDBFF followed by \uDC00-\uDFFF */
+                    if(cp >= 0xD800 && cp <= 0xDBFF
+                       && str[pos + 1] == '\\' && str[pos + 2] == 'u')
+                    {
+                        const int l1 = hex_nibble(str[pos + 3]);
+                        const int l2 = hex_nibble(str[pos + 4]);
+                        const int l3 = hex_nibble(str[pos + 5]);
+                        const int l4 = hex_nibble(str[pos + 6]);
+                        if(l1 >= 0 && l2 >= 0 && l3 >= 0 && l4 >= 0)
+                        {
+                            const uint32_t low = ((uint32_t)l1 << 12) | ((uint32_t)l2 << 8)
+                                               | ((uint32_t)l3 << 4)  | (uint32_t)l4;
+                            if(low >= 0xDC00 && low <= 0xDFFF)
+                            {
+                                cp = 0x10000 + (((cp - 0xD800) << 10) | (low - 0xDC00));
+                                pos += 6; /* consume \uXXXX */
+                            }
+                        }
+                    }
+
+                    if(cp > 0x10FFFF)
+                        return -1;
+                    add_utf8(&b, cp);
+                    break;
+                }
                 default:
                     return -1;
             }
@@ -246,47 +327,12 @@ static int scan_string(lua_State *L, const char *str, int pos)
 
 static int scan_number(lua_State *L, const char *str, int pos)
 {
-    char c;
-    double number = 0;
-
-    bool is_nn = false;
-    if(str[pos] == '-')
-    {
-        is_nn = true;
-        ++pos;
-    }
-
-    for(; (c = str[pos]) != '\0'; ++pos)
-    {
-        if(c >= '0' && c <= '9')
-        {
-            if(number > 0)
-                number *= 10;
-            number += c - '0';
-        }
-        else
-            break;
-    }
-
-    if(c == '.')
-    {
-        // TODO: fix that
-        ++pos;
-        for(; (c = str[pos]) != '\0'; ++pos)
-        {
-            if(c >= '0' && c <= '9')
-                ;
-            else
-                break;
-        }
-    }
-
-    if(is_nn)
-        number = 0 - number;
-
+    char *endptr = NULL;
+    const double number = strtod(&str[pos], &endptr);
+    if(!endptr || endptr == &str[pos])
+        return -1;
     lua_pushnumber(L, number);
-
-    return pos;
+    return (int)(endptr - str);
 }
 
 static int scan_json(lua_State *L, const char *str, int pos);
