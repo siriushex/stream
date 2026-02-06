@@ -3595,7 +3595,9 @@ local function handle_audio_fix_probe_result(channel_data, output_id, output_dat
     audio_fix.detected_audio_type_hex = format_audio_type_hex(detected_type)
     audio_fix.last_error = err
 
-    local mismatch = detected_type ~= nil and detected_type ~= audio_fix.config.target_audio_type
+    local type_mismatch = detected_type ~= nil and detected_type ~= audio_fix.config.target_audio_type
+    local unknown = detected_type == nil
+    local mismatch = type_mismatch or (unknown and not audio_fix.proc and not is_audio_fix_force_run(audio_fix.config))
     if mismatch then
         if not audio_fix.mismatch_since then
             audio_fix.mismatch_since = now
