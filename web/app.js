@@ -1483,6 +1483,13 @@ const SETTINGS_GENERAL_SECTIONS = [
             placeholder: '4',
           },
           {
+            id: 'settings-psi-debug',
+            label: 'PSI debug logs (NIT/TOT/TDT)',
+            type: 'switch',
+            key: 'psi_debug_logs',
+            level: 'advanced',
+          },
+          {
             id: 'settings-log-max-entries',
             label: 'Log max entries',
             type: 'input',
