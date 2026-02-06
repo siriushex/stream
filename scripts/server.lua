@@ -992,6 +992,7 @@ function main()
     local http_play_arrange = setting_string("http_play_arrange", "tv")
     local http_play_buffer_kb = setting_number("http_play_buffer_kb", 4000)
     local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 128)
+    local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 512)
     local http_play_m3u_header = setting_string("http_play_m3u_header", "")
     local http_play_xspf_title = setting_string("http_play_xspf_title", "Playlist")
     local http_play_no_tls = setting_bool("http_play_no_tls", false)
@@ -1289,6 +1290,10 @@ function main()
             end
 
             local buffer_size = math.max(128, http_play_buffer_kb)
+            -- Prevent very large buffers from producing bursty /play delivery (drain -> long refill cycles).
+            if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+            end
             local buffer_fill = math.floor(buffer_size / 4)
             -- Cap buffer_fill so /play is less bursty. This matters for:
             -- - players that expect near-realtime delivery
