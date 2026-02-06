@@ -4766,6 +4766,7 @@ function updateStreamBackupFields() {
 function updateMptsFields() {
   if (!elements.streamMpts) return;
   const enabled = elements.streamMpts.checked;
+  setTabVisibility('mpts', 'stream-editor', enabled);
   $$('.mpts-field').forEach((field) => {
     field.disabled = !enabled;
   });
@@ -7014,6 +7015,25 @@ function setTab(name, scope) {
   });
 }
 
+function setTabVisibility(name, scope, visible) {
+  const tab = document.querySelector(`.tab[data-tab="${name}"][data-tab-scope="${scope}"]`);
+  const content = document.querySelector(`.tab-content[data-tab-content="${name}"][data-tab-scope="${scope}"]`);
+
+  if (tab) tab.hidden = !visible;
+  if (content) {
+    content.hidden = !visible;
+    if (!visible) content.classList.remove('active');
+  }
+
+  if (!visible) {
+    const active = document.querySelector(`.tab.active[data-tab="${name}"][data-tab-scope="${scope}"]`);
+    if (active) setTab('general', scope);
+  }
+
+  const tabbar = tab ? tab.closest('.tabbar') : null;
+  if (tabbar) updateTabbarScrollState(tabbar);
+}
+
 function updateTabbarScrollState(tabbar) {
   if (!tabbar) return;
   const scrollable = tabbar.scrollWidth > tabbar.clientWidth + 2;
@@ -7045,7 +7065,7 @@ function renderInputList() {
 
   state.inputs.forEach((value, index) => {
     const row = document.createElement('div');
-    row.className = 'list-row';
+    row.className = 'list-row input-row';
     row.dataset.index = String(index);
 
     const idx = document.createElement('div');
@@ -7061,6 +7081,20 @@ function renderInputList() {
       state.inputs[index] = input.value;
     });
 
+    const moveUp = document.createElement('button');
+    moveUp.className = 'icon-btn';
+    moveUp.type = 'button';
+    moveUp.dataset.action = 'input-up';
+    moveUp.textContent = '↑';
+    moveUp.disabled = index === 0;
+
+    const moveDown = document.createElement('button');
+    moveDown.className = 'icon-btn';
+    moveDown.type = 'button';
+    moveDown.dataset.action = 'input-down';
+    moveDown.textContent = '↓';
+    moveDown.disabled = index === state.inputs.length - 1;
+
     const options = document.createElement('button');
     options.className = 'icon-btn';
     options.type = 'button';
@@ -7075,6 +7109,8 @@ function renderInputList() {
 
     row.appendChild(idx);
     row.appendChild(input);
+    row.appendChild(moveUp);
+    row.appendChild(moveDown);
     row.appendChild(options);
     row.appendChild(remove);
 
@@ -19112,6 +19148,33 @@ function bindEvents() {
     const row = event.target.closest('.list-row');
     if (!row) return;
     const index = Number(row.dataset.index);
+    const focusInput = (targetIndex) => {
+      setTimeout(() => {
+        const nextRow = elements.inputList.querySelector(`.list-row[data-index="${targetIndex}"]`);
+        const inputEl = nextRow && nextRow.querySelector('input[data-role="input"]');
+        if (inputEl) inputEl.focus();
+      }, 0);
+    };
+    if (action.dataset.action === 'input-up') {
+      if (index > 0) {
+        const tmp = state.inputs[index - 1];
+        state.inputs[index - 1] = state.inputs[index];
+        state.inputs[index] = tmp;
+        renderInputList();
+        focusInput(index - 1);
+      }
+      return;
+    }
+    if (action.dataset.action === 'input-down') {
+      if (index < state.inputs.length - 1) {
+        const tmp = state.inputs[index + 1];
+        state.inputs[index + 1] = state.inputs[index];
+        state.inputs[index] = tmp;
+        renderInputList();
+        focusInput(index + 1);
+      }
+      return;
+    }
     if (action.dataset.action === 'input-options') {
       openInputModal(index);
       return;

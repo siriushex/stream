@@ -1456,6 +1456,17 @@ select {
   min-height: 160px;
 }
 
+.checkline-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+}
+
+.checkline-row .checkline span {
+  white-space: nowrap;
+}
+
 .field select {
   appearance: none;
   background-image:
@@ -2573,6 +2584,10 @@ details.fold[open] > .fold-summary::after {
   grid-template-columns: 36px 1fr auto auto auto;
 }
 
+.input-row {
+  grid-template-columns: 36px 1fr auto auto auto auto;
+}
+
 .transcode-output-row {
   grid-template-columns: 36px 1fr auto auto auto;
 }
@@ -2964,7 +2979,11 @@ details.fold[open] > .fold-summary::after {
 }
 
 .stream-desc-field textarea {
-  min-height: 44px;
+  min-height: 32px;
+}
+
+.stream-desc-field textarea.textarea-grow:focus {
+  min-height: 96px;
 }
 
 @media (max-width: 900px) {
