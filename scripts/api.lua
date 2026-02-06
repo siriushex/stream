@@ -1806,6 +1806,13 @@ local function stream_analyze_finish(job, status, err)
         kill_input(job.input)
         job.input = nil
     end
+    if job.retained and job.channel_data and channel_release then
+        -- Analyze can temporarily retain a live stream pipeline so it stays active without viewers.
+        -- Release the retain when the job finishes, even on errors.
+        pcall(channel_release, job.channel_data, "analyze")
+        job.retained = nil
+        job.channel_data = nil
+    end
     job.finished_at = os.time()
     job.status = status
     if err then
@@ -1913,9 +1920,16 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         end
     end
 
-    local input_url, err = resolve_stream_input_url(stream_id)
-    if not input_url then
-        return error_response(server, client, 400, err or "input url not found")
+    local input_url, input_err = resolve_stream_input_url(stream_id)
+
+    -- Prefer analyzing the live stream pipeline (post-remap, same as /play) when available.
+    -- This avoids SSRF/allowlist problems for remote inputs and works for stream:// sources.
+    local entry = runtime and runtime.streams and runtime.streams[tostring(stream_id)] or nil
+    local channel_data = entry and entry.channel or nil
+    local can_attach_live = channel_data and channel_data.tail and channel_retain and channel_release
+
+    if not can_attach_live and not input_url then
+        return error_response(server, client, 400, input_err or "input url not found")
     end
 
     local stream_name = tostring(stream_id)
@@ -1930,7 +1944,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         id = id,
         stream_id = tostring(stream_id),
         stream_name = stream_name,
-        input_url = tostring(input_url),
+        input_url = input_url and tostring(input_url) or nil,
         status = "running",
         started_at = os.time(),
         duration_sec = duration,
@@ -1941,21 +1955,35 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         pids = {},
     }
 
-    local conf = parse_url(input_url)
-    if not conf then
-        return error_response(server, client, 400, "invalid input url")
-    end
-    conf.name = "stream-analyze-" .. tostring(stream_id)
+    local analyze_name = "stream-analyze-" .. tostring(stream_id)
+    local upstream = nil
 
-    local input = init_input(conf)
-    if not input then
-        return error_response(server, client, 500, "failed to init input")
+    if can_attach_live then
+        job.channel_data = channel_data
+        local ok, retained = pcall(channel_retain, channel_data, "analyze")
+        if ok and retained then
+            job.retained = true
+        end
+        upstream = channel_data.tail:stream()
+    else
+        local conf = parse_url(input_url)
+        if not conf then
+            return error_response(server, client, 400, "invalid input url")
+        end
+        conf.name = analyze_name
+
+        local input = init_input(conf)
+        if not input then
+            return error_response(server, client, 500, "failed to init input")
+        end
+        job.input = input
+        upstream = input.tail:stream()
     end
-    job.input = input
+
     stream_analyze.active = stream_analyze.active + 1
     job.analyze = analyze({
-        upstream = input.tail:stream(),
-        name = conf.name,
+        upstream = upstream,
+        name = analyze_name,
         join_pid = true,
         callback = function(data)
             if type(data) ~= "table" then
