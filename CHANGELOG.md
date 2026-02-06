@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - AI: harden OpenAI 429 handling (use retry hints in error messages, safer backoff when headers are stripped, and avoid retry loops on quota errors).
+  - AI: add `ai_max_attempts` (default 6) so chat jobs can survive transient rate limits without user re-submits.
+  - UI: extend AstralAI chat polling timeout to 10 minutes to allow longer backoffs.
+- Tests:
+  - `./astral scripts/tests/ai_openai_retry_delay_unit.lua`
+### 2026-02-06
+- Changes:
   - HLS memfd: fix invalid `#EXTINF` duration formatting in playlists (was emitting `.3f` due to limited formatter).
   - Tools: HLS memfd smoke now validates EXTINF duration format (regression guard).
 - Tests:
