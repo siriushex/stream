@@ -1289,6 +1289,18 @@ function main()
 
             local buffer_size = math.max(128, http_play_buffer_kb)
             local buffer_fill = math.floor(buffer_size / 4)
+            local query = request and request.query or nil
+            if query then
+                local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
+                if qbuf and qbuf > 0 then
+                    buffer_size = math.max(128, math.floor(qbuf))
+                    buffer_fill = math.floor(buffer_size / 4)
+                end
+                local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
+                if qfill and qfill > 0 then
+                    buffer_fill = math.min(buffer_size, math.floor(qfill))
+                end
+            end
             server:send(client, {
                 upstream = channel_data.tail:stream(),
                 buffer_size = buffer_size,

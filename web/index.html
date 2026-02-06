@@ -1569,6 +1569,7 @@
       </div>
 
       <form id="stream-form">
+        <div class="modal-body-scroll">
         <div class="tab-content active" data-tab-content="general" data-tab-scope="stream-editor">
           <label class="checkline">
             <input type="checkbox" id="stream-enabled" checked />
@@ -2311,6 +2312,7 @@
             </label>
           </div>
         </div>
+        </div>
 
         <div class="modal-footer">
           <button class="btn ghost danger" type="button" id="btn-delete">Remove</button>
@@ -2335,6 +2337,7 @@
         </button>
       </div>
       <form id="output-form">
+        <div class="modal-body-scroll">
         <div class="form-subsection">
           <div class="form-grid">
             <label class="field">
@@ -2668,6 +2671,7 @@
             <span>Use Direct I/O</span>
           </label>
         </div>
+        </div>
 
         <div class="modal-footer">
           <button class="btn" type="submit" id="output-save">OK</button>
@@ -2686,6 +2690,7 @@
         </button>
       </div>
       <form id="transcode-output-form">
+        <div class="modal-body-scroll">
         <label class="field">
           <span>Preset</span>
           <select id="transcode-output-preset">
@@ -2738,6 +2743,7 @@
           <span>Metadata args (one per line)</span>
           <textarea id="transcode-output-metadata" rows="3" placeholder="-metadata&#10;service_name=Channel"></textarea>
         </label>
+        </div>
 
         <div class="form-note" id="transcode-output-error"></div>
         <div class="modal-footer">
@@ -2757,6 +2763,7 @@
         </button>
       </div>
       <form id="transcode-monitor-form">
+        <div class="modal-body-scroll">
         <div class="form-note" id="transcode-monitor-target"></div>
 
         <div class="panel subtle">
@@ -2842,6 +2849,7 @@
           </div>
           <div class="form-hint">Low bitrate uses the selected monitor engine for this output.</div>
         </div>
+        </div>
 
         <div class="form-note" id="transcode-monitor-error"></div>
         <div class="modal-footer">
@@ -2861,6 +2869,7 @@
         </button>
       </div>
       <form id="input-form">
+        <div class="modal-body-scroll">
         <div class="form-subsection">
           <div class="form-grid">
             <label class="field">
@@ -3071,6 +3080,7 @@
           <input type="checkbox" id="input-no-analyze" />
           <span>Disable analyze</span>
         </label>
+        </div>
 
         <div class="modal-footer">
           <button class="btn" type="submit" id="input-save">OK</button>

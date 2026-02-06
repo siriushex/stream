@@ -23,6 +23,7 @@ local ANALYZE_MAX_CONCURRENCY_DEFAULT = 4
 local STDERR_TAIL_MAX = 200
 local WARMUP_STDERR_MAX = 30
 local WARMUP_TIMEOUT_EXTRA = 2
+local TRANSCODE_PLAY_BUFFER_KB_DEFAULT = 512
 
 local function normalize_stream_type(cfg)
     local t = cfg and cfg.type
@@ -129,6 +130,32 @@ local function strip_url_hash(url)
     return tostring(url)
 end
 
+local function append_play_buffer(url, buffer_kb)
+    if not url or url == "" then
+        return url
+    end
+    local value = tonumber(buffer_kb)
+    if not value or value <= 0 then
+        return url
+    end
+    local suffix = "buf_kb=" .. tostring(math.floor(value))
+    if tostring(url):find("?", 1, true) then
+        return tostring(url) .. "&" .. suffix
+    end
+    return tostring(url) .. "?" .. suffix
+end
+
+local function resolve_play_buffer_kb(value)
+    if value == nil then
+        return nil
+    end
+    local num = tonumber(value)
+    if not num or num <= 0 then
+        return nil
+    end
+    return math.floor(num)
+end
+
 local function is_ffmpeg_url_supported(url)
     if not url or url == "" then
         return false
@@ -210,6 +237,14 @@ local function resolve_job_input_url(job)
     end
     local tc = job.config.transcode or {}
     local use_play = normalize_bool(tc.input_use_play, true)
+    local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
+    local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
+    if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
+        play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
+    end
+    if not has_play_buffer then
+        play_buffer_kb = TRANSCODE_PLAY_BUFFER_KB_DEFAULT
+    end
     local play_url = nil
     if use_play then
         local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
@@ -217,6 +252,7 @@ local function resolve_job_input_url(job)
             play_url = build_transcode_play_url(play_id)
         end
         if play_url then
+            play_url = append_play_buffer(play_url, play_buffer_kb)
             return play_url
         end
         log.warning("[transcode " .. tostring(job.id) .. "] play input unavailable; using configured input")
