@@ -212,6 +212,7 @@ const state = {
   playerShareKind: 'play',
   playerToken: null,
   playerTriedVideoOnly: false,
+  playerTriedAudioAac: false,
   playerStartTimer: null,
   playerStarting: false,
   analyzeJobId: null,
@@ -14613,7 +14614,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206f`;
+  const src = `/vendor/hls.min.js?v=20260206g`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
@@ -16337,9 +16338,34 @@ async function attachPlayerSource(url, opts = {}) {
   }
   clearPlayerError();
   setPlayerLoading(true, 'Подключение...');
-  state.playerStartTimer = setTimeout(() => {
+  state.playerStartTimer = setTimeout(async () => {
+    state.playerStartTimer = null;
+    const stream = getPlayerStream();
+    // Если модалка уже закрыта, ничего не делаем.
+    if (!stream || !state.playerStreamId) {
+      return;
+    }
+
+    // Фолбэки: сначала пробуем перекодировать аудио в AAC (video copy), затем без аудио.
+    if (!state.playerTriedAudioAac) {
+      state.playerTriedAudioAac = true;
+      setPlayerLoading(true, 'Запуск с AAC аудио...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(stream, { forceAudioAac: true });
+      return;
+    }
+    if (!state.playerTriedVideoOnly) {
+      state.playerTriedVideoOnly = true;
+      setPlayerLoading(true, 'Запуск без аудио...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(stream, { forceVideoOnly: true });
+      return;
+    }
+
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
-  }, 10000);
+  }, 12000);
 
   if (opts.mode === 'mpegts') {
     elements.playerVideo.src = url;
@@ -16429,14 +16455,16 @@ async function startPlayer(stream, opts = {}) {
   let url = null;
   let mode = 'direct';
   let token = null;
+  const forceVideoOnly = opts.forceVideoOnly === true;
+  const forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
-  url = opts.forceVideoOnly ? null : getPlaylistUrl(stream);
+  url = (forceVideoOnly || forceAudioAac) ? null : getPlaylistUrl(stream);
 
   if (!url) {
     try {
-      const qs = opts.forceVideoOnly ? '?video_only=1' : '';
+      const qs = forceVideoOnly ? '?video_only=1' : (forceAudioAac ? '?audio_aac=1' : '');
       const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start${qs}`, { method: 'POST' });
       url = payload.url;
       token = payload.token;
@@ -16473,6 +16501,7 @@ function openPlayer(stream) {
   state.playerShareKind = 'play';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
+  state.playerTriedAudioAac = false;
   updatePlayerMeta(stream);
   setOverlay(elements.playerOverlay, true);
   startPlayer(stream);
@@ -16489,6 +16518,7 @@ async function closePlayer() {
   state.playerShareKind = 'play';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
+  state.playerTriedAudioAac = false;
   updatePlayerActions();
 }
 
@@ -17135,22 +17165,16 @@ function pollAnalyzeJob(stream, stats, jobId, attempt) {
   if (state.analyzeStreamId !== stream.id) return;
   apiJson(`/api/v1/streams/analyze/${jobId}`).then((job) => {
     if (state.analyzeStreamId !== stream.id) return;
-    if (job.status === 'running' && attempt < maxAttempts) {
-      const base = buildAnalyzeBaseSections(stream, stats);
-      const sections = base.concat([{
-        title: 'Analyze details',
-        items: ['Analyzing...'],
-      }]);
-      renderAnalyzeSections(sections);
-      state.analyzePoll = setTimeout(() => {
-        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
-      }, 500);
-      return;
-    }
+    // Показываем частичные результаты во время анализа (PAT/PMT/SDT и bitrate появляются сразу).
     updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
     const base = buildAnalyzeBaseSections(stream, stats);
     const sections = base.concat(buildAnalyzeJobSections(job));
     renderAnalyzeSections(sections);
+    if (job.status === 'running' && attempt < maxAttempts) {
+      state.analyzePoll = setTimeout(() => {
+        pollAnalyzeJob(stream, stats, jobId, attempt + 1);
+      }, 500);
+    }
   }).catch((err) => {
     if (state.analyzeStreamId !== stream.id) return;
     const base = buildAnalyzeBaseSections(stream, stats);
@@ -19006,6 +19030,7 @@ function bindEvents() {
       if (!stream) return;
       await stopPlayerSession();
       state.playerTriedVideoOnly = false;
+      state.playerTriedAudioAac = false;
       startPlayer(stream);
     });
   }
