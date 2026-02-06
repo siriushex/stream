@@ -73,3 +73,7 @@ fi
 if [[ "${MPTS_AUTO_PROBE_SMOKE:-0}" == "1" ]]; then
   PORT="${MPTS_AUTO_PROBE_PORT:-9063}" contrib/ci/smoke_mpts_auto_probe.sh
 fi
+
+if [[ "${AUDIO_FIX_SMOKE:-0}" == "1" ]]; then
+  PORT="${AUDIO_FIX_PORT:-9077}" contrib/ci/smoke_audio_fix_failover.sh
+fi

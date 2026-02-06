@@ -549,13 +549,33 @@ local function collect_output_status(channel)
                 end
             end
             entry.audio_fix_enabled = audio_fix.config and audio_fix.config.enabled or false
+            entry.audio_fix_force_on = audio_fix.config and audio_fix.config.force_on or false
+            entry.audio_fix_mode = audio_fix.config and audio_fix.config.mode or nil
+            entry.audio_fix_aac_bitrate_kbps = audio_fix.config and audio_fix.config.aac_bitrate_kbps or nil
+            entry.audio_fix_aac_sample_rate = audio_fix.config and audio_fix.config.aac_sample_rate or nil
+            entry.audio_fix_aac_channels = audio_fix.config and audio_fix.config.aac_channels or nil
+            entry.audio_fix_aac_profile = audio_fix.config and audio_fix.config.aac_profile or nil
+            entry.audio_fix_aresample_async = audio_fix.config and audio_fix.config.aresample_async or nil
+            entry.audio_fix_silence_fallback = audio_fix.config and audio_fix.config.silence_fallback or false
             entry.audio_fix_state = audio_fix.state or (entry.audio_fix_enabled and "PROBING" or "OFF")
+            entry.audio_fix_effective_mode = audio_fix.effective_mode
+            entry.audio_fix_silence_active = audio_fix.silence_active == true
+            entry.audio_fix_last_restart_reason = audio_fix.last_restart_reason
+            entry.audio_fix_last_drift_ms = audio_fix.last_drift_ms
+            entry.audio_fix_last_drift_ts = audio_fix.last_drift_ts
             entry.detected_audio_type_hex = audio_fix.detected_audio_type_hex
             entry.last_probe_ts = audio_fix.last_probe_ts
             entry.last_error = audio_fix.last_error
             entry.last_fix_start_ts = audio_fix.last_fix_start_ts
             entry.last_restart_ts = audio_fix.last_restart_ts
             entry.cooldown_remaining_sec = remaining
+            entry.audio_fix_input_probe_ts = audio_fix.input_probe_ts
+            entry.audio_fix_input_probe_error = audio_fix.input_probe_error
+            entry.audio_fix_input_missing = audio_fix.input_audio and audio_fix.input_audio.missing == true or false
+            entry.audio_fix_input_codec = audio_fix.input_audio and audio_fix.input_audio.codec_name or nil
+            entry.audio_fix_input_profile = audio_fix.input_audio and audio_fix.input_audio.profile or nil
+            entry.audio_fix_input_sample_rate = audio_fix.input_audio and audio_fix.input_audio.sample_rate or nil
+            entry.audio_fix_input_channels = audio_fix.input_audio and audio_fix.input_audio.channels or nil
         end
         table.insert(outputs, entry)
     end

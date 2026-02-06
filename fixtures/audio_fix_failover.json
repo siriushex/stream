@@ -1,0 +1,43 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "audio_fix_failover",
+      "name": "Audio Fix Failover",
+      "enable": true,
+      "input": [
+        "udp://239.255.0.10:12400",
+        "udp://239.255.0.10:12401"
+      ],
+      "backup_type": "passive",
+      "backup_initial_delay": 5,
+      "backup_start_delay": 1,
+      "backup_return_delay": 1,
+      "stable_ok_sec": 2,
+      "no_data_timeout_sec": 3,
+      "probe_interval_sec": 2,
+      "output": [
+        {
+          "format": "udp",
+          "addr": "239.255.0.10",
+          "port": 12410,
+          "audio_fix": {
+            "enabled": true,
+            "force_on": true,
+            "mode": "auto",
+            "aac_bitrate_kbps": 128,
+            "aac_sample_rate": 48000,
+            "aac_channels": 2,
+            "aresample_async": 1,
+            "silence_fallback": true,
+            "input_probe_timeout_sec": 12,
+            "probe_interval_sec": 2,
+            "probe_duration_sec": 2,
+            "mismatch_hold_sec": 2,
+            "restart_cooldown_sec": 0
+          }
+        }
+      ]
+    }
+  ]
+}

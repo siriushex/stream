@@ -344,6 +344,17 @@ static int proc_spawn(lua_State *L)
             _exit(127);
         }
 
+        /*
+         * Do not leak Astra's open file descriptors (server sockets, db files, etc)
+         * into subprocesses. This also prevents orphaned children from keeping the
+         * HTTP port busy after parent exit/crash.
+         */
+        long max_fd = sysconf(_SC_OPEN_MAX);
+        if(max_fd < 0)
+            max_fd = 1024;
+        for(int fd = 3; fd < max_fd; fd++)
+            close(fd);
+
         execvp(argv[0], argv);
         _exit(127);
     }
