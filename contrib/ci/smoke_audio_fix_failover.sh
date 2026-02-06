@@ -173,31 +173,41 @@ PY
 probe_output_audio() {
   local tries="${1:-10}"
   for _ in $(seq 1 "$tries"); do
-    if FFPROBE_BIN="$FFPROBE_BIN" python3 - <<'PY'
-import json, os, subprocess, sys
-bin = os.environ["FFPROBE_BIN"]
+    if FFMPEG_BIN="$FFMPEG_BIN" python3 - <<'PY'
+import os, subprocess, sys
+
+bin = os.environ["FFMPEG_BIN"]
 group = os.environ.get("OUT_ADDR") or "127.0.0.1"
 port = int(os.environ.get("OUT_PORT") or "12410")
 url = f"udp://{group}:{port}?fifo_size=1000000&overrun_nonfatal=1"
+
+argv = [
+    bin,
+    "-hide_banner",
+    "-nostats",
+    "-loglevel", "info",
+    "-i", url,
+    "-t", "0.5",
+    "-map", "0:a:0?",
+    "-vn",
+    "-f", "null",
+    "-",
+]
+
 try:
-    cp = subprocess.run(
-        [bin, "-v", "error", "-print_format", "json", "-show_streams", "-select_streams", "a:0", url],
-        capture_output=True, text=True, timeout=5,
-    )
+    cp = subprocess.run(argv, capture_output=True, text=True, timeout=6)
 except subprocess.TimeoutExpired:
     sys.exit(2)
-if cp.returncode != 0:
+
+text = (cp.stderr or "") + "\n" + (cp.stdout or "")
+audio_lines = [ln for ln in text.splitlines() if "Audio:" in ln]
+if not audio_lines:
     sys.exit(2)
-data = json.loads(cp.stdout or "{}")
-streams = data.get("streams") or []
-if not streams:
-    sys.exit(2)
-s = streams[0]
-codec = (s.get("codec_name") or "").strip()
-sr = int(s.get("sample_rate") or 0)
-ch = int(s.get("channels") or 0)
-if codec != "aac" or sr != 48000 or ch != 2:
-    print(f"probe mismatch: codec={codec!r} sr={sr} ch={ch}", file=sys.stderr)
+
+line = audio_lines[0]
+ok = ("Audio: aac" in line) and ("48000 Hz" in line) and (("stereo" in line) or ("2 channels" in line))
+if not ok:
+    print(f"probe audio line: {line}", file=sys.stderr)
     sys.exit(1)
 PY
     then
