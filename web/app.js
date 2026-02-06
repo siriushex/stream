@@ -6,11 +6,18 @@ const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
 const SETTINGS_DENSITY_KEY = 'astral.settings.density';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
+const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
   if (value === null || value === undefined || value === '') return fallback;
   return value === '1' || value === 'true';
+}
+
+function normalizePlayerPlaybackMode(value) {
+  const mode = String(value || '').toLowerCase().trim();
+  if (mode === 'h264' || mode === 'h264_aac' || mode === 'h264/aac') return 'h264';
+  return 'auto';
 }
 
 function normalizeTilesMode(value) {
@@ -207,6 +214,8 @@ const state = {
   player: null,
   playerStreamId: null,
   playerMode: null,
+  // Режим воспроизведения в UI-плеере: auto (как есть) или h264 (совместимый предпросмотр).
+  playerPlaybackMode: normalizePlayerPlaybackMode(localStorage.getItem(PLAYER_PLAYBACK_MODE_KEY)),
   playerUrl: '',
   playerShareUrl: '',
   playerShareKind: 'play',
@@ -216,6 +225,7 @@ const state = {
   playerTriedAudioAac: false,
   playerTriedH264: false,
   playerStartTimer: null,
+  playerVideoProbeTimer: null,
   playerStarting: false,
   analyzeJobId: null,
   analyzePoll: null,
@@ -1128,6 +1138,8 @@ const elements = {
   playerInput: $('#player-input'),
   playerOpenTab: $('#player-open-tab'),
   playerCopyLink: $('#player-copy-link'),
+  playerModeAuto: $('#player-mode-auto'),
+  playerModeH264: $('#player-mode-h264'),
   playerLinkPlay: $('#player-link-play'),
   playerLinkHls: $('#player-link-hls'),
   playerRetry: $('#player-retry'),
@@ -16602,6 +16614,35 @@ function getPlayerStream() {
     || null;
 }
 
+function updatePlayerPlaybackModeUi() {
+  if (!elements.playerModeAuto || !elements.playerModeH264) return;
+  const h264 = state.playerPlaybackMode === 'h264';
+  elements.playerModeAuto.classList.toggle('active', !h264);
+  elements.playerModeAuto.setAttribute('aria-selected', (!h264) ? 'true' : 'false');
+  elements.playerModeH264.classList.toggle('active', h264);
+  elements.playerModeH264.setAttribute('aria-selected', h264 ? 'true' : 'false');
+}
+
+async function setPlayerPlaybackMode(mode, opts = {}) {
+  const next = normalizePlayerPlaybackMode(mode);
+  if (next === state.playerPlaybackMode) return;
+  state.playerPlaybackMode = next;
+  localStorage.setItem(PLAYER_PLAYBACK_MODE_KEY, next);
+  updatePlayerPlaybackModeUi();
+
+  // Если плеер открыт, перезапускаем воспроизведение в новом режиме.
+  const stream = getPlayerStream();
+  const visible = elements.playerOverlay && elements.playerOverlay.getAttribute('aria-hidden') === 'false';
+  const restart = opts.restart !== false && visible && stream;
+  if (!restart) return;
+
+  await stopPlayerSession();
+  state.playerTriedVideoOnly = false;
+  state.playerTriedAudioAac = false;
+  state.playerTriedH264 = false;
+  startPlayer(stream);
+}
+
 function resolveAbsoluteUrl(url, base) {
   if (!url) return '';
   try {
@@ -16644,6 +16685,7 @@ function getPlayerPageUrl(stream) {
   params.set('player', target.id);
   params.set('kind', state.playerShareKind === 'hls' ? 'hls' : 'play');
   params.set('autoplay', '1');
+  params.set('pm', state.playerPlaybackMode || 'auto');
   return `${window.location.origin}/index.html#${params.toString()}`;
 }
 
@@ -16662,7 +16704,8 @@ function parsePlayerAutoOpenFromHash() {
   const kindRaw = (params.get('kind') || '').toLowerCase();
   const kind = (kindRaw === 'play') ? 'play' : 'hls';
   const autoplay = params.get('autoplay') !== '0';
-  return { id, kind, autoplay };
+  const playbackMode = normalizePlayerPlaybackMode(params.get('pm') || '');
+  return { id, kind, autoplay, playbackMode };
 }
 
 function updatePlayerActions() {
@@ -16731,6 +16774,7 @@ function updatePlayerMeta(stream) {
   }
 
   updatePlayerShareUi(target);
+  updatePlayerPlaybackModeUi();
 }
 
 function setPlayerLoading(active, text) {
@@ -16776,6 +16820,10 @@ function resetPlayerMedia() {
     clearTimeout(state.playerStartTimer);
     state.playerStartTimer = null;
   }
+  if (state.playerVideoProbeTimer) {
+    clearTimeout(state.playerVideoProbeTimer);
+    state.playerVideoProbeTimer = null;
+  }
   setPlayerLoading(false);
   clearPlayerError();
 }
@@ -16805,6 +16853,50 @@ function formatVideoError(err) {
   return 'Ошибка воспроизведения.';
 }
 
+function schedulePlayerNoVideoFallback(attempt) {
+  const tryIndex = Number(attempt) || 0;
+  if (state.playerPlaybackMode === 'h264') return;
+  if (state.playerTriedH264) return;
+  const stream = getPlayerStream();
+  if (!stream || !state.playerStreamId) return;
+  if (!elements.playerVideo) return;
+  const visible = elements.playerOverlay && elements.playerOverlay.getAttribute('aria-hidden') === 'false';
+  if (!visible) return;
+
+  if (state.playerVideoProbeTimer) {
+    clearTimeout(state.playerVideoProbeTimer);
+    state.playerVideoProbeTimer = null;
+  }
+
+  state.playerVideoProbeTimer = setTimeout(async () => {
+    state.playerVideoProbeTimer = null;
+    const current = getPlayerStream();
+    if (!current || current.id !== stream.id) return;
+    if (!elements.playerVideo) return;
+    if (elements.playerVideo.paused || elements.playerVideo.ended) return;
+    const w = Number(elements.playerVideo.videoWidth) || 0;
+    const h = Number(elements.playerVideo.videoHeight) || 0;
+    if (w > 0 && h > 0) return;
+
+    const t = Number(elements.playerVideo.currentTime) || 0;
+    if (tryIndex < 1 && t < 1.0) {
+      // Иногда видео "догоняет" позже аудио. Даём ещё чуть времени.
+      schedulePlayerNoVideoFallback(tryIndex + 1);
+      return;
+    }
+
+    // Аудио может играть, даже если видео-кодек не поддерживается (HEVC и т.п.).
+    // В этом случае принудительно стартуем совместимый предпросмотр H.264/AAC.
+    if (!state.playerTriedH264) {
+      state.playerTriedH264 = true;
+      setPlayerLoading(true, 'Видео не поддерживается. Запуск с H.264...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(current, { forceH264: true });
+    }
+  }, tryIndex === 0 ? 2500 : 1500);
+}
+
 async function attachPlayerSource(url, opts = {}) {
   resetPlayerMedia();
   if (!url) {
@@ -16818,6 +16910,12 @@ async function attachPlayerSource(url, opts = {}) {
     const stream = getPlayerStream();
     // Если модалка уже закрыта, ничего не делаем.
     if (!stream || !state.playerStreamId) {
+      return;
+    }
+
+    // В режиме "H.264/AAC" мы уже на самом совместимом варианте, дальше фолбэки бессмысленны.
+    if (state.playerPlaybackMode === 'h264') {
+      setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
       return;
     }
 
@@ -16957,7 +17055,10 @@ async function startPlayer(stream, opts = {}) {
   let token = null;
   const forceVideoOnly = opts.forceVideoOnly === true;
   const forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
-  const forceH264 = (!forceVideoOnly) && (!forceAudioAac) && (opts.forceH264 === true);
+  let forceH264 = (!forceVideoOnly) && (!forceAudioAac) && (opts.forceH264 === true);
+  if (!forceVideoOnly && !forceAudioAac && !forceH264 && state.playerPlaybackMode === 'h264') {
+    forceH264 = true;
+  }
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
@@ -16995,6 +17096,10 @@ function openPlayer(stream, opts = {}) {
   if (state.playerMode === 'preview' && state.playerStreamId && state.playerStreamId !== stream.id) {
     apiJson(`/api/v1/streams/${state.playerStreamId}/preview/stop`, { method: 'POST' }).catch(() => {});
   }
+  if (opts && opts.playbackMode) {
+    state.playerPlaybackMode = normalizePlayerPlaybackMode(opts.playbackMode);
+    localStorage.setItem(PLAYER_PLAYBACK_MODE_KEY, state.playerPlaybackMode);
+  }
   state.playerStreamId = stream.id;
   state.playerMode = null;
   state.playerUrl = '';
@@ -17004,6 +17109,7 @@ function openPlayer(stream, opts = {}) {
   state.playerTriedVideoOnly = false;
   state.playerTriedAudioAac = false;
   state.playerTriedH264 = false;
+  updatePlayerPlaybackModeUi();
   updatePlayerMeta(stream);
   setOverlay(elements.playerOverlay, true);
   startPlayer(stream);
@@ -18567,7 +18673,7 @@ async function refreshAll() {
       state.playerAutoOpen = null;
       const stream = state.streamIndex[request.id];
       if (stream) {
-        openPlayer(stream, { shareKind: request.kind });
+        openPlayer(stream, { shareKind: request.kind, playbackMode: request.playbackMode });
       } else {
         setStatus(`Stream not found: ${request.id}`);
       }
@@ -19615,6 +19721,16 @@ function bindEvents() {
       if (link) copyText(link);
     });
   }
+  if (elements.playerModeAuto) {
+    elements.playerModeAuto.addEventListener('click', () => {
+      setPlayerPlaybackMode('auto');
+    });
+  }
+  if (elements.playerModeH264) {
+    elements.playerModeH264.addEventListener('click', () => {
+      setPlayerPlaybackMode('h264');
+    });
+  }
   if (elements.playerLinkPlay) {
     elements.playerLinkPlay.addEventListener('click', () => {
       state.playerShareKind = 'play';
@@ -19647,6 +19763,9 @@ function bindEvents() {
         clearTimeout(state.playerStartTimer);
         state.playerStartTimer = null;
       }
+      // Если видео-кодек не поддерживается, браузер может "играть" только аудио.
+      // Делаем быстрый probe и, при необходимости, включаем предпросмотр H.264/AAC.
+      schedulePlayerNoVideoFallback(0);
     });
     elements.playerVideo.addEventListener('waiting', () => {
       setPlayerLoading(true, 'Буферизация...');
@@ -19658,29 +19777,31 @@ function bindEvents() {
       // можно обойти это без транскодинга, отключив audio.
       if (mediaErr && (mediaErr.code === 4 || mediaErr.code === 3)) {
         const stream = getPlayerStream();
-        if (stream && !state.playerTriedAudioAac) {
-          state.playerTriedAudioAac = true;
-          setPlayerLoading(true, 'Запуск с AAC аудио...');
-          clearPlayerError();
-          await stopPlayerSession();
-          startPlayer(stream, { forceAudioAac: true });
-          return;
-        }
-        if (stream && !state.playerTriedVideoOnly) {
-          state.playerTriedVideoOnly = true;
-          setPlayerLoading(true, 'Запуск без аудио...');
-          clearPlayerError();
-          await stopPlayerSession();
-          startPlayer(stream, { forceVideoOnly: true });
-          return;
-        }
-        if (stream && !state.playerTriedH264) {
-          state.playerTriedH264 = true;
-          setPlayerLoading(true, 'Запуск с H.264 видео...');
-          clearPlayerError();
-          await stopPlayerSession();
-          startPlayer(stream, { forceH264: true });
-          return;
+        if (state.playerPlaybackMode !== 'h264') {
+          if (stream && !state.playerTriedAudioAac) {
+            state.playerTriedAudioAac = true;
+            setPlayerLoading(true, 'Запуск с AAC аудио...');
+            clearPlayerError();
+            await stopPlayerSession();
+            startPlayer(stream, { forceAudioAac: true });
+            return;
+          }
+          if (stream && !state.playerTriedVideoOnly) {
+            state.playerTriedVideoOnly = true;
+            setPlayerLoading(true, 'Запуск без аудио...');
+            clearPlayerError();
+            await stopPlayerSession();
+            startPlayer(stream, { forceVideoOnly: true });
+            return;
+          }
+          if (stream && !state.playerTriedH264) {
+            state.playerTriedH264 = true;
+            setPlayerLoading(true, 'Запуск с H.264 видео...');
+            clearPlayerError();
+            await stopPlayerSession();
+            startPlayer(stream, { forceH264: true });
+            return;
+          }
         }
       }
       const message = formatVideoError(mediaErr);
