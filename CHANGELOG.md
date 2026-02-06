@@ -13,11 +13,40 @@
 ### 2026-02-06
 - Changes:
   - Transcode API: expose `publish_hls_variants` in transcode status (list of published HLS variant PIDs, if present).
-  - UI Player: always show both links `Play` (`/play/<id>`) and `HLS` (`/hls/<id>/index.m3u8`), and display the selected URL in the header (instead of the UDP active input).
-  - UI Player: improve HLS robustness (retries for on-demand 503, better error messages, and video-only fallback on decode/not-supported errors).
-  - Preview: when `http_play_hls=true`, `preview/start` returns direct `/hls/<id>/index.m3u8` without starting a preview session.
+- Tests:
+  - Not run locally (covered by CI).
+### 2026-02-06
+- Changes:
+  - UI: add `ui_polling_interval_sec` (Settings -> General: "Polling") to control Dashboard status/bitrate refresh; on page load it polls every ~2s for ~30s then ramps to the selected interval.
+  - UI: fix view naming defaults so polling follows the active tabs (`dashboard`, `logs`) without requiring a manual re-open.
+  - Transcode: improve late-joiner compatibility (repeat SPS/PPS on keyframes, resend TS headers, and set MP4 codec tags for DASH stream-copy).
+  - CI: add DASH ladder publish smoke (`contrib/ci/smoke_transcode_ladder_dash_publish.sh`).
+- Tests:
+  - Not run locally (covered by CI).
+### 2026-02-06
+- Changes:
+  - AI Chat: add `delete all disable channel` command chip to purge all disabled streams (no OpenAI call).
+  - AI Chat: command runs via API (no plan/apply) and refreshes the streams list after completion.
+  - API: add admin endpoint `POST /api/v1/streams/purge-disabled` (snapshot-safe config change).
+- Tests:
+  - `./configure.sh && make`
+### 2026-02-06
+- Changes:
+  - UI Player: "Open in new tab" now opens a self-contained UI URL (`/index.html#player=<id>&kind=...`) so playback works in a new tab (instead of opening raw `/play`/`/hls`).
+  - Preview: return `409 stream offline` when the input is already running and has failures, to avoid infinite buffering in the player.
+  - CI: add `preview_offline_unit` and run it in `contrib/ci/smoke_preview.sh`.
 - Tests:
   - `contrib/ci/smoke_preview.sh`
+### 2026-02-06
+- Changes:
+  - UI Player: always show both links `Play` (`/play/<id>`) and `HLS` (`/hls/<id>/index.m3u8`), and display the selected URL in the header (instead of the UDP active input).
+  - UI Player: improve HLS robustness (retries for on-demand 503, better error messages, and fallbacks: `audio_aac` then video-only on decode/not-supported errors).
+  - Preview: when `http_play_hls=true`, `preview/start` returns direct `/hls/<id>/index.m3u8` without starting a preview session.
+  - Preview: add `audio_aac` preview profile (ffmpeg: `-c:v copy`, `-c:a aac`) and use `/play/<id>?internal=1` for localhost ffmpeg to bypass `http_auth`.
+  - API: support `audio_aac=1` for `POST /api/v1/streams/:id/preview/start`.
+- Tests:
+  - `contrib/ci/smoke_preview.sh`
+  - `./astral scripts/tests/preview_audio_aac_unit.lua`
 ### 2026-02-06
 - Changes:
   - JSON: support `\\uXXXX` (incl. surrogate pairs) and `\\b`/`\\f` escapes, plus exponent numbers (improves OpenAI Responses parsing reliability).

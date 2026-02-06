@@ -705,6 +705,22 @@ local function start_stream_preview(server, client, request, stream_id)
         local v = tostring(vo):lower()
         opts.video_only = (v == "1" or v == "true" or v == "yes" or v == "on")
     end
+    local aa = q.audio_aac or q.audioaac or q.aac or nil
+    if aa ~= nil then
+        local v = tostring(aa):lower()
+        opts.audio_aac = (v == "1" or v == "true" or v == "yes" or v == "on")
+    end
+    local audio = q.audio or q.a or nil
+    if audio ~= nil then
+        local v = tostring(audio):lower()
+        if v == "aac" then
+            opts.audio_aac = true
+        end
+    end
+    if opts.video_only then
+        -- video_only уже подразумевает "без аудио", поэтому игнорируем audio_aac.
+        opts.audio_aac = false
+    end
     local result, err, code = preview.start(stream_id, opts)
     if not result then
         return error_response(server, client, code or 500, err or "preview failed")
@@ -841,6 +857,60 @@ local function delete_stream(server, client, id, request)
             if epg and epg.export_all then
                 epg.export_all("stream delete")
             end
+        end,
+    })
+end
+
+local function purge_disabled_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+
+    local rows = config.list_streams()
+    local ids = {}
+    for _, row in ipairs(rows) do
+        if (tonumber(row.enabled) or 0) == 0 then
+            table.insert(ids, row.id)
+        end
+    end
+    if #ids == 0 then
+        return json_response(server, client, 200, { status = "ok", deleted = 0 })
+    end
+    table.sort(ids)
+
+    apply_config_change(server, client, request, {
+        actor = admin.username,
+        comment = "purge disabled streams",
+        apply = function()
+            for _, id in ipairs(ids) do
+                config.delete_stream(id)
+            end
+            return { deleted = #ids }
+        end,
+        runtime_apply = function()
+            if not runtime or not runtime.apply_stream_row then
+                return false, "runtime apply not available"
+            end
+            for _, id in ipairs(ids) do
+                local ok, err = runtime.apply_stream_row({ id = id, enabled = 0, config = {} }, true)
+                if ok == false then
+                    return false, err or ("runtime delete failed: " .. id)
+                end
+            end
+            return true
+        end,
+        after = function()
+            if epg and epg.export_all then
+                epg.export_all("stream purge disabled")
+            end
+        end,
+        success_builder = function(res, revision_id)
+            return {
+                status = "ok",
+                deleted = res and (tonumber(res.deleted) or 0) or 0,
+                revision_id = revision_id,
+            }
         end,
     })
 end
@@ -1819,12 +1889,12 @@ local function stream_analyze_finish(job, status, err)
         job.error = err
     end
     dvb_scan_build_channels(job)
+    local program_count = 0
+    for _ in pairs(job.programs or {}) do
+        program_count = program_count + 1
+    end
     job.summary = {
-        programs = job.programs and tostring(#(function()
-            local count = 0
-            for _ in pairs(job.programs or {}) do count = count + 1 end
-            return { count = count }
-        end)().count) or 0,
+        programs = program_count,
         channels = job.channels and #job.channels or 0,
         bitrate = job.totals and job.totals.bitrate or nil,
         cc_errors = job.totals and job.totals.cc_errors or nil,
@@ -4714,6 +4784,9 @@ function api.handle_request(server, client, request)
             return error_response(server, client, 400, "stream id required")
         end
         return upsert_stream(server, client, body.id, request)
+    end
+    if path == "/api/v1/streams/purge-disabled" and method == "POST" then
+        return purge_disabled_streams(server, client, request)
     end
 
     local stream_id = path:match("^/api/v1/streams/([%w%-%_]+)$")

@@ -408,6 +408,14 @@ local function track_hls_session(request, route_prefix)
     if not stream_id then
         return
     end
+    -- Ladder HLS uses composite ids like "<stream_id>~<profile_id>" for variants.
+    -- For access/session tracking we want the base stream id.
+    do
+        local base = stream_id:match("^(.+)~[A-Za-z0-9_-]+$")
+        if base and base ~= "" then
+            stream_id = base
+        end
+    end
 
     local headers = request.headers or {}
     local user_agent = header_value(headers, "user-agent") or ""
@@ -926,11 +934,18 @@ function main()
         woff2 = "font/woff2",
         ttf = "font/ttf",
         m3u8 = "application/vnd.apple.mpegurl",
+        mpd = "application/dash+xml",
+        m4s = "video/iso.segment",
+        mp4 = "video/mp4",
     }
     mime[hls_ts_extension] = hls_ts_mime
     if hls_ts_extension ~= "ts" then
         mime.ts = hls_ts_mime
     end
+
+    local dash_route = normalize_route(setting_string("dash_route", "/dash"))
+    local dash_dir = setting_string("dash_dir", opt.data_dir .. "/dash")
+    ensure_dir(dash_dir)
 
     local hls_static = nil
     if hls_needs_disk then
@@ -952,6 +967,15 @@ function main()
             ts_mime = hls_ts_mime,
         })
     end
+
+    local dash_static = http_static({
+        path = dash_dir,
+        skip = dash_route,
+        headers = {
+            "Cache-Control: no-store",
+            "Pragma: no-cache",
+        },
+    })
     -- Preview HLS (memfd): отдельный handler с no-store заголовками.
     local preview_memfd_handler = nil
     if hls_memfd then
@@ -1389,6 +1413,31 @@ function main()
             return nil
         end
 
+        local function is_internal_live_request(req)
+            if not req or not req.query then
+                return false
+            end
+            local flag = req.query.internal or req.query._internal
+            if flag == nil then
+                return false
+            end
+            local text = tostring(flag):lower()
+            if not (text == "1" or text == "true" or text == "yes" or text == "on") then
+                return false
+            end
+            local ip = tostring(req.addr or "")
+            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+                local headers = req.headers or {}
+                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                    or headers["forwarded"] or headers["Forwarded"]
+                    or headers["x-real-ip"] or headers["X-Real-IP"] then
+                    return false
+                end
+                return true
+            end
+            return false
+        end
+
         local stream_id, profile_id = http_live_stream_ids(request.path)
         if not stream_id or not profile_id then
             server:abort(client, 404)
@@ -1431,11 +1480,32 @@ function main()
             end
         end
 
-        server:send(client, {
-            upstream = bus.switch:stream(),
-            buffer_size = buffer_size,
-            buffer_fill = buffer_fill,
-        }, "video/MP2T")
+        local function allow_stream(_session)
+            server:send(client, {
+                upstream = bus.switch:stream(),
+                buffer_size = buffer_size,
+                buffer_fill = buffer_fill,
+            }, "video/MP2T")
+        end
+
+        -- /live is used both by external clients and by internal publishers (ffmpeg -c copy).
+        -- External access should follow the same token auth rules as /play, but internal publishers
+        -- must work even when tokens are required.
+        if is_internal_live_request(request) then
+            allow_stream(nil)
+            return nil
+        end
+
+        local token = auth and auth.get_token and auth.get_token(request) or nil
+        ensure_token_auth(server, client, request, {
+            stream_id = stream_id,
+            stream_name = job and job.name or stream_id,
+            proto = "http_ts",
+            token = token,
+        }, function(session)
+            allow_stream(session)
+        end)
+        return nil
     end
 
     local function preview_route_handler(server, client, request)
@@ -1539,8 +1609,8 @@ function main()
         end
 
         local rest = request.path:sub(#prefix + 1)
-        local stream_id = rest:match("^([^/]+)/")
-        if not stream_id then
+        local requested_id = rest:match("^([^/]+)/")
+        if not requested_id then
             if hls_static then
                 return hls_static(server, client, request)
             end
@@ -1548,12 +1618,22 @@ function main()
             return nil
         end
 
-        local entry = runtime.streams[stream_id]
+        local base_id = requested_id
+        local profile_id = nil
+        do
+            local b, p = requested_id:match("^(.+)~([A-Za-z0-9_-]+)$")
+            if b and b ~= "" and p and p ~= "" then
+                base_id = b
+                profile_id = p
+            end
+        end
+
+        local entry = runtime.streams[base_id]
         local stream_cfg = entry and entry.channel and entry.channel.config or nil
         local token = auth and auth.get_token and auth.get_token(request) or nil
         ensure_token_auth(server, client, request, {
-            stream_id = stream_id,
-            stream_name = stream_cfg and stream_cfg.name or stream_id,
+            stream_id = base_id,
+            stream_name = stream_cfg and stream_cfg.name or base_id,
             stream_cfg = stream_cfg,
             proto = "hls",
             token = token,
@@ -1566,6 +1646,90 @@ function main()
                 and auth.get_hls_rewrite_enabled()
                 and auth.rewrite_m3u8
             local needs_cookie = (token and token ~= "") or (session and session.session_id)
+
+            local is_master_index = (profile_id == nil)
+                and (rest == (tostring(base_id) .. "/index.m3u8") or rest == (tostring(base_id) .. "/index.m3u"))
+
+            -- Serve ladder master playlist even when auth rewrite is disabled.
+            if is_playlist and is_master_index and not (can_rewrite or needs_cookie) then
+                local payload = nil
+                local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
+                if job and job.ladder_enabled == true and type(job.publish) == "table" then
+                    local variant_set = {}
+                    for _, pub in ipairs(job.publish) do
+                        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
+                            and type(pub.variants) == "table" then
+                            for _, pid in ipairs(pub.variants) do
+                                if pid and pid ~= "" then
+                                    variant_set[tostring(pid)] = true
+                                end
+                            end
+                        end
+                    end
+                    local variants = {}
+                    for pid, _ in pairs(variant_set) do
+                        variants[#variants + 1] = pid
+                    end
+                    if #variants > 0 then
+                        local profiles_by_id = {}
+                        for _, p in ipairs(job.profiles or {}) do
+                            if p and p.id then
+                                profiles_by_id[tostring(p.id)] = p
+                            end
+                        end
+                        table.sort(variants, function(a, b)
+                            local pa = profiles_by_id[a] or {}
+                            local pb = profiles_by_id[b] or {}
+                            local ba = tonumber(pa.bitrate_kbps) or 0
+                            local bb = tonumber(pb.bitrate_kbps) or 0
+                            if ba ~= bb then
+                                return ba > bb
+                            end
+                            local ha = tonumber(pa.height) or 0
+                            local hb = tonumber(pb.height) or 0
+                            if ha ~= hb then
+                                return ha > hb
+                            end
+                            return tostring(a) < tostring(b)
+                        end)
+                        local lines = {
+                            "#EXTM3U",
+                            "#EXT-X-VERSION:3",
+                            "#EXT-X-INDEPENDENT-SEGMENTS",
+                        }
+                        for _, pid in ipairs(variants) do
+                            local p = profiles_by_id[pid] or {}
+                            local bw = tonumber(p.bitrate_kbps) or 0
+                            if bw < 1 then bw = 1 end
+                            bw = math.floor(bw * 1000)
+                            local inf = "BANDWIDTH=" .. tostring(bw)
+                            local w = tonumber(p.width)
+                            local h = tonumber(p.height)
+                            if w and h and w > 0 and h > 0 then
+                                inf = inf .. ",RESOLUTION=" .. tostring(math.floor(w)) .. "x" .. tostring(math.floor(h))
+                            end
+                            table.insert(lines, "#EXT-X-STREAM-INF:" .. inf)
+                            table.insert(lines, opt.hls_route .. "/" .. tostring(base_id) .. "~" .. tostring(pid) .. "/index.m3u8")
+                        end
+                        payload = table.concat(lines, "\n") .. "\n"
+                    end
+                end
+
+                if payload then
+                    local headers = {
+                        "Content-Type: application/vnd.apple.mpegurl",
+                        "Connection: close",
+                    }
+                    if m3u_headers then
+                        for _, header in ipairs(m3u_headers) do
+                            table.insert(headers, header)
+                        end
+                    end
+                    server:send(client, { code = 200, headers = headers, content = payload })
+                    return
+                end
+            end
+
             if is_playlist and (can_rewrite or needs_cookie) then
                 local rel = rest
                 if rel:find("%.%.") then
@@ -1573,8 +1737,72 @@ function main()
                     return
                 end
                 local payload = nil
-                if hls_memfd_handler and hls_memfd_handler.get_playlist then
-                    payload = hls_memfd_handler:get_playlist(stream_id)
+                if is_master_index then
+                    local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
+                    if job and job.ladder_enabled == true and type(job.publish) == "table" then
+                        local variant_set = {}
+                        for _, pub in ipairs(job.publish) do
+                            if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
+                                and type(pub.variants) == "table" then
+                                for _, pid in ipairs(pub.variants) do
+                                    if pid and pid ~= "" then
+                                        variant_set[tostring(pid)] = true
+                                    end
+                                end
+                            end
+                        end
+                        local variants = {}
+                        for pid, _ in pairs(variant_set) do
+                            variants[#variants + 1] = pid
+                        end
+                        if #variants > 0 then
+                            local profiles_by_id = {}
+                            for _, p in ipairs(job.profiles or {}) do
+                                if p and p.id then
+                                    profiles_by_id[tostring(p.id)] = p
+                                end
+                            end
+                            table.sort(variants, function(a, b)
+                                local pa = profiles_by_id[a] or {}
+                                local pb = profiles_by_id[b] or {}
+                                local ba = tonumber(pa.bitrate_kbps) or 0
+                                local bb = tonumber(pb.bitrate_kbps) or 0
+                                if ba ~= bb then
+                                    return ba > bb
+                                end
+                                local ha = tonumber(pa.height) or 0
+                                local hb = tonumber(pb.height) or 0
+                                if ha ~= hb then
+                                    return ha > hb
+                                end
+                                return tostring(a) < tostring(b)
+                            end)
+                            local lines = {
+                                "#EXTM3U",
+                                "#EXT-X-VERSION:3",
+                                "#EXT-X-INDEPENDENT-SEGMENTS",
+                            }
+                            for _, pid in ipairs(variants) do
+                                local p = profiles_by_id[pid] or {}
+                                local bw = tonumber(p.bitrate_kbps) or 0
+                                if bw < 1 then bw = 1 end
+                                bw = math.floor(bw * 1000)
+                                local inf = "BANDWIDTH=" .. tostring(bw)
+                                local w = tonumber(p.width)
+                                local h = tonumber(p.height)
+                                if w and h and w > 0 and h > 0 then
+                                    inf = inf .. ",RESOLUTION=" .. tostring(math.floor(w)) .. "x" .. tostring(math.floor(h))
+                                end
+                                table.insert(lines, "#EXT-X-STREAM-INF:" .. inf)
+                                table.insert(lines, opt.hls_route .. "/" .. tostring(base_id) .. "~" .. tostring(pid) .. "/index.m3u8")
+                            end
+                            payload = table.concat(lines, "\n") .. "\n"
+                        end
+                    end
+                end
+
+                if not payload and hls_memfd_handler and hls_memfd_handler.get_playlist then
+                    payload = hls_memfd_handler:get_playlist(requested_id)
                 end
                 if not payload then
                     if hls_memfd_handler then
@@ -1638,6 +1866,55 @@ function main()
         end)
     end
 
+    local function dash_route_handler(server, client, request)
+        local client_data = server:data(client)
+        if request and not ensure_http_auth(server, client, request) then
+            return nil
+        end
+        if not request then
+            if client_data.dash_static then
+                dash_static(server, client, request)
+                client_data.dash_static = nil
+                return nil
+            end
+            return nil
+        end
+        if request.method ~= "GET" then
+            server:abort(client, 405)
+            return nil
+        end
+
+        local prefix = dash_route .. "/"
+        if request.path:sub(1, #prefix) ~= prefix then
+            server:abort(client, 404)
+            return nil
+        end
+        local rest = request.path:sub(#prefix + 1)
+        local stream_id = rest:match("^([^/]+)/")
+        if not stream_id or stream_id == "" then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local job = transcode and transcode.jobs and transcode.jobs[stream_id] or nil
+        if not job or job.ladder_enabled ~= true then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local token = auth and auth.get_token and auth.get_token(request) or nil
+        ensure_token_auth(server, client, request, {
+            stream_id = stream_id,
+            stream_name = job.name or stream_id,
+            stream_cfg = nil,
+            proto = "dash",
+            token = token,
+        }, function(_session)
+            dash_static(server, client, request)
+            client_data.dash_static = true
+        end)
+    end
+
     local function build_http_play_routes(include_redirect, include_hls_route, include_web)
         local routes = {}
         if not http_play_enabled then
@@ -1683,6 +1960,7 @@ function main()
 
     table.insert(main_routes, { "/preview/*", preview_route_handler })
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
+    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
     table.insert(main_routes, { "/", web_index })
     table.insert(main_routes, { "/*", web_index })
 

@@ -346,6 +346,15 @@ function parse_url(url)
         opts = url:sub(b + 1)
         url = url:sub(1, b - 1)
     end
+    if not opts and (data.format == "udp" or data.format == "rtp") then
+        -- Historically Astra uses "#k=v" for URL options, but ffmpeg-style UDP URLs often
+        -- use "?k=v". Support both to avoid "invalid input format" on common configs.
+        local q = url:find("%?")
+        if q then
+            opts = url:sub(q + 1)
+            url = url:sub(1, q - 1)
+        end
+    end
 
     local _parse_url_format = parse_url_format[data.format]
     if _parse_url_format then
@@ -533,14 +542,15 @@ function http_auth_check(request)
         return true, info
     end
 
-    -- Allow internal ffmpeg consumers (transcode/audio-fix) to read /play without credentials.
+    -- Allow internal ffmpeg consumers (transcode/audio-fix/publish) to read certain endpoints
+    -- without credentials.
     -- This is constrained to:
     -- - loopback source IP
     -- - no forwarded headers (avoid accidental reverse-proxy bypass)
     -- - explicit query flag (?internal=1)
-    -- - /play/* only
+    -- - /play/* and /live/* only
     local path = request and request.path or ""
-    if path:sub(1, 6) == "/play/" then
+    if path:sub(1, 6) == "/play/" or path:sub(1, 6) == "/live/" then
         local ip = request and request.addr or ""
         local headers = request and request.headers or {}
         local query = request and request.query or nil
