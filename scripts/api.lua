@@ -756,6 +756,11 @@ local function start_stream_preview(server, client, request, stream_id)
             opts.audio_aac = true
         end
     end
+    local h264 = q.h264 or q.video_h264 or q.vh264 or nil
+    if h264 ~= nil then
+        local v = tostring(h264):lower()
+        opts.video_h264 = (v == "1" or v == "true" or v == "yes" or v == "on")
+    end
     if opts.video_only then
         -- video_only уже подразумевает "без аудио", поэтому игнорируем audio_aac.
         opts.audio_aac = false

@@ -451,6 +451,107 @@ local function start_ffmpeg_hls_audio_aac(token, stream_id)
     }
 end
 
+local function start_ffmpeg_hls_h264_aac(token, stream_id)
+    if not process or type(process.spawn) ~= "function" then
+        return nil, "process module is not available", 501
+    end
+
+    local root = pick_preview_tmp_root()
+    ensure_dir(root)
+
+    local base_path = root .. "/" .. token
+    ensure_dir(base_path)
+
+    -- Чтобы клиент не ловил 404 на первом запросе плейлиста, кладём заглушку.
+    do
+        local fp = io.open(base_path .. "/index.m3u8", "wb")
+        if fp then
+            fp:write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n")
+            fp:close()
+        end
+    end
+
+    local input_url = build_local_play_url(stream_id)
+    local ffmpeg = resolve_ffmpeg_bin()
+
+    -- Полный "browser compatible" профиль: H.264 + AAC (наиболее предсказуемо для HTML5 video).
+    -- bitrate держим минимальным (~1 Mbit), чтобы предпросмотр был дешёвым по сети/CPU.
+    local args = {
+        ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "+genpts",
+        "-i",
+        input_url,
+        "-map",
+        "0:v:0?",
+        "-map",
+        "0:a:0?",
+        "-sn",
+        "-dn",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-tune",
+        "zerolatency",
+        "-pix_fmt",
+        "yuv420p",
+        "-profile:v",
+        "main",
+        "-level",
+        "4.0",
+        "-b:v",
+        "1000k",
+        "-maxrate",
+        "1000k",
+        "-bufsize",
+        "2000k",
+        -- Под HLS сегментацию (2s) удобнее иметь регулярные keyframe.
+        "-sc_threshold",
+        "0",
+        "-force_key_frames",
+        "expr:gte(t,n_forced*2)",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-ac",
+        "2",
+        "-ar",
+        "48000",
+        "-af",
+        "aresample=async=1",
+        "-f",
+        "hls",
+        "-hls_time",
+        "2",
+        "-hls_list_size",
+        "4",
+        "-hls_flags",
+        "delete_segments+independent_segments",
+        "-hls_allow_cache",
+        "0",
+        "-hls_segment_filename",
+        "seg_%08d.ts",
+        "index.m3u8",
+    }
+
+    local ok, proc = pcall(process.spawn, args, { cwd = base_path })
+    if not ok or not proc then
+        rm_rf(base_path)
+        return nil, "failed to start preview process", 500
+    end
+
+    return {
+        proc = proc,
+        base_path = base_path,
+    }
+end
+
 local function stop_session(token, reason)
     token = tostring(token or ""):lower()
     local s = sessions[token]
@@ -588,7 +689,8 @@ function preview.start(stream_id, opts)
 
     opts = (type(opts) == "table") and opts or {}
     local video_only = (opts.video_only == true)
-    local audio_aac = (not video_only) and (opts.audio_aac == true)
+    local video_h264 = (not video_only) and (opts.video_h264 == true)
+    local audio_aac = (not video_only) and (not video_h264) and (opts.audio_aac == true)
 
     local stream = runtime and runtime.streams and runtime.streams[stream_id] or nil
     if not stream then
@@ -609,7 +711,7 @@ function preview.start(stream_id, opts)
     -- Дешёвый путь: если у потока уже есть HLS output, возвращаем его без preview-сессии.
     -- Но если UI запросил video_only (фолбэк для браузерной совместимости), HLS нельзя использовать,
     -- потому что там может быть неподдерживаемое аудио (например MP2).
-    if not video_only and not audio_aac then
+    if not video_only and not audio_aac and not video_h264 then
         -- Если включен global http_play_hls, то /hls/<id>/index.m3u8 доступен даже без per-stream output.
         -- Это самый дешёвый вариант: не запускаем preview-сессию вообще.
         if setting_bool("http_play_hls", false) then
@@ -633,7 +735,9 @@ function preview.start(stream_id, opts)
     if existing and sessions[existing] then
         local s = sessions[existing]
         -- Если текущая сессия не совпадает по профилю, перезапускаем.
-        if (video_only ~= (s.video_only == true)) or (audio_aac ~= (s.audio_aac == true)) then
+        if (video_only ~= (s.video_only == true))
+            or (audio_aac ~= (s.audio_aac == true))
+            or (video_h264 ~= (s.video_h264 == true)) then
             stop_session(existing, "profile_change")
         else
             preview.touch(existing)
@@ -673,6 +777,13 @@ function preview.start(stream_id, opts)
         base_path = started.base_path
     elseif audio_aac then
         local started, start_err, start_code = start_ffmpeg_hls_audio_aac(token, stream_id)
+        if not started then
+            return nil, start_err or "preview failed", start_code or 500
+        end
+        proc = started.proc
+        base_path = started.base_path
+    elseif video_h264 then
+        local started, start_err, start_code = start_ffmpeg_hls_h264_aac(token, stream_id)
         if not started then
             return nil, start_err or "preview failed", start_code or 500
         end
@@ -718,6 +829,7 @@ function preview.start(stream_id, opts)
         url = "/preview/" .. token .. "/index.m3u8",
         video_only = video_only,
         audio_aac = audio_aac,
+        video_h264 = video_h264,
         output = output,
         proc = proc,
         base_path = base_path,

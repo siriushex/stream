@@ -214,6 +214,7 @@ const state = {
   playerToken: null,
   playerTriedVideoOnly: false,
   playerTriedAudioAac: false,
+  playerTriedH264: false,
   playerStartTimer: null,
   playerStarting: false,
   analyzeJobId: null,
@@ -16787,6 +16788,14 @@ async function attachPlayerSource(url, opts = {}) {
       startPlayer(stream, { forceVideoOnly: true });
       return;
     }
+    if (!state.playerTriedH264) {
+      state.playerTriedH264 = true;
+      setPlayerLoading(true, 'Запуск с H.264 видео...');
+      clearPlayerError();
+      await stopPlayerSession();
+      startPlayer(stream, { forceH264: true });
+      return;
+    }
 
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
   }, 12000);
@@ -16898,14 +16907,15 @@ async function startPlayer(stream, opts = {}) {
   let token = null;
   const forceVideoOnly = opts.forceVideoOnly === true;
   const forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
+  const forceH264 = (!forceVideoOnly) && (!forceAudioAac) && (opts.forceH264 === true);
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
-  url = (forceVideoOnly || forceAudioAac) ? null : getPlaylistUrl(stream);
+  url = (forceVideoOnly || forceAudioAac || forceH264) ? null : getPlaylistUrl(stream);
 
   if (!url) {
     try {
-      const qs = forceVideoOnly ? '?video_only=1' : (forceAudioAac ? '?audio_aac=1' : '');
+      const qs = forceVideoOnly ? '?video_only=1' : (forceAudioAac ? '?audio_aac=1' : (forceH264 ? '?h264=1' : ''));
       const payload = await apiJson(`/api/v1/streams/${stream.id}/preview/start${qs}`, { method: 'POST' });
       url = payload.url;
       token = payload.token;
@@ -16943,6 +16953,7 @@ function openPlayer(stream, opts = {}) {
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
   state.playerTriedAudioAac = false;
+  state.playerTriedH264 = false;
   updatePlayerMeta(stream);
   setOverlay(elements.playerOverlay, true);
   startPlayer(stream);
@@ -16960,6 +16971,7 @@ async function closePlayer() {
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
   state.playerTriedAudioAac = false;
+  state.playerTriedH264 = false;
   updatePlayerActions();
 }
 
@@ -19573,6 +19585,7 @@ function bindEvents() {
       await stopPlayerSession();
       state.playerTriedVideoOnly = false;
       state.playerTriedAudioAac = false;
+      state.playerTriedH264 = false;
       startPlayer(stream);
     });
   }
@@ -19609,6 +19622,14 @@ function bindEvents() {
           clearPlayerError();
           await stopPlayerSession();
           startPlayer(stream, { forceVideoOnly: true });
+          return;
+        }
+        if (stream && !state.playerTriedH264) {
+          state.playerTriedH264 = true;
+          setPlayerLoading(true, 'Запуск с H.264 видео...');
+          clearPlayerError();
+          await stopPlayerSession();
+          startPlayer(stream, { forceH264: true });
           return;
         }
       }
