@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-06
 - Changes:
+  - Auth: cache `auth_session_ttl_sec` lookup to avoid extra settings DB query on each authenticated request.
+- Tests:
+  - Not run locally.
+### 2026-02-06
+- Changes:
   - Auth: keep web sessions alive for active users (sliding TTL) and set persistent session cookie (`Max-Age`, `SameSite=Lax`) on login.
 - Tests:
   - Not run locally.
