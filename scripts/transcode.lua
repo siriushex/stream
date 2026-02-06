@@ -205,6 +205,22 @@ local function build_transcode_play_url(stream_id)
     return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
 end
 
+local function build_transcode_live_url(stream_id, profile_id)
+    if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local port = tonumber(config.get_setting("http_port"))
+    if not port then
+        return nil
+    end
+    -- Pass internal=1 so localhost ffmpeg publishers can bypass http/token auth for /live.
+    return "http://127.0.0.1:" .. tostring(port)
+        .. "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts?internal=1"
+end
+
 local function extract_play_id_from_input(entry)
     if not entry then
         return nil
@@ -1025,6 +1041,11 @@ local build_probe_args
 local parse_probe_json
 local record_alert
 local extract_exit_info
+local parse_udp_output_url
+
+local ensure_publish_workers
+local start_publish_worker
+local tick_publish_workers
 
 local function resolve_primary_format(cfg)
     local entry = pick_input_entry(cfg, 1, true)
@@ -3937,6 +3958,9 @@ tick_ladder = function(job, now)
     for _, worker in ipairs(job.profile_workers or {}) do
         tick_worker(job, worker, now)
     end
+    if tick_publish_workers then
+        tick_publish_workers(job, now)
+    end
     job.pid = (job.profile_workers and job.profile_workers[1] and job.profile_workers[1].pid) or nil
     local primary = job.profile_workers and job.profile_workers[1] or nil
     if primary then
@@ -3981,6 +4005,13 @@ local function job_has_any_proc(job)
     end
     if type(job.profile_workers) == "table" then
         for _, worker in ipairs(job.profile_workers) do
+            if worker and worker.proc then
+                return true
+            end
+        end
+    end
+    if type(job.publish_workers) == "table" then
+        for _, worker in ipairs(job.publish_workers) do
             if worker and worker.proc then
                 return true
             end
@@ -4401,6 +4432,310 @@ local function ensure_ladder_publish(job)
     end
 end
 
+local function reset_publish_runtime(worker, now)
+    worker.start_ts = now
+    worker.stderr_tail = {}
+    worker.last_progress = {}
+    worker.last_progress_ts = now
+    worker.last_out_time_ts = now
+    worker.last_out_time_ms = 0
+    worker.stdout_buf = ""
+    worker.stderr_buf = ""
+    worker.error_events = {}
+    worker.last_error_line = nil
+    worker.last_error_ts = nil
+    worker.ffmpeg_exit_code = nil
+    worker.ffmpeg_exit_signal = nil
+end
+
+local function build_publish_ffmpeg_argv(job, worker)
+    if not job or not worker then
+        return nil, "invalid args"
+    end
+    local tc = job.config and job.config.transcode or {}
+    local bin, bin_source, bin_exists, bin_bundled = resolve_ffmpeg_path(tc)
+    if not bin or bin == "" then
+        return nil, "ffmpeg not found"
+    end
+
+    local t = tostring(worker.publish_type or ""):lower()
+    local pid = worker.profile_id
+    local url = worker.publish_url
+    if not pid or pid == "" then
+        return nil, "publish profile_id required"
+    end
+    if not url or url == "" then
+        return nil, "publish url required"
+    end
+
+    local input_url = build_transcode_live_url(job.id, pid)
+    if not input_url then
+        return nil, "http_port unknown (cannot build /live url)"
+    end
+
+    local argv = {
+        bin,
+        "-hide_banner",
+        "-progress", "pipe:1",
+        "-nostats",
+        "-loglevel", "warning",
+        "-i", input_url,
+        -- Be tolerant to missing tracks (e.g., audio missing). Copy only.
+        "-map", "0:v:0?",
+        "-map", "0:a:0?",
+        "-c", "copy",
+    }
+
+    if t == "rtmp" then
+        table.insert(argv, "-f")
+        table.insert(argv, "flv")
+        table.insert(argv, tostring(url))
+    elseif t == "rtsp" then
+        table.insert(argv, "-f")
+        table.insert(argv, "rtsp")
+        table.insert(argv, "-rtsp_transport")
+        table.insert(argv, "tcp")
+        table.insert(argv, tostring(url))
+    else
+        return nil, "unsupported publish type: " .. tostring(t)
+    end
+
+    worker.input_url = input_url
+    worker.ffmpeg_path_resolved = bin
+    worker.ffmpeg_path_source = bin_source
+    worker.ffmpeg_path_exists = bin_exists
+    worker.ffmpeg_bundled = bin_bundled
+    return argv, nil
+end
+
+local function read_publish_output(job, worker)
+    if not worker.proc then
+        return
+    end
+    local tc = job.config and job.config.transcode or nil
+    local log_mode = get_log_to_main_mode(tc)
+    local label = tostring(worker.publish_type or "publish") .. ":" .. tostring(worker.profile_id or "?")
+
+    local out_chunk = worker.proc:read_stdout()
+    consume_lines(worker, "stdout_buf", out_chunk, function(line)
+        update_progress(worker, line)
+    end)
+
+    local err_chunk = worker.proc:read_stderr()
+    consume_lines(worker, "stderr_buf", err_chunk, function(line)
+        update_progress(worker, line)
+        local is_error = match_error_line(line)
+        if is_error then
+            mark_error_line(worker, line)
+        end
+        append_stderr_tail(worker, line)
+        if log_mode == "all" then
+            log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        elseif log_mode == "errors" and is_error then
+            log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        end
+        if job.log_file_handle then
+            job.log_file_handle:write("[publish " .. label .. "] " .. line .. "\n")
+            job.log_file_handle:flush()
+        end
+    end)
+end
+
+local function schedule_publish_restart(job, worker, code, message, meta)
+    if not job or not worker then
+        return false
+    end
+    if worker.state == "ERROR" or worker.state == "RESTARTING" then
+        return false
+    end
+    local watchdog = worker.watchdog or job.watchdog
+    if not watchdog then
+        return false
+    end
+    local now = os.time()
+    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    if cooldown > 0 and worker.last_restart_ts then
+        local note = now - worker.last_restart_ts
+        if note < cooldown then
+            log.warning("[publish " .. tostring(job.id) .. "] restart suppressed (cooldown) " ..
+                tostring(worker.publish_type) .. ":" .. tostring(worker.profile_id))
+            return false
+        end
+    end
+
+    local reason_code = resolve_restart_reason_code(code)
+    local payload = normalize_restart_meta(meta)
+    payload.publish_type = worker.publish_type
+    payload.profile_id = worker.profile_id
+    payload.publish_url = worker.publish_url
+    payload.input_url = worker.input_url
+    local alert_message = tostring(worker.publish_type) .. ":" .. tostring(worker.profile_id) .. ": " ..
+        tostring(message or "")
+
+    record_alert(job, reason_code, alert_message, payload)
+    local ok, history = restart_allowed_worker(job, worker, watchdog)
+    if not ok then
+        worker.state = "ERROR"
+        return false
+    end
+    table.insert(history, now)
+
+    worker.last_restart_ts = now
+    worker.last_restart_reason = reason_code
+    worker.state = "RESTARTING"
+    worker.restart_due_ts = now + compute_restart_delay(watchdog, history)
+    worker.restart_reason_code = reason_code
+    worker.restart_reason_meta = payload
+    request_stop(worker)
+    return true
+end
+
+start_publish_worker = function(job, worker)
+    if not job or not worker then
+        return false
+    end
+    if worker.proc or worker.state == "ERROR" then
+        return false
+    end
+    local argv, err = build_publish_ffmpeg_argv(job, worker)
+    if not argv then
+        record_alert(job, "PUBLISH_CONFIG_ERROR", err or "invalid publish config", {
+            publish_type = worker.publish_type,
+            profile_id = worker.profile_id,
+            publish_url = worker.publish_url,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    if not ok or not proc then
+        record_alert(job, "PUBLISH_SPAWN_FAILED", "failed to start publisher ffmpeg", {
+            publish_type = worker.publish_type,
+            profile_id = worker.profile_id,
+            publish_url = worker.publish_url,
+        })
+        worker.state = "ERROR"
+        return false
+    end
+    worker.proc = proc
+    worker.pid = proc:pid()
+    worker.term_sent_ts = nil
+    worker.kill_due_ts = nil
+    worker.kill_attempts = nil
+    reset_publish_runtime(worker, os.time())
+    worker.state = "RUNNING"
+    return true
+end
+
+local function tick_publish_worker(job, worker, now)
+    if not job or not worker then
+        return
+    end
+    read_publish_output(job, worker)
+    if worker.proc then
+        local status = worker.proc:poll()
+        if status then
+            finalize_process_exit(worker, status)
+            if worker.state == "RUNNING" then
+                schedule_publish_restart(job, worker, "PUBLISH_EXIT_UNEXPECTED", "publisher exited unexpectedly", {
+                    exit = status,
+                })
+            end
+        elseif worker.term_sent_ts and now >= (worker.kill_due_ts or 0) then
+            worker.kill_attempts = (worker.kill_attempts or 0) + 1
+            local killed = false
+            if type(worker.proc.kill_tree) == "function" then
+                local ok = pcall(worker.proc.kill_tree, worker.proc)
+                killed = ok
+            end
+            if not killed then
+                worker.proc:kill()
+            end
+            worker.kill_due_ts = now + 1
+        end
+    end
+
+    prune_time_list(worker.error_events, now - 60)
+    if worker.state == "RUNNING" then
+        local wd = worker.watchdog or job.watchdog
+        if wd and wd.no_progress_timeout_sec > 0 then
+            local last_ts = worker.last_out_time_ts or worker.last_progress_ts or worker.start_ts
+            if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
+                schedule_publish_restart(job, worker, "PUBLISH_NO_PROGRESS", "no progress detected", {
+                    timeout_sec = wd.no_progress_timeout_sec,
+                })
+            end
+        end
+        if wd and wd.max_error_lines_per_min > 0 and #worker.error_events >= wd.max_error_lines_per_min then
+            schedule_publish_restart(job, worker, "PUBLISH_ERROR_RATE", "ffmpeg errors rate exceeded", {
+                count = #worker.error_events,
+            })
+        end
+    end
+
+    if worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
+        if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
+            worker.restart_due_ts = nil
+            start_publish_worker(job, worker)
+        end
+    end
+end
+
+tick_publish_workers = function(job, now)
+    if not job or type(job.publish_workers) ~= "table" then
+        return
+    end
+    for _, worker in ipairs(job.publish_workers) do
+        tick_publish_worker(job, worker, now)
+    end
+end
+
+ensure_publish_workers = function(job)
+    if not job or job.ladder_enabled ~= true then
+        return
+    end
+    if type(job.publish) ~= "table" or #job.publish == 0 then
+        job.publish_workers = nil
+        return
+    end
+    job.publish_workers = job.publish_workers or {}
+    job.publish_workers_by_key = job.publish_workers_by_key or {}
+
+    local desired = {}
+    for _, pub in ipairs(job.publish) do
+        if pub and pub.enabled == true then
+            local t = tostring(pub.type or ""):lower()
+            if t == "rtmp" or t == "rtsp" then
+                local pid = pub.profile
+                local url = pub.url
+                if pid and pid ~= "" and url and url ~= "" then
+                    local key = t .. ":" .. pid
+                    desired[key] = { type = t, profile_id = pid, url = url }
+                end
+            end
+        end
+    end
+
+    for key, spec in pairs(desired) do
+        if not job.publish_workers_by_key[key] then
+            local worker = {
+                kind = "publish",
+                publish_type = spec.type,
+                profile_id = spec.profile_id,
+                publish_url = spec.url,
+                watchdog = job.watchdog,
+                state = "STOPPED",
+                restart_history = {},
+                error_events = {},
+                stderr_tail = {},
+                last_progress = {},
+            }
+            job.publish_workers_by_key[key] = worker
+            table.insert(job.publish_workers, worker)
+        end
+    end
+end
+
 local function reset_worker_runtime(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
@@ -4434,7 +4769,7 @@ local function parse_query_params(query)
     return out
 end
 
-local function parse_udp_output_url(url)
+parse_udp_output_url = function(url)
     if not url or url == "" then
         return nil
     end
@@ -5064,6 +5399,10 @@ function transcode.start(job, opts)
 
         -- Ladder publish (MVP): create HLS variant outputs fed from per-profile internal bus.
         ensure_ladder_publish(job)
+        ensure_publish_workers(job)
+        for _, pub in ipairs(job.publish_workers or {}) do
+            start_publish_worker(job, pub)
+        end
 
         ensure_timer(job)
         return true
@@ -5203,6 +5542,15 @@ function transcode.stop(job)
         -- Drop publish outputs so memfd streams are released.
         job.publish_hls_outputs = nil
         job.publish_udp_outputs = nil
+        if type(job.publish_workers) == "table" then
+            for _, pub in ipairs(job.publish_workers) do
+                pub.restart_due_ts = nil
+                pub.state = "STOPPED"
+                if pub.proc then
+                    request_stop(pub)
+                end
+            end
+        end
     elseif job.process_per_output == true then
         ensure_workers(job)
         for _, worker in ipairs(job.workers or {}) do
@@ -5546,6 +5894,29 @@ function transcode.get_status(id)
             }
         end
     end
+
+    local publish_status = nil
+    if job.ladder_enabled == true and type(job.publish) == "table" then
+        publish_status = {}
+        if type(job.publish_workers) == "table" then
+            for _, worker in ipairs(job.publish_workers) do
+                publish_status[#publish_status + 1] = {
+                    type = worker.publish_type,
+                    profile_id = worker.profile_id,
+                    url = worker.publish_url,
+                    state = worker.state,
+                    pid = worker.pid,
+                    restart_reason_code = worker.restart_reason_code,
+                    restart_reason_meta = worker.restart_reason_meta,
+                    last_progress = worker.last_progress,
+                    last_progress_ts = worker.last_progress_ts,
+                    stderr_tail = worker.stderr_tail or {},
+                    ffmpeg_exit_code = worker.ffmpeg_exit_code,
+                    ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
+                }
+            end
+        end
+    end
     local inputs = collect_failover_input_stats(job)
     local fo = job.failover
     local active_input_url = get_active_input_url(job.config, job.active_input_id, true)
@@ -5602,6 +5973,7 @@ function transcode.get_status(id)
         profiles_error = job.profiles_error,
         publish = job.publish,
         publish_error = job.publish_error,
+        publish_status = publish_status,
         profiles_status = profiles_status,
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
