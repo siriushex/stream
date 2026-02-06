@@ -15026,11 +15026,9 @@ async function apiFetch(path, options = {}) {
 
 function formatNetworkError(err) {
   if (!err) return '';
-  if (err.network) return 'Server is unreachable or IP is not in allowlist.';
   const message = String(err.message || '');
-  if (message.includes('Failed to fetch') || message.includes('Network error')) {
-    return 'Server is unreachable or IP is not in allowlist.';
-  }
+  const isNetwork = err.network || message.includes('Failed to fetch') || message.includes('Network error');
+  if (isNetwork) return 'Не удалось связаться с сервером (network). Проверьте адрес/порт и что UI открыта на нужном инстансе.';
   return '';
 }
 
