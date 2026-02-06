@@ -54,3 +54,27 @@ jobs:
           contrib/ci/smoke_mpts_dvbs.sh
           contrib/ci/smoke_mpts_multisection.sh
           contrib/ci/smoke_mpts_cat.sh
+
+  transcode-workers-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsqlite3-dev libssl-dev pkg-config curl python3 ffmpeg libavcodec-dev libavutil-dev libpq-dev
+      - name: Smoke transcode per-output isolation
+        run: contrib/ci/smoke_transcode_per_output_isolation.sh
+
+  transcode-seamless-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libsqlite3-dev libssl-dev pkg-config curl python3 ffmpeg libavcodec-dev libavutil-dev libpq-dev
+      - name: Smoke transcode seamless failover (udp proxy)
+        run: contrib/ci/smoke_transcode_seamless_failover.sh

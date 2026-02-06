@@ -12249,6 +12249,40 @@ function formatWarmupSummary(warmup) {
   return parts.join(' • ');
 }
 
+function formatWorkerCutoverHint(cutover) {
+  if (!cutover || typeof cutover !== 'object') return '';
+  const state = (cutover.state ? String(cutover.state) : '').toUpperCase();
+  if (!state) return '';
+
+  if (state === 'STARTED') {
+    const started = cutover.started_at ? formatTimestamp(cutover.started_at) : '';
+    return started ? `cutover started ${started}` : 'cutover started';
+  }
+
+  if (state === 'OK') {
+    const parts = ['cutover OK'];
+    const dur = Number(cutover.duration_sec);
+    if (Number.isFinite(dur)) parts.push(`${dur.toFixed(1)}s`);
+    const sub = [];
+    const ready = Number(cutover.ready_sec);
+    if (Number.isFinite(ready)) sub.push(`ready ${ready.toFixed(1)}s`);
+    const stable = Number(cutover.stable_ok_sec);
+    if (Number.isFinite(stable)) sub.push(`stable ${stable.toFixed(1)}s`);
+    if (sub.length) parts.push(`(${sub.join(', ')})`);
+    return parts.join(' ');
+  }
+
+  if (state === 'FAIL') {
+    const parts = ['cutover FAIL'];
+    if (cutover.error) parts.push(String(cutover.error));
+    const dur = Number(cutover.duration_sec);
+    if (Number.isFinite(dur)) parts.push(`${dur.toFixed(1)}s`);
+    return parts.join(' ');
+  }
+
+  return `cutover ${state}`;
+}
+
 function updateEditorTranscodeStatus() {
   if (!elements.streamTranscodeStatus) return;
   if (elements.streamTranscodeInputUrl) {
@@ -12323,6 +12357,8 @@ function updateEditorTranscodeStatus() {
         const parts = [`#${index} ${state}`];
         if (worker.pid) parts.push(`pid ${worker.pid}`);
         if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        const cutoverHint = formatWorkerCutoverHint(worker.last_cutover);
+        if (cutoverHint) parts.push(cutoverHint);
         if (worker.proxy_enabled) {
           const port = Number(worker.proxy_listen_port) || 0;
           parts.push(port ? `proxy 127.0.0.1:${port}` : 'proxy enabled');

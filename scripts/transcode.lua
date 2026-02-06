@@ -1796,6 +1796,8 @@ local function schedule_failover_restart(job, reason, meta)
         local min_ms = job.failover and tonumber(job.failover.switch_warmup_min_ms) or 500
         if min_ms < 0 then min_ms = 0 end
 
+        local cutover_id = (job.cutover_seq or 0) + 1
+        job.cutover_seq = cutover_id
         local any = false
         local any_cutover = false
         local started_at = os.time()
@@ -1806,11 +1808,23 @@ local function schedule_failover_restart(job, reason, meta)
                 and is_udp_url(worker.output and worker.output.url)
             if can_cutover then
                 worker.cutover = {
+                    id = cutover_id,
                     target_input_id = job.active_input_id,
                     reason = reason,
                     meta = meta,
                     started_at = started_at,
                     deadline_ts = started_at + timeout_sec,
+                    stable_sec = stable_sec,
+                    min_out_time_ms = min_ms,
+                }
+                worker.last_cutover = {
+                    id = cutover_id,
+                    state = "STARTED",
+                    started_at = started_at,
+                    reason = reason,
+                    output_index = worker.index,
+                    target_input_id = job.active_input_id,
+                    timeout_sec = timeout_sec,
                     stable_sec = stable_sec,
                     min_out_time_ms = min_ms,
                 }
@@ -1828,6 +1842,7 @@ local function schedule_failover_restart(job, reason, meta)
         end
         if any_cutover and config and config.add_alert then
             config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_START", reason or "cutover start", {
+                cutover_id = cutover_id,
                 input_index = job.active_input_id and (job.active_input_id - 1) or nil,
                 reason = reason,
                 timeout_sec = timeout_sec,
@@ -3929,6 +3944,12 @@ tick_worker = function(job, worker, now)
         local status = worker.retire.proc:poll()
         if status then
             finalize_process_exit(worker.retire, status)
+            local last = worker.last_cutover
+            if last and worker.retire.cutover_id and last.id == worker.retire.cutover_id then
+                last.retire_done_at = now
+                last.retire_exit_code = status.exit_code
+                last.retire_exit_signal = status.signal
+            end
             worker.retire = nil
         elseif worker.retire.term_sent_ts and now >= (worker.retire.kill_due_ts or 0) then
             worker.retire.kill_attempts = (worker.retire.kill_attempts or 0) + 1
@@ -4019,8 +4040,15 @@ tick_worker = function(job, worker, now)
         if not standby or not standby.proc then
             record_alert(job, "TRANSCODE_CUTOVER_FAIL", "standby not running", {
                 output_index = worker.index,
+                cutover_id = cut.id,
                 reason = cut.reason,
             })
+            if worker.last_cutover and worker.last_cutover.id == cut.id then
+                worker.last_cutover.state = "FAIL"
+                worker.last_cutover.failed_at = now
+                worker.last_cutover.error = "standby_not_running"
+                worker.last_cutover.duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+            end
             worker.cutover = nil
             worker.standby = nil
         elseif deadline > 0 and now >= deadline then
@@ -4030,9 +4058,16 @@ tick_worker = function(job, worker, now)
             worker.cutover = nil
             record_alert(job, "TRANSCODE_CUTOVER_FAIL", "cutover timeout", {
                 output_index = worker.index,
+                cutover_id = cut.id,
                 reason = cut.reason,
                 timeout_sec = (deadline - (cut.started_at or (deadline - 1))),
             })
+            if worker.last_cutover and worker.last_cutover.id == cut.id then
+                worker.last_cutover.state = "FAIL"
+                worker.last_cutover.failed_at = now
+                worker.last_cutover.error = "timeout"
+                worker.last_cutover.duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+            end
         else
             local min_ms = tonumber(cut.min_out_time_ms) or 500
             local stable_sec = tonumber(cut.stable_sec) or 1
@@ -4041,6 +4076,10 @@ tick_worker = function(job, worker, now)
 
             if not standby.ready_ts and standby.last_out_time_ms and standby.last_out_time_ms >= min_ms then
                 standby.ready_ts = now
+                cut.ready_at = now
+                if worker.last_cutover and worker.last_cutover.id == cut.id then
+                    worker.last_cutover.ready_at = now
+                end
             end
 
             local stable_ok = false
@@ -4055,6 +4094,12 @@ tick_worker = function(job, worker, now)
                             stable_ok = true
                         end
                     end
+                end
+            end
+            if stable_ok and not cut.stable_ok_at then
+                cut.stable_ok_at = now
+                if worker.last_cutover and worker.last_cutover.id == cut.id then
+                    worker.last_cutover.stable_ok_at = now
                 end
             end
 
@@ -4076,11 +4121,18 @@ tick_worker = function(job, worker, now)
             if (stable_ok or active_missing) and sender and sw then
                 local ok_set = pcall(sw.set_source, sw, sender.addr, sender.port)
                 if ok_set then
+                    local duration_sec = (cut.started_at and (now - cut.started_at)) or nil
+                    local ready_sec = (cut.started_at and cut.ready_at) and (cut.ready_at - cut.started_at) or nil
+                    local stable_ok_sec = (cut.started_at and cut.stable_ok_at) and (cut.stable_ok_at - cut.started_at) or nil
                     if config and config.add_alert then
                         config.add_alert("INFO", job.id, "TRANSCODE_CUTOVER_OK", cut.reason or "cutover ok", {
                             output_index = worker.index,
+                            cutover_id = cut.id,
                             input_index = cut.target_input_id and (cut.target_input_id - 1) or nil,
                             sender = sender,
+                            duration_sec = duration_sec,
+                            ready_sec = ready_sec,
+                            stable_ok_sec = stable_ok_sec,
                         })
                     end
                     job.last_alert = {
@@ -4088,12 +4140,21 @@ tick_worker = function(job, worker, now)
                         message = cut.reason or "cutover ok",
                         ts = now,
                     }
+                    if worker.last_cutover and worker.last_cutover.id == cut.id then
+                        worker.last_cutover.state = "OK"
+                        worker.last_cutover.switched_at = now
+                        worker.last_cutover.duration_sec = duration_sec
+                        worker.last_cutover.ready_sec = ready_sec
+                        worker.last_cutover.stable_ok_sec = stable_ok_sec
+                        worker.last_cutover.sender = sender
+                    end
 
                     if worker.proc then
                         worker.retire = {
                             proc = worker.proc,
                             pid = worker.pid,
                             watchdog = worker.watchdog,
+                            cutover_id = cut.id,
                         }
                         request_stop(worker.retire)
                     end
@@ -4566,6 +4627,7 @@ function transcode.get_status(id)
                 ffmpeg_exit_signal = worker.ffmpeg_exit_signal,
                 output_bitrate_kbps = worker.output_bitrate_kbps,
                 last_out_time_ms = worker.last_out_time_ms,
+                last_cutover = worker.last_cutover,
                 proxy_enabled = worker.proxy_enabled == true,
                 proxy_listen_port = worker.proxy_listen_port,
                 proxy_active_source = proxy_active_source,
