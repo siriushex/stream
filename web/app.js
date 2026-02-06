@@ -340,8 +340,6 @@ const elements = {
   aiChatLog: $('#ai-chat-log'),
   aiChatInput: $('#ai-chat-input'),
   aiChatSend: $('#ai-chat-send'),
-  aiChatStop: $('#ai-chat-stop'),
-  aiChatClear: $('#ai-chat-clear'),
   aiChatStatus: $('#ai-chat-status'),
   aiChatFiles: $('#ai-chat-files'),
   aiChatFilesLabel: $('#ai-chat-files-label'),
@@ -843,6 +841,13 @@ const elements = {
   streamTranscodeLogMain: $('#stream-transcode-log-main'),
   streamTranscodeProcessPerOutput: $('#stream-transcode-process-per-output'),
   streamTranscodeSeamlessUdpProxy: $('#stream-transcode-seamless-udp-proxy'),
+  streamTranscodeLadderEnabled: $('#stream-transcode-ladder-enabled'),
+  streamTranscodeLadderBlock: $('#stream-transcode-ladder-block'),
+  streamTranscodeOutputsBlock: $('#stream-transcode-outputs-block'),
+  streamTranscodeLadderPreset2: $('#stream-transcode-ladder-preset-2'),
+  streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
+  streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
+  streamTranscodePublishJson: $('#stream-transcode-publish-json'),
   streamTranscodePreset: $('#stream-transcode-preset'),
   streamTranscodePresetApply: $('#stream-transcode-preset-apply'),
   streamTranscodeInputUrl: $('#stream-transcode-input-url'),
@@ -5626,6 +5631,110 @@ function updateSeamlessProxyToggle() {
   elements.streamTranscodeSeamlessUdpProxy.disabled = !enabled;
   if (!enabled) {
     elements.streamTranscodeSeamlessUdpProxy.checked = false;
+  }
+}
+
+function formatJson(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch (err) {
+    return '';
+  }
+}
+
+function parseJsonValue(text, label) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const reason = err && err.message ? err.message : String(err);
+    throw new Error(`${label}: invalid JSON (${reason})`);
+  }
+}
+
+function getLadderPresetProfiles(mode) {
+  const fps = 25;
+  const base = [
+    {
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      fps,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3000,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 128,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    },
+    {
+      id: 'HDMedium',
+      name: '540p',
+      width: 960,
+      height: 540,
+      fps,
+      bitrate_kbps: 1000,
+      maxrate_kbps: 1500,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 128,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    },
+  ];
+  if (mode === '3') {
+    base.push({
+      id: 'SDHigh',
+      name: '360p',
+      width: 640,
+      height: 360,
+      fps,
+      bitrate_kbps: 700,
+      maxrate_kbps: 900,
+      audio_mode: 'aac',
+      audio_bitrate_kbps: 96,
+      audio_sr: 48000,
+      audio_channels: 2,
+      deinterlace: 'auto',
+    });
+  }
+  return base;
+}
+
+function getLadderPresetPublish(mode) {
+  const variants = mode === '3'
+    ? ['HDHigh', 'HDMedium', 'SDHigh']
+    : ['HDHigh', 'HDMedium'];
+
+  return [
+    { type: 'hls', enabled: true, variants },
+    { type: 'dash', enabled: false, variants },
+  ];
+}
+
+function applyTranscodeLadderPreset(mode) {
+  if (!elements.streamTranscodeLadderEnabled) return;
+  elements.streamTranscodeLadderEnabled.checked = true;
+  updateTranscodeLadderToggle();
+  if (elements.streamTranscodeProfilesJson) {
+    elements.streamTranscodeProfilesJson.value = formatJson(getLadderPresetProfiles(mode));
+  }
+  if (elements.streamTranscodePublishJson) {
+    elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
+  }
+}
+
+function updateTranscodeLadderToggle() {
+  if (!elements.streamTranscodeLadderEnabled) return;
+  const enabled = elements.streamTranscodeLadderEnabled.checked;
+  if (elements.streamTranscodeLadderBlock) {
+    elements.streamTranscodeLadderBlock.hidden = !enabled;
+  }
+  if (elements.streamTranscodeOutputsBlock) {
+    elements.streamTranscodeOutputsBlock.hidden = enabled;
   }
 }
 
@@ -11899,8 +12008,20 @@ function openEditor(stream, isNew) {
     if (elements.streamTranscodeSeamlessUdpProxy) {
       elements.streamTranscodeSeamlessUdpProxy.checked = tc.seamless_udp_proxy === true;
     }
+    if (elements.streamTranscodeLadderEnabled) {
+      const ladderEnabled = Array.isArray(tc.profiles) && tc.profiles.length > 0;
+      elements.streamTranscodeLadderEnabled.checked = ladderEnabled;
+      if (elements.streamTranscodeProfilesJson) {
+        elements.streamTranscodeProfilesJson.value = ladderEnabled ? formatJson(tc.profiles) : '';
+      }
+      if (elements.streamTranscodePublishJson) {
+        const publish = Array.isArray(tc.publish) ? tc.publish : [];
+        elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
+      }
+    }
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
+    updateTranscodeLadderToggle();
   }
 
   state.inputs = normalizeInputs(config.input || []);
@@ -12476,6 +12597,56 @@ function readStreamForm() {
     const commonArgs = linesToArgs(elements.streamTranscodeCommonArgs && elements.streamTranscodeCommonArgs.value);
     if (commonArgs.length) transcode.common_output_args = commonArgs;
 
+    const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
+    if (ladderEnabled) {
+      const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+        'Profiles (Transcode tab)');
+      if (!Array.isArray(profiles) || profiles.length === 0) {
+        throw new Error('Transcode ladder profiles are required (Transcode tab)');
+      }
+      const seen = new Set();
+      profiles.forEach((profile, index) => {
+        if (!profile || typeof profile !== 'object') {
+          throw new Error(`Profile #${index + 1}: must be an object (Transcode tab)`);
+        }
+        const pid = String(profile.id || '').trim();
+        if (!pid) {
+          throw new Error(`Profile #${index + 1}: id is required (Transcode tab)`);
+        }
+        if (!/^[A-Za-z0-9_-]+$/.test(pid)) {
+          throw new Error(`Profile #${index + 1}: id must be URL-safe (letters, numbers, _, -) (Transcode tab)`);
+        }
+        if (seen.has(pid)) {
+          throw new Error(`Profile #${index + 1}: duplicate id "${pid}" (Transcode tab)`);
+        }
+        seen.add(pid);
+        const width = toNumber(profile.width);
+        const height = toNumber(profile.height);
+        const bitrate = toNumber(profile.bitrate_kbps);
+        if (width === undefined || width <= 0) {
+          throw new Error(`Profile #${index + 1}: width must be > 0 (Transcode tab)`);
+        }
+        if (height === undefined || height <= 0) {
+          throw new Error(`Profile #${index + 1}: height must be > 0 (Transcode tab)`);
+        }
+        if (bitrate === undefined || bitrate <= 0) {
+          throw new Error(`Profile #${index + 1}: bitrate_kbps must be > 0 (Transcode tab)`);
+        }
+      });
+      transcode.profiles = profiles;
+
+      const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
+        'Publish targets (Transcode tab)');
+      if (publish !== null) {
+        if (!Array.isArray(publish)) {
+          throw new Error('Publish targets must be a JSON array (Transcode tab)');
+        }
+        if (publish.length) {
+          transcode.publish = publish;
+        }
+      }
+    }
+
     const baseWatchdog = state.transcodeWatchdogDefaults || normalizeOutputWatchdog(null, TRANSCODE_WATCHDOG_DEFAULTS);
     const tcOutputs = state.transcodeOutputs.map((output) => {
       const cleaned = {};
@@ -12504,12 +12675,16 @@ function readStreamForm() {
       cleaned.watchdog = watchdog;
 
       return cleaned;
-    });
-    tcOutputs.forEach(validateTranscodeOutput);
-    if (!tcOutputs.length) {
-      throw new Error('Transcode outputs are required (Transcode tab)');
+    }).filter((output) => output && output.url);
+    if (!ladderEnabled) {
+      tcOutputs.forEach(validateTranscodeOutput);
+      if (!tcOutputs.length) {
+        throw new Error('Transcode outputs are required (Transcode tab)');
+      }
     }
-    transcode.outputs = tcOutputs;
+    if (tcOutputs.length) {
+      transcode.outputs = tcOutputs;
+    }
 
     config.transcode = transcode;
   }
@@ -12993,9 +13168,11 @@ function updateEditorTranscodeStatus() {
     }
   }
   if (elements.streamTranscodeWorkers) {
+    const lines = [];
+
     const workers = Array.isArray(transcode.workers) ? transcode.workers : [];
     if (workers.length) {
-      const lines = [`Workers: ${workers.length}`];
+      lines.push(`Workers: ${workers.length}`);
       workers.forEach((worker) => {
         if (!worker) return;
         const index = Number.isFinite(worker.output_index) ? worker.output_index : '?';
@@ -13018,6 +13195,52 @@ function updateEditorTranscodeStatus() {
         }
         lines.push(parts.join(' | '));
       });
+    }
+
+    const profiles = Array.isArray(transcode.profiles_status) ? transcode.profiles_status : [];
+    if (profiles.length) {
+      lines.push(`Profiles: ${profiles.length}`);
+      profiles.forEach((profile) => {
+        if (!profile) return;
+        const pid = profile.profile_id || '?';
+        const state = profile.state || 'n/a';
+        const parts = [`${pid} ${state}`];
+        if (profile.pid) parts.push(`pid ${profile.pid}`);
+        if (profile.bus_enabled) {
+          const port = Number(profile.bus_listen_port) || 0;
+          parts.push(port ? `bus 127.0.0.1:${port}` : 'bus enabled');
+          const src = profile.bus_active_source || null;
+          if (src && src.addr && src.port) {
+            parts.push(`src ${src.addr}:${src.port}`);
+          }
+          if (Number.isFinite(profile.bus_senders_count)) {
+            parts.push(`senders ${profile.bus_senders_count}`);
+          }
+        }
+        if (profile.restart_reason_code) parts.push(`restart ${profile.restart_reason_code}`);
+        const cutoverHint = formatWorkerCutoverHint(profile.last_cutover);
+        if (cutoverHint) parts.push(cutoverHint);
+        lines.push(parts.join(' | '));
+      });
+    }
+
+    const publish = Array.isArray(transcode.publish_status) ? transcode.publish_status : [];
+    if (publish.length) {
+      lines.push(`Publish: ${publish.length}`);
+      publish.forEach((worker) => {
+        if (!worker) return;
+        const type = worker.type || 'publish';
+        const pid = worker.profile_id || '?';
+        const state = worker.state || 'n/a';
+        const parts = [`${type}:${pid} ${state}`];
+        if (worker.pid) parts.push(`pid ${worker.pid}`);
+        if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        if (worker.url) parts.push(worker.url);
+        lines.push(parts.join(' | '));
+      });
+    }
+
+    if (lines.length) {
       elements.streamTranscodeWorkers.textContent = lines.join('\n');
       if (transcodeState === 'ERROR') {
         elements.streamTranscodeWorkers.classList.add('is-error');
@@ -16915,6 +17138,53 @@ function schedulePlayerNoVideoFallback(attempt) {
   }, tryIndex === 0 ? 2500 : 1500);
 }
 
+function isPreviewHlsUrl(url) {
+  const text = String(url || '');
+  return text.includes('/preview/');
+}
+
+async function waitForHlsManifestReady(url, opts = {}) {
+  if (!url) return;
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 2500;
+  const requireSegments = opts.requireSegments === true;
+  const abs = resolveAbsoluteUrl(url, window.location.origin);
+  let sameOrigin = false;
+  try {
+    sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
+  } catch (err) {
+    sameOrigin = false;
+  }
+  if (!sameOrigin) return;
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    let res = null;
+    try {
+      res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
+    } catch (err) {
+      break;
+    }
+    if (res.status === 503) {
+      await delay(250);
+      continue;
+    }
+    if (!res.ok) {
+      break;
+    }
+    if (requireSegments && abs.endsWith('.m3u8')) {
+      try {
+        const text = await res.text();
+        if (!text || !text.includes('#EXTINF')) {
+          await delay(250);
+          continue;
+        }
+      } catch (err) {
+      }
+    }
+    break;
+  }
+}
+
 async function attachPlayerSource(url, opts = {}) {
   resetPlayerMedia();
   if (!url) {
@@ -16923,6 +17193,8 @@ async function attachPlayerSource(url, opts = {}) {
   }
   clearPlayerError();
   setPlayerLoading(true, 'Подключение...');
+  const isPreview = isPreviewHlsUrl(url);
+  const startTimeoutMs = isPreview ? 20000 : 12000;
   state.playerStartTimer = setTimeout(async () => {
     state.playerStartTimer = null;
     const stream = getPlayerStream();
@@ -16964,7 +17236,7 @@ async function attachPlayerSource(url, opts = {}) {
     }
 
     setPlayerError('Не удалось запустить предпросмотр. Попробуйте ещё раз.');
-  }, 12000);
+  }, startTimeoutMs);
 
   if (opts.mode === 'mpegts') {
     elements.playerVideo.src = url;
@@ -16972,20 +17244,13 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (canPlayHlsNatively()) {
-    // Safari (native HLS) может падать на первых запросах, если /hls/* включён on-demand
-    // и плейлист ещё не успел появиться. Немного подождём манифест.
+    // Safari (native HLS): ждём манифест/первые сегменты.
+    // Для preview (ffmpeg) это особенно важно: "пустой" index.m3u8 может зависнуть без ретраев.
     try {
-      const abs = resolveAbsoluteUrl(url, window.location.origin);
-      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
-      if (sameOrigin) {
-        const deadline = Date.now() + 2500;
-        while (Date.now() < deadline) {
-          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
-          if (res.ok) break;
-          if (res.status !== 503) break;
-          await delay(250);
-        }
-      }
+      await waitForHlsManifestReady(url, {
+        timeoutMs: isPreview ? 9000 : 2500,
+        requireSegments: isPreview,
+      });
     } catch (err) {
     }
     elements.playerVideo.src = url;
@@ -17003,19 +17268,12 @@ async function attachPlayerSource(url, opts = {}) {
 
   if (window.Hls && window.Hls.isSupported()) {
     // Для on-demand /hls/* манифест может быть 503 первые секунды.
-    // Перед запуском hls.js чуть подождём, чтобы уменьшить шанс фатальной ошибки.
+    // Для preview (ffmpeg) дополнительно ждём появления первых сегментов.
     try {
-      const abs = resolveAbsoluteUrl(url, window.location.origin);
-      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
-      if (sameOrigin) {
-        const deadline = Date.now() + 2500;
-        while (Date.now() < deadline) {
-          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
-          if (res.ok) break;
-          if (res.status !== 503) break;
-          await delay(250);
-        }
-      }
+      await waitForHlsManifestReady(url, {
+        timeoutMs: isPreview ? 9000 : 2500,
+        requireSegments: isPreview,
+      });
     } catch (err) {
     }
 
@@ -18239,23 +18497,33 @@ function getAiHelpHints() {
     'error ch',
     'make mpts',
     'delete all disable channel',
+    'transcode all stream',
   ];
 }
 
 function buildAiHelpNode() {
   const wrapper = createEl('div');
-  wrapper.appendChild(createEl('div', '', 'Astral это web интерфейс для управления потоками, адаптерами, доступом и настройками.'));
-  wrapper.appendChild(createEl(
-    'div',
-    'form-note',
-    'AstralAI Chat помогает с анализом и безопасными изменениями конфигурации. Ничего не применяется, пока вы не нажмете Apply plan.'
-  ));
-  wrapper.appendChild(createEl('div', 'form-note', 'Попробуйте:'));
+  wrapper.appendChild(createEl('div', '', 'Astral это веб интерфейс для управления IPTV конфигом: streams, adapters, доступ, логи и настройки.'));
+  wrapper.appendChild(
+    createEl(
+      'div',
+      'form-note',
+      'AstralAI Chat отвечает как обычный чат. Если вы попросите изменить конфиг, он сначала предложит план. Применение изменений возможно только через Apply plan (если включено).'
+    )
+  );
+  wrapper.appendChild(createEl('div', 'form-note', 'Нажмите на подсказку или напишите свой запрос:'));
   const list = createEl('div', 'help-bubbles');
   getAiHelpHints().forEach((hint) => {
     list.appendChild(createEl('div', 'help-bubble', hint));
   });
   wrapper.appendChild(list);
+  const details = createEl('div', 'ai-help-lines');
+  details.appendChild(createEl('div', '', '- help: краткая справка и подсказки'));
+  details.appendChild(createEl('div', '', '- error ch: список проблемных каналов (по статусу)'));
+  details.appendChild(createEl('div', '', '- make mpts: объяснит MPTS и предложит план настройки'));
+  details.appendChild(createEl('div', '', '- delete all disable channel: удалить все выключенные streams из конфига'));
+  details.appendChild(createEl('div', '', '- transcode all stream: подготовить transcode streams (по умолчанию DISABLED)'));
+  wrapper.appendChild(details);
   wrapper.appendChild(createEl(
     'div',
     'form-note',
@@ -18272,7 +18540,6 @@ function clearAiChatPolling() {
   state.aiChatJobId = null;
   state.aiChatBusy = false;
   if (elements.aiChatSend) elements.aiChatSend.disabled = false;
-  if (elements.aiChatStop) elements.aiChatStop.disabled = true;
 }
 
 function collectAiChatCliList() {
@@ -18381,6 +18648,13 @@ function renderAiPlanResult(job) {
     return wrapper;
   }
   const hasOps = Array.isArray(plan.ops) && plan.ops.length > 0;
+  const diff = job && job.result && job.result.diff;
+  const diffError = job && job.result && job.result.diff_error;
+  const summary = diff && diff.summary ? diff.summary : null;
+  const totalAdded = summary && Number.isFinite(Number(summary.added)) ? Number(summary.added) : 0;
+  const totalUpdated = summary && Number.isFinite(Number(summary.updated)) ? Number(summary.updated) : 0;
+  const totalRemoved = summary && Number.isFinite(Number(summary.removed)) ? Number(summary.removed) : 0;
+  const hasChanges = (totalAdded + totalUpdated + totalRemoved) > 0;
   wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
   if (Array.isArray(plan.help_lines) && plan.help_lines.length) {
     const helpBlock = createEl('div', 'ai-help-lines');
@@ -18397,7 +18671,7 @@ function renderAiPlanResult(job) {
     const warn = createEl('div', 'form-note', `Warnings: ${plan.warnings.join('; ')}`);
     wrapper.appendChild(warn);
   }
-  if (hasOps) {
+  if (hasOps && hasChanges) {
     const list = document.createElement('div');
     plan.ops.forEach((op) => {
       const line = createEl(
@@ -18408,13 +18682,14 @@ function renderAiPlanResult(job) {
       list.appendChild(line);
     });
     wrapper.appendChild(list);
+  } else if (hasOps && !hasChanges) {
+    wrapper.appendChild(createEl('div', 'form-note', 'No config changes proposed.'));
   }
-  const diff = job && job.result && job.result.diff;
-  const diffError = job && job.result && job.result.diff_error;
   if (hasOps && diffError) {
     wrapper.appendChild(createEl('div', 'form-note', `Diff preview failed: ${diffError}`));
   }
-  if (hasOps && diff && diff.sections) {
+  // Hide diff/apply blocks for pure chat replies (plan.ops is empty).
+  if (hasOps && hasChanges && diff && diff.sections) {
     const diffBlock = document.createElement('div');
     diffBlock.className = 'ai-summary-section';
     diffBlock.appendChild(createEl('div', 'ai-summary-label', 'Diff preview'));
@@ -18430,7 +18705,7 @@ function renderAiPlanResult(job) {
     wrapper.appendChild(diffBlock);
   }
   const allowApply = getSettingBool('ai_allow_apply', false);
-  if (hasOps && allowApply && job && job.id) {
+  if (hasOps && hasChanges && allowApply && job && job.id && !diffError) {
     const applyBtn = createEl('button', 'btn', 'Apply plan');
     applyBtn.type = 'button';
     applyBtn.addEventListener('click', async () => {
@@ -18472,7 +18747,6 @@ function startAiChatPolling(jobId) {
   state.aiChatJobId = jobId;
   state.aiChatBusy = true;
   if (elements.aiChatSend) elements.aiChatSend.disabled = true;
-  if (elements.aiChatStop) elements.aiChatStop.disabled = false;
   const startMs = Date.now();
   const deadlineMs = startMs + (10 * 60 * 1000);
 
@@ -18543,6 +18817,70 @@ async function sendAiChatMessage() {
     }
     return;
   }
+  if (normalized === 'error ch' || normalized === 'error channel' || normalized === 'error channels') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    state.aiChatBusy = true;
+    if (elements.aiChatSend) elements.aiChatSend.disabled = true;
+    setAiChatStatus('Checking streams...');
+    try {
+      if (!Array.isArray(state.streams) || state.streams.length === 0) {
+        await loadStreams();
+      }
+      const stats = await apiJson('/api/v1/stream-status');
+      const problems = [];
+      (state.streams || []).forEach((stream) => {
+        if (!stream || stream.enabled === false) return;
+        const st = (stats && stats[stream.id]) || {};
+        const info = getStreamStatusInfo(stream, st);
+        if (info.className === 'ok') return;
+        const inputs = Array.isArray(st.inputs) ? st.inputs : [];
+        const activeIndex = getActiveInputIndex(st);
+        const activeLabel = getActiveInputLabel(inputs, activeIndex);
+        const tcState = st.transcode_state;
+        const tc = st.transcode || {};
+        const tcDetail = (tcState === 'ERROR') ? (formatTranscodeAlert(tc.last_alert) || tc.last_error || 'Transcode failed') : '';
+        problems.push({
+          id: stream.id,
+          name: stream.name || '',
+          label: info.label,
+          className: info.className,
+          active: activeLabel || '',
+          transcode: tcDetail,
+        });
+      });
+
+      if (problems.length === 0) {
+        appendAiChatMessage('assistant', 'No problematic channels found. All enabled streams are Online.');
+      } else {
+        const node = createEl('div');
+        node.appendChild(createEl('div', '', `Problem channels: ${problems.length}`));
+        const list = createEl('div', 'ai-help-lines');
+        problems.slice(0, 30).forEach((p) => {
+          const active = p.active ? ` (${p.active})` : '';
+          const extra = p.transcode ? ` - ${p.transcode}` : '';
+          list.appendChild(createEl('div', '', `- ${p.name} (#${p.id}): ${p.label}${active}${extra}`));
+        });
+        if (problems.length > 30) {
+          list.appendChild(createEl('div', 'form-note', `Showing first 30. Total: ${problems.length}.`));
+        }
+        node.appendChild(list);
+        appendAiChatMessage('assistant', node);
+      }
+    } catch (err) {
+      appendAiChatMessage('system', buildAiErrorNode(`Failed to check streams: ${formatNetworkError(err) || err.message}`));
+    } finally {
+      state.aiChatBusy = false;
+      if (elements.aiChatSend) elements.aiChatSend.disabled = false;
+      setAiChatStatus('');
+    }
+    return;
+  }
   if (
     normalized === 'delete all disable channel' ||
     normalized === 'delete all disabled channel' ||
@@ -18572,6 +18910,48 @@ async function sendAiChatMessage() {
       await loadStreams();
     } catch (err) {
       appendAiChatMessage('system', buildAiErrorNode(`Purge failed: ${formatNetworkError(err) || err.message}`));
+    } finally {
+      state.aiChatBusy = false;
+      if (elements.aiChatSend) elements.aiChatSend.disabled = false;
+      setAiChatStatus('');
+    }
+    return;
+  }
+  if (normalized === 'transcode all stream' || normalized === 'transcode all streams') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    const ok = window.confirm(
+      'Configure transcode streams for all enabled channels?\n\n' +
+      'For safety, new transcode streams will be created DISABLED to avoid CPU/RAM spikes.'
+    );
+    if (!ok) {
+      appendAiChatMessage('system', 'Cancelled.');
+      return;
+    }
+    state.aiChatBusy = true;
+    if (elements.aiChatSend) elements.aiChatSend.disabled = true;
+    setAiChatStatus('Preparing transcode config...');
+    try {
+      const res = await apiJson('/api/v1/streams/transcode-all', {
+        method: 'POST',
+        body: JSON.stringify({ enable: false }),
+      });
+      const created = res && res.created != null ? Number(res.created) : 0;
+      const skipped = res && res.skipped != null ? Number(res.skipped) : 0;
+      const rev = res && res.revision_id ? ` (revision ${res.revision_id})` : '';
+      appendAiChatMessage(
+        'assistant',
+        `Transcode configured: created ${created}, skipped ${skipped}${rev}. New transcode streams are disabled by default.`
+      );
+      await loadStreams();
+      setView('dashboard');
+    } catch (err) {
+      appendAiChatMessage('system', buildAiErrorNode(`Transcode-all failed: ${formatNetworkError(err) || err.message}`));
     } finally {
       state.aiChatBusy = false;
       if (elements.aiChatSend) elements.aiChatSend.disabled = false;
@@ -19600,26 +19980,6 @@ function bindEvents() {
       sendAiChatMessage();
     });
   }
-  if (elements.aiChatStop) {
-    elements.aiChatStop.addEventListener('click', () => {
-      clearAiChatPolling();
-      setAiChatStatus('Stopped.');
-    });
-    elements.aiChatStop.disabled = true;
-  }
-  if (elements.aiChatClear) {
-    elements.aiChatClear.addEventListener('click', () => {
-      if (elements.aiChatLog) {
-        elements.aiChatLog.innerHTML = '';
-      }
-      setAiChatStatus('');
-      if (elements.aiChatInput) elements.aiChatInput.value = '';
-      if (elements.aiChatFiles) {
-        elements.aiChatFiles.value = '';
-        updateAiChatFilesLabel();
-      }
-    });
-  }
   if (elements.aiChatInput) {
     elements.aiChatInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -20252,6 +20612,19 @@ function bindEvents() {
   }
   if (elements.streamTranscodeProcessPerOutput && elements.streamTranscodeSeamlessUdpProxy) {
     elements.streamTranscodeProcessPerOutput.addEventListener('change', updateSeamlessProxyToggle);
+  }
+  if (elements.streamTranscodeLadderEnabled) {
+    elements.streamTranscodeLadderEnabled.addEventListener('change', updateTranscodeLadderToggle);
+  }
+  if (elements.streamTranscodeLadderPreset2) {
+    elements.streamTranscodeLadderPreset2.addEventListener('click', () => {
+      applyTranscodeLadderPreset('2');
+    });
+  }
+  if (elements.streamTranscodeLadderPreset3) {
+    elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
+      applyTranscodeLadderPreset('3');
+    });
   }
 
   if (elements.transcodeOutputClose) {

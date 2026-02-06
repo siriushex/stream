@@ -734,7 +734,9 @@ local function schedule_openai_plan(job, prompt, context_opts)
         end
         local diff = nil
         local diff_error = nil
-        if context_opts and context_opts.preview_diff then
+        -- Diff preview is only useful when there are concrete ops to apply. Skipping it for
+        -- chat-only replies reduces CPU/IO overhead (snapshot+diff) and avoids UI noise.
+        if context_opts and context_opts.preview_diff and plan and plan.ops and #plan.ops > 0 then
             if ai_tools and ai_tools.apply_ops then
                 local current, snap_err = ai_tools.config_snapshot()
                 if current then
@@ -825,7 +827,12 @@ function ai_runtime.is_ready()
     if not ai_runtime.config.model or ai_runtime.config.model == "" then
         return false
     end
-    if not ai_runtime.config.has_api_key then
+    local has_key = ai_runtime.config.has_api_key == true
+    if ai_openai_client and ai_openai_client.has_api_key then
+        -- Do not rely solely on cached state: API keys can be set/rotated at runtime.
+        has_key = ai_openai_client.has_api_key() == true
+    end
+    if not has_key then
         return false
     end
     return true

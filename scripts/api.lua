@@ -959,6 +959,161 @@ local function purge_disabled_streams(server, client, request)
     })
 end
 
+local function detect_nvidia_available()
+    local ok, handle = pcall(io.popen, "nvidia-smi -L 2>/dev/null")
+    if not ok or not handle then
+        return false
+    end
+    local out = handle:read("*a") or ""
+    handle:close()
+    return out:match("GPU%s+%d+") ~= nil
+end
+
+local function build_default_transcode_ladder(base_id, base_name)
+    local engine = detect_nvidia_available() and "nvidia" or "cpu"
+    local tc = {
+        engine = engine,
+        ffmpeg_global_args = { "-fflags", "+genpts" },
+        profiles = {
+            {
+                id = "SD",
+                name = "540p",
+                width = 960,
+                height = 540,
+                fps = 25,
+                bitrate_kbps = 1200,
+                maxrate_kbps = 1500,
+            },
+        },
+        publish = {
+            {
+                type = "hls",
+                enabled = true,
+                variants = { "SD" },
+                storage = "memfd",
+            },
+        },
+        watchdog = {
+            restart_delay_sec = 1,
+            restart_jitter_sec = 1,
+            restart_backoff_base_sec = 1,
+            restart_backoff_max_sec = 10,
+            no_progress_timeout_sec = 30,
+            max_error_lines_per_min = 200,
+            probe_interval_sec = 0,
+            max_restarts_per_10min = 10,
+            restart_cooldown_sec = 0,
+        },
+    }
+    if engine == "nvidia" then
+        -- Auto-distribute across GPUs by picking the least busy device at runtime.
+        tc.gpu_device = "auto"
+    end
+    return {
+        id = base_id,
+        name = (base_name and ("Transcode " .. tostring(base_name))) or ("Transcode " .. tostring(base_id)),
+        type = "transcode",
+        input = { "stream://" .. tostring(base_id) },
+        transcode = tc,
+    }
+end
+
+local function transcode_all_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+
+    local body = parse_json_body(request) or {}
+    local enable_requested = body and (body.enable == true or body.enable == 1 or body.enable == "1")
+    -- Safety first: avoid CPU/RAM spikes. We only create streams disabled by default.
+    if enable_requested then
+        enable_requested = false
+    end
+
+    local rows = config.list_streams()
+    local by_id = {}
+    for _, row in ipairs(rows) do
+        by_id[row.id] = row
+    end
+
+    local targets = {}
+    local skipped = 0
+    for _, row in ipairs(rows) do
+        local enabled = (tonumber(row.enabled) or 0) ~= 0
+        if enabled then
+            local cfg = row.config or {}
+            local stype = tostring(cfg.type or ""):lower()
+            if stype ~= "transcode" and stype ~= "ffmpeg" then
+                local base_id = row.id
+                local tc_id = "tc_" .. tostring(base_id)
+                if by_id[tc_id] then
+                    skipped = skipped + 1
+                else
+                    table.insert(targets, { base_id = base_id, tc_id = tc_id, base_name = cfg.name })
+                end
+            end
+        end
+    end
+
+    if #targets == 0 then
+        return json_response(server, client, 200, { status = "ok", created = 0, skipped = skipped })
+    end
+
+    table.sort(targets, function(a, b) return tostring(a.tc_id) < tostring(b.tc_id) end)
+
+    apply_config_change(server, client, request, {
+        actor = admin.username,
+        comment = "transcode all streams",
+        validate = function()
+            for _, item in ipairs(targets) do
+                local cfg = build_default_transcode_ladder(item.base_id, item.base_name)
+                cfg.id = item.tc_id
+                if type(validate_stream_config) == "function" then
+                    local ok, err = validate_stream_config(cfg)
+                    if not ok then
+                        return false, err or ("invalid transcode config: " .. tostring(item.tc_id)), {
+                            { path = "stream", message = err or "invalid transcode config" },
+                        }
+                    end
+                end
+            end
+            return true
+        end,
+        apply = function()
+            for _, item in ipairs(targets) do
+                local cfg = build_default_transcode_ladder(item.base_id, item.base_name)
+                cfg.id = item.tc_id
+                config.upsert_stream(item.tc_id, false, cfg)
+            end
+            return { created = #targets, skipped = skipped }
+        end,
+        runtime_apply = function()
+            if not runtime or not runtime.apply_stream_row then
+                return false, "runtime apply not available"
+            end
+            for _, item in ipairs(targets) do
+                local row = config.get_stream(item.tc_id)
+                if row then
+                    local ok, err = runtime.apply_stream_row(row, true)
+                    if ok == false then
+                        return false, err or ("runtime apply failed: " .. tostring(item.tc_id))
+                    end
+                end
+            end
+            return true
+        end,
+        success_builder = function(res, revision_id)
+            return {
+                status = "ok",
+                created = res and (tonumber(res.created) or 0) or 0,
+                skipped = res and (tonumber(res.skipped) or 0) or 0,
+                revision_id = revision_id,
+            }
+        end,
+    })
+end
+
 local function list_adapters(server, client)
     local rows = config.list_adapters()
     local result = {}
@@ -4980,6 +5135,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/streams/purge-disabled" and method == "POST" then
         return purge_disabled_streams(server, client, request)
+    end
+    if path == "/api/v1/streams/transcode-all" and method == "POST" then
+        return transcode_all_streams(server, client, request)
     end
 
     local stream_id = path:match("^/api/v1/streams/([%w%-%_]+)$")

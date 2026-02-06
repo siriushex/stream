@@ -1450,6 +1450,7 @@
               <div class="help-bubble">error ch</div>
               <div class="help-bubble">make mpts</div>
               <div class="help-bubble">delete all disable channel</div>
+              <div class="help-bubble">transcode all stream</div>
             </div>
 
             <h4>AstralAI Chat</h4>
@@ -2175,17 +2176,50 @@
             <input type="checkbox" id="stream-transcode-process-per-output" />
             <span>One ffmpeg process per output (fault isolation)</span>
           </label>
-          <label class="checkline">
-            <input type="checkbox" id="stream-transcode-seamless-udp-proxy" />
-            <span>Seamless UDP/RTP cutover via local proxy (warm-switch)</span>
-          </label>
-          <div class="form-hint">
-            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
-          </div>
+	          <label class="checkline">
+	            <input type="checkbox" id="stream-transcode-seamless-udp-proxy" />
+	            <span>Seamless UDP/RTP cutover via local proxy (warm-switch)</span>
+	          </label>
+	          <div class="form-hint">
+	            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
+	          </div>
 
-          <details class="fold">
-            <summary class="fold-summary">FFmpeg args</summary>
-            <div class="fold-body">
+	          <label class="checkline">
+	            <input type="checkbox" id="stream-transcode-ladder-enabled" />
+	            <span>Multi-bitrate ladder (profiles + publish)</span>
+	          </label>
+	          <div class="form-hint">
+	            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead.
+	          </div>
+	          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
+	            <div class="form-grid">
+	              <div class="field span-12">
+	                <span>Quick presets</span>
+	                <div class="btn-row">
+	                  <button class="btn ghost" type="button" id="stream-transcode-ladder-preset-2">2 profiles (720+540)</button>
+	                  <button class="btn ghost" type="button" id="stream-transcode-ladder-preset-3">3 profiles (720+540+360)</button>
+	                </div>
+	              </div>
+	            </div>
+	            <label class="field">
+	              <span>Profiles (JSON)</span>
+	              <textarea id="stream-transcode-profiles-json" class="textarea-grow" rows="6" placeholder='[{"id":"HDHigh","width":1280,"height":720,"bitrate_kbps":2500}]'></textarea>
+	            </label>
+	            <label class="field">
+	              <span>Publish targets (JSON)</span>
+	              <textarea id="stream-transcode-publish-json" class="textarea-grow" rows="5" placeholder='[{"type":"hls","variants":["HDHigh","HDMedium"]}]'></textarea>
+	            </label>
+	            <div class="form-hint">
+	              Internal pull endpoints are always available when ladder is running:
+	              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,
+	              <code>/hls/&lt;stream_id&gt;/index.m3u8</code>,
+	              <code>/dash/&lt;stream_id&gt;/manifest.mpd</code>.
+	            </div>
+	          </div>
+
+	          <details class="fold">
+	            <summary class="fold-summary">FFmpeg args</summary>
+	            <div class="fold-body">
               <label class="field">
                 <span>Global args (one per line)</span>
                 <textarea id="stream-transcode-global-args" class="textarea-grow" rows="2" placeholder="-nostats&#10;-fflags"></textarea>
@@ -2201,15 +2235,15 @@
               <div class="form-hint">
                 Outputs and args map directly to ffmpeg argv items. Use one argument per line in the arg fields.
               </div>
-            </div>
-          </details>
-          <div class="list-block">
-            <div class="list-header">
-              <span>TRANSCODE OUTPUTS</span>
-              <button class="text-link" type="button" id="btn-add-transcode-output">NEW OUTPUT</button>
-            </div>
-            <div class="list" id="transcode-output-list"></div>
-          </div>
+	            </div>
+	          </details>
+	          <div class="list-block" id="stream-transcode-outputs-block">
+	            <div class="list-header">
+	              <span>TRANSCODE OUTPUTS</span>
+	              <button class="text-link" type="button" id="btn-add-transcode-output">NEW OUTPUT</button>
+	            </div>
+	            <div class="list" id="transcode-output-list"></div>
+	          </div>
           <div class="form-hint" id="stream-transcode-input-url"></div>
           <div class="form-hint" id="stream-transcode-status"></div>
           <div class="form-hint" id="stream-transcode-warmup"></div>
