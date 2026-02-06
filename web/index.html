@@ -1062,7 +1062,8 @@
                 <span>Use default headers for .ts</span>
               </label>
               <div class="apply-row">
-                <button class="btn" id="btn-apply-hls">Apply &amp; Restart</button>
+                <button class="btn ghost" type="button" id="btn-save-hls">Save</button>
+                <button class="btn" type="button" id="btn-apply-hls">Save &amp; Restart</button>
               </div>
             </div>
           </div>
@@ -1114,7 +1115,8 @@
                 <input type="text" id="http-play-xspf-title" placeholder="Playlist" />
               </label>
               <div class="apply-row">
-                <button class="btn" id="btn-apply-http-play">Apply &amp; Restart</button>
+                <button class="btn ghost" type="button" id="btn-save-http-play">Save</button>
+                <button class="btn" type="button" id="btn-apply-http-play">Save &amp; Restart</button>
               </div>
             </div>
           </div>
@@ -1227,7 +1229,8 @@
                 </select>
               </label>
               <div class="apply-row">
-                <button class="btn" id="btn-apply-http-auth">Apply &amp; Restart</button>
+                <button class="btn ghost" type="button" id="btn-save-http-auth">Save</button>
+                <button class="btn" type="button" id="btn-apply-http-auth">Save &amp; Restart</button>
               </div>
             </div>
           </div>
@@ -2467,6 +2470,41 @@
             <label class="checkline">
               <input type="checkbox" id="output-udp-audio-fix-enabled" />
               <span>Audio fix (normalize to AAC)</span>
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-udp-audio-fix-force" />
+              <span>Force on (always run, copy when possible)</span>
+            </label>
+            <label class="field">
+              <span>Mode</span>
+              <select id="output-udp-audio-fix-mode">
+                <option value="aac">AAC (always transcode)</option>
+                <option value="auto">Auto (copy if already AAC + matches params)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>AAC bitrate (kbit/s)</span>
+              <input type="number" id="output-udp-audio-fix-bitrate" placeholder="128" />
+            </label>
+            <label class="field">
+              <span>AAC sample rate (Hz)</span>
+              <input type="number" id="output-udp-audio-fix-sr" placeholder="48000" />
+            </label>
+            <label class="field">
+              <span>AAC channels</span>
+              <input type="number" id="output-udp-audio-fix-ch" placeholder="2" />
+            </label>
+            <label class="field">
+              <span>AAC profile (optional)</span>
+              <input type="text" id="output-udp-audio-fix-profile" placeholder="(auto)" />
+            </label>
+            <label class="field">
+              <span>Aresample async (0 to disable)</span>
+              <input type="number" id="output-udp-audio-fix-async" placeholder="1" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="output-udp-audio-fix-silence" />
+              <span>Silence fallback (inject silence when audio missing)</span>
             </label>
             <label class="field">
               <span>Probe interval (sec)</span>

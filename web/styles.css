@@ -1472,6 +1472,8 @@ select {
 .apply-row {
   display: flex;
   justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
   padding-top: 10px;
 }
 

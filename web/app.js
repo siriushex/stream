@@ -914,6 +914,14 @@ const elements = {
   outputUdpCbr: $('#output-udp-cbr'),
   outputUdpAudioFixBlock: $('#output-udp-audio-fix'),
   outputUdpAudioFixEnabled: $('#output-udp-audio-fix-enabled'),
+  outputUdpAudioFixForce: $('#output-udp-audio-fix-force'),
+  outputUdpAudioFixMode: $('#output-udp-audio-fix-mode'),
+  outputUdpAudioFixBitrate: $('#output-udp-audio-fix-bitrate'),
+  outputUdpAudioFixSampleRate: $('#output-udp-audio-fix-sr'),
+  outputUdpAudioFixChannels: $('#output-udp-audio-fix-ch'),
+  outputUdpAudioFixProfile: $('#output-udp-audio-fix-profile'),
+  outputUdpAudioFixAsync: $('#output-udp-audio-fix-async'),
+  outputUdpAudioFixSilence: $('#output-udp-audio-fix-silence'),
   outputUdpAudioFixInterval: $('#output-udp-audio-fix-interval'),
   outputUdpAudioFixDuration: $('#output-udp-audio-fix-duration'),
   outputUdpAudioFixHold: $('#output-udp-audio-fix-hold'),
@@ -1112,6 +1120,7 @@ const elements = {
   hlsTsExtension: $('#hls-ts-extension'),
   hlsTsMime: $('#hls-ts-mime'),
   hlsTsHeaders: $('#hls-ts-headers'),
+  btnSaveHls: $('#btn-save-hls'),
   btnApplyHls: $('#btn-apply-hls'),
   httpPlayAllow: $('#http-play-allow'),
   httpPlayHls: $('#http-play-hls'),
@@ -1124,6 +1133,7 @@ const elements = {
   httpPlayBuffer: $('#http-play-buffer'),
   httpPlayM3uHeader: $('#http-play-m3u-header'),
   httpPlayXspfTitle: $('#http-play-xspf-title'),
+  btnSaveHttpPlay: $('#btn-save-http-play'),
   btnApplyHttpPlay: $('#btn-apply-http-play'),
   bufferSettingEnabled: $('#buffer-setting-enabled'),
   bufferSettingHost: $('#buffer-setting-host'),
@@ -1138,6 +1148,7 @@ const elements = {
   httpAuthDeny: $('#http-auth-deny'),
   httpAuthTokens: $('#http-auth-tokens'),
   httpAuthRealm: $('#http-auth-realm'),
+  btnSaveHttpAuth: $('#btn-save-http-auth'),
   btnApplyHttpAuth: $('#btn-apply-http-auth'),
   authOnPlayUrl: $('#auth-on-play-url'),
   authOnPublishUrl: $('#auth-on-publish-url'),
@@ -1163,11 +1174,19 @@ const defaults = {
 
 const OUTPUT_AUDIO_FIX_DEFAULTS = {
   enabled: false,
+  force_on: false,
+  mode: 'aac',
   target_audio_type: 0x0f,
   probe_interval_sec: 30,
   probe_duration_sec: 2,
   mismatch_hold_sec: 10,
   restart_cooldown_sec: 1200,
+  aac_bitrate_kbps: 128,
+  aac_sample_rate: 48000,
+  aac_channels: 2,
+  aac_profile: '',
+  aresample_async: 1,
+  silence_fallback: false,
 };
 
 let searchTerm = '';
@@ -5204,6 +5223,8 @@ function formatAudioTypeHex(value) {
 
 function normalizeOutputAudioFix(config) {
   const src = (config && typeof config === 'object') ? config : {};
+  const modeRaw = String(src.mode || OUTPUT_AUDIO_FIX_DEFAULTS.mode || 'aac').toLowerCase();
+  const mode = (modeRaw === 'auto' || modeRaw === 'aac') ? modeRaw : OUTPUT_AUDIO_FIX_DEFAULTS.mode;
   const target = Number.isFinite(Number(src.target_audio_type))
     ? Number(src.target_audio_type)
     : OUTPUT_AUDIO_FIX_DEFAULTS.target_audio_type;
@@ -5211,13 +5232,26 @@ function normalizeOutputAudioFix(config) {
   const duration = toNumber(src.probe_duration_sec);
   const hold = toNumber(src.mismatch_hold_sec);
   const cooldown = toNumber(src.restart_cooldown_sec);
+  const bitrate = toNumber(src.aac_bitrate_kbps);
+  const sampleRate = toNumber(src.aac_sample_rate);
+  const channels = toNumber(src.aac_channels);
+  const asyncValue = src.aresample_async !== undefined ? toNumber(src.aresample_async) : undefined;
+  const profile = typeof src.aac_profile === 'string' ? src.aac_profile.trim() : '';
   return {
     enabled: src.enabled === true,
+    force_on: src.force_on === true,
+    mode,
     target_audio_type: target,
     probe_interval_sec: Number.isFinite(interval) ? interval : OUTPUT_AUDIO_FIX_DEFAULTS.probe_interval_sec,
     probe_duration_sec: Number.isFinite(duration) ? duration : OUTPUT_AUDIO_FIX_DEFAULTS.probe_duration_sec,
     mismatch_hold_sec: Number.isFinite(hold) ? hold : OUTPUT_AUDIO_FIX_DEFAULTS.mismatch_hold_sec,
     restart_cooldown_sec: Number.isFinite(cooldown) ? cooldown : OUTPUT_AUDIO_FIX_DEFAULTS.restart_cooldown_sec,
+    aac_bitrate_kbps: Number.isFinite(bitrate) ? bitrate : OUTPUT_AUDIO_FIX_DEFAULTS.aac_bitrate_kbps,
+    aac_sample_rate: Number.isFinite(sampleRate) ? sampleRate : OUTPUT_AUDIO_FIX_DEFAULTS.aac_sample_rate,
+    aac_channels: Number.isFinite(channels) ? channels : OUTPUT_AUDIO_FIX_DEFAULTS.aac_channels,
+    aac_profile: profile || OUTPUT_AUDIO_FIX_DEFAULTS.aac_profile,
+    aresample_async: Number.isFinite(asyncValue) ? asyncValue : OUTPUT_AUDIO_FIX_DEFAULTS.aresample_async,
+    silence_fallback: src.silence_fallback === true,
   };
 }
 
@@ -5233,11 +5267,18 @@ function getOutputAudioFixMeta(output, status) {
   let fixClass = '';
   if (fixState === 'RUNNING') fixClass = 'is-ok';
   else if (fixState === 'COOLDOWN') fixClass = 'is-warn';
+  const effectiveMode = status && status.audio_fix_effective_mode ? String(status.audio_fix_effective_mode) : '';
+  const silence = status && status.audio_fix_silence_active === true;
+  const drift = status && Number.isFinite(Number(status.audio_fix_last_drift_ms))
+    ? Number(status.audio_fix_last_drift_ms)
+    : null;
+  const modeHint = effectiveMode ? ` (${effectiveMode}${silence ? ',silence' : ''})` : (silence ? ' (silence)' : '');
+  const driftHint = drift !== null ? ` drift=${drift}ms` : '';
   return {
     config,
     audioText,
     audioClass: audioOk ? 'is-ok' : (detectedHex ? 'is-bad' : ''),
-    fixText: `Fix: ${fixState}`,
+    fixText: `Fix: ${fixState}${modeHint}${driftHint}`,
     fixClass,
   };
 }
@@ -7614,6 +7655,30 @@ function openOutputModal(index) {
   if (elements.outputUdpAudioFixEnabled) {
     const audioFix = normalizeOutputAudioFix(output.audio_fix);
     elements.outputUdpAudioFixEnabled.checked = audioFix.enabled;
+    if (elements.outputUdpAudioFixForce) {
+      elements.outputUdpAudioFixForce.checked = audioFix.force_on;
+    }
+    if (elements.outputUdpAudioFixMode) {
+      elements.outputUdpAudioFixMode.value = audioFix.mode;
+    }
+    if (elements.outputUdpAudioFixBitrate) {
+      elements.outputUdpAudioFixBitrate.value = audioFix.aac_bitrate_kbps;
+    }
+    if (elements.outputUdpAudioFixSampleRate) {
+      elements.outputUdpAudioFixSampleRate.value = audioFix.aac_sample_rate;
+    }
+    if (elements.outputUdpAudioFixChannels) {
+      elements.outputUdpAudioFixChannels.value = audioFix.aac_channels;
+    }
+    if (elements.outputUdpAudioFixProfile) {
+      elements.outputUdpAudioFixProfile.value = audioFix.aac_profile || '';
+    }
+    if (elements.outputUdpAudioFixAsync) {
+      elements.outputUdpAudioFixAsync.value = audioFix.aresample_async;
+    }
+    if (elements.outputUdpAudioFixSilence) {
+      elements.outputUdpAudioFixSilence.checked = audioFix.silence_fallback;
+    }
     elements.outputUdpAudioFixInterval.value = audioFix.probe_interval_sec;
     elements.outputUdpAudioFixDuration.value = audioFix.probe_duration_sec;
     elements.outputUdpAudioFixHold.value = audioFix.mismatch_hold_sec;
@@ -7732,6 +7797,8 @@ function readOutputForm() {
     if (type === 'udp' && elements.outputUdpAudioFixEnabled) {
       payload.audio_fix = {
         enabled: elements.outputUdpAudioFixEnabled.checked,
+        force_on: elements.outputUdpAudioFixForce ? elements.outputUdpAudioFixForce.checked : false,
+        mode: elements.outputUdpAudioFixMode ? elements.outputUdpAudioFixMode.value : OUTPUT_AUDIO_FIX_DEFAULTS.mode,
         target_audio_type: OUTPUT_AUDIO_FIX_DEFAULTS.target_audio_type,
         probe_interval_sec: toNumber(elements.outputUdpAudioFixInterval.value)
           || OUTPUT_AUDIO_FIX_DEFAULTS.probe_interval_sec,
@@ -7741,6 +7808,19 @@ function readOutputForm() {
           || OUTPUT_AUDIO_FIX_DEFAULTS.mismatch_hold_sec,
         restart_cooldown_sec: toNumber(elements.outputUdpAudioFixCooldown.value)
           || OUTPUT_AUDIO_FIX_DEFAULTS.restart_cooldown_sec,
+        aac_bitrate_kbps: toNumber(elements.outputUdpAudioFixBitrate && elements.outputUdpAudioFixBitrate.value)
+          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_bitrate_kbps,
+        aac_sample_rate: toNumber(elements.outputUdpAudioFixSampleRate && elements.outputUdpAudioFixSampleRate.value)
+          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_sample_rate,
+        aac_channels: toNumber(elements.outputUdpAudioFixChannels && elements.outputUdpAudioFixChannels.value)
+          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_channels,
+        aac_profile: elements.outputUdpAudioFixProfile
+          ? (elements.outputUdpAudioFixProfile.value || '').trim()
+          : OUTPUT_AUDIO_FIX_DEFAULTS.aac_profile,
+        aresample_async: elements.outputUdpAudioFixAsync && toNumber(elements.outputUdpAudioFixAsync.value) !== undefined
+          ? toNumber(elements.outputUdpAudioFixAsync.value)
+          : OUTPUT_AUDIO_FIX_DEFAULTS.aresample_async,
+        silence_fallback: elements.outputUdpAudioFixSilence ? elements.outputUdpAudioFixSilence.checked : false,
       };
     }
     return payload;
@@ -15228,13 +15308,46 @@ function collectHttpAuthSettings() {
   };
 }
 
-async function saveSettings(update) {
+async function saveSettings(update, opts = {}) {
   await apiJson('/api/v1/settings', {
     method: 'PUT',
     body: JSON.stringify(update),
   });
-  await loadSettings();
-  setStatus('Settings saved');
+
+  const shouldReload = opts.reload !== false;
+  if (shouldReload) {
+    await loadSettings();
+  } else {
+    // Не перерисовываем все поля (иначе можно потерять несохранённый ввод в форме).
+    state.settings = state.settings || {};
+    Object.keys(update || {}).forEach((key) => {
+      state.settings[key] = update[key];
+    });
+  }
+
+  if (!opts.silent) {
+    setStatus(opts.status || 'Settings saved');
+  }
+}
+
+let httpPlayToggleSaveTimer = null;
+
+function scheduleHttpPlayToggleSave() {
+  if (!elements.httpPlayAllow || !elements.httpPlayHls) return;
+  if (httpPlayToggleSaveTimer) {
+    clearTimeout(httpPlayToggleSaveTimer);
+  }
+  httpPlayToggleSaveTimer = setTimeout(() => {
+    httpPlayToggleSaveTimer = null;
+    const patch = {
+      http_play_allow: elements.httpPlayAllow.checked,
+      http_play_hls: elements.httpPlayHls.checked,
+    };
+    saveSettings(patch, {
+      reload: false,
+      status: 'HTTP Play access saved (restart to apply).',
+    }).catch((err) => setStatus(err.message));
+  }, 250);
 }
 
 async function requestRestart() {
@@ -17717,6 +17830,15 @@ function bindEvents() {
 
   elements.btnLogout.addEventListener('click', logout);
 
+  if (elements.btnSaveHls) {
+    elements.btnSaveHls.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectHlsSettings(), { status: 'HLS settings saved (restart to apply).' });
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
   if (elements.btnApplyHls) {
     elements.btnApplyHls.addEventListener('click', async () => {
       try {
@@ -17795,6 +17917,22 @@ function bindEvents() {
     elements.settingsTelegramSummaryEnabled.addEventListener('change', updateTelegramSummaryScheduleFields);
   }
 
+  if (elements.httpPlayAllow) {
+    elements.httpPlayAllow.addEventListener('change', scheduleHttpPlayToggleSave);
+  }
+  if (elements.httpPlayHls) {
+    elements.httpPlayHls.addEventListener('change', scheduleHttpPlayToggleSave);
+  }
+
+  if (elements.btnSaveHttpPlay) {
+    elements.btnSaveHttpPlay.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectHttpPlaySettings(), { status: 'HTTP Play settings saved (restart to apply).' });
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
   if (elements.btnApplyHttpPlay) {
     elements.btnApplyHttpPlay.addEventListener('click', async () => {
       try {
@@ -17817,6 +17955,15 @@ function bindEvents() {
     });
   }
 
+  if (elements.btnSaveHttpAuth) {
+    elements.btnSaveHttpAuth.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectHttpAuthSettings(), { status: 'HTTP auth settings saved (restart to apply).' });
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
   if (elements.btnApplyHttpAuth) {
     elements.btnApplyHttpAuth.addEventListener('click', async () => {
       try {
