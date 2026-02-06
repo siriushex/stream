@@ -166,6 +166,90 @@ local function build_direct_hls_url(stream_id, out)
     return join_path(join_path(hls_base, stream_id), playlist)
 end
 
+local function channel_on_air(channel)
+    if not channel or type(channel) ~= "table" then
+        return false
+    end
+    local inputs = channel.input
+    if type(inputs) ~= "table" then
+        return false
+    end
+
+    local now = os.time()
+    local function input_ok(input_data)
+        if not input_data or type(input_data) ~= "table" then
+            return false
+        end
+        if input_data.on_air == true then
+            return true
+        end
+        local stats = input_data.stats
+        if type(stats) == "table" then
+            if stats.on_air == true then
+                return true
+            end
+            local br = tonumber(stats.bitrate)
+            if br and br > 0 then
+                return true
+            end
+        end
+        local last_ok = tonumber(input_data.last_ok_ts)
+        if last_ok and last_ok > 0 and (now - last_ok) <= 5 then
+            return true
+        end
+        return false
+    end
+
+    local active_id = tonumber(channel.active_input_id or 0) or 0
+    if active_id > 0 and input_ok(inputs[active_id]) then
+        return true
+    end
+
+    for _, input_data in ipairs(inputs) do
+        if input_ok(input_data) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function channel_has_running_input(channel)
+    if not channel or type(channel) ~= "table" then
+        return false
+    end
+    local inputs = channel.input
+    if type(inputs) ~= "table" then
+        return false
+    end
+    for _, input_data in ipairs(inputs) do
+        if input_data and input_data.input ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local function channel_has_failures(channel)
+    if not channel or type(channel) ~= "table" then
+        return false
+    end
+    local inputs = channel.input
+    if type(inputs) ~= "table" then
+        return false
+    end
+    for _, input_data in ipairs(inputs) do
+        if type(input_data) == "table" then
+            local fail = tonumber(input_data.fail_count) or 0
+            local err = tostring(input_data.last_error or "")
+            if fail > 0 or err ~= "" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function ensure_dir(path)
     if not path or path == "" then
         return false
@@ -512,6 +596,14 @@ function preview.start(stream_id, opts)
     end
     if stream.kind ~= "stream" or not stream.channel then
         return nil, "preview not supported", 409
+    end
+
+    -- Быстрый оффлайн-чек: если input уже запущен, но сигнала нет, не даём UI "висеть" на буферизации.
+    -- Если input ещё не стартовал (0 клиентов), даём шанс предпросмотру запустить его.
+    if channel_has_running_input(stream.channel)
+        and not channel_on_air(stream.channel)
+        and channel_has_failures(stream.channel) then
+        return nil, "stream offline", 409
     end
 
     -- Дешёвый путь: если у потока уже есть HLS output, возвращаем его без preview-сессии.
