@@ -965,6 +965,21 @@ function config.get_session(token)
     return s
 end
 
+function config.extend_session(token, new_expires_at)
+    local t = tostring(token or "")
+    if t == "" then
+        return false
+    end
+    local expires = tonumber(new_expires_at)
+    if not expires then
+        return false
+    end
+    -- Never shorten sessions; only extend.
+    db_exec(config.db, "UPDATE sessions SET expires_at=CASE WHEN expires_at < " .. expires ..
+        " THEN " .. expires .. " ELSE expires_at END WHERE token='" .. sql_escape(t) .. "';")
+    return true
+end
+
 function config.delete_session(token)
     db_exec(config.db, "DELETE FROM sessions WHERE token='" .. sql_escape(token) .. "';")
 end

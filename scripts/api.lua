@@ -300,7 +300,29 @@ local function require_auth(request)
     if not token then
         return nil
     end
-    return config.get_session(token)
+    local session = config.get_session(token)
+    if not session then
+        return nil
+    end
+
+    -- Sliding expiration: extend session on activity to reduce repeated logins.
+    -- Update is throttled (only when remaining TTL is below 50%).
+    if config.extend_session then
+        local ttl = setting_number("auth_session_ttl_sec", 3600)
+        if ttl < 300 then
+            ttl = 300
+        end
+        local exp = tonumber(session.expires_at) or 0
+        local now = os.time()
+        local remaining = exp - now
+        if remaining < math.floor(ttl * 0.5) then
+            local new_exp = now + ttl
+            config.extend_session(token, new_exp)
+            session.expires_at = new_exp
+        end
+    end
+
+    return session
 end
 
 local function require_admin(request)
@@ -4470,11 +4492,12 @@ local function login(server, client, request)
         actor_username = user.username,
         ok = true,
     })
+    local cookie = "astra_session=" .. token .. "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" .. ttl
     server:send(client, {
         code = 200,
         headers = {
             "Content-Type: application/json",
-            "Set-Cookie: astra_session=" .. token .. "; Path=/; HttpOnly",
+            "Set-Cookie: " .. cookie,
             "Connection: close",
         },
         content = json.encode({
@@ -4662,7 +4685,7 @@ local function logout(server, client, request)
         code = 200,
         headers = {
             "Content-Type: application/json",
-            "Set-Cookie: astra_session=; Path=/; Max-Age=0",
+            "Set-Cookie: astra_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
             "Connection: close",
         },
         content = json.encode({ status = "ok" }),
