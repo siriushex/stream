@@ -13,6 +13,7 @@
 ### 2026-02-06
 - Changes:
   - AI Chat: add `delete all disable channel` command chip to purge all disabled streams (no OpenAI call).
+  - AI Chat: command runs via API (no plan/apply) and refreshes the streams list after completion.
   - API: add admin endpoint `POST /api/v1/streams/purge-disabled` (snapshot-safe config change).
 - Tests:
   - `./configure.sh && make`
