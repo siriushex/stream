@@ -93,6 +93,76 @@ dump_psi_info["sdt"] = function(name, info)
     log.info(name .. ("SDT: crc32: 0x%X"):format(info.crc32))
 end
 
+dump_psi_info["nit"] = function(name, info)
+    local network_id = info.network_id or 0
+    local table_id = info.table_id or 0
+    log.info(name .. ("NIT: network_id: %d table_id: 0x%02X"):format(network_id, table_id))
+    if info.network_name then
+        log.info(name .. ("NIT: network_name: %s"):format(info.network_name))
+    end
+    if info.delivery == "cable" or info.delivery == "satellite" then
+        local tsid = info.tsid or 0
+        local onid = info.onid or 0
+        local freq = info.frequency_khz or 0
+        local sr = info.symbolrate_ksps or 0
+        local modulation = info.modulation or "unknown"
+        local fec = info.fec_inner or "unknown"
+        log.info(name .. ("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d symbolrate_ksps: %d modulation: %s fec: %s")
+            :format(info.delivery, tsid, onid, freq, sr, modulation, fec))
+    elseif info.delivery == "terrestrial" then
+        local tsid = info.tsid or 0
+        local onid = info.onid or 0
+        local freq = info.frequency_khz or 0
+        local modulation = info.modulation or "unknown"
+        log.info(name .. ("NIT: delivery: %s tsid: %d onid: %d freq_khz: %d modulation: %s")
+            :format(info.delivery, tsid, onid, freq, modulation))
+    end
+    if info.service_list then
+        local entries = {}
+        for sid, stype in pairs(info.service_list) do
+            table.insert(entries, string.format("%d=%d", sid, stype))
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(name .. ("NIT: service_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.ts_list then
+        local entries = {}
+        for _, value in pairs(info.ts_list) do
+            table.insert(entries, value)
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(name .. ("NIT: ts_list: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.lcn then
+        local entries = {}
+        for sid, lcn in pairs(info.lcn) do
+            table.insert(entries, string.format("%d=%d", sid, lcn))
+        end
+        table.sort(entries)
+        if #entries > 0 then
+            log.info(name .. ("NIT: lcn: %s"):format(table.concat(entries, ",")))
+        end
+    end
+    if info.crc32 then
+        log.info(name .. ("NIT: crc32: 0x%X"):format(info.crc32))
+    end
+end
+
+dump_psi_info["tdt"] = function(name, _info)
+    log.info(name .. "TDT: present")
+end
+
+dump_psi_info["tot"] = function(name, info)
+    log.info(name .. "TOT: present")
+    if info.crc32 then
+        log.info(name .. ("TOT: crc32: 0x%X"):format(info.crc32))
+    end
+end
+
 local function get_setting(key)
     if config and config.get_setting then
         return config.get_setting(key)
@@ -118,6 +188,16 @@ local function setting_bool(key, fallback)
     end
     return false
 end
+
+local function psi_debug_enabled()
+    return setting_bool("psi_debug_logs", false)
+end
+
+local psi_debug_only = {
+    nit = true,
+    tdt = true,
+    tot = true,
+}
 
 local function setting_string(key, fallback)
     local value = get_setting(key)
@@ -1005,10 +1085,15 @@ function on_analyze_spts(channel_data, input_id, data)
         end
 
     elseif data.psi then
-        if dump_psi_info[data.psi] then
-            dump_psi_info[data.psi]("[" .. input_data.config.name .. "] ", data)
+        local handler = dump_psi_info[data.psi]
+        if handler then
+            if not psi_debug_only[data.psi] or psi_debug_enabled() then
+                handler("[" .. input_data.config.name .. "] ", data)
+            end
         else
-            log.error("[" .. input_data.config.name .. "] Unknown PSI: " .. data.psi)
+            if psi_debug_enabled() then
+                log.info("[" .. input_data.config.name .. "] Unknown PSI: " .. data.psi)
+            end
         end
 
     elseif data.analyze then
