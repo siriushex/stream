@@ -934,11 +934,18 @@ function main()
         woff2 = "font/woff2",
         ttf = "font/ttf",
         m3u8 = "application/vnd.apple.mpegurl",
+        mpd = "application/dash+xml",
+        m4s = "video/iso.segment",
+        mp4 = "video/mp4",
     }
     mime[hls_ts_extension] = hls_ts_mime
     if hls_ts_extension ~= "ts" then
         mime.ts = hls_ts_mime
     end
+
+    local dash_route = normalize_route(setting_string("dash_route", "/dash"))
+    local dash_dir = setting_string("dash_dir", opt.data_dir .. "/dash")
+    ensure_dir(dash_dir)
 
     local hls_static = nil
     if hls_needs_disk then
@@ -960,6 +967,15 @@ function main()
             ts_mime = hls_ts_mime,
         })
     end
+
+    local dash_static = http_static({
+        path = dash_dir,
+        skip = dash_route,
+        headers = {
+            "Cache-Control: no-store",
+            "Pragma: no-cache",
+        },
+    })
     -- Preview HLS (memfd): отдельный handler с no-store заголовками.
     local preview_memfd_handler = nil
     if hls_memfd then
@@ -1850,6 +1866,55 @@ function main()
         end)
     end
 
+    local function dash_route_handler(server, client, request)
+        local client_data = server:data(client)
+        if request and not ensure_http_auth(server, client, request) then
+            return nil
+        end
+        if not request then
+            if client_data.dash_static then
+                dash_static(server, client, request)
+                client_data.dash_static = nil
+                return nil
+            end
+            return nil
+        end
+        if request.method ~= "GET" then
+            server:abort(client, 405)
+            return nil
+        end
+
+        local prefix = dash_route .. "/"
+        if request.path:sub(1, #prefix) ~= prefix then
+            server:abort(client, 404)
+            return nil
+        end
+        local rest = request.path:sub(#prefix + 1)
+        local stream_id = rest:match("^([^/]+)/")
+        if not stream_id or stream_id == "" then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local job = transcode and transcode.jobs and transcode.jobs[stream_id] or nil
+        if not job or job.ladder_enabled ~= true then
+            server:abort(client, 404)
+            return nil
+        end
+
+        local token = auth and auth.get_token and auth.get_token(request) or nil
+        ensure_token_auth(server, client, request, {
+            stream_id = stream_id,
+            stream_name = job.name or stream_id,
+            stream_cfg = nil,
+            proto = "dash",
+            token = token,
+        }, function(_session)
+            dash_static(server, client, request)
+            client_data.dash_static = true
+        end)
+    end
+
     local function build_http_play_routes(include_redirect, include_hls_route, include_web)
         local routes = {}
         if not http_play_enabled then
@@ -1895,6 +1960,7 @@ function main()
 
     table.insert(main_routes, { "/preview/*", preview_route_handler })
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
+    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
     table.insert(main_routes, { "/", web_index })
     table.insert(main_routes, { "/*", web_index })
 
