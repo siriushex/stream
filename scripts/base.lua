@@ -346,6 +346,15 @@ function parse_url(url)
         opts = url:sub(b + 1)
         url = url:sub(1, b - 1)
     end
+    if not opts and (data.format == "udp" or data.format == "rtp") then
+        -- Historically Astra uses "#k=v" for URL options, but ffmpeg-style UDP URLs often
+        -- use "?k=v". Support both to avoid "invalid input format" on common configs.
+        local q = url:find("%?")
+        if q then
+            opts = url:sub(q + 1)
+            url = url:sub(1, q - 1)
+        end
+    end
 
     local _parse_url_format = parse_url_format[data.format]
     if _parse_url_format then
