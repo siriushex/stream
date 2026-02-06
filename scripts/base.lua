@@ -914,12 +914,19 @@ init_input_module.http = function(conf)
             conf.user_agent = conf.ua
         end
 
+        local sync = conf.sync
+        if sync == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
+            -- /play is served via http_upstream (burst delivery); enabling http_request sync
+            -- makes consumption stable for downstream pipelines.
+            sync = 1
+        end
+
         local http_conf = {
             host = conf.host,
             port = conf.port,
             path = conf.path,
             stream = true,
-            sync = conf.sync,
+            sync = sync,
             buffer_size = conf.buffer_size,
             timeout = conf.timeout,
             sctp = conf.sctp,
@@ -1016,12 +1023,17 @@ local function init_input_module_https_direct(conf)
             conf.user_agent = conf.ua
         end
 
+        local sync = conf.sync
+        if sync == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
+            sync = 1
+        end
+
         local http_conf = {
             host = conf.host,
             port = conf.port,
             path = conf.path,
             stream = true,
-            sync = conf.sync,
+            sync = sync,
             buffer_size = conf.buffer_size,
             timeout = conf.timeout,
             sctp = conf.sctp,
