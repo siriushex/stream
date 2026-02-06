@@ -177,6 +177,26 @@ local rate_limits = {
     counter = 0,
 }
 
+local auth_session_ttl_cache = {
+    ts = 0,
+    value = nil,
+}
+
+local function get_auth_session_ttl()
+    local now = os.time()
+    local cached = auth_session_ttl_cache.value
+    if cached ~= nil and (now - auth_session_ttl_cache.ts) < 10 then
+        return cached
+    end
+    local ttl = setting_number("auth_session_ttl_sec", 3600)
+    if ttl < 300 then
+        ttl = 300
+    end
+    auth_session_ttl_cache.ts = now
+    auth_session_ttl_cache.value = ttl
+    return ttl
+end
+
 local dvb_scan = {
     seq = 0,
     jobs = {},
@@ -308,10 +328,7 @@ local function require_auth(request)
     -- Sliding expiration: extend session on activity to reduce repeated logins.
     -- Update is throttled (only when remaining TTL is below 50%).
     if config.extend_session then
-        local ttl = setting_number("auth_session_ttl_sec", 3600)
-        if ttl < 300 then
-            ttl = 300
-        end
+        local ttl = get_auth_session_ttl()
         local exp = tonumber(session.expires_at) or 0
         local now = os.time()
         local remaining = exp - now
