@@ -543,6 +543,14 @@ Per-output config (UDP only):
     restart ffmpeg with the new input.
 - Config keys (per stream):
   - `transcode.engine`: `cpu` | `nvidia` (defaults output codecs).
+  - `transcode.process_per_output`: when `true`, run one ffmpeg process per output
+    (fault isolation, independent restarts; status includes `workers[]`).
+  - `transcode.seamless_udp_proxy`: when `true` and the output URL is UDP/RTP,
+    route the worker output through a local UDP switch proxy so failover can do
+    a warm cutover (old+new encoders in parallel; proxy flips sender when ready).
+  - `transcode.seamless_cutover_timeout_sec`: cutover timeout (default 10).
+  - `transcode.seamless_cutover_min_stable_sec`: extra stable window requirement
+    for cutover readiness (defaults to the existing warmup stable window).
   - `transcode.ffmpeg_global_args`, `transcode.decoder_args`,
     `transcode.common_output_args` (alias: `common_input_args`).
   - `transcode.outputs[]`: `vf`, `vcodec`, `v_args`, `acodec`, `a_args`,

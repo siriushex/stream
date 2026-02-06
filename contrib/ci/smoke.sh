@@ -77,3 +77,11 @@ fi
 if [[ "${AUDIO_FIX_SMOKE:-0}" == "1" ]]; then
   PORT="${AUDIO_FIX_PORT:-9077}" contrib/ci/smoke_audio_fix_failover.sh
 fi
+
+if [[ "${TRANSCODE_WORKERS_SMOKE:-0}" == "1" ]]; then
+  PORT="${TRANSCODE_WORKERS_PORT:-9083}" contrib/ci/smoke_transcode_per_output_isolation.sh
+fi
+
+if [[ "${TRANSCODE_SEAMLESS_SMOKE:-0}" == "1" ]]; then
+  PORT="${TRANSCODE_SEAMLESS_PORT:-9084}" contrib/ci/smoke_transcode_seamless_failover.sh
+fi
