@@ -1620,6 +1620,12 @@ local function dvb_scan_add_pat(job, data)
     if type(data.programs) ~= "table" then
         return
     end
+    if data.tsid ~= nil then
+        job.pat_tsid = tonumber(data.tsid)
+    end
+    if data.crc32 ~= nil then
+        job.pat_crc32 = tonumber(data.crc32)
+    end
     job.programs = job.programs or {}
     for _, program in ipairs(data.programs) do
         local pnr = tonumber(program.pnr)
@@ -1641,6 +1647,7 @@ local function dvb_scan_add_pmt(job, data)
     local entry = job.programs[pnr] or { pnr = pnr }
     entry.pmt_pid = entry.pmt_pid or tonumber(data.pid)
     entry.pcr = tonumber(data.pcr)
+    entry.crc32 = tonumber(data.crc32) or entry.crc32
     entry.streams = {}
     entry.cas = dvb_scan_merge_cas(entry.cas, dvb_scan_collect_cas(data.descriptors))
 
@@ -1663,6 +1670,12 @@ end
 local function dvb_scan_add_sdt(job, data)
     if type(data.services) ~= "table" then
         return
+    end
+    if data.tsid ~= nil then
+        job.sdt_tsid = tonumber(data.tsid)
+    end
+    if data.crc32 ~= nil then
+        job.sdt_crc32 = tonumber(data.crc32)
     end
     job.services = job.services or {}
     for _, service in ipairs(data.services) do
@@ -1830,6 +1843,10 @@ local function stream_analyze_payload(job)
         programs = job.programs,
         program_list = job.program_list,
         channels = job.channels,
+        pat_tsid = job.pat_tsid,
+        pat_crc32 = job.pat_crc32,
+        sdt_tsid = job.sdt_tsid,
+        sdt_crc32 = job.sdt_crc32,
         last_update = job.last_update,
     }
 end
