@@ -4260,31 +4260,98 @@ local function ensure_ladder_publish(job)
     if type(job.publish) ~= "table" or #job.publish == 0 then
         return
     end
-    if not hls_output then
-        return
-    end
-
     local variants = {}
     local storage = nil
+    local udp_targets = {}
     for _, pub in ipairs(job.publish) do
-        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls" then
-            storage = pub.storage or storage
-            if type(pub.variants) == "table" then
-                for _, pid in ipairs(pub.variants) do
-                    if pid and pid ~= "" then
-                        variants[pid] = true
+        if pub and pub.enabled == true then
+            local t = tostring(pub.type or ""):lower()
+            if t == "hls" then
+                storage = pub.storage or storage
+                if type(pub.variants) == "table" then
+                    for _, pid in ipairs(pub.variants) do
+                        if pid and pid ~= "" then
+                            variants[pid] = true
+                        end
                     end
+                end
+            elseif t == "udp" or t == "rtp" then
+                local pid = pub.profile
+                local url = pub.url
+                if pid and pid ~= "" and url and url ~= "" then
+                    udp_targets[pid] = url
                 end
             end
         end
     end
 
-    local has_any = false
+    -- UDP/RTP publish from per-profile bus.
+    if udp_output and udp_switch then
+        job.publish_udp_outputs = job.publish_udp_outputs or {}
+        for pid, url in pairs(udp_targets) do
+            if not job.publish_udp_outputs[pid] then
+                local bus = job.profile_buses and job.profile_buses[pid] or nil
+                local parsed = parse_udp_output_url(url)
+                if not bus or not bus.switch then
+                    record_alert(job, "PUBLISH_CONFIG_ERROR", "profile bus missing", {
+                        type = "udp",
+                        profile_id = pid,
+                        url = url,
+                    })
+                elseif not parsed then
+                    record_alert(job, "PUBLISH_CONFIG_ERROR", "invalid udp/rtp url", {
+                        type = "udp",
+                        profile_id = pid,
+                        url = url,
+                    })
+                else
+                    local opts = {
+                        upstream = bus.switch:stream(),
+                        addr = parsed.addr,
+                        port = parsed.port,
+                        rtp = parsed.scheme == "rtp",
+                    }
+                    if parsed.localaddr and parsed.localaddr ~= "" then
+                        opts.localaddr = parsed.localaddr
+                    end
+                    if parsed.query then
+                        local ttl = tonumber(parsed.query.ttl)
+                        if ttl and ttl > 0 then opts.ttl = ttl end
+                        local socket_size = tonumber(parsed.query.socket_size or parsed.query.sock)
+                        if socket_size and socket_size > 0 then opts.socket_size = socket_size end
+                        if parsed.query.sync ~= nil then opts.sync = normalize_bool(parsed.query.sync, nil) end
+                        if parsed.query.cbr ~= nil then opts.cbr = normalize_bool(parsed.query.cbr, nil) end
+                    end
+                    local ok_out, out = pcall(udp_output, opts)
+                    if ok_out and out then
+                        job.publish_udp_outputs[pid] = out
+                    else
+                        record_alert(job, "PUBLISH_FAILED", "udp_output init failed", {
+                            type = parsed.scheme,
+                            profile_id = pid,
+                            url = url,
+                        })
+                    end
+                end
+            end
+        end
+    elseif next(udp_targets) ~= nil then
+        record_alert(job, "PUBLISH_UNSUPPORTED", "udp_output module missing", {
+            type = "udp",
+        })
+    end
+
+    -- HLS publish variants.
+    if not hls_output then
+        return
+    end
+
+    local has_any_variant = false
     for _ in pairs(variants) do
-        has_any = true
+        has_any_variant = true
         break
     end
-    if not has_any then
+    if not has_any_variant then
         return
     end
 
@@ -5135,6 +5202,7 @@ function transcode.stop(job)
         end
         -- Drop publish outputs so memfd streams are released.
         job.publish_hls_outputs = nil
+        job.publish_udp_outputs = nil
     elseif job.process_per_output == true then
         ensure_workers(job)
         for _, worker in ipairs(job.workers or {}) do
