@@ -84,6 +84,147 @@ local function get_active_input_url(cfg, active_id, failover_enabled)
     return get_input_url(entry)
 end
 
+local function normalize_bool(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" then
+        return true
+    end
+    local text = tostring(value):lower()
+    if text == "true" or text == "yes" or text == "on" then
+        return true
+    end
+    if text == "false" or text == "no" or text == "off" or text == "0" then
+        return false
+    end
+    return fallback
+end
+
+local function normalize_setting_bool(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" then
+        return true
+    end
+    local text = tostring(value):lower()
+    if text == "true" or text == "yes" or text == "on" then
+        return true
+    end
+    if text == "false" or text == "no" or text == "off" or text == "0" then
+        return false
+    end
+    return fallback
+end
+
+local function strip_url_hash(url)
+    if not url or url == "" then
+        return url
+    end
+    local hash = tostring(url):find("#")
+    if hash then
+        return tostring(url):sub(1, hash - 1)
+    end
+    return tostring(url)
+end
+
+local function is_ffmpeg_url_supported(url)
+    if not url or url == "" then
+        return false
+    end
+    local u = strip_url_hash(url):lower()
+    if u:find("^http://") == 1 or u:find("^https://") == 1 then
+        return true
+    end
+    if u:find("^udp://") == 1 or u:find("^rtp://") == 1 or u:find("^srt://") == 1 or u:find("^tcp://") == 1 then
+        return true
+    end
+    if u:find("^file:") == 1 then
+        return true
+    end
+    if u:find("^/") == 1 then
+        return true
+    end
+    return false
+end
+
+local function build_transcode_play_url(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+    if not http_play_allow then
+        return nil
+    end
+    local http_auth_enabled = normalize_setting_bool(config.get_setting("http_auth_enabled"), false)
+    if http_auth_enabled then
+        return nil
+    end
+    local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
+    if not port then
+        return nil
+    end
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id)
+end
+
+local function extract_play_id_from_input(entry)
+    if not entry then
+        return nil
+    end
+    if type(entry) == "table" then
+        if entry.stream_id and tostring(entry.stream_id) ~= "" then
+            return tostring(entry.stream_id)
+        end
+        if entry.url and tostring(entry.url) ~= "" then
+            entry = entry.url
+        else
+            return nil
+        end
+    end
+    local text = tostring(entry)
+    if text == "" then
+        return nil
+    end
+    local id = text:match("^stream://(.+)$")
+    if id and id ~= "" then
+        return id
+    end
+    if not text:find("://", 1, true) then
+        return text
+    end
+    return nil
+end
+
+local function resolve_transcode_play_id(cfg, active_id, failover_enabled)
+    local entry = pick_input_entry(cfg, active_id, failover_enabled)
+    return extract_play_id_from_input(entry)
+end
+
+local function resolve_job_input_url(job)
+    if not job or not job.config then
+        return nil
+    end
+    local tc = job.config.transcode or {}
+    local use_play = normalize_bool(tc.input_use_play, true)
+    local play_url = nil
+    if use_play then
+        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
+        if play_id then
+            play_url = build_transcode_play_url(play_id)
+        end
+        if play_url then
+            return play_url
+        end
+        log.warning("[transcode " .. tostring(job.id) .. "] play input unavailable; using configured input")
+    end
+    local raw = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
+    return raw
+end
+
 local function is_udp_url(url)
     if not url or url == "" then
         return false
@@ -413,6 +554,9 @@ local function build_ffmpeg_args(cfg, opts)
     local tc = cfg.transcode or {}
     local inputs = ensure_list(cfg.input)
     local selected_url = nil
+    if opts and opts.play_input_url and opts.play_input_url ~= "" then
+        inputs = { tostring(opts.play_input_url) }
+    end
     if #inputs > 1 then
         local entry = pick_input_entry(cfg, opts and opts.active_input_id or nil, true)
         if entry then
@@ -504,20 +648,6 @@ local function build_ffmpeg_args(cfg, opts)
         exists = bin_exists,
         bundled = bin_bundled,
     }
-end
-
-local function normalize_bool(value, fallback)
-    if value == nil then
-        return fallback
-    end
-    if value == true or value == 1 or value == "1" then
-        return true
-    end
-    local text = tostring(value):lower()
-    if text == "true" or text == "yes" or text == "on" then
-        return true
-    end
-    return false
 end
 
 local function normalize_monitor_engine(value)
@@ -3358,7 +3488,7 @@ local function start_input_probe(job)
     if job.input_probe_inflight then
         return
     end
-    local url = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
+    local url = resolve_job_input_url(job)
     if not url or url == "" then
         return
     end
@@ -3412,7 +3542,7 @@ local function should_preprobe_udp(job)
     if not has_output_probe_interval(job) then
         return false
     end
-    local url = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
+    local url = resolve_job_input_url(job)
     return is_udp_url(url)
 end
 
@@ -3830,10 +3960,12 @@ end
 
 local function build_worker_ffmpeg_args(job, worker)
     local output_override = build_worker_output_override(job, worker)
+    local play_input_url = resolve_job_input_url(job)
     local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
         active_input_id = job.active_input_id,
         gpu_device = job.gpu_device,
         outputs_override = { output_override },
+        play_input_url = play_input_url,
     })
     return argv, err, selected_url, bin_info
 end
@@ -4317,9 +4449,11 @@ function transcode.start(job, opts)
         return true
     end
 
+    local play_input_url = resolve_job_input_url(job)
     local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
         active_input_id = job.active_input_id,
         gpu_device = job.gpu_device,
+        play_input_url = play_input_url,
     })
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", nil)

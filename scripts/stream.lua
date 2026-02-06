@@ -3179,6 +3179,10 @@ local function build_audio_fix_play_url(channel_data)
 end
 
 local function resolve_audio_fix_input_url(channel_data, audio_fix)
+    local play_url = build_audio_fix_play_url(channel_data)
+    if play_url then
+        return play_url, nil
+    end
     if audio_fix and audio_fix.config and audio_fix.config.input_url and audio_fix.config.input_url ~= "" then
         return strip_url_hash(audio_fix.config.input_url), nil
     end
@@ -3186,14 +3190,10 @@ local function resolve_audio_fix_input_url(channel_data, audio_fix)
     if active and is_ffmpeg_url_supported(active) then
         return strip_url_hash(active), nil
     end
-    local play_url = build_audio_fix_play_url(channel_data)
-    if play_url then
-        return play_url, nil
-    end
     if active and active ~= "" then
-        return nil, "no ffmpeg-compatible input url (active=" .. tostring(active) .. ")"
+        return nil, "play input unavailable; no ffmpeg-compatible input url (active=" .. tostring(active) .. ")"
     end
-    return nil, "active input url is required"
+    return nil, "play input unavailable; active input url is required"
 end
 
 local function set_udp_output_passthrough(channel_data, output_id, enabled)
