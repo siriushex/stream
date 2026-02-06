@@ -3870,14 +3870,10 @@ local function handle_audio_fix_probe_result(channel_data, output_id, output_dat
     local hold = audio_fix.config.mismatch_hold_sec or AUDIO_FIX_MISMATCH_HOLD_DEFAULT
     if mismatch and audio_fix.mismatch_since and (now - audio_fix.mismatch_since) >= hold then
         local restart_opts = { effective_mode = "aac" }
-        if audio_fix.proc then
-            if restart_audio_fix_process(channel_data, output_id, output_data, "audio_mismatch", restart_opts) then
-                audio_fix.state = "RUNNING"
-            end
-        else
-            if start_audio_fix_process(channel_data, output_id, output_data, "audio_mismatch", restart_opts) then
-                audio_fix.state = "RUNNING"
-            end
+        -- Use restart helper for both start and restart paths so restart_cooldown_sec is respected
+        -- and we don't thrash when ffmpeg exits quickly.
+        if restart_audio_fix_process(channel_data, output_id, output_data, "audio_mismatch", restart_opts) then
+            audio_fix.state = "RUNNING"
         end
     elseif audio_fix.proc then
         audio_fix.state = audio_fix.cooldown_active and "COOLDOWN" or "RUNNING"
@@ -3950,8 +3946,9 @@ local function tick_audio_fix_process(channel_data, output_id, output_data, now)
         audio_fix.proc:close()
         audio_fix.proc = nil
         audio_fix.last_error = audio_fix.last_error or "ffmpeg exited"
+        audio_fix.last_exit_status = status
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg exited for output #" ..
-            tostring(output_id))
+            tostring(output_id) .. " (" .. tostring(audio_fix.last_error) .. ", status=" .. tostring(status) .. ")")
         set_udp_output_passthrough(channel_data, output_id, true)
     end
 end
