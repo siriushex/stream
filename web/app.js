@@ -338,8 +338,6 @@ const elements = {
   aiChatLog: $('#ai-chat-log'),
   aiChatInput: $('#ai-chat-input'),
   aiChatSend: $('#ai-chat-send'),
-  aiChatStop: $('#ai-chat-stop'),
-  aiChatClear: $('#ai-chat-clear'),
   aiChatStatus: $('#ai-chat-status'),
   aiChatFiles: $('#ai-chat-files'),
   aiChatFilesLabel: $('#ai-chat-files-label'),
@@ -18400,18 +18398,27 @@ function getAiHelpHints() {
 
 function buildAiHelpNode() {
   const wrapper = createEl('div');
-  wrapper.appendChild(createEl('div', '', 'Astral это web интерфейс для управления потоками, адаптерами, доступом и настройками.'));
-  wrapper.appendChild(createEl(
-    'div',
-    'form-note',
-    'AstralAI Chat помогает с анализом и безопасными изменениями конфигурации. Ничего не применяется, пока вы не нажмете Apply plan.'
-  ));
-  wrapper.appendChild(createEl('div', 'form-note', 'Попробуйте:'));
+  wrapper.appendChild(createEl('div', '', 'Astral это веб интерфейс для управления IPTV конфигом: streams, adapters, доступ, логи и настройки.'));
+  wrapper.appendChild(
+    createEl(
+      'div',
+      'form-note',
+      'AstralAI Chat отвечает как обычный чат. Если вы попросите изменить конфиг, он сначала предложит план. Применение изменений возможно только через Apply plan (если включено).'
+    )
+  );
+  wrapper.appendChild(createEl('div', 'form-note', 'Нажмите на подсказку или напишите свой запрос:'));
   const list = createEl('div', 'help-bubbles');
   getAiHelpHints().forEach((hint) => {
     list.appendChild(createEl('div', 'help-bubble', hint));
   });
   wrapper.appendChild(list);
+  const details = createEl('div', 'ai-help-lines');
+  details.appendChild(createEl('div', '', '- help: краткая справка и подсказки'));
+  details.appendChild(createEl('div', '', '- error ch: список проблемных каналов (по статусу)'));
+  details.appendChild(createEl('div', '', '- make mpts: объяснит MPTS и предложит план настройки'));
+  details.appendChild(createEl('div', '', '- delete all disable channel: удалить все выключенные streams из конфига'));
+  details.appendChild(createEl('div', '', '- transcode all stream: подготовить transcode streams (по умолчанию DISABLED)'));
+  wrapper.appendChild(details);
   wrapper.appendChild(createEl(
     'div',
     'form-note',
@@ -18428,7 +18435,6 @@ function clearAiChatPolling() {
   state.aiChatJobId = null;
   state.aiChatBusy = false;
   if (elements.aiChatSend) elements.aiChatSend.disabled = false;
-  if (elements.aiChatStop) elements.aiChatStop.disabled = true;
 }
 
 function collectAiChatCliList() {
@@ -18577,7 +18583,8 @@ function renderAiPlanResult(job) {
   if (hasOps && diffError) {
     wrapper.appendChild(createEl('div', 'form-note', `Diff preview failed: ${diffError}`));
   }
-  if (hasChanges && diff && diff.sections) {
+  // Hide diff/apply blocks for pure chat replies (plan.ops is empty).
+  if (hasOps && hasChanges && diff && diff.sections) {
     const diffBlock = document.createElement('div');
     diffBlock.className = 'ai-summary-section';
     diffBlock.appendChild(createEl('div', 'ai-summary-label', 'Diff preview'));
@@ -18593,7 +18600,7 @@ function renderAiPlanResult(job) {
     wrapper.appendChild(diffBlock);
   }
   const allowApply = getSettingBool('ai_allow_apply', false);
-  if (hasChanges && allowApply && job && job.id && !diffError) {
+  if (hasOps && hasChanges && allowApply && job && job.id && !diffError) {
     const applyBtn = createEl('button', 'btn', 'Apply plan');
     applyBtn.type = 'button';
     applyBtn.addEventListener('click', async () => {
@@ -18635,7 +18642,6 @@ function startAiChatPolling(jobId) {
   state.aiChatJobId = jobId;
   state.aiChatBusy = true;
   if (elements.aiChatSend) elements.aiChatSend.disabled = true;
-  if (elements.aiChatStop) elements.aiChatStop.disabled = false;
   const startMs = Date.now();
   const deadlineMs = startMs + (10 * 60 * 1000);
 
@@ -19867,26 +19873,6 @@ function bindEvents() {
   if (elements.aiChatSend) {
     elements.aiChatSend.addEventListener('click', () => {
       sendAiChatMessage();
-    });
-  }
-  if (elements.aiChatStop) {
-    elements.aiChatStop.addEventListener('click', () => {
-      clearAiChatPolling();
-      setAiChatStatus('Stopped.');
-    });
-    elements.aiChatStop.disabled = true;
-  }
-  if (elements.aiChatClear) {
-    elements.aiChatClear.addEventListener('click', () => {
-      if (elements.aiChatLog) {
-        elements.aiChatLog.innerHTML = '';
-      }
-      setAiChatStatus('');
-      if (elements.aiChatInput) elements.aiChatInput.value = '';
-      if (elements.aiChatFiles) {
-        elements.aiChatFiles.value = '';
-        updateAiChatFilesLabel();
-      }
     });
   }
   if (elements.aiChatInput) {
