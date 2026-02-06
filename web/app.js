@@ -210,6 +210,7 @@ const state = {
   playerUrl: '',
   playerShareUrl: '',
   playerShareKind: 'play',
+  playerAutoOpen: null,
   playerToken: null,
   playerTriedVideoOnly: false,
   playerTriedAudioAac: false,
@@ -16191,10 +16192,39 @@ function getPlayerLink() {
   return resolveAbsoluteUrl(link, window.location.origin);
 }
 
+function getPlayerPageUrl(stream) {
+  const target = stream || getPlayerStream();
+  if (!target) return '';
+  const params = new URLSearchParams();
+  params.set('player', target.id);
+  params.set('kind', state.playerShareKind === 'hls' ? 'hls' : 'play');
+  params.set('autoplay', '1');
+  return `${window.location.origin}/index.html#${params.toString()}`;
+}
+
+function parsePlayerAutoOpenFromHash() {
+  const raw = String(window.location.hash || '');
+  if (!raw || raw === '#') return null;
+  const query = raw.startsWith('#') ? raw.slice(1) : raw;
+  let params = null;
+  try {
+    params = new URLSearchParams(query);
+  } catch (err) {
+    return null;
+  }
+  const id = params.get('player') || '';
+  if (!id) return null;
+  const kindRaw = (params.get('kind') || '').toLowerCase();
+  const kind = (kindRaw === 'play') ? 'play' : 'hls';
+  const autoplay = params.get('autoplay') !== '0';
+  return { id, kind, autoplay };
+}
+
 function updatePlayerActions() {
-  const hasUrl = !!getPlayerLink();
-  if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasUrl;
-  if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasUrl;
+  const hasCopyUrl = !!getPlayerLink();
+  const hasPageUrl = !!getPlayerPageUrl();
+  if (elements.playerOpenTab) elements.playerOpenTab.disabled = !hasPageUrl;
+  if (elements.playerCopyLink) elements.playerCopyLink.disabled = !hasCopyUrl;
 }
 
 function updatePlayerShareUi(stream) {
@@ -16403,6 +16433,23 @@ async function attachPlayerSource(url, opts = {}) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
+    // Для on-demand /hls/* манифест может быть 503 первые секунды.
+    // Перед запуском hls.js чуть подождём, чтобы уменьшить шанс фатальной ошибки.
+    try {
+      const abs = resolveAbsoluteUrl(url, window.location.origin);
+      const sameOrigin = new URL(abs, window.location.origin).origin === window.location.origin;
+      if (sameOrigin) {
+        const deadline = Date.now() + 2500;
+        while (Date.now() < deadline) {
+          const res = await fetch(abs, { credentials: 'same-origin', cache: 'no-store' });
+          if (res.ok) break;
+          if (res.status !== 503) break;
+          await delay(250);
+        }
+      }
+    } catch (err) {
+    }
+
     const hls = new window.Hls({
       lowLatencyMode: true,
       // /hls/* может быть on-demand и на первых запросах отдавать 503, поэтому даём hls.js
@@ -16489,7 +16536,7 @@ async function startPlayer(stream, opts = {}) {
   }
 }
 
-function openPlayer(stream) {
+function openPlayer(stream, opts = {}) {
   if (!stream) return;
   if (state.playerMode === 'preview' && state.playerStreamId && state.playerStreamId !== stream.id) {
     apiJson(`/api/v1/streams/${state.playerStreamId}/preview/stop`, { method: 'POST' }).catch(() => {});
@@ -16498,7 +16545,7 @@ function openPlayer(stream) {
   state.playerMode = null;
   state.playerUrl = '';
   state.playerShareUrl = '';
-  state.playerShareKind = 'play';
+  state.playerShareKind = (opts && opts.shareKind === 'play') ? 'play' : 'hls';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
   state.playerTriedAudioAac = false;
@@ -16515,7 +16562,7 @@ async function closePlayer() {
   state.playerMode = null;
   state.playerUrl = '';
   state.playerShareUrl = '';
-  state.playerShareKind = 'play';
+  state.playerShareKind = 'hls';
   state.playerToken = null;
   state.playerTriedVideoOnly = false;
   state.playerTriedAudioAac = false;
@@ -18041,6 +18088,19 @@ async function refreshAll() {
     if (state.currentView === 'observability') {
       await loadObservability(false);
     }
+
+    // Поддержка "открыть плеер в новой вкладке": index.html#player=<id>&kind=hls|play
+    if (state.playerAutoOpen && state.playerAutoOpen.id) {
+      const request = state.playerAutoOpen;
+      state.playerAutoOpen = null;
+      const stream = state.streamIndex[request.id];
+      if (stream) {
+        openPlayer(stream, { shareKind: request.kind });
+      } else {
+        setStatus(`Stream not found: ${request.id}`);
+      }
+    }
+
     setOverlay(elements.loginOverlay, false);
     resumeAllPolling();
   } catch (err) {
@@ -19038,7 +19098,7 @@ function bindEvents() {
   }
   if (elements.playerOpenTab) {
     elements.playerOpenTab.addEventListener('click', () => {
-      const link = getPlayerLink();
+      const link = getPlayerPageUrl();
       if (link) window.open(link, '_blank', 'noopener');
     });
   }
@@ -20084,4 +20144,5 @@ setViewMode(state.viewMode, { persist: false, render: false });
 setThemeMode(state.themeMode, { persist: false });
 setSettingsSection(state.settingsSection);
 applyTilesUiState();
+state.playerAutoOpen = parsePlayerAutoOpenFromHash();
 refreshAll();
