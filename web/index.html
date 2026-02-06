@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260206c" />
-  <script defer src="/app.js?v=20260206c"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260206d" />
+  <script defer src="/app.js?v=20260206d"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260206c</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260206d</div>
       </div>
     </header>
 
@@ -1597,7 +1597,7 @@
 
             <label class="field span-12 stream-desc-field">
               <span>Description</span>
-              <textarea id="stream-desc" rows="2"></textarea>
+              <textarea id="stream-desc" class="textarea-grow" rows="2"></textarea>
             </label>
           </div>
 
@@ -1697,13 +1697,14 @@
           </div>
         </div>
 	        <div class="tab-content" data-tab-content="mpts" data-tab-scope="stream-editor">
-	          <div class="mpts-manual" id="mpts-manual">
+	          <div class="mpts-manual is-collapsed" id="mpts-manual">
 	            <div class="mpts-manual-header">
 	              <div>
 	                <div class="panel-title">MPTS Manual</div>
 	                <div class="mpts-status" id="mpts-enabled-status">Status: Disabled</div>
 	              </div>
 	              <div class="mpts-manual-actions">
+	                <button class="btn ghost" type="button" id="btn-mpts-manual-toggle" aria-expanded="false">Show manual</button>
 	                <button class="btn" type="button" id="btn-mpts-enable">Enable MPTS</button>
 	              </div>
 	            </div>
@@ -1944,8 +1945,9 @@
 	            <div class="form-hint">Если задан список LCN tags, одиночный LCN tag игнорируется.</div>
 	            <div class="form-hint">LCN version используется для совместимости и переопределяет NIT version, если он не задан.</div>
 	          </div>
-	          <div class="form-subsection mpts-section">
-	            <div class="panel-title">Advanced</div>
+	          <details class="form-subsection mpts-section fold">
+	            <summary class="fold-summary">Advanced</summary>
+	            <div class="fold-body">
             <div class="form-grid">
               <label class="field">
                 <span>SI interval (ms)</span>
@@ -2059,9 +2061,11 @@
             <div class="form-hint">
               Strict PNR отклоняет входы с несколькими программами, если PNR не задан.
             </div>
-          </div>
-          <div class="form-subsection mpts-section">
-            <div class="panel-title">CAT / CA</div>
+	          </div>
+	          </details>
+	          <details class="form-subsection mpts-section fold">
+	            <summary class="fold-summary">CAT / CA</summary>
+	            <div class="fold-body">
             <div class="form-hint">Настраивает CA_descriptors в CAT (EMM PID). Это не создаёт CA поток, только объявляет параметры в SI.</div>
             <div class="list-header">
               <span>CA DESCRIPTORS</span>
@@ -2069,7 +2073,8 @@
             </div>
             <div class="list" id="mpts-ca-list"></div>
             <div class="form-hint">CAID: 0..65535, CA PID: 0..8190, private_data: hex строка (опционально).</div>
-          </div>
+	          </div>
+	          </details>
           <div class="form-hint mpts-pass-warning is-hidden" id="mpts-pass-warning">
             Pass NIT/SDT/EIT/TDT корректен только для одного сервиса.
           </div>
@@ -2186,18 +2191,26 @@
             Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
           </div>
 
-          <label class="field">
-            <span>Global args (one per line)</span>
-            <textarea id="stream-transcode-global-args" rows="4" placeholder="-nostats&#10;-fflags"></textarea>
-          </label>
-          <label class="field">
-            <span>Decoder args (one per line)</span>
-            <textarea id="stream-transcode-decoder-args" rows="4" placeholder="-hwaccel&#10;nvdec"></textarea>
-          </label>
-          <label class="field">
-            <span>Common output args (one per line)</span>
-            <textarea id="stream-transcode-common-args" rows="4" placeholder="-f&#10;mpegts"></textarea>
-          </label>
+          <details class="fold">
+            <summary class="fold-summary">FFmpeg args</summary>
+            <div class="fold-body">
+              <label class="field">
+                <span>Global args (one per line)</span>
+                <textarea id="stream-transcode-global-args" class="textarea-grow" rows="2" placeholder="-nostats&#10;-fflags"></textarea>
+              </label>
+              <label class="field">
+                <span>Decoder args (one per line)</span>
+                <textarea id="stream-transcode-decoder-args" class="textarea-grow" rows="2" placeholder="-hwaccel&#10;nvdec"></textarea>
+              </label>
+              <label class="field">
+                <span>Common output args (one per line)</span>
+                <textarea id="stream-transcode-common-args" class="textarea-grow" rows="2" placeholder="-f&#10;mpegts"></textarea>
+              </label>
+              <div class="form-hint">
+                Outputs and args map directly to ffmpeg argv items. Use one argument per line in the arg fields.
+              </div>
+            </div>
+          </details>
           <div class="list-block">
             <div class="list-header">
               <span>TRANSCODE OUTPUTS</span>
@@ -2212,19 +2225,21 @@
           <div class="form-hint form-hint-pre" id="stream-transcode-workers"></div>
           <div class="form-hint form-hint-pre" id="stream-transcode-stderr"></div>
 
-          <label class="checkline">
-            <input type="checkbox" id="stream-transcode-input-probe-udp" />
-            <span>Enable UDP input bitrate probe (longer analyze window)</span>
-          </label>
-          <label class="checkline">
-            <input type="checkbox" id="stream-transcode-input-probe-restart" />
-            <span>Restart on probe interval to refresh UDP input bitrate (disruptive)</span>
-          </label>
-          <div class="form-hint">Runs a short pre-probe before start; requires output monitor interval &gt; 0.</div>
-          <div class="form-hint">Restart/Monitor settings are configured per output (see the Monitor button).</div>
-          <div class="form-hint">
-            Outputs and args map directly to ffmpeg argv items. Use one argument per line in the arg fields.
-          </div>
+          <details class="fold">
+            <summary class="fold-summary">Probe &amp; restart</summary>
+            <div class="fold-body">
+              <label class="checkline">
+                <input type="checkbox" id="stream-transcode-input-probe-udp" />
+                <span>Enable UDP input bitrate probe (longer analyze window)</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="stream-transcode-input-probe-restart" />
+                <span>Restart on probe interval to refresh UDP input bitrate (disruptive)</span>
+              </label>
+              <div class="form-hint">Runs a short pre-probe before start; requires output monitor interval &gt; 0.</div>
+              <div class="form-hint">Restart/Monitor settings are configured per output (see the Monitor button).</div>
+            </div>
+          </details>
         </div>
         <div class="tab-content" data-tab-content="epg" data-tab-scope="stream-editor">
           <div class="form-grid">
@@ -2606,14 +2621,14 @@
               <span>Bridge log level</span>
               <input type="text" id="output-srt-bridge-log" placeholder="warning" />
             </label>
-            <label class="field">
-              <span>Bridge input args (one per line)</span>
-              <textarea id="output-srt-bridge-input-args" rows="3" placeholder="-re"></textarea>
-            </label>
-            <label class="field">
-              <span>Bridge output args (one per line)</span>
-              <textarea id="output-srt-bridge-output-args" rows="3" placeholder="-flush_packets&#10;1"></textarea>
-            </label>
+              <label class="field">
+                <span>Bridge input args (one per line)</span>
+                <textarea id="output-srt-bridge-input-args" class="textarea-grow" rows="2" placeholder="-re"></textarea>
+              </label>
+              <label class="field">
+                <span>Bridge output args (one per line)</span>
+                <textarea id="output-srt-bridge-output-args" class="textarea-grow" rows="2" placeholder="-flush_packets&#10;1"></textarea>
+              </label>
             <div class="form-hint">One argument per line. Split flags and values into separate lines.</div>
           </div>
         </div>
@@ -2725,7 +2740,7 @@
         </label>
         <label class="field">
           <span>Video args (one per line)</span>
-          <textarea id="transcode-output-v-args" rows="4" placeholder="-preset&#10;slow"></textarea>
+          <textarea id="transcode-output-v-args" class="textarea-grow" rows="2" placeholder="-preset&#10;slow"></textarea>
         </label>
         <label class="field">
           <span>Audio codec</span>
@@ -2733,15 +2748,15 @@
         </label>
         <label class="field">
           <span>Audio args (one per line)</span>
-          <textarea id="transcode-output-a-args" rows="4" placeholder="-ab&#10;128k"></textarea>
+          <textarea id="transcode-output-a-args" class="textarea-grow" rows="2" placeholder="-ab&#10;128k"></textarea>
         </label>
         <label class="field">
           <span>Format args (one per line)</span>
-          <textarea id="transcode-output-format-args" rows="3" placeholder="-f&#10;mpegts"></textarea>
+          <textarea id="transcode-output-format-args" class="textarea-grow" rows="2" placeholder="-f&#10;mpegts"></textarea>
         </label>
         <label class="field">
           <span>Metadata args (one per line)</span>
-          <textarea id="transcode-output-metadata" rows="3" placeholder="-metadata&#10;service_name=Channel"></textarea>
+          <textarea id="transcode-output-metadata" class="textarea-grow" rows="2" placeholder="-metadata&#10;service_name=Channel"></textarea>
         </label>
         </div>
 
