@@ -33,6 +33,46 @@ cleanup() {
 }
 trap cleanup EXIT
 
+dump_debug() {
+  echo "---- DEBUG ----" >&2
+  if [[ -n "${FEED_PID:-}" ]]; then
+    if kill -0 "$FEED_PID" 2>/dev/null; then
+      echo "feed: running pid=$FEED_PID" >&2
+    else
+      echo "feed: not running pid=$FEED_PID" >&2
+    fi
+  fi
+  if [[ -n "${PORT:-}" ]]; then
+    echo "transcode-status: $STREAM_ID" >&2
+    STATUS_JSON="$(curl -sS "http://127.0.0.1:${PORT}/api/v1/transcode-status/${STREAM_ID}" "${AUTH_ARGS[@]:-}" 2>/dev/null || true)"
+    if [[ -n "$STATUS_JSON" ]]; then
+      STATUS_JSON="$STATUS_JSON" python3 - <<'PY' || true
+import json, os
+payload = os.environ.get("STATUS_JSON") or ""
+try:
+  info = json.loads(payload)
+except Exception as e:
+  print("transcode-status: failed to parse:", e)
+  print(payload[:400])
+  raise SystemExit(0)
+print("state:", info.get("state"))
+print("ffmpeg_input_url:", info.get("ffmpeg_input_url"))
+workers = info.get("profile_workers") or []
+print("profile_workers:", len(workers))
+for w in workers:
+  print("worker:", w.get("index"), w.get("profile_id"), "pid=", w.get("pid"), "state=", w.get("state"), "out_ms=", w.get("last_out_time_ms"))
+  tail = w.get("stderr_tail") or []
+  if isinstance(tail, list) and tail:
+    print("  stderr_tail_last:", tail[-1])
+PY
+    else
+      echo "transcode-status: empty response" >&2
+    fi
+  fi
+  echo "server log tail:" >&2
+  tail -n 200 "$LOG_FILE" >&2 || true
+}
+
 cd "$ROOT_DIR"
 
 if [[ ! -f "$TEMPLATE_FILE" ]]; then
@@ -44,8 +84,9 @@ fi
 make
 
 if [[ -z "${MC_GROUP:-}" ]]; then
-  # Multicast can be flaky in CI/macOS environments; for this smoke we only
-  # need a stable UDP source.
+  # Ladder runs multiple ffmpeg processes (one per profile). Instead of having
+  # every ffmpeg bind the same UDP port, we use a single Astra UDP stream as the
+  # receiver and let ffmpeg read via /play (HTTP fanout).
   MC_GROUP="127.0.0.1"
 fi
 BASE_PORT="${BASE_PORT:-$((21000 + (RANDOM % 20000)))}"
@@ -63,17 +104,16 @@ group = os.environ["MC_GROUP"]
 in_port = int(os.environ["IN_PORT"])
 stream_id = os.environ["STREAM_ID"]
 src_id = os.environ["SRC_ID"]
-src_port = in_port + 1
 
 cfg = json.load(open(template, "r", encoding="utf-8"))
 rows = cfg.get("make_stream") or []
 for row in rows:
     if row.get("id") == src_id:
-        row["input"] = [f"udp://{group}:{src_port}?reuse=1"]
+        row["input"] = [f"udp://{group}:{in_port}?reuse=1"]
         row["enable"] = True
     if row.get("id") == stream_id:
         row["enable"] = True
-        row["input"] = [f"udp://{group}:{in_port}"]
+        row["input"] = [f"stream://{src_id}"]
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
@@ -125,9 +165,9 @@ if ! command -v "$FFMPEG_BIN" >/dev/null 2>&1; then
   fi
 fi
 
-"$FFMPEG_BIN" -hide_banner -loglevel error -re \
-  -f lavfi -i testsrc=size=640x360:rate=25 \
-  -f lavfi -i sine=frequency=1000 \
+"$FFMPEG_BIN" -hide_banner -loglevel error \
+  -re -f lavfi -i testsrc=size=640x360:rate=25 \
+  -re -f lavfi -i sine=frequency=1000 \
   -shortest -c:v mpeg2video -c:a mp2 \
   -f mpegts "udp://${MC_GROUP}:${IN_PORT}?pkt_size=1316" >/dev/null 2>&1 &
 FEED_PID=$!
@@ -150,7 +190,7 @@ done
 
 if [[ "$STATE_OK" -ne 1 ]]; then
   echo "Transcode state not RUNNING (stream_id=$STREAM_ID)" >&2
-  tail -n 200 "$LOG_FILE" >&2 || true
+  dump_debug
   exit 1
 fi
 
@@ -172,7 +212,7 @@ done
 if [[ "$MASTER_OK" -ne 1 ]]; then
   echo "Master playlist not ready: $MASTER_URL" >&2
   echo "$MASTER_BODY" >&2 || true
-  tail -n 200 "$LOG_FILE" >&2 || true
+  dump_debug
   exit 1
 fi
 
@@ -195,21 +235,19 @@ for pid in "${VARIANTS[@]}"; do
   if [[ "$VAR_OK" -ne 1 ]]; then
     echo "Variant playlist not ready ($pid): $VAR_URL" >&2
     echo "$VAR_BODY" >&2 || true
-    tail -n 200 "$LOG_FILE" >&2 || true
+    dump_debug
     exit 1
   fi
 
-  SEG_PATH="$(python3 - <<PY
+  SEG_PATH="$(python3 -c '
 import sys
-body = sys.stdin.read().splitlines()
-for line in body:
-    line = line.strip()
-    if not line or line.startswith('#'):
-        continue
-    print(line)
-    break
-PY
-<<<"$VAR_BODY")"
+for raw in sys.stdin.read().splitlines():
+  line = raw.strip()
+  if not line or line.startswith("#"):
+    continue
+  print(line)
+  break
+' <<<"$VAR_BODY")"
   if [[ -z "$SEG_PATH" ]]; then
     echo "No segment path found in playlist ($pid)" >&2
     echo "$VAR_BODY" >&2 || true
@@ -220,6 +258,7 @@ PY
   BYTES="$(curl -fsS "$SEG_URL" "${AUTH_ARGS[@]}" | wc -c | tr -d ' ')"
   if [[ "$BYTES" -lt 1880 ]]; then
     echo "Segment too small ($pid): bytes=$BYTES url=$SEG_URL" >&2
+    dump_debug
     exit 1
   fi
 done

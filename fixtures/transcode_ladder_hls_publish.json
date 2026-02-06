@@ -24,7 +24,7 @@
       "name": "Transcode Ladder HLS Publish",
       "enable": true,
       "input": [
-        "udp://127.0.0.1:12120"
+        "stream://src_udp"
       ],
       "transcode": {
         "engine": "cpu",
@@ -68,10 +68,11 @@
           "restart_jitter_sec": 1,
           "restart_backoff_base_sec": 1,
           "restart_backoff_max_sec": 10,
-          "no_progress_timeout_sec": 12,
+          "no_progress_timeout_sec": 30,
           "max_error_lines_per_min": 200,
           "probe_interval_sec": 0,
-          "max_restarts_per_10min": 10
+          "max_restarts_per_10min": 10,
+          "restart_cooldown_sec": 0
         }
       }
     }
