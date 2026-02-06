@@ -1344,6 +1344,48 @@ function main()
             return nil
         end
 
+        -- Если preview использует внешний процесс (ffmpeg) и пишет HLS в каталог,
+        -- отдаём файлы напрямую с no-store заголовками.
+        if preview.get_session then
+            local s = preview.get_session(token)
+            if s and s.base_path then
+                if not request or request.method ~= "GET" then
+                    server:abort(client, 405)
+                    return nil
+                end
+                local rel = request.path:match("^/preview/[0-9a-fA-F]+/(.+)$")
+                if not rel or rel == "" or rel:find("%.%.", 1, true) or rel:find("/", 1, true) then
+                    server:abort(client, 404)
+                    return nil
+                end
+                local file_path = join_path(s.base_path, rel)
+                local fp = io.open(file_path, "rb")
+                if not fp then
+                    server:abort(client, 404)
+                    return nil
+                end
+                local content = fp:read("*a")
+                fp:close()
+                if not content then
+                    server:abort(client, 404)
+                    return nil
+                end
+                local ext = rel:match("%.([%w]+)$") or ""
+                local content_type = mime[ext] or "application/octet-stream"
+                server:send(client, {
+                    code = 200,
+                    headers = {
+                        "Content-Type: " .. content_type,
+                        "Cache-Control: no-store",
+                        "Pragma: no-cache",
+                        "Connection: close",
+                    },
+                    content = content,
+                })
+                return nil
+            end
+        end
+
         local handled = preview_memfd_handler(server, client, request)
         if handled then
             client_data.preview_memfd = true

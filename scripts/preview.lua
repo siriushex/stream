@@ -17,6 +17,20 @@ local sessions = {}   -- token -> session
 local by_stream = {}  -- stream_id -> token
 local sweep_timer = nil
 
+local function setting_bool(key, fallback)
+    if not config or not config.get_setting then
+        return fallback
+    end
+    local value = config.get_setting(key)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" then
+        return true
+    end
+    return false
+end
+
 local function setting_number(key, fallback)
     if not config or not config.get_setting then
         return fallback
@@ -152,6 +166,127 @@ local function build_direct_hls_url(stream_id, out)
     return join_path(join_path(hls_base, stream_id), playlist)
 end
 
+local function ensure_dir(path)
+    if not path or path == "" then
+        return false
+    end
+    local stat = utils and utils.stat and utils.stat(path) or {}
+    if stat.type == "directory" then
+        return true
+    end
+    os.execute("mkdir -p " .. path)
+    return true
+end
+
+local function rm_rf(path)
+    if not path or path == "" then
+        return
+    end
+    -- path строится из безопасных частей (корень + token), без пробелов.
+    os.execute("rm -rf " .. path)
+end
+
+local function resolve_ffmpeg_bin()
+    local env = os.getenv("ASTRA_FFMPEG_PATH") or os.getenv("FFMPEG_PATH")
+    if env and env ~= "" then
+        return env
+    end
+    local cfg = setting_string("ffmpeg_path", "")
+    if cfg and cfg ~= "" then
+        return cfg
+    end
+    return "ffmpeg"
+end
+
+local function pick_preview_tmp_root()
+    local configured = setting_string("preview_tmp_root", "")
+    if configured and configured ~= "" then
+        return configured
+    end
+    local shm = "/dev/shm"
+    local st = utils and utils.stat and utils.stat(shm) or {}
+    if st.type == "directory" then
+        return shm .. "/astra-preview"
+    end
+    local base = (config and config.data_dir) and config.data_dir or "./data"
+    return base .. "/preview"
+end
+
+local function build_local_play_url(stream_id)
+    local http_port = tonumber(config and config.get_setting and config.get_setting("http_port") or nil) or 8000
+    local play_port = tonumber(config and config.get_setting and config.get_setting("http_play_port") or nil) or http_port
+    if not play_port or play_port == 0 then
+        play_port = http_port
+    end
+    return "http://127.0.0.1:" .. tostring(play_port) .. "/play/" .. tostring(stream_id)
+end
+
+local function start_ffmpeg_hls_video_only(token, stream_id)
+    if not process or type(process.spawn) ~= "function" then
+        return nil, "process module is not available", 501
+    end
+
+    local root = pick_preview_tmp_root()
+    ensure_dir(root)
+
+    local base_path = root .. "/" .. token
+    ensure_dir(base_path)
+
+    -- Чтобы клиент не ловил 404 на первом запросе плейлиста, кладём заглушку.
+    do
+        local fp = io.open(base_path .. "/index.m3u8", "wb")
+        if fp then
+            fp:write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n")
+            fp:close()
+        end
+    end
+
+    local input_url = build_local_play_url(stream_id)
+    local ffmpeg = resolve_ffmpeg_bin()
+
+    local args = {
+        ffmpeg,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "+genpts",
+        "-i",
+        input_url,
+        -- Без транскодинга: только video, audio/subs/data выключаем.
+        "-an",
+        "-sn",
+        "-dn",
+        "-c",
+        "copy",
+        "-f",
+        "hls",
+        "-hls_time",
+        "2",
+        "-hls_list_size",
+        "4",
+        "-hls_flags",
+        "delete_segments+independent_segments",
+        "-hls_allow_cache",
+        "0",
+        "-hls_segment_filename",
+        "seg_%08d.ts",
+        "index.m3u8",
+    }
+
+    local ok, proc = pcall(process.spawn, args, { cwd = base_path })
+    if not ok or not proc then
+        rm_rf(base_path)
+        return nil, "failed to start preview process", 500
+    end
+
+    return {
+        proc = proc,
+        base_path = base_path,
+    }
+end
+
 local function stop_session(token, reason)
     token = tostring(token or ""):lower()
     local s = sessions[token]
@@ -163,6 +298,13 @@ local function stop_session(token, reason)
     if s.stream_id and by_stream[s.stream_id] == token then
         by_stream[s.stream_id] = nil
     end
+
+    if s.proc then
+        pcall(function() s.proc:terminate() end)
+        pcall(function() s.proc:kill() end)
+        pcall(function() s.proc:close() end)
+    end
+    s.proc = nil
 
     if s.output and s.output.close then
         pcall(function() s.output:close() end)
@@ -183,6 +325,11 @@ local function stop_session(token, reason)
     end
     log.info(msg)
 
+    if s.base_path then
+        rm_rf(s.base_path)
+    end
+    s.base_path = nil
+
     collectgarbage()
     return true
 end
@@ -196,14 +343,23 @@ local function ensure_sweep_timer()
         callback = function(self)
             local _, idle, _ = preview_limits()
             local now = os.time()
+            local to_stop = {}
             for token, s in pairs(sessions) do
                 local last = tonumber(s.last_access_at or s.created_at or 0) or 0
                 local exp = tonumber(s.expires_at or 0) or 0
                 if exp > 0 and now > exp then
-                    stop_session(token, "ttl")
+                    table.insert(to_stop, { token = token, reason = "ttl" })
                 elseif last > 0 and (now - last) > idle then
-                    stop_session(token, "idle")
+                    table.insert(to_stop, { token = token, reason = "idle" })
+                elseif s.proc and s.proc.poll then
+                    local status = s.proc:poll()
+                    if status then
+                        table.insert(to_stop, { token = token, reason = "proc_exit" })
+                    end
                 end
+            end
+            for _, item in ipairs(to_stop) do
+                stop_session(item.token, item.reason)
             end
             if next(sessions) == nil then
                 self:close()
@@ -252,11 +408,22 @@ function preview.stop(stream_id)
     return stop_session(token, "api")
 end
 
-function preview.start(stream_id)
+function preview.get_session(token)
+    if not validate_token(token) then
+        return nil
+    end
+    token = tostring(token):lower()
+    return sessions[token]
+end
+
+function preview.start(stream_id, opts)
     stream_id = tostring(stream_id or "")
     if stream_id == "" then
         return nil, "stream id required", 400
     end
+
+    opts = (type(opts) == "table") and opts or {}
+    local video_only = (opts.video_only == true)
 
     local stream = runtime and runtime.streams and runtime.streams[stream_id] or nil
     if not stream then
@@ -278,14 +445,19 @@ function preview.start(stream_id)
     local existing = by_stream[stream_id]
     if existing and sessions[existing] then
         local s = sessions[existing]
-        preview.touch(existing)
-        return {
-            mode = "preview",
-            url = s.url,
-            token = s.token,
-            expires_in_sec = tonumber(s.expires_in_sec) or nil,
-            reused = true,
-        }
+        -- Если текущая сессия не совпадает по профилю, перезапускаем.
+        if (video_only and not s.video_only) or ((not video_only) and s.video_only) then
+            stop_session(existing, "profile_change")
+        else
+            preview.touch(existing)
+            return {
+                mode = "preview",
+                url = s.url,
+                token = s.token,
+                expires_in_sec = tonumber(s.expires_in_sec) or nil,
+                reused = true,
+            }
+        end
     end
 
     local max_sessions, _, ttl = preview_limits()
@@ -302,32 +474,44 @@ function preview.start(stream_id)
         return nil, "failed to generate token", 500
     end
 
-    -- Настройки HLS для предпросмотра.
-    local ts_ext = setting_string("hls_ts_extension", "ts")
-    if ts_ext == "" then
-        ts_ext = "ts"
-    end
+    local output = nil
+    local proc = nil
+    local base_path = nil
+    if video_only then
+        local started, start_err, start_code = start_ffmpeg_hls_video_only(token, stream_id)
+        if not started then
+            return nil, start_err or "preview failed", start_code or 500
+        end
+        proc = started.proc
+        base_path = started.base_path
+    else
+        -- Настройки HLS для предпросмотра.
+        local ts_ext = setting_string("hls_ts_extension", "ts")
+        if ts_ext == "" then
+            ts_ext = "ts"
+        end
 
-    local output = hls_output({
-        upstream = stream.channel.tail:stream(),
-        playlist = "index.m3u8",
-        prefix = "seg",
-        ts_extension = ts_ext,
-        pass_data = true,
-        use_wall = true,
-        naming = "sequence",
-        round_duration = false,
-        storage = "memfd",
-        stream_id = token,
-        on_demand = true,
-        idle_timeout_sec = setting_number("preview_idle_timeout_sec", 45),
-        target_duration = 2,
-        window = 4,
-        cleanup = 8,
-        -- Жёсткий лимит памяти на сессию (для memfd/heap хранения сегментов).
-        max_bytes = 32 * 1024 * 1024,
-        max_segments = 32,
-    })
+        output = hls_output({
+            upstream = stream.channel.tail:stream(),
+            playlist = "index.m3u8",
+            prefix = "seg",
+            ts_extension = ts_ext,
+            pass_data = true,
+            use_wall = true,
+            naming = "sequence",
+            round_duration = false,
+            storage = "memfd",
+            stream_id = token,
+            on_demand = true,
+            idle_timeout_sec = setting_number("preview_idle_timeout_sec", 45),
+            target_duration = 2,
+            window = 4,
+            cleanup = 8,
+            -- Жёсткий лимит памяти на сессию (для memfd/heap хранения сегментов).
+            max_bytes = 32 * 1024 * 1024,
+            max_segments = 32,
+        })
+    end
 
     local now = os.time()
     sessions[token] = {
@@ -338,7 +522,10 @@ function preview.start(stream_id)
         expires_at = now + ttl,
         expires_in_sec = ttl,
         url = "/preview/" .. token .. "/index.m3u8",
+        video_only = video_only,
         output = output,
+        proc = proc,
+        base_path = base_path,
         channel_data = stream.channel,
     }
     by_stream[stream_id] = token
@@ -364,4 +551,3 @@ function preview.start(stream_id)
         reused = false,
     }
 end
-
