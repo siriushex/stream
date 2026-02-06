@@ -17585,26 +17585,30 @@ function getAiHelpHints() {
   }
   return [
     'help',
-    'refresh channel <id>',
-    'show channel graphs (24h)',
-    'show errors last 24h',
-    'analyze stream <id>',
-    'scan dvb adapter <n>',
-    'list busy adapters',
-    'check signal lock (femon)',
-    'backup config now',
-    'restart stream <id>',
+    'error ch',
+    'make mpts',
   ];
 }
 
 function buildAiHelpNode() {
   const wrapper = createEl('div');
-  wrapper.appendChild(createEl('div', 'form-note', 'Quick hints:'));
+  wrapper.appendChild(createEl('div', '', 'Astral это web интерфейс для управления потоками, адаптерами, доступом и настройками.'));
+  wrapper.appendChild(createEl(
+    'div',
+    'form-note',
+    'AstralAI Chat помогает с анализом и безопасными изменениями конфигурации. Ничего не применяется, пока вы не нажмете Apply plan.'
+  ));
+  wrapper.appendChild(createEl('div', 'form-note', 'Попробуйте:'));
   const list = createEl('div', 'help-bubbles');
   getAiHelpHints().forEach((hint) => {
     list.appendChild(createEl('div', 'help-bubble', hint));
   });
   wrapper.appendChild(list);
+  wrapper.appendChild(createEl(
+    'div',
+    'form-note',
+    'Примеры: "почему stream a019 DOWN?", "поставь no_data_timeout_sec=20 для stream a019".'
+  ));
   return wrapper;
 }
 
@@ -17724,6 +17728,7 @@ function renderAiPlanResult(job) {
     wrapper.appendChild(createEl('div', '', 'No plan data returned.'));
     return wrapper;
   }
+  const hasOps = Array.isArray(plan.ops) && plan.ops.length > 0;
   wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
   if (Array.isArray(plan.help_lines) && plan.help_lines.length) {
     const helpBlock = createEl('div', 'ai-help-lines');
@@ -17740,7 +17745,7 @@ function renderAiPlanResult(job) {
     const warn = createEl('div', 'form-note', `Warnings: ${plan.warnings.join('; ')}`);
     wrapper.appendChild(warn);
   }
-  if (Array.isArray(plan.ops) && plan.ops.length) {
+  if (hasOps) {
     const list = document.createElement('div');
     plan.ops.forEach((op) => {
       const line = createEl(
@@ -17754,10 +17759,10 @@ function renderAiPlanResult(job) {
   }
   const diff = job && job.result && job.result.diff;
   const diffError = job && job.result && job.result.diff_error;
-  if (diffError) {
+  if (hasOps && diffError) {
     wrapper.appendChild(createEl('div', 'form-note', `Diff preview failed: ${diffError}`));
   }
-  if (diff && diff.sections) {
+  if (hasOps && diff && diff.sections) {
     const diffBlock = document.createElement('div');
     diffBlock.className = 'ai-summary-section';
     diffBlock.appendChild(createEl('div', 'ai-summary-label', 'Diff preview'));
@@ -17773,7 +17778,7 @@ function renderAiPlanResult(job) {
     wrapper.appendChild(diffBlock);
   }
   const allowApply = getSettingBool('ai_allow_apply', false);
-  if (allowApply && job && job.id) {
+  if (hasOps && allowApply && job && job.id) {
     const applyBtn = createEl('button', 'btn', 'Apply plan');
     applyBtn.type = 'button';
     applyBtn.addEventListener('click', async () => {
@@ -17877,6 +17882,7 @@ async function sendAiChatMessage() {
   const normalized = prompt.toLowerCase();
   if (normalized === 'help' || normalized === '/help' || normalized === '?') {
     elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
     appendAiChatMessage('assistant', buildAiHelpNode());
     setAiChatStatus('');
     if (elements.aiChatFiles) {
@@ -18888,6 +18894,16 @@ function bindEvents() {
     elements.aiChatFiles.addEventListener('change', updateAiChatFilesLabel);
     updateAiChatFilesLabel();
   }
+  // Clickable prompt chips (Help view and chat messages), like ChatGPT suggestions.
+  document.addEventListener('click', (event) => {
+    const bubble = event.target.closest('.help-bubble');
+    if (!bubble) return;
+    const text = (bubble.textContent || '').trim();
+    if (!text || !elements.aiChatInput) return;
+    elements.aiChatInput.value = text;
+    elements.aiChatInput.focus();
+    sendAiChatMessage();
+  });
 
   elements.dashboardStreams.addEventListener('click', (event) => {
     const tile = event.target.closest('.tile');
