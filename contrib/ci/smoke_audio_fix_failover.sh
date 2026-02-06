@@ -58,15 +58,17 @@ IN_PRIMARY_PORT="${IN_PRIMARY_PORT:-$BASE_PORT}"
 IN_BACKUP_PORT="${IN_BACKUP_PORT:-$((BASE_PORT + 1))}"
 OUT_PORT="${OUT_PORT:-$((BASE_PORT + 10))}"
 
-echo "smoke_audio_fix_failover: mc_group=$MC_GROUP in_primary=$IN_PRIMARY_PORT in_backup=$IN_BACKUP_PORT out=$OUT_PORT port=$PORT" >&2
+OUT_ADDR="${OUT_ADDR:-127.0.0.1}"
+echo "smoke_audio_fix_failover: mc_group=$MC_GROUP in_primary=$IN_PRIMARY_PORT in_backup=$IN_BACKUP_PORT out=${OUT_ADDR}:${OUT_PORT} port=$PORT" >&2
 
-export TEMPLATE_FILE RUNTIME_CONFIG_FILE STREAM_ID MC_GROUP IN_PRIMARY_PORT IN_BACKUP_PORT OUT_PORT
+export TEMPLATE_FILE RUNTIME_CONFIG_FILE STREAM_ID MC_GROUP IN_PRIMARY_PORT IN_BACKUP_PORT OUT_ADDR OUT_PORT
 python3 - <<'PY'
 import json, os
 
 template = os.environ["TEMPLATE_FILE"]
 out_path = os.environ["RUNTIME_CONFIG_FILE"]
 group = os.environ["MC_GROUP"]
+out_addr = os.environ.get("OUT_ADDR") or "127.0.0.1"
 in_primary = int(os.environ["IN_PRIMARY_PORT"])
 in_backup = int(os.environ["IN_BACKUP_PORT"])
 out_port = int(os.environ["OUT_PORT"])
@@ -76,8 +78,12 @@ s = (cfg.get("make_stream") or [{}])[0]
 s["id"] = os.environ.get("STREAM_ID") or s.get("id") or "audio_fix_failover"
 s["input"] = [f"udp://{group}:{in_primary}", f"udp://{group}:{in_backup}"]
 out = (s.get("output") or [{}])[0]
-out["addr"] = group
+out["addr"] = out_addr
 out["port"] = out_port
+af = out.get("audio_fix") or {}
+# Don't start an internal output probe for this smoke: we need a single local receiver for UDP unicast.
+af["probe_interval_sec"] = 0
+out["audio_fix"] = af
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
@@ -170,7 +176,7 @@ probe_output_audio() {
     if FFPROBE_BIN="$FFPROBE_BIN" python3 - <<'PY'
 import json, os, subprocess, sys
 bin = os.environ["FFPROBE_BIN"]
-group = os.environ.get("MC_GROUP") or "239.255.0.10"
+group = os.environ.get("OUT_ADDR") or "127.0.0.1"
 port = int(os.environ.get("OUT_PORT") or "12410")
 url = f"udp://{group}:{port}?fifo_size=1000000&overrun_nonfatal=1"
 try:
