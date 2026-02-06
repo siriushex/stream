@@ -354,6 +354,41 @@ local function scrub_json_body(body)
     return out, n
 end
 
+local function decode_json_object(body)
+    if type(body) ~= "string" or body == "" then
+        return nil, ""
+    end
+
+    local cleaned = body
+    local ok, decoded = pcall(json.decode, cleaned)
+    if ok and type(decoded) == "table" then
+        return decoded, cleaned
+    end
+
+    cleaned = scrub_json_body(cleaned)
+    ok, decoded = pcall(json.decode, cleaned)
+    if ok and type(decoded) == "table" then
+        return decoded, cleaned
+    end
+
+    -- Some proxies add prefixes/suffixes around the JSON. Try to salvage the outermost object.
+    local start = cleaned:find("{", 1, true)
+    if start then
+        for i = #cleaned, start, -1 do
+            if cleaned:sub(i, i) == "}" then
+                local slice = cleaned:sub(start, i)
+                ok, decoded = pcall(json.decode, slice)
+                if ok and type(decoded) == "table" then
+                    return decoded, slice
+                end
+                break
+            end
+        end
+    end
+
+    return nil, cleaned
+end
+
 local function detect_image_error(body)
     local msg = ""
     if type(body) == "string" then
@@ -919,8 +954,22 @@ function ai_openai_client.request_json_schema(opts, callback)
                     end
                     return callback(false, msg, meta)
                 end
-                local decoded = json.decode(response_body or "")
+                local decoded, cleaned = decode_json_object(response_body or "")
                 if type(decoded) ~= "table" then
+                    if model_index < #models then
+                        model_index = model_index + 1
+                        return perform_request()
+                    end
+                    if attempts < max_attempts then
+                        local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
+                        delay = ai_openai_client.compute_retry_delay(meta, delay)
+                        if type(opts.on_retry) == "function" then
+                            pcall(opts.on_retry, attempts, delay, meta)
+                        end
+                        schedule_retry(delay)
+                        return
+                    end
+                    meta.error_detail = meta.error_detail or snip_error_body(cleaned, 200)
                     return callback(false, "invalid json", meta)
                 end
                 local text, err = extract_output_json(decoded)
@@ -1099,8 +1148,23 @@ function ai_openai_client.request_json_schema(opts, callback)
                 if not response.content then
                     return callback(false, "empty response", meta)
                 end
-                local decoded = json.decode(response.content)
+                local decoded, cleaned = decode_json_object(response.content or "")
                 if type(decoded) ~= "table" then
+                    if model_index < #models then
+                        model_index = model_index + 1
+                        perform_request()
+                        return
+                    end
+                    if attempts < max_attempts then
+                        local delay = retry_schedule[attempts] or retry_schedule[#retry_schedule] or 15
+                        delay = ai_openai_client.compute_retry_delay(meta, delay)
+                        if type(opts.on_retry) == "function" then
+                            pcall(opts.on_retry, attempts, delay, meta)
+                        end
+                        schedule_retry(delay)
+                        return
+                    end
+                    meta.error_detail = meta.error_detail or snip_error_body(cleaned, 200)
                     return callback(false, "invalid json", meta)
                 end
                 local text, err = extract_output_json(decoded)

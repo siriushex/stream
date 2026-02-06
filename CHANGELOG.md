@@ -19,6 +19,11 @@
   - `contrib/ci/smoke_preview.sh`
 ### 2026-02-06
 - Changes:
+  - AI: harden OpenAI proxy response decoding (scrub/salvage JSON) and fall back to the next model when a proxy returns invalid JSON.
+- Tests:
+  - `./astral scripts/tests/ai_openai_invalid_json_fallback_unit.lua`
+### 2026-02-06
+- Changes:
   - AI: when using proxy (curl), read OpenAI Responses body from a temp file (`curl -o`) to avoid stdout truncation causing "invalid json" in chat.
 - Tests:
   - `./astral scripts/tests/ai_openai_proxy_bodyfile_unit.lua`
