@@ -4574,6 +4574,12 @@ local function build_publish_ffmpeg_argv(job, worker)
 
         table.insert(argv, "-c")
         table.insert(argv, "copy")
+        -- Unlike plain MP4 muxing, DASH (fragmented MP4) is strict about codec tags.
+        -- Explicitly set MP4-compatible tags so stream-copy from MPEG-TS works reliably.
+        table.insert(argv, "-tag:v")
+        table.insert(argv, "avc1")
+        table.insert(argv, "-tag:a")
+        table.insert(argv, "mp4a")
 
         -- Live DASH (MVP): mpd + fMP4 segments on disk.
         table.insert(argv, "-f")
