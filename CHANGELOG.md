@@ -23,6 +23,13 @@
   - `contrib/ci/smoke_mpts_cat.sh`
 ### 2026-02-06
 - Changes:
+  - API: allow enabled-only adapter updates (avoid wiping adapter config when toggling enabled).
+  - API: adapters: treat missing `enabled` on updates as "keep current" (prevents accidental re-enable on partial updates).
+  - UI: rename Stream/Adapter "Apply" buttons to "Save" to clarify persistence.
+- Tests:
+  - Local integration: enabled-only adapter PUT preserves adapter config fields (export unchanged).
+### 2026-02-06
+- Changes:
   - UI: add Save buttons for HLS/HTTP Play/HTTP Auth settings (persist without restart) and autosave HTTP Play access toggles.
 - Tests:
   - Not run (UI change only).
