@@ -754,9 +754,11 @@ function ai_openai_client.request_json_schema(opts, callback)
         end
         local body_path = nil
         local headers_path = nil
+        local response_path = nil
         if #proxies > 0 then
             body_path = write_temp_body(body)
             headers_path = make_temp_path("astral-ai-headers", ".txt")
+            response_path = make_temp_path("astral-ai-response", ".json")
         end
         local function cleanup_temp()
             if body_path then
@@ -766,6 +768,10 @@ function ai_openai_client.request_json_schema(opts, callback)
             if headers_path then
                 pcall(os.remove, headers_path)
                 headers_path = nil
+            end
+            if response_path then
+                pcall(os.remove, response_path)
+                response_path = nil
             end
         end
         local function read_rate_headers()
@@ -848,6 +854,8 @@ function ai_openai_client.request_json_schema(opts, callback)
                     tostring(math.min(5, timeout)),
                     "-D",
                     headers_path or "/dev/null",
+                    "-o",
+                    response_path or "/dev/null",
                     "-H",
                     "Content-Type: application/json",
                     "-H",
@@ -901,7 +909,8 @@ function ai_openai_client.request_json_schema(opts, callback)
                             end
                             return handle_result(false, nil, 0, stderr or "curl failed")
                         end
-                        local body_out, status_code = split_curl_output(stdout or "")
+                        local _, status_code = split_curl_output(stdout or "")
+                        local body_out = response_path and read_text_file(response_path) or ""
                         if not status_code or status_code == 0 then
                             if index < #proxies then
                                 return attempt_proxy(index + 1)
