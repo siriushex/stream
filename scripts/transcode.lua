@@ -449,6 +449,20 @@ local function stat_exists(path)
     return false
 end
 
+local function sh_quote(path)
+    local text = tostring(path or "")
+    -- POSIX shell single-quote escaping: ' -> '\''.
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+local function ensure_dir(path)
+    if not path or path == "" then
+        return false
+    end
+    os.execute("mkdir -p " .. sh_quote(path))
+    return true
+end
+
 local function check_nvidia_support()
     if not utils or type(utils.stat) ~= "function" then
         return true, nil
@@ -4459,48 +4473,118 @@ local function build_publish_ffmpeg_argv(job, worker)
     end
 
     local t = tostring(worker.publish_type or ""):lower()
-    local pid = worker.profile_id
-    local url = worker.publish_url
-    if not pid or pid == "" then
-        return nil, "publish profile_id required"
-    end
-    if not url or url == "" then
-        return nil, "publish url required"
-    end
-
-    local input_url = build_transcode_live_url(job.id, pid)
-    if not input_url then
-        return nil, "http_port unknown (cannot build /live url)"
-    end
-
     local argv = {
         bin,
         "-hide_banner",
         "-progress", "pipe:1",
         "-nostats",
         "-loglevel", "warning",
-        "-i", input_url,
-        -- Be tolerant to missing tracks (e.g., audio missing). Copy only.
-        "-map", "0:v:0?",
-        "-map", "0:a:0?",
-        "-c", "copy",
     }
 
-    if t == "rtmp" then
+    if t == "dash" then
+        local variants = type(worker.variants) == "table" and worker.variants or {}
+        if #variants == 0 then
+            return nil, "publish variants required"
+        end
+
+        local base = (config and config.data_dir) and config.data_dir or "./data"
+        local out_dir = worker.dash_dir or (base .. "/dash/" .. tostring(job.id))
+        ensure_dir(out_dir)
+        local mpd_path = worker.dash_mpd_path or (out_dir .. "/manifest.mpd")
+        worker.dash_dir = out_dir
+        worker.dash_mpd_path = mpd_path
+        worker.publish_url = mpd_path
+        if not worker.profile_id or worker.profile_id == "" then
+            worker.profile_id = table.concat(variants, "+")
+        end
+
+        local input_urls = {}
+        for _, pid in ipairs(variants) do
+            local input_url = build_transcode_live_url(job.id, pid)
+            if not input_url then
+                return nil, "http_port unknown (cannot build /live url)"
+            end
+            table.insert(argv, "-i")
+            table.insert(argv, input_url)
+            table.insert(input_urls, input_url)
+        end
+        worker.input_urls = input_urls
+        worker.input_url = input_urls[1]
+
+        for idx = 0, (#variants - 1) do
+            table.insert(argv, "-map")
+            table.insert(argv, tostring(idx) .. ":v:0?")
+        end
+        table.insert(argv, "-map")
+        table.insert(argv, "0:a:0?")
+
+        table.insert(argv, "-c")
+        table.insert(argv, "copy")
+
+        -- Live DASH (MVP): mpd + fMP4 segments on disk.
         table.insert(argv, "-f")
-        table.insert(argv, "flv")
-        table.insert(argv, tostring(url))
-    elseif t == "rtsp" then
-        table.insert(argv, "-f")
-        table.insert(argv, "rtsp")
-        table.insert(argv, "-rtsp_transport")
-        table.insert(argv, "tcp")
-        table.insert(argv, tostring(url))
+        table.insert(argv, "dash")
+        table.insert(argv, "-streaming")
+        table.insert(argv, "1")
+        table.insert(argv, "-use_template")
+        table.insert(argv, "1")
+        table.insert(argv, "-use_timeline")
+        table.insert(argv, "0")
+        table.insert(argv, "-adaptation_sets")
+        table.insert(argv, "id=0,streams=v id=1,streams=a")
+        local seg = tonumber(worker.dash_seg_duration) or tonumber(tc.dash_seg_duration) or 2
+        if not seg or seg < 1 then seg = 2 end
+        table.insert(argv, "-seg_duration")
+        table.insert(argv, tostring(seg))
+        local window = tonumber(worker.dash_window_size) or tonumber(tc.dash_window_size) or 10
+        if not window or window < 5 then window = 10 end
+        table.insert(argv, "-window_size")
+        table.insert(argv, tostring(math.floor(window)))
+        table.insert(argv, "-extra_window_size")
+        table.insert(argv, tostring(math.floor(window)))
+        table.insert(argv, mpd_path)
+    elseif t == "rtmp" or t == "rtsp" then
+        local pid = worker.profile_id
+        local url = worker.publish_url
+        if not pid or pid == "" then
+            return nil, "publish profile_id required"
+        end
+        if not url or url == "" then
+            return nil, "publish url required"
+        end
+
+        local input_url = build_transcode_live_url(job.id, pid)
+        if not input_url then
+            return nil, "http_port unknown (cannot build /live url)"
+        end
+        worker.input_url = input_url
+
+        table.insert(argv, "-i")
+        table.insert(argv, input_url)
+
+        -- Be tolerant to missing tracks (e.g., audio missing). Copy only.
+        table.insert(argv, "-map")
+        table.insert(argv, "0:v:0?")
+        table.insert(argv, "-map")
+        table.insert(argv, "0:a:0?")
+        table.insert(argv, "-c")
+        table.insert(argv, "copy")
+
+        if t == "rtmp" then
+            table.insert(argv, "-f")
+            table.insert(argv, "flv")
+            table.insert(argv, tostring(url))
+        else
+            table.insert(argv, "-f")
+            table.insert(argv, "rtsp")
+            table.insert(argv, "-rtsp_transport")
+            table.insert(argv, "tcp")
+            table.insert(argv, tostring(url))
+        end
     else
         return nil, "unsupported publish type: " .. tostring(t)
     end
 
-    worker.input_url = input_url
     worker.ffmpeg_path_resolved = bin
     worker.ffmpeg_path_source = bin_source
     worker.ffmpeg_path_exists = bin_exists
@@ -4712,6 +4796,12 @@ ensure_publish_workers = function(job)
                     local key = t .. ":" .. pid
                     desired[key] = { type = t, profile_id = pid, url = url }
                 end
+            elseif t == "dash" then
+                local variants = type(pub.variants) == "table" and pub.variants or nil
+                if variants and #variants > 0 then
+                    local key = t .. ":" .. table.concat(variants, "+")
+                    desired[key] = { type = t, variants = variants, path = pub.path }
+                end
             end
         end
     end
@@ -4723,6 +4813,7 @@ ensure_publish_workers = function(job)
                 publish_type = spec.type,
                 profile_id = spec.profile_id,
                 publish_url = spec.url,
+                variants = spec.variants,
                 watchdog = job.watchdog,
                 state = "STOPPED",
                 restart_history = {},
@@ -4730,6 +4821,20 @@ ensure_publish_workers = function(job)
                 stderr_tail = {},
                 last_progress = {},
             }
+            if spec.type == "dash" then
+                worker.profile_id = table.concat(spec.variants or {}, "+")
+                if spec.path and spec.path ~= "" then
+                    local mpd = tostring(spec.path)
+                    if mpd:match("%.mpd$") then
+                        worker.dash_mpd_path = mpd
+                        worker.dash_dir = mpd:match("^(.*)/[^/]+$") or nil
+                    else
+                        worker.dash_dir = mpd
+                        worker.dash_mpd_path = mpd .. "/manifest.mpd"
+                    end
+                    worker.publish_url = worker.dash_mpd_path
+                end
+            end
             job.publish_workers_by_key[key] = worker
             table.insert(job.publish_workers, worker)
         end
