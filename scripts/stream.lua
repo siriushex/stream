@@ -2358,6 +2358,7 @@ function validate_stream_config(cfg, opts)
         return nil, "stream config is required"
     end
 
+    local is_transcode = is_transcode_stream(cfg)
     local is_mpts = cfg.mpts == true
     local inputs = normalize_stream_list(cfg.input)
 
@@ -2437,9 +2438,14 @@ function validate_stream_config(cfg, opts)
                 return nil, "invalid input #" .. idx .. " format"
             end
             if resolved.format == "stream" then
-                return nil, "stream:// inputs are supported only in MPTS mode"
-            end
-            if not init_input_module[resolved.format] then
+                if not is_transcode then
+                    return nil, "stream:// inputs are supported only in MPTS mode"
+                end
+                local stream_id = resolved.stream_id or resolved.addr or resolved.id
+                if not stream_id or stream_id == "" then
+                    return nil, "transcode input #" .. idx .. " requires stream://<id>"
+                end
+            elseif not init_input_module[resolved.format] then
                 return nil, "invalid input #" .. idx .. " format"
             end
             if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
@@ -2488,10 +2494,13 @@ function validate_stream_config(cfg, opts)
         if not ok then return nil, err end
     end
 
-    if is_transcode_stream(cfg) then
+    if is_transcode then
         local tc = cfg.transcode or {}
-        if type(tc.outputs) ~= "table" or #tc.outputs == 0 then
-            return nil, "transcode outputs are required"
+        local has_outputs = type(tc.outputs) == "table" and #tc.outputs > 0
+        local has_publish = type(tc.profiles) == "table" and #tc.profiles > 0
+            and type(tc.publish) == "table" and #tc.publish > 0
+        if not has_outputs and not has_publish then
+            return nil, "transcode outputs or publish profiles are required"
         end
         return true
     end
