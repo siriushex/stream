@@ -2256,12 +2256,10 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     else
         -- Fallback: analyze through loopback /play. This avoids SSRF allowlist issues for remote inputs
         -- and ensures the analyzed TS matches what external clients see.
-        local url = nil
-        if channel_data then
-            url = build_local_play_url(stream_id)
-        else
-            url = input_url
-        end
+        -- Даже если канал ещё не активен (нет viewers / on-demand), loopback /play
+        -- безопаснее, чем прямой http_request к input_url: не упираемся в allowlist
+        -- и получаем ровно тот TS, который видит внешний клиент.
+        local url = build_local_play_url(stream_id)
         local conf = parse_url(url)
         if not conf then
             return error_response(server, client, 400, "invalid input url")
@@ -2269,7 +2267,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         conf.name = analyze_name
 
         local input = init_input(conf)
-        if not input and url ~= input_url and input_url then
+        if not input and input_url then
             -- Loopback can fail if /play is disabled or stream is missing in runtime; try the raw input URL.
             conf = parse_url(input_url)
             if not conf then
