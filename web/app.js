@@ -2132,7 +2132,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'ai_model',
             level: 'advanced',
-            placeholder: 'gpt-5.2',
+            placeholder: 'gpt-5-mini',
             hintId: 'settings-ai-model-hint',
           },
           {
@@ -14845,7 +14845,7 @@ function applySettingsToUI() {
     elements.settingsAiModel.value = getSettingString('ai_model', '');
   }
   if (elements.settingsAiModelHint) {
-    elements.settingsAiModelHint.textContent = 'Default: gpt-5.2 (auto fallback to gpt-5-mini, gpt-4.1 if unavailable).';
+    elements.settingsAiModelHint.textContent = 'Default: gpt-5-mini (auto fallback to gpt-5.2, gpt-4.1 if unavailable).';
   }
   if (elements.settingsAiChartMode) {
     elements.settingsAiChartMode.value = 'spec';
@@ -14868,7 +14868,7 @@ function applySettingsToUI() {
   if (elements.aiChatStatus) {
     const enabled = getSettingBool('ai_enabled', false);
     const model = getSettingString('ai_model', '');
-    const effectiveModel = model || 'gpt-5.2';
+    const effectiveModel = model || 'gpt-5-mini';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
       elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
