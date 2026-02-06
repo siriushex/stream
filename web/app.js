@@ -4850,7 +4850,8 @@ function shortInputLabel(url) {
   }
 
   if (scheme === 'udp' || scheme === 'rtp') {
-    return truncateText(rest, 28);
+    // Для multicast и RTP важно не терять схему, иначе адрес выглядит как "239.0.0.1:1234".
+    return truncateText(`${scheme}://${rest}`, 28);
   }
 
   if (scheme === 'file' || scheme === 'dvb') {
@@ -14568,7 +14569,7 @@ function ensureHlsJsLoaded() {
   if (window.Hls) return Promise.resolve();
   if (hlsJsPromise) return hlsJsPromise;
   // Загружаем локальный vendor только по требованию (не тянем CDN в проде).
-  const src = `/vendor/hls.min.js?v=20260206d`;
+  const src = `/vendor/hls.min.js?v=20260206e`;
   hlsJsPromise = loadScriptOnce(src, 'hlsjs').catch((err) => {
     hlsJsPromise = null;
     throw err;
