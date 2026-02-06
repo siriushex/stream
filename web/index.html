@@ -1971,7 +1971,7 @@
               </label>
             </div>
             <div class="form-hint">Target bitrate ниже входного приведёт к переполнению (CBR не выдерживается).</div>
-            <div class="form-hint">CAT is generated empty (no CA descriptors yet).</div>
+            <div class="form-hint">CAT генерируется из списка CA ниже (если Pass CAT выключен).</div>
             <label class="checkline">
               <input type="checkbox" id="mpts-disable-autoremap" class="mpts-field" />
               <span>Disable PID auto-remap</span>
@@ -2003,7 +2003,7 @@
               <input type="checkbox" id="mpts-pass-tdt" class="mpts-field" />
               <span>Pass TDT</span>
             </label>
-            <div class="form-hint">Pass EIT/CAT берётся из выбранного сервиса и фильтруется по service_id.</div>
+            <div class="form-hint">Pass EIT берётся из выбранного сервиса и фильтруется по service_id. Pass CAT пропускается как есть.</div>
             <label class="field">
               <span>EIT source (service #)</span>
               <input type="number" id="mpts-eit-source" class="mpts-field" placeholder="1" min="1" />
@@ -2024,6 +2024,16 @@
             <div class="form-hint">
               Strict PNR отклоняет входы с несколькими программами, если PNR не задан.
             </div>
+          </div>
+          <div class="form-subsection mpts-section">
+            <div class="panel-title">CAT / CA</div>
+            <div class="form-hint">Настраивает CA_descriptors в CAT (EMM PID). Это не создаёт CA поток, только объявляет параметры в SI.</div>
+            <div class="list-header">
+              <span>CA DESCRIPTORS</span>
+              <button class="text-link mpts-field" type="button" id="btn-add-mpts-ca">NEW CA</button>
+            </div>
+            <div class="list" id="mpts-ca-list"></div>
+            <div class="form-hint">CAID: 0..65535, CA PID: 0..8190, private_data: hex строка (опционально).</div>
           </div>
           <div class="form-hint mpts-pass-warning is-hidden" id="mpts-pass-warning">
             Pass NIT/SDT/EIT/TDT корректен только для одного сервиса.

@@ -53,3 +53,4 @@ jobs:
           contrib/ci/smoke_mpts_dvbt.sh
           contrib/ci/smoke_mpts_dvbs.sh
           contrib/ci/smoke_mpts_multisection.sh
+          contrib/ci/smoke_mpts_cat.sh

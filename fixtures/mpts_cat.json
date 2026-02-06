@@ -1,0 +1,68 @@
+{
+  "settings": {},
+  "make_stream": [
+    {
+      "id": "mpts_cat_test",
+      "name": "MPTS CAT Test",
+      "type": "spts",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12355",
+        "udp://127.0.0.1:12357"
+      ],
+      "mpts_services": [
+        {
+          "input": "udp://127.0.0.1:12355",
+          "pnr": 101,
+          "service_name": "MPTS CA 1",
+          "service_provider": "Astral",
+          "service_type_id": 1,
+          "lcn": 101
+        },
+        {
+          "input": "udp://127.0.0.1:12357",
+          "pnr": 102,
+          "service_name": "MPTS CA 2",
+          "service_provider": "Astral",
+          "service_type_id": 1,
+          "lcn": 102
+        }
+      ],
+      "output": [
+        "udp://127.0.0.1:12356"
+      ],
+      "mpts": true,
+      "mpts_config": {
+        "general": {
+          "codepage": "utf-8",
+          "provider_name": "Astral",
+          "tsid": 1,
+          "onid": 1,
+          "network_id": 1,
+          "network_name": "Astral",
+          "country": "RUS",
+          "utc_offset": 3
+        },
+        "nit": {
+          "delivery": "cable",
+          "frequency": 650000,
+          "symbolrate": 6875,
+          "modulation": "256qam",
+          "fec": "auto"
+        },
+        "advanced": {
+          "si_interval_ms": 500,
+          "target_bitrate": 50000000
+        },
+        "ca": [
+          {
+            "ca_system_id": 2816,
+            "ca_pid": 800,
+            "private_data": "010203"
+          }
+        ]
+      }
+    }
+  ]
+}
+
