@@ -3241,6 +3241,9 @@ function setSettingsSection(section) {
   if (section === 'license') {
     loadLicense();
   }
+  if (section === 'users') {
+    loadUsers();
+  }
   if (section === 'servers') {
     startServerStatusPolling();
   } else {
@@ -12345,20 +12348,108 @@ function readStreamForm() {
   return { id, enabled, config };
 }
 
-function updateTileInputs(tile, stats) {
-  const container = tile.querySelector('[data-role="tile-inputs"]');
-  if (!container) return;
-  if (stats && stats.transcode_state) {
-    container.innerHTML = '';
-    return;
+function ensureTileInputRows(container, inputs) {
+  if (!container) return [];
+  const current = Array.isArray(container.__rows) ? container.__rows : [];
+  if (container.dataset.mode === 'inputs' && current.length === inputs.length) {
+    return current;
   }
-  const inputs = Array.isArray(stats && stats.inputs) ? stats.inputs : [];
-  const activeIndex = getActiveInputIndex(stats);
-  renderTileInputs(container, inputs, activeIndex);
+  container.innerHTML = '';
+  container.__rows = [];
+  if (!inputs.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tile-input-empty';
+    empty.textContent = 'No input stats yet.';
+    container.appendChild(empty);
+    container.dataset.mode = 'empty';
+    return [];
+  }
+  container.dataset.mode = 'inputs';
+
+  inputs.forEach((input, index) => {
+    const row = document.createElement('div');
+    row.className = 'tile-input-row';
+
+    const badge = document.createElement('span');
+    badge.className = 'input-badge';
+
+    const label = document.createElement('span');
+    label.className = 'tile-input-label';
+
+    const bitrateEl = document.createElement('span');
+    bitrateEl.className = 'tile-input-bitrate';
+
+    row.appendChild(badge);
+    row.appendChild(label);
+    row.appendChild(bitrateEl);
+
+    const copyButton = document.createElement('button');
+    copyButton.type = 'button';
+    copyButton.className = 'tile-input-copy';
+    copyButton.textContent = 'Copy';
+    copyButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const url = copyButton.dataset.url || '';
+      if (url) copyText(url);
+    });
+    row.appendChild(copyButton);
+
+    container.appendChild(row);
+    container.__rows.push({ row, badge, label, bitrateEl, copyButton });
+  });
+
+  return container.__rows;
 }
 
-function updateTileMptsMeta(tile, stream, stats) {
-  const meta = tile.querySelector('[data-role="tile-mpts-meta"]');
+function updateTileInputs(container, stats) {
+  if (!container) return;
+  if (stats && stats.transcode_state) {
+    // Для transcoding-stream inputs не показываем.
+    if (container.dataset.mode !== 'transcode') {
+      container.innerHTML = '';
+      container.__rows = [];
+      container.dataset.mode = 'transcode';
+    }
+    return;
+  }
+
+  const inputs = Array.isArray(stats && stats.inputs) ? stats.inputs : [];
+  const activeIndex = getActiveInputIndex(stats);
+  const rows = ensureTileInputRows(container, inputs);
+  if (!inputs.length) return;
+
+  rows.forEach((ref, index) => {
+    const input = inputs[index] || {};
+    const stateValue = getInputState(input, index, activeIndex);
+    const stateClass = `tile-input-row state-${String(stateValue || '').toLowerCase()}`.trim();
+    if (ref.row.className !== stateClass) {
+      ref.row.className = stateClass;
+    }
+    ref.row.classList.toggle('is-active', index === activeIndex);
+    if (ref.badge.textContent !== stateValue) {
+      ref.badge.textContent = stateValue;
+    }
+
+    const labelText = `#${index + 1} ${getInputLabel(input, index)}`;
+    if (ref.label.textContent !== labelText) {
+      ref.label.textContent = labelText;
+    }
+    const url = input && input.url ? String(input.url) : '';
+    ref.label.title = url;
+    ref.copyButton.dataset.url = url;
+    ref.copyButton.hidden = !url;
+
+    const bitrateValue = Number.isFinite(input && input.bitrate_kbps)
+      ? input.bitrate_kbps
+      : (input && input.bitrate);
+    const bitrate = formatBitrate(Number(bitrateValue) || 0);
+    if (ref.bitrateEl.textContent !== bitrate) {
+      ref.bitrateEl.textContent = bitrate;
+    }
+  });
+}
+
+function updateTileMptsMeta(meta, stream, stats) {
   if (!meta) return;
   const isMpts = stream && stream.config && stream.config.mpts === true;
   if (!isMpts) {
@@ -12379,6 +12470,26 @@ function updateTileMptsMeta(tile, stream, stats) {
   meta.classList.remove('is-hidden');
 }
 
+function getTileRefs(tile) {
+  if (!tile) return null;
+  if (tile.__refs) return tile.__refs;
+  const refs = {
+    rateEl: tile.querySelector('.tile-rate'),
+    metaEl: tile.querySelector('.tile-meta'),
+    compactStatus: tile.querySelector('[data-role="tile-compact-status"]'),
+    compactStatusLabel: null,
+    compactInput: tile.querySelector('[data-role="tile-compact-input"]'),
+    compactSummary: tile.querySelector('[data-role="tile-compact-input-summary"]'),
+    inputsContainer: tile.querySelector('[data-role="tile-inputs"]'),
+    mptsMeta: tile.querySelector('[data-role="tile-mpts-meta"]'),
+  };
+  if (refs.compactStatus) {
+    refs.compactStatusLabel = refs.compactStatus.querySelector('[data-role="tile-compact-status-label"]');
+  }
+  tile.__refs = refs;
+  return refs;
+}
+
 function updateTiles() {
   if (state.viewMode === 'table') {
     updateStreamTableRows();
@@ -12390,7 +12501,7 @@ function updateTiles() {
   }
   $$('.tile').forEach((tile) => {
     const id = tile.dataset.id;
-    applyTileUiState(tile);
+    const refs = getTileRefs(tile);
     const stream = state.streamIndex[id];
     const enabled = stream ? stream.enabled !== false : tile.dataset.enabled === '1';
     tile.dataset.enabled = enabled ? '1' : '0';
@@ -12401,8 +12512,6 @@ function updateTiles() {
       ? transcodeState === 'RUNNING'
       : stats.on_air === true;
     const onAir = enabled && isRunning;
-    const rateEl = tile.querySelector('.tile-rate');
-    const metaEl = tile.querySelector('.tile-meta');
     const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
     const activeIndex = getActiveInputIndex(stats);
     const activeLabel = getActiveInputLabel(inputs, activeIndex);
@@ -12413,30 +12522,34 @@ function updateTiles() {
         className: enabled ? (onAir ? 'ok' : 'warn') : 'disabled',
       };
 
-    if (rateEl) {
+    if (refs && refs.rateEl) {
       if (transcodeState) {
-        rateEl.textContent = formatTranscodeBitrates(transcode);
+        const text = formatTranscodeBitrates(transcode);
+        if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       } else {
-        rateEl.textContent = formatBitrate(stats.bitrate || 0);
+        const text = formatBitrate(stats.bitrate || 0);
+        if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       }
-      rateEl.classList.toggle('warn', enabled && !onAir);
-      rateEl.classList.toggle('disabled', !enabled);
+      refs.rateEl.classList.toggle('warn', enabled && !onAir);
+      refs.rateEl.classList.toggle('disabled', !enabled);
     }
-    if (metaEl) {
+    if (refs && refs.metaEl) {
       if (!enabled) {
-        metaEl.textContent = 'Disabled';
+        if (refs.metaEl.textContent !== 'Disabled') refs.metaEl.textContent = 'Disabled';
       } else if (transcodeState) {
         if (transcodeState === 'ERROR') {
           const alertMessage = formatTranscodeAlert(transcode.last_alert);
           const fallback = transcode.last_error || 'Transcode failed';
-          metaEl.textContent = `Transcode error: ${alertMessage || fallback}`;
+          const text = `Transcode error: ${alertMessage || fallback}`;
+          if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
         } else if (transcodeState === 'STARTING') {
-          metaEl.textContent = 'Pre-probe in progress...';
+          if (refs.metaEl.textContent !== 'Pre-probe in progress...') refs.metaEl.textContent = 'Pre-probe in progress...';
         } else if (transcodeState === 'RESTARTING') {
           const alertMessage = formatTranscodeAlert(transcode.last_alert);
-          metaEl.textContent = alertMessage
+          const text = alertMessage
             ? `Restarting: ${alertMessage}`
             : 'Transcode: RESTARTING';
+          if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
         } else {
           let suffix = '';
           if (transcode.switch_warmup) {
@@ -12451,37 +12564,42 @@ function updateTiles() {
               suffix = ' (warmup running)';
             }
           }
-          metaEl.textContent = `Transcode: ${transcodeState}${suffix}`;
+          const text = `Transcode: ${transcodeState}${suffix}`;
+          if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
         }
       } else {
-        metaEl.textContent = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
+        const text = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
+        if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
       }
     }
 
-    const compactStatus = tile.querySelector('[data-role="tile-compact-status"]');
-    if (compactStatus) {
-      compactStatus.className = `tile-compact-status stream-status-badge ${statusInfo.className}`;
-      const statusLabel = compactStatus.querySelector('[data-role="tile-compact-status-label"]');
-      if (statusLabel) statusLabel.textContent = statusInfo.label;
+    if (refs && refs.compactStatus) {
+      const cls = `tile-compact-status stream-status-badge ${statusInfo.className}`;
+      if (refs.compactStatus.className !== cls) refs.compactStatus.className = cls;
+      if (refs.compactStatusLabel && refs.compactStatusLabel.textContent !== statusInfo.label) {
+        refs.compactStatusLabel.textContent = statusInfo.label;
+      }
     }
-    const compactInput = tile.querySelector('[data-role="tile-compact-input"]');
-    if (compactInput) {
-      compactInput.textContent = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
+    if (refs && refs.compactInput) {
+      const text = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
+      if (refs.compactInput.textContent !== text) refs.compactInput.textContent = text;
       const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
-      compactInput.title = activeInput && activeInput.url ? activeInput.url : '';
+      refs.compactInput.title = activeInput && activeInput.url ? activeInput.url : '';
     }
-    const compactSummary = tile.querySelector('[data-role="tile-compact-input-summary"]');
-    if (compactSummary) {
-      compactSummary.textContent = formatInputSummary(inputs, activeIndex);
+    if (refs && refs.compactSummary) {
+      const text = formatInputSummary(inputs, activeIndex);
+      if (refs.compactSummary.textContent !== text) refs.compactSummary.textContent = text;
     }
 
-    updateTileInputs(tile, stats);
-    updateTileMptsMeta(tile, stream, stats);
+    // Детали обновляем только когда плитка раскрыта (иначе слишком дорого при большом числе стримов).
+    if (tile.classList.contains('is-expanded')) {
+      updateTileInputs(refs && refs.inputsContainer, stats);
+      updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
+    }
     tile.classList.toggle('ok', enabled && onAir);
     tile.classList.toggle('warn', enabled && !onAir);
     tile.classList.toggle('disabled', !enabled);
   });
-  scheduleAutoFit(elements.dashboardStreams);
 }
 
 function formatTranscodeAlert(alert) {
@@ -15858,6 +15976,10 @@ async function loadSettings() {
     state.settings = data || {};
   } catch (err) {
     state.settings = {};
+    // 401 нужно пробрасывать наверх (иначе refreshAll() может скрыть login overlay).
+    if (err && err.status === 401) {
+      throw err;
+    }
   }
   state.groups = normalizeGroups(state.settings.groups);
   state.servers = normalizeServers(state.settings.servers);
@@ -18153,22 +18275,38 @@ async function logout() {
 }
 
 async function refreshAll() {
+  // Делаем UI отзывчивым: сначала минимальный набор для текущего view,
+  // остальное догружаем в фоне. Это важно для больших конфигов (много стримов).
+  pauseAllPolling();
   try {
     await loadSettings();
-    await loadAdapters();
-    await loadAdapterStatus();
-    if (state.currentView === 'adapters') {
+    setOverlay(elements.loginOverlay, false);
+
+    const view = state.currentView || 'dashboard';
+    if (view === 'dashboard') {
+      await loadStreams();
+    } else if (view === 'adapters') {
+      await loadAdapters();
+      await loadAdapterStatus();
       await loadDvbAdapters();
-      startDvbPolling();
-    }
-    await loadSplitters();
-    await loadBuffers();
-    await loadStreams();
-    await loadUsers();
-    await loadSessions();
-    await loadAccessLog(true);
-    if (state.currentView === 'observability') {
+    } else if (view === 'splitters') {
+      await loadSplitters();
+    } else if (view === 'buffers') {
+      await loadBuffers();
+    } else if (view === 'observability') {
       await loadObservability(false);
+      // Стримы нужны для selector'ов и переходов; грузим без блокировки view.
+      loadStreams().catch(() => {});
+    } else if (view === 'sessions') {
+      await loadSessions();
+      loadStreams().catch(() => {});
+    } else if (view === 'logs') {
+      loadStreams().catch(() => {});
+    } else if (view === 'access') {
+      loadStreams().catch(() => {});
+    } else {
+      // Fallback: всегда стараемся иметь список стримов (это основная сущность UI).
+      await loadStreams();
     }
 
     // Поддержка "открыть плеер в новой вкладке": index.html#player=<id>&kind=hls|play
@@ -18183,10 +18321,31 @@ async function refreshAll() {
       }
     }
 
-    setOverlay(elements.loginOverlay, false);
     resumeAllPolling();
+
+    // Фоновая подгрузка остальных разделов (не блокируем открытие dashboard).
+    const bgTasks = [];
+    if (view !== 'adapters') {
+      bgTasks.push(loadAdapters());
+      bgTasks.push(loadAdapterStatus());
+    }
+    if (view !== 'splitters') {
+      bgTasks.push(loadSplitters());
+    }
+    if (view !== 'buffers') {
+      bgTasks.push(loadBuffers());
+    }
+    Promise.allSettled(bgTasks).catch(() => {});
   } catch (err) {
-    setOverlay(elements.loginOverlay, true);
+    const net = formatNetworkError(err);
+    const message = net || (err && err.message ? err.message : 'Failed to load');
+    if (err && err.status === 401) {
+      setOverlay(elements.loginOverlay, true);
+      return;
+    }
+    // Сеть/allowlist: не прячем UI за логином, просто показываем ошибку.
+    setOverlay(elements.loginOverlay, false);
+    setStatus(message || 'Failed to load');
   }
 }
 
@@ -19125,7 +19284,14 @@ function bindEvents() {
     const toggleButton = event.target.closest('[data-action="tile-toggle"]');
     if (toggleButton) {
       const expanded = isTileExpanded(stream.id);
-      setTileExpanded(stream.id, !expanded);
+      const nextExpanded = !expanded;
+      setTileExpanded(stream.id, nextExpanded);
+      if (nextExpanded) {
+        const refs = getTileRefs(tile);
+        const stats = state.stats[stream.id] || {};
+        updateTileInputs(refs && refs.inputsContainer, stats);
+        updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
+      }
       return;
     }
 
@@ -19139,7 +19305,14 @@ function bindEvents() {
     const header = event.target.closest('.tile-header');
     if (header) {
       const expanded = isTileExpanded(stream.id);
-      setTileExpanded(stream.id, !expanded);
+      const nextExpanded = !expanded;
+      setTileExpanded(stream.id, nextExpanded);
+      if (nextExpanded) {
+        const refs = getTileRefs(tile);
+        const stats = state.stats[stream.id] || {};
+        updateTileInputs(refs && refs.inputsContainer, stats);
+        updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
+      }
       return;
     }
 
