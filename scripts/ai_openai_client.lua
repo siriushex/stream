@@ -389,6 +389,116 @@ local function decode_json_object(body)
     return nil, cleaned
 end
 
+local function read_json_string_literal(body, start_idx)
+    if type(body) ~= "string" or type(start_idx) ~= "number" then
+        return nil, nil
+    end
+    local i = start_idx
+    while i <= #body do
+        local c = body:sub(i, i)
+        if c ~= " " and c ~= "\t" and c ~= "\r" and c ~= "\n" then
+            break
+        end
+        i = i + 1
+    end
+    if body:sub(i, i) ~= "\"" then
+        return nil, nil
+    end
+    local start = i
+    i = i + 1
+    local escaped = false
+    while i <= #body do
+        local byte = body:byte(i)
+        if escaped then
+            escaped = false
+        elseif byte == 92 then -- '\\'
+            escaped = true
+        elseif byte == 34 then -- '"'
+            return body:sub(start, i), i + 1
+        end
+        i = i + 1
+    end
+    return nil, nil
+end
+
+local function extract_output_text_candidates(body)
+    if type(body) ~= "string" or body == "" then
+        return {}
+    end
+    local cleaned = scrub_json_body(body)
+    local out = {}
+
+    local function push_literal(literal)
+        if type(literal) ~= "string" or literal == "" then
+            return
+        end
+        local ok, unescaped = pcall(json.decode, literal)
+        if ok and type(unescaped) == "string" and unescaped ~= "" then
+            table.insert(out, unescaped)
+        end
+    end
+
+    -- 1) Top-level convenience field: "output_text": "..."
+    local idx = 1
+    while true do
+        local k = cleaned:find("\"output_text\"", idx, true)
+        if not k then
+            break
+        end
+        local colon = cleaned:find(":", k + 11, true)
+        if not colon then
+            idx = k + 11
+        else
+            local literal, next_i = read_json_string_literal(cleaned, colon + 1)
+            if literal then
+                push_literal(literal)
+                idx = next_i or (colon + 1)
+            else
+                idx = colon + 1
+            end
+        end
+    end
+
+    -- 2) Chunk form: { "type": "output_text", "text": "..." }
+    idx = 1
+    while true do
+        local k = cleaned:find("\"type\":\"output_text\"", idx, true)
+        if not k then
+            break
+        end
+        local t = cleaned:find("\"text\"", k + 18, true)
+        if not t then
+            idx = k + 18
+        else
+            local colon = cleaned:find(":", t + 6, true)
+            if not colon then
+                idx = t + 6
+            else
+                local literal, next_i = read_json_string_literal(cleaned, colon + 1)
+                if literal then
+                    push_literal(literal)
+                    idx = next_i or (colon + 1)
+                else
+                    idx = colon + 1
+                end
+            end
+        end
+    end
+
+    return out
+end
+
+local function extract_output_json_from_raw(body)
+    local candidates = extract_output_text_candidates(body)
+    for _, text in ipairs(candidates) do
+        local ok, parsed = pcall(json.decode, text)
+        if ok and type(parsed) == "table" then
+            return parsed
+        end
+    end
+    return nil
+end
+
 local function detect_image_error(body)
     local msg = ""
     if type(body) == "string" then
@@ -956,6 +1066,10 @@ function ai_openai_client.request_json_schema(opts, callback)
                 end
                 local decoded, cleaned = decode_json_object(response_body or "")
                 if type(decoded) ~= "table" then
+                    local parsed_out = extract_output_json_from_raw(cleaned)
+                    if type(parsed_out) == "table" then
+                        return callback(true, parsed_out, meta)
+                    end
                     if model_index < #models then
                         model_index = model_index + 1
                         return perform_request()
@@ -1150,6 +1264,10 @@ function ai_openai_client.request_json_schema(opts, callback)
                 end
                 local decoded, cleaned = decode_json_object(response.content or "")
                 if type(decoded) ~= "table" then
+                    local parsed_out = extract_output_json_from_raw(cleaned)
+                    if type(parsed_out) == "table" then
+                        return callback(true, parsed_out, meta)
+                    end
                     if model_index < #models then
                         model_index = model_index + 1
                         perform_request()
@@ -1211,4 +1329,7 @@ ai_openai_client._test = {
     detect_model_not_found = detect_model_not_found,
     build_url = build_url,
     scrub_json_body = scrub_json_body,
+    decode_json_object = decode_json_object,
+    extract_output_text_candidates = extract_output_text_candidates,
+    extract_output_json_from_raw = extract_output_json_from_raw,
 }
