@@ -437,11 +437,21 @@ function preview.start(stream_id, opts)
     -- Но если UI запросил video_only (фолбэк для браузерной совместимости), HLS нельзя использовать,
     -- потому что там может быть неподдерживаемое аудио (например MP2).
     if not video_only then
-        local out = find_hls_output(stream.channel.config or {})
-        if out then
+        -- Если включен global http_play_hls, то /hls/<id>/index.m3u8 доступен даже без per-stream output.
+        -- Это самый дешёвый вариант: не запускаем preview-сессию вообще.
+        if setting_bool("http_play_hls", false) then
+            local out = find_hls_output(stream.channel.config or {}) or { playlist = "index.m3u8" }
             local url = build_direct_hls_url(stream_id, out)
             if url and url ~= "" then
                 return { mode = "hls", url = url }
+            end
+        else
+            local out = find_hls_output(stream.channel.config or {})
+            if out then
+                local url = build_direct_hls_url(stream_id, out)
+                if url and url ~= "" then
+                    return { mode = "hls", url = url }
+                end
             end
         end
     end
