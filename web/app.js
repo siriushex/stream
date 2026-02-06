@@ -17611,6 +17611,7 @@ function getAiHelpHints() {
     'help',
     'error ch',
     'make mpts',
+    'delete all disable channel',
   ];
 }
 
@@ -17912,6 +17913,42 @@ async function sendAiChatMessage() {
     if (elements.aiChatFiles) {
       elements.aiChatFiles.value = '';
       updateAiChatFilesLabel();
+    }
+    return;
+  }
+  if (
+    normalized === 'delete all disable channel' ||
+    normalized === 'delete all disabled channel' ||
+    normalized === 'delete all disabled channels'
+  ) {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    const ok = window.confirm('Delete all disabled streams from config? This can be restored via Config History, but it will remove streams now.');
+    if (!ok) {
+      appendAiChatMessage('system', 'Cancelled.');
+      return;
+    }
+    state.aiChatBusy = true;
+    if (elements.aiChatSend) elements.aiChatSend.disabled = true;
+    setAiChatStatus('Purging disabled streams...');
+    try {
+      const res = await apiJson('/api/v1/streams/purge-disabled', { method: 'POST' });
+      const deletedRaw = res && res.deleted != null ? Number(res.deleted) : 0;
+      const deleted = Number.isFinite(deletedRaw) ? deletedRaw : 0;
+      const rev = res && res.revision_id ? ` (revision ${res.revision_id})` : '';
+      appendAiChatMessage('assistant', `Deleted ${deleted} disabled stream(s)${rev}.`);
+      await loadStreams();
+    } catch (err) {
+      appendAiChatMessage('system', buildAiErrorNode(`Purge failed: ${formatNetworkError(err) || err.message}`));
+    } finally {
+      state.aiChatBusy = false;
+      if (elements.aiChatSend) elements.aiChatSend.disabled = false;
+      setAiChatStatus('');
     }
     return;
   }
