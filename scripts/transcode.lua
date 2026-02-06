@@ -6088,6 +6088,14 @@ function transcode.get_status(id)
             end
         end
     end
+    local publish_hls_variants = nil
+    if type(job.publish_hls_outputs) == "table" then
+        publish_hls_variants = {}
+        for pid, _ in pairs(job.publish_hls_outputs) do
+            table.insert(publish_hls_variants, pid)
+        end
+        table.sort(publish_hls_variants)
+    end
     local inputs = collect_failover_input_stats(job)
     local fo = job.failover
     local active_input_url = get_active_input_url(job.config, job.active_input_id, true)
@@ -6146,6 +6154,7 @@ function transcode.get_status(id)
         publish_error = job.publish_error,
         publish_status = publish_status,
         profiles_status = profiles_status,
+        publish_hls_variants = publish_hls_variants,
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
