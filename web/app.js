@@ -16775,6 +16775,9 @@ function buildAnalyzeServiceMap(job) {
 }
 
 function getAnalyzeStreamLabel(stream) {
+  const desc = stream && stream.descriptor ? String(stream.descriptor).toLowerCase() : '';
+  if (desc.startsWith('0x59')) return 'SUB';
+  if (desc.startsWith('0x56')) return 'TTX';
   const name = String(stream && stream.type_name ? stream.type_name : '');
   const lower = name.toLowerCase();
   if (lower.includes('video')) return 'VIDEO';
@@ -16838,6 +16841,7 @@ function buildAnalyzePmtSections(job, programs, serviceMap) {
         if (stream.lang) sub.push(`Language: ${stream.lang}`);
         const cas = formatCasList(stream.cas);
         if (cas) sub.push(`CAS: ${cas}`);
+        if (stream.descriptor) sub.push(`Descriptor: ${stream.descriptor}`);
         items.push(sub.length ? { text: line, sub } : line);
       });
     }
