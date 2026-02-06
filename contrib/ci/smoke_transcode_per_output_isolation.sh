@@ -88,7 +88,20 @@ else
   "${SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
 fi
 SERVER_PID=$!
-sleep 2
+
+SERVER_READY=0
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:${PORT}/index.html" >/dev/null 2>&1; then
+    SERVER_READY=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "$SERVER_READY" -ne 1 ]]; then
+  echo "Server did not start (port=$PORT)" >&2
+  tail -n 200 "$LOG_FILE" >&2 || true
+  exit 1
+fi
 
 # Try login (ok even if auth disabled)
 AUTH_ARGS=()
@@ -148,7 +161,7 @@ fi
 WORKERS_OK=0
 for _ in $(seq 1 30); do
   STATUS_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/api/v1/transcode-status/${STREAM_ID}" "${AUTH_ARGS[@]}")"
-  read -r WORKER0_PID WORKER0_STATE WORKER1_PID WORKER1_STATE <<<"$(STATUS_JSON="$STATUS_JSON" python3 - <<'PY'
+  read -r OUT1_PID OUT1_STATE OUT2_PID OUT2_STATE <<<"$(STATUS_JSON="$STATUS_JSON" python3 - <<'PY'
 import json, os
 info = json.loads(os.environ.get("STATUS_JSON") or "{}")
 workers = info.get("workers") or []
@@ -161,10 +174,10 @@ def get(idx, key):
   w = m.get(idx) or {}
   v = w.get(key)
   return "" if v is None else str(v)
-print(f"{get(0,'pid')} {get(0,'state')} {get(1,'pid')} {get(1,'state')}".strip())
+print(f"{get(1,'pid')} {get(1,'state')} {get(2,'pid')} {get(2,'state')}".strip())
 PY
 )"
-  if [[ -n "${WORKER0_PID:-}" && -n "${WORKER1_PID:-}" && "${WORKER0_STATE:-}" == "RUNNING" && "${WORKER1_STATE:-}" == "RUNNING" ]]; then
+  if [[ -n "${OUT1_PID:-}" && -n "${OUT2_PID:-}" && "${OUT1_STATE:-}" == "RUNNING" && "${OUT2_STATE:-}" == "RUNNING" ]]; then
     WORKERS_OK=1
     break
   fi
@@ -203,11 +216,11 @@ wait_pat() {
 wait_pat "udp://127.0.0.1:${OUT1_PORT}"
 wait_pat "udp://127.0.0.1:${OUT2_PORT}"
 
-echo "worker0_pid=$WORKER0_PID worker1_pid=$WORKER1_PID (killing worker1)" >&2
+echo "out1_pid=$OUT1_PID out2_pid=$OUT2_PID (killing out2 worker)" >&2
 
-# Kill worker1 and ensure worker0 keeps running (fault isolation).
-kill "$WORKER1_PID" 2>/dev/null || true
-wait "$WORKER1_PID" 2>/dev/null || true
+# Kill out2 worker and ensure out1 keeps running (fault isolation).
+kill "$OUT2_PID" 2>/dev/null || true
+wait "$OUT2_PID" 2>/dev/null || true
 
 # Output #1 must remain valid.
 wait_pat "udp://127.0.0.1:${OUT1_PORT}"
@@ -220,12 +233,12 @@ import json, os
 info = json.loads(os.environ.get("STATUS_JSON") or "{}")
 workers = info.get("workers") or []
 for w in workers:
-  if w.get("output_index") == 0:
+  if w.get("output_index") == 1:
     print(w.get("pid") or "")
     break
 PY
 )"
-  if [[ "$CUR_PID0" == "$WORKER0_PID" ]]; then
+  if [[ "$CUR_PID0" == "$OUT1_PID" ]]; then
     PID_OK=1
     break
   fi
@@ -233,7 +246,7 @@ PY
 done
 
 if [[ "$PID_OK" -ne 1 ]]; then
-  echo "Worker0 PID changed after killing worker1 (expected isolation)." >&2
+  echo "Out1 worker PID changed after killing out2 worker (expected isolation)." >&2
   echo "$STATUS_JSON" >&2
   tail -n 200 "$LOG_FILE" >&2 || true
   exit 1
@@ -242,4 +255,4 @@ fi
 # Output #2 should recover (worker restart).
 wait_pat "udp://127.0.0.1:${OUT2_PORT}"
 
-echo "OK: per-output isolation verified (worker0 stayed up, worker1 recovered)" >&2
+echo "OK: per-output isolation verified (out1 stayed up, out2 recovered)" >&2
