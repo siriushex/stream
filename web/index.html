@@ -1597,7 +1597,7 @@
 
             <label class="field span-12 stream-desc-field">
               <span>Description</span>
-              <textarea id="stream-desc" class="textarea-grow" rows="2"></textarea>
+              <textarea id="stream-desc" class="textarea-grow" rows="1"></textarea>
             </label>
           </div>
 
@@ -2305,26 +2305,28 @@
           <div class="form-hint">0 = stop immediately, -1 = always active, &gt;0 = keep input alive after last HTTP client.</div>
           <div class="form-subsection">
             <div class="form-hint">MPEG-TS tables and reload behavior.</div>
-            <label class="checkline">
-              <input type="checkbox" id="stream-no-sdt" />
-              <span>Disable SDT</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="stream-no-eit" />
-              <span>Disable EIT</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="stream-pass-sdt" />
-              <span>Pass upstream SDT</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="stream-pass-eit" />
-              <span>Pass upstream EIT</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="stream-no-reload" />
-              <span>Disable input reload</span>
-            </label>
+            <div class="checkline-row">
+              <label class="checkline">
+                <input type="checkbox" id="stream-no-sdt" />
+                <span>Disable SDT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="stream-no-eit" />
+                <span>Disable EIT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="stream-pass-sdt" />
+                <span>Pass upstream SDT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="stream-pass-eit" />
+                <span>Pass upstream EIT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="stream-no-reload" />
+                <span>Disable input reload</span>
+              </label>
+            </div>
           </div>
         </div>
         </div>
