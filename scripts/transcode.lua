@@ -186,24 +186,28 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-local function build_transcode_play_url(stream_id)
-    if not stream_id or stream_id == "" then
-        return nil
-    end
-    if not (config and config.get_setting) then
-        return nil
-    end
-    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
-    if not http_play_allow then
-        return nil
-    end
-    local port = tonumber(config.get_setting("http_play_port")) or tonumber(config.get_setting("http_port"))
-    if not port then
-        return nil
-    end
-    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
-end
+	local function build_transcode_play_url(stream_id)
+	    if not stream_id or stream_id == "" then
+	        return nil
+	    end
+	    if not (config and config.get_setting) then
+	        return nil
+	    end
+	    local http_port = tonumber(config.get_setting("http_port"))
+	    local play_port = tonumber(config.get_setting("http_play_port"))
+	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
+	    local http_play_enabled = http_play_allow or http_play_hls
+	    local port = http_port
+	    if http_play_enabled and play_port then
+	        port = play_port
+	    end
+	    if not port then
+	        return nil
+	    end
+	    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
+	    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
+	end
 
 local function build_transcode_live_url(stream_id, profile_id)
     if not stream_id or stream_id == "" or not profile_id or profile_id == "" then

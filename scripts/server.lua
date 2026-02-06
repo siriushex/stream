@@ -1360,10 +1360,10 @@ function main()
         end)
     end
 
-    local function http_play_stream(server, client, request)
-        local client_data = server:data(client)
+	    local function http_play_stream(server, client, request)
+	        local client_data = server:data(client)
 
-        if not request then
+	        if not request then
             if client_data.output_data and client_data.output_data.channel_data then
                 local channel_data = client_data.output_data.channel_data
                 channel_data.clients = channel_data.clients - 1
@@ -1409,17 +1409,49 @@ function main()
             return nil
         end
 
-        -- В режиме http_upstream успешный ответ должен быть одним server:send() с upstream.
-        -- Для отказов используем server:abort(), иначе upstream-модуль вернёт 500.
-        local ok_http = http_auth_check(request)
-        if not ok_http then
-            server:abort(client, 401)
-            return nil
-        end
+	        -- В режиме http_upstream успешный ответ должен быть одним server:send() с upstream.
+	        -- Для отказов используем server:abort(), иначе upstream-модуль вернёт 500.
+	        local function is_internal_play_request(req)
+	            if not req or not req.query then
+	                return false
+	            end
+	            local flag = req.query.internal or req.query._internal
+	            if flag == nil then
+	                return false
+	            end
+	            local text = tostring(flag):lower()
+	            if not (text == "1" or text == "true" or text == "yes" or text == "on") then
+	                return false
+	            end
+	            local ip = tostring(req.addr or "")
+	            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+	                local headers = req.headers or {}
+	                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+	                    or headers["forwarded"] or headers["Forwarded"]
+	                    or headers["x-real-ip"] or headers["X-Real-IP"] then
+	                    return false
+	                end
+	                return true
+	            end
+	            return false
+	        end
 
-        local stream_id = http_play_stream_id(request.path)
-        if not stream_id then
-            server:abort(client, 404)
+	        local internal = is_internal_play_request(request)
+	        -- When http_play_allow is disabled we still allow internal ffmpeg consumers
+	        -- to read /play (used by transcode/audio-fix), but hide it from external clients.
+	        if not http_play_allow and not internal then
+	            server:abort(client, 404)
+	            return nil
+	        end
+
+	        if not http_auth_check(request) then
+	            server:abort(client, 401)
+	            return nil
+	        end
+
+	        local stream_id = http_play_stream_id(request.path)
+	        if not stream_id then
+	            server:abort(client, 404)
             return nil
         end
 
@@ -1429,7 +1461,7 @@ function main()
             return nil
         end
 
-        local function allow_stream(session)
+	        local function allow_stream(session)
             client_data.output_data = { channel_data = entry.channel }
             http_output_client(server, client, request, client_data.output_data)
 
@@ -1481,14 +1513,19 @@ function main()
                 buffer_size = buffer_size,
                 buffer_fill = buffer_fill,
             }, "video/MP2T")
-        end
+	        end
 
-        if auth and auth.check_play then
-            local headers = request.headers or {}
-            auth.check_play({
-                stream_id = stream_id,
-                stream_name = entry.channel.config and entry.channel.config.name or stream_id,
-                stream_cfg = entry.channel.config,
+	        if auth and auth.check_play then
+	            -- Internal consumers must work even when play tokens are required.
+	            if internal then
+	                allow_stream(nil)
+	                return nil
+	            end
+	            local headers = request.headers or {}
+	            auth.check_play({
+	                stream_id = stream_id,
+	                stream_name = entry.channel.config and entry.channel.config.name or stream_id,
+	                stream_cfg = entry.channel.config,
                 proto = "http_ts",
                 request = request,
                 ip = request.addr,
@@ -1506,8 +1543,8 @@ function main()
             return nil
         end
 
-        allow_stream(nil)
-    end
+	        allow_stream(nil)
+	    end
 
     local function http_live_stream(server, client, request)
         if not request then
@@ -2056,18 +2093,23 @@ function main()
 
     local live_upstream = http_upstream({ callback = http_live_stream })
 
-    local main_routes = {
-        { "/api/*", api.handle_request },
-        { "/live/*", live_upstream },
-        { "/favicon.ico", http_favicon },
-        { "/index.html", web_static },
-    }
+	    local main_routes = {
+	        { "/api/*", api.handle_request },
+	        { "/live/*", live_upstream },
+	        { "/favicon.ico", http_favicon },
+	        { "/index.html", web_static },
+	    }
 
-    if http_play_enabled and http_play_port == opt.port then
-        for _, route in ipairs(build_http_play_routes(false, false, false)) do
-            table.insert(main_routes, route)
-        end
-    end
+	    if http_play_enabled and http_play_port == opt.port then
+	        for _, route in ipairs(build_http_play_routes(false, false, false)) do
+	            table.insert(main_routes, route)
+	        end
+	    elseif not http_play_enabled then
+	        -- Internal-only /play (transcode/audio-fix) even when http_play_allow/http_play_hls are disabled.
+	        local upstream = http_upstream({ callback = http_play_stream })
+	        table.insert(main_routes, { "/stream/*", upstream })
+	        table.insert(main_routes, { "/play/*", upstream })
+	    end
 
     table.insert(main_routes, { "/preview/*", preview_route_handler })
     table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
