@@ -2329,6 +2329,10 @@ select {
   font-weight: 600;
 }
 
+.text-link.is-warning {
+  color: var(--warning);
+}
+
 .text-link:disabled {
   color: var(--muted);
   cursor: not-allowed;
@@ -2847,6 +2851,10 @@ select {
 
 .form-hint.is-error {
   color: var(--danger);
+}
+
+.form-hint.is-warning {
+  color: var(--warning);
 }
 
 .stream-transcode-note {

@@ -1140,6 +1140,8 @@ const elements = {
   btnApplyHls: $('#btn-apply-hls'),
   httpPlayAllow: $('#http-play-allow'),
   httpPlayHls: $('#http-play-hls'),
+  httpPlayHlsStorageWarning: $('#http-play-hls-storage-warning'),
+  btnHlsSwitchMemfd: $('#btn-hls-switch-memfd'),
   httpPlayPort: $('#http-play-port'),
   httpPlayNoTls: $('#http-play-no-tls'),
   httpPlayLogos: $('#http-play-logos'),
@@ -15003,6 +15005,7 @@ function applySettingsToUI() {
   if (elements.httpPlayHls) {
     elements.httpPlayHls.checked = getSettingBool('http_play_hls', false);
   }
+  updateHttpPlayHlsStorageWarning();
   if (elements.httpPlayPort) {
     elements.httpPlayPort.value = getSettingNumber('http_play_port', getSettingNumber('http_port', 8000));
   }
@@ -15526,6 +15529,35 @@ function collectHlsSettings() {
   };
 }
 
+function updateHttpPlayHlsStorageWarning() {
+  if (!elements.httpPlayHlsStorageWarning || !elements.httpPlayHls || !elements.hlsStorage) {
+    return;
+  }
+  const hlsEnabled = elements.httpPlayHls.checked;
+  // В конфиге `hls_storage` может отсутствовать, но в UI select всегда имеет значение.
+  const storage = String(elements.hlsStorage.value || 'disk');
+  elements.httpPlayHlsStorageWarning.hidden = !(hlsEnabled && storage !== 'memfd');
+}
+
+function applyHlsMemfdPreset() {
+  if (!elements.hlsStorage) return;
+  elements.hlsStorage.value = 'memfd';
+  if (elements.hlsOnDemand) {
+    elements.hlsOnDemand.checked = true;
+  }
+  // Не перетираем ввод пользователя: проставляем дефолты только если поля пустые.
+  if (elements.hlsIdleTimeout && !String(elements.hlsIdleTimeout.value || '').trim()) {
+    elements.hlsIdleTimeout.value = '30';
+  }
+  if (elements.hlsMaxBytesMb && !String(elements.hlsMaxBytesMb.value || '').trim()) {
+    elements.hlsMaxBytesMb.value = '64';
+  }
+  if (elements.hlsMaxSegments && !String(elements.hlsMaxSegments.value || '').trim()) {
+    elements.hlsMaxSegments.value = '12';
+  }
+  updateHlsStorageUi();
+}
+
 function updateHlsStorageUi() {
   if (!elements.hlsStorage) return;
   const isMemfd = elements.hlsStorage.value === 'memfd';
@@ -15533,6 +15565,7 @@ function updateHlsStorageUi() {
   $$('.hls-memfd-only').forEach((el) => {
     el.hidden = !isMemfd;
   });
+  updateHttpPlayHlsStorageWarning();
 }
 
 function collectHttpPlaySettings() {
@@ -15609,6 +15642,7 @@ let httpPlayToggleSaveTimer = null;
 
 function scheduleHttpPlayToggleSave() {
   if (!elements.httpPlayAllow || !elements.httpPlayHls) return;
+  updateHttpPlayHlsStorageWarning();
   if (httpPlayToggleSaveTimer) {
     clearTimeout(httpPlayToggleSaveTimer);
   }
@@ -18129,6 +18163,13 @@ function bindEvents() {
   }
   if (elements.hlsStorage) {
     elements.hlsStorage.addEventListener('change', updateHlsStorageUi);
+  }
+  if (elements.btnHlsSwitchMemfd) {
+    elements.btnHlsSwitchMemfd.addEventListener('click', () => {
+      applyHlsMemfdPreset();
+      setSettingsSection('hls');
+      setStatus('HLS: switched to Memfd preset (not saved). Use Save & Restart to apply.');
+    });
   }
 
   if (elements.btnApplyCas) {
