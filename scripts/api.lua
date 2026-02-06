@@ -705,6 +705,22 @@ local function start_stream_preview(server, client, request, stream_id)
         local v = tostring(vo):lower()
         opts.video_only = (v == "1" or v == "true" or v == "yes" or v == "on")
     end
+    local aa = q.audio_aac or q.audioaac or q.aac or nil
+    if aa ~= nil then
+        local v = tostring(aa):lower()
+        opts.audio_aac = (v == "1" or v == "true" or v == "yes" or v == "on")
+    end
+    local audio = q.audio or q.a or nil
+    if audio ~= nil then
+        local v = tostring(audio):lower()
+        if v == "aac" then
+            opts.audio_aac = true
+        end
+    end
+    if opts.video_only then
+        -- video_only уже подразумевает "без аудио", поэтому игнорируем audio_aac.
+        opts.audio_aac = false
+    end
     local result, err, code = preview.start(stream_id, opts)
     if not result then
         return error_response(server, client, code or 500, err or "preview failed")
