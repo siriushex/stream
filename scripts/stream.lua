@@ -470,6 +470,53 @@ local function build_mpts_mux_options(channel_config)
         name = channel_config.name,
     }
 
+    -- CAT CA_descriptors (EMM PID). Поскольку C-модуль получает только плоские options,
+    -- сериализуем список в строку формата "caid:pid[:private_data];...".
+    if mpts.ca ~= nil then
+        if type(mpts.ca) == "string" then
+            if mpts.ca ~= "" then
+                opts.ca = tostring(mpts.ca)
+            end
+        elseif type(mpts.ca) == "table" then
+            local parts = {}
+            for idx, entry in ipairs(mpts.ca) do
+                if type(entry) == "string" then
+                    if entry ~= "" then
+                        table.insert(parts, entry)
+                    end
+                elseif type(entry) == "table" then
+                    local caid = tonumber(entry.ca_system_id or entry.caid)
+                    local pid = tonumber(entry.ca_pid or entry.pid)
+                    local priv = entry.private_data or entry.data
+                    if caid == nil or caid < 0 or caid > 65535 then
+                        log.warning("[" .. channel_config.name .. "] mpts_config.ca[" .. idx .. "].ca_system_id вне диапазона 0..65535")
+                    elseif pid == nil or pid < 0 or pid >= 8191 then
+                        log.warning("[" .. channel_config.name .. "] mpts_config.ca[" .. idx .. "].ca_pid вне диапазона 0..8190")
+                    else
+                        local part = string.format("0x%04X:%d", caid, pid)
+                        if type(priv) == "string" and priv ~= "" then
+                            local hex = tostring(priv):gsub("%s+", "")
+                            hex = hex:gsub("^0[xX]", "")
+                            if not hex:match("^[0-9a-fA-F]+$") or (string.len(hex) % 2) == 1 then
+                                log.warning("[" .. channel_config.name .. "] mpts_config.ca[" .. idx .. "].private_data должен быть hex строкой чётной длины")
+                            else
+                                part = part .. ":" .. hex
+                            end
+                        end
+                        table.insert(parts, part)
+                    end
+                else
+                    log.warning("[" .. channel_config.name .. "] mpts_config.ca[" .. idx .. "] должен быть строкой или объектом")
+                end
+            end
+            if #parts > 0 then
+                opts.ca = table.concat(parts, ";")
+            end
+        else
+            log.warning("[" .. channel_config.name .. "] mpts_config.ca должен быть строкой или массивом")
+        end
+    end
+
     if general.tsid ~= nil then opts.tsid = tonumber(general.tsid) end
     if general.onid ~= nil then opts.onid = tonumber(general.onid) end
     if general.network_id ~= nil then opts.network_id = tonumber(general.network_id) end

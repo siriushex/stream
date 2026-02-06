@@ -36,6 +36,8 @@ EXPECT_NETWORK_NAME="${EXPECT_NETWORK_NAME:-}"
 EXPECT_LCN="${EXPECT_LCN:-}"
 EXPECT_FREE_CA="${EXPECT_FREE_CA:-}"
 EXPECT_SERVICE_TYPE="${EXPECT_SERVICE_TYPE:-}"
+EXPECT_CAT_CAS="${EXPECT_CAT_CAS:-}"
+EXPECT_PMT_CAS="${EXPECT_PMT_CAS:-}"
 EXPECT_BITRATE_KBIT="${EXPECT_BITRATE_KBIT:-}"
 EXPECT_BITRATE_TOL_PCT="${EXPECT_BITRATE_TOL_PCT:-10}"
 EXPECT_LOG="${EXPECT_LOG:-}"
@@ -66,6 +68,54 @@ if [[ "${EXPECT_CAT}" == "1" ]]; then
     echo "CAT not found"
     exit 1
   fi
+fi
+
+if [[ -n "$EXPECT_CAT_CAS" ]]; then
+  if ! grep -q "CAT: present" "$LOG_FILE"; then
+    echo "CAT not found (EXPECT_CAT_CAS set)"
+    exit 1
+  fi
+  cas_norm="$(echo "$EXPECT_CAT_CAS" | tr ';' ',')"
+  IFS=',' read -r -a CAT_CAS_LIST <<< "$cas_norm"
+  for entry in "${CAT_CAS_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    IFS=':' read -r caid_raw pid_raw _rest <<< "$entry_trim"
+    if [[ -z "$caid_raw" || -z "$pid_raw" ]]; then
+      echo "EXPECT_CAT_CAS entry must be caid:pid (got: ${entry_trim})"
+      exit 1
+    fi
+    caid_hex="$(printf "0x%04X" "$((caid_raw))")"
+    pid_dec="$((pid_raw))"
+    if ! grep -Fq "CAT: CAS: caid: ${caid_hex} pid: ${pid_dec}" "$LOG_FILE"; then
+      echo "CAT missing CAS caid ${caid_hex} pid ${pid_dec}"
+      exit 1
+    fi
+  done
+fi
+
+if [[ -n "$EXPECT_PMT_CAS" ]]; then
+  cas_norm="$(echo "$EXPECT_PMT_CAS" | tr ';' ',')"
+  IFS=',' read -r -a PMT_CAS_LIST <<< "$cas_norm"
+  for entry in "${PMT_CAS_LIST[@]}"; do
+    entry_trim="$(echo "$entry" | xargs)"
+    if [[ -z "$entry_trim" ]]; then
+      continue
+    fi
+    IFS=':' read -r caid_raw pid_raw _rest <<< "$entry_trim"
+    if [[ -z "$caid_raw" || -z "$pid_raw" ]]; then
+      echo "EXPECT_PMT_CAS entry must be caid:pid (got: ${entry_trim})"
+      exit 1
+    fi
+    caid_hex="$(printf "0x%04X" "$((caid_raw))")"
+    pid_dec="$((pid_raw))"
+    if ! grep -Fq "PMT: CAS: caid: ${caid_hex} pid: ${pid_dec}" "$LOG_FILE"; then
+      echo "PMT missing CAS caid ${caid_hex} pid ${pid_dec}"
+      exit 1
+    fi
+  done
 fi
 
 if [[ -n "$EXPECT_PNRS" ]]; then

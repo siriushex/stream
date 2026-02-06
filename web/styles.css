@@ -2385,14 +2385,38 @@ select {
   color: var(--muted);
 }
 
+.mpts-ca-row {
+  grid-template-columns: 36px 1fr auto;
+  align-items: start;
+}
+
+.mpts-ca-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mpts-ca-grid {
+  display: grid;
+  grid-template-columns: 160px 110px minmax(200px, 2fr);
+  gap: 6px;
+  align-items: center;
+}
+
 @media (max-width: 900px) {
   .mpts-service-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .mpts-ca-grid {
     grid-template-columns: 1fr 1fr;
   }
 }
 
 @media (max-width: 600px) {
   .mpts-service-grid {
+    grid-template-columns: 1fr;
+  }
+  .mpts-ca-grid {
     grid-template-columns: 1fr;
   }
 }

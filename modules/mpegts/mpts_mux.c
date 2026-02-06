@@ -7,6 +7,7 @@
 #include <astra.h>
 #include <time.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #define PID_DROP 0xFFFF
@@ -21,6 +22,14 @@
 #define MPTS_LCN_DESC_MAX_LEN 252 // 63 * 4, чтобы не рвать записи 4-байтовых LCN элементов.
 
 typedef struct mpts_service_t mpts_service_t;
+
+typedef struct
+{
+    uint16_t ca_system_id;
+    uint16_t ca_pid;
+    uint8_t *private_data;
+    size_t private_data_len;
+} mpts_ca_desc_t;
 
 typedef struct
 {
@@ -143,6 +152,7 @@ struct module_data_t
     bool pass_warned;
     bool eit_source_warned;
     bool cat_source_warned;
+    bool cat_ca_truncated_warned;
 
     uint8_t cc[MPTS_MAX_PIDS];
     bool pid_in_use[MPTS_MAX_PIDS];
@@ -173,6 +183,9 @@ struct module_data_t
     mpegts_psi_t *eit_in;
     mpts_service_t *eit_source;
     mpts_service_t *cat_source;
+
+    // CAT CA_descriptors (конфиг-driven). Могут быть пустыми.
+    asc_list_t *cat_ca;
 };
 
 #define MSG(_msg) "[mpts %s] " _msg, (mod->name ? mod->name : "mux")
@@ -273,6 +286,207 @@ static uint16_t alloc_pid(module_data_t *mod)
     return PID_DROP;
 }
 
+static bool pid_list_add_unique(uint16_t *list, size_t *count, size_t max, uint16_t pid)
+{
+    if(pid == 0 || pid >= NULL_TS_PID)
+        return false;
+    for(size_t i = 0; i < *count; ++i)
+    {
+        if(list[i] == pid)
+            return false;
+    }
+    if(*count >= max)
+        return false;
+    list[(*count)++] = pid;
+    return true;
+}
+
+static int hex_value(char c)
+{
+    if(c >= '0' && c <= '9')
+        return (int)(c - '0');
+    if(c >= 'a' && c <= 'f')
+        return (int)(c - 'a' + 10);
+    if(c >= 'A' && c <= 'F')
+        return (int)(c - 'A' + 10);
+    return -1;
+}
+
+static bool hex_to_bytes(const char *text, uint8_t **out, size_t *out_len)
+{
+    if(!out || !out_len)
+        return false;
+    *out = NULL;
+    *out_len = 0;
+
+    if(!text)
+        return true;
+
+    const char *p = text;
+    while(*p == ' ' || *p == '\t')
+        ++p;
+    if(p[0] == '0' && (p[1] == 'x' || p[1] == 'X'))
+        p += 2;
+
+    size_t digits = 0;
+    for(const char *q = p; *q; ++q)
+    {
+        if(*q == ' ' || *q == '\t')
+            continue;
+        if(hex_value(*q) < 0)
+            return false;
+        ++digits;
+    }
+    if(digits == 0)
+        return true;
+    if((digits & 1) != 0)
+        return false;
+
+    const size_t bytes_len = digits / 2;
+    uint8_t *bytes = (uint8_t *)malloc(bytes_len);
+    if(!bytes)
+        return false;
+
+    size_t idx = 0;
+    int hi = -1;
+    for(const char *q = p; *q; ++q)
+    {
+        if(*q == ' ' || *q == '\t')
+            continue;
+        const int v = hex_value(*q);
+        if(v < 0)
+        {
+            free(bytes);
+            return false;
+        }
+        if(hi < 0)
+            hi = v;
+        else
+        {
+            bytes[idx++] = (uint8_t)((hi << 4) | v);
+            hi = -1;
+        }
+    }
+
+    *out = bytes;
+    *out_len = bytes_len;
+    return true;
+}
+
+static void free_ca_list(asc_list_t *list)
+{
+    if(!list)
+        return;
+    for(asc_list_first(list); !asc_list_eol(list); asc_list_first(list))
+    {
+        mpts_ca_desc_t *entry = (mpts_ca_desc_t *)asc_list_data(list);
+        if(entry)
+        {
+            if(entry->private_data)
+                free(entry->private_data);
+            free(entry);
+        }
+        asc_list_remove_current(list);
+    }
+}
+
+static void parse_cat_ca_list(module_data_t *mod, const char *value)
+{
+    if(!mod || !mod->cat_ca || !value || value[0] == '\0')
+        return;
+
+    // Формат: "0x0B00:500:010203;0x0500:501" (caid:pid[:private_data_hex])
+    char *copy = strdup(value);
+    if(!copy)
+        return;
+
+    char *save = NULL;
+    for(char *token = strtok_r(copy, ";,", &save); token; token = strtok_r(NULL, ";,", &save))
+    {
+        while(*token == ' ' || *token == '\t')
+            ++token;
+        if(*token == '\0')
+            continue;
+
+        char *sep1 = strchr(token, ':');
+        if(!sep1)
+        {
+            asc_log_warning(MSG("ca list entry '%s' не содержит ':' (ожидается caid:pid[:data])"), token);
+            continue;
+        }
+        *sep1 = '\0';
+        char *caid_str = token;
+        char *rest = sep1 + 1;
+
+        char *sep2 = strchr(rest, ':');
+        char *pid_str = rest;
+        char *data_str = NULL;
+        if(sep2)
+        {
+            *sep2 = '\0';
+            data_str = sep2 + 1;
+        }
+
+        char *end = NULL;
+        unsigned long caid_ul = strtoul(caid_str, &end, 0);
+        if(end == caid_str || *end != '\0' || caid_ul > 0xFFFFUL)
+        {
+            asc_log_warning(MSG("ca list entry: неверный caid '%s'"), caid_str);
+            continue;
+        }
+        unsigned long pid_ul = strtoul(pid_str, &end, 0);
+        if(end == pid_str || *end != '\0' || pid_ul >= NULL_TS_PID)
+        {
+            asc_log_warning(MSG("ca list entry: неверный pid '%s'"), pid_str);
+            continue;
+        }
+
+        uint8_t *priv = NULL;
+        size_t priv_len = 0;
+        if(data_str && data_str[0] != '\0')
+        {
+            if(!hex_to_bytes(data_str, &priv, &priv_len))
+            {
+                asc_log_warning(MSG("ca list entry: неверный private_data '%s'"), data_str);
+                continue;
+            }
+            if(priv_len > (MPTS_DESC_MAX_LEN - 4))
+            {
+                asc_log_warning(MSG("ca list entry: private_data слишком длинный (%zu), максимум %d"),
+                                priv_len, (int)(MPTS_DESC_MAX_LEN - 4));
+                free(priv);
+                continue;
+            }
+        }
+
+        mpts_ca_desc_t *entry = (mpts_ca_desc_t *)calloc(1, sizeof(mpts_ca_desc_t));
+        if(!entry)
+        {
+            free(priv);
+            continue;
+        }
+        entry->ca_system_id = (uint16_t)caid_ul;
+        entry->ca_pid = (uint16_t)pid_ul;
+        entry->private_data = priv;
+        entry->private_data_len = priv_len;
+
+        asc_list_insert_tail(mod->cat_ca, entry);
+
+        // Резервируем PID, чтобы auto-remap не выделил его под ES/PMT.
+        reserve_pid(mod, entry->ca_pid);
+    }
+
+    free(copy);
+}
+
+static void desc_set_ca_pid(uint8_t *desc, uint16_t pid)
+{
+    // CA_descriptor: ca_pid хранится в 13 битах (3 бита reserved + 13 PID).
+    // Сохраняем reserved-биты и переписываем только значение PID.
+    desc[4] = (uint8_t)((desc[4] & 0xE0) | ((pid >> 8) & 0x1F));
+    desc[5] = (uint8_t)(pid & 0xFF);
+}
+
 static void mpts_send_ts(module_data_t *mod, const uint8_t *ts)
 {
     uint8_t out[TS_PACKET_SIZE];
@@ -364,23 +578,35 @@ static bool service_map_pids(mpts_service_t *svc)
     PMT_ITEMS_FOREACH(svc->pmt, ptr)
     {
         const uint16_t pid = PMT_ITEM_GET_PID(svc->pmt, ptr);
-        bool exists = false;
-        for(size_t i = 0; i < pid_count; ++i)
+        if(pid_list_add_unique(pid_list, &pid_count, ASC_ARRAY_SIZE(pid_list), pid))
         {
-            if(pid_list[i] == pid)
-            {
-                exists = true;
-                break;
-            }
-        }
-        if(!exists && pid_count < ASC_ARRAY_SIZE(pid_list))
-        {
-            pid_list[pid_count++] = pid;
             if(pcr_pid == 0)
             {
                 pcr_pid = pid;
                 pcr_auto = true;
             }
+        }
+
+        // CA_descriptor (0x09) может ссылаться на отдельный PID (ECM).
+        const uint8_t *desc_ptr;
+        PMT_ITEM_DESC_FOREACH(ptr, desc_ptr)
+        {
+            if(desc_ptr[0] == 0x09 && desc_ptr[1] >= 4)
+            {
+                const uint16_t ca_pid = DESC_CA_PID(desc_ptr);
+                pid_list_add_unique(pid_list, &pid_count, ASC_ARRAY_SIZE(pid_list), ca_pid);
+            }
+        }
+    }
+
+    // CA_descriptor в program_info (ECM на уровне программы).
+    const uint8_t *desc_ptr;
+    PMT_DESC_FOREACH(svc->pmt, desc_ptr)
+    {
+        if(desc_ptr[0] == 0x09 && desc_ptr[1] >= 4)
+        {
+            const uint16_t ca_pid = DESC_CA_PID(desc_ptr);
+            pid_list_add_unique(pid_list, &pid_count, ASC_ARRAY_SIZE(pid_list), ca_pid);
         }
     }
 
@@ -513,6 +739,36 @@ static void service_build_pmt(mpts_service_t *svc)
         const uint16_t pid_out = svc->pid_map[pid_in];
         if(pid_out != PID_DROP)
             PMT_ITEM_SET_PID(svc->pmt_out, ptr_out, pid_out);
+    }
+
+    // Ремап CA_PID внутри CA_descriptor (0x09) в program_info и ES info.
+    // Если CA_PID не переписать, PMT будет ссылаться на "старый" PID и приёмник не найдёт ECM.
+    uint8_t *desc_ptr;
+    PMT_DESC_FOREACH(svc->pmt_out, desc_ptr)
+    {
+        if(desc_ptr[0] == 0x09 && desc_ptr[1] >= 4)
+        {
+            const uint16_t ca_pid_in = DESC_CA_PID(desc_ptr);
+            const uint16_t ca_pid_out = svc->pid_map[ca_pid_in];
+            if(ca_pid_out != PID_DROP)
+                desc_set_ca_pid(desc_ptr, ca_pid_out);
+        }
+    }
+
+    uint8_t *es_ptr;
+    PMT_ITEMS_FOREACH(svc->pmt_out, es_ptr)
+    {
+        uint8_t *es_desc;
+        PMT_ITEM_DESC_FOREACH(es_ptr, es_desc)
+        {
+            if(es_desc[0] == 0x09 && es_desc[1] >= 4)
+            {
+                const uint16_t ca_pid_in = DESC_CA_PID(es_desc);
+                const uint16_t ca_pid_out = svc->pid_map[ca_pid_in];
+                if(ca_pid_out != PID_DROP)
+                    desc_set_ca_pid(es_desc, ca_pid_out);
+            }
+        }
     }
 
     PSI_SET_CRC32(svc->pmt_out);
@@ -842,7 +1098,45 @@ static void build_cat(module_data_t *mod)
     CAT_SET_VERSION(mod->cat_out, mod->cat_version);
     buf[6] = 0x00; // section_number
     buf[7] = 0x00; // last_section_number
-    mod->cat_out->buffer_size = 8 + CRC32_SIZE;
+
+    size_t pos = 8;
+    if(mod->cat_ca)
+    {
+        asc_list_for(mod->cat_ca)
+        {
+            const mpts_ca_desc_t *entry = (const mpts_ca_desc_t *)asc_list_data(mod->cat_ca);
+            if(!entry)
+                continue;
+
+            const size_t priv_len = entry->private_data_len;
+            const size_t desc_len = 4 + priv_len;
+            const size_t need = 2 + desc_len;
+            if(need > (size_t)MPTS_DESC_MAX_LEN + 2)
+                continue;
+
+            if(pos + need + CRC32_SIZE > MPTS_PSI_SECTION_MAX_SIZE)
+            {
+                if(!mod->cat_ca_truncated_warned)
+                {
+                    asc_log_warning(MSG("CAT CA_descriptors не помещаются в одну секцию, обрезаем"));
+                    mod->cat_ca_truncated_warned = true;
+                }
+                break;
+            }
+
+            buf[pos + 0] = 0x09; // CA_descriptor
+            buf[pos + 1] = (uint8_t)desc_len;
+            buf[pos + 2] = (uint8_t)(entry->ca_system_id >> 8);
+            buf[pos + 3] = (uint8_t)(entry->ca_system_id & 0xFF);
+            buf[pos + 4] = 0xE0 | ((entry->ca_pid >> 8) & 0x1F);
+            buf[pos + 5] = (uint8_t)(entry->ca_pid & 0xFF);
+            if(priv_len > 0 && entry->private_data)
+                memcpy(&buf[pos + 6], entry->private_data, priv_len);
+            pos += need;
+        }
+    }
+
+    mod->cat_out->buffer_size = (uint16_t)(pos + CRC32_SIZE);
     PSI_SET_SIZE(mod->cat_out);
     PSI_SET_CRC32(mod->cat_out);
 }
@@ -2019,6 +2313,7 @@ static void module_init(module_data_t *mod)
     module_stream_init(mod, NULL);
 
     mod->services = asc_list_init();
+    mod->cat_ca = asc_list_init();
     mod->service_count = 0;
     mod->next_pid = 0x0020;
     mod->lcn_descriptor_tag = 0x83;
@@ -2133,6 +2428,22 @@ static void module_init(module_data_t *mod)
     {
         asc_log_warning(MSG("pcr_smoothing работает только с pcr_restamp; отключаем сглаживание"));
         mod->pcr_smoothing = false;
+    }
+
+    // CAT CA_descriptors: задаются отдельным списком (mpts_config.ca).
+    // Формат значения: "0x0B00:500:010203;0x0500:501" (caid:pid[:private_data_hex])
+    const char *ca_list = NULL;
+    module_option_string("ca", &ca_list, NULL);
+    if(ca_list && ca_list[0] != '\0')
+    {
+        if(mod->pass_cat)
+        {
+            asc_log_warning(MSG("ca list задан, но pass_cat включён; генерация CAT отключена, игнорируем ca list"));
+        }
+        else
+        {
+            parse_cat_ca_list(mod, ca_list);
+        }
     }
 
     if(module_option_number("eit_source", &tmp) && tmp > 0)
@@ -2267,6 +2578,13 @@ static void module_destroy(module_data_t *mod)
     if(mod->tdt_out) mpegts_psi_destroy(mod->tdt_out);
     if(mod->tot_out) mpegts_psi_destroy(mod->tot_out);
     if(mod->eit_in) mpegts_psi_destroy(mod->eit_in);
+
+    if(mod->cat_ca)
+    {
+        free_ca_list(mod->cat_ca);
+        asc_list_destroy(mod->cat_ca);
+        mod->cat_ca = NULL;
+    }
 
     if(mod->services)
     {
