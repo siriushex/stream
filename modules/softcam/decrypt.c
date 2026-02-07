@@ -819,9 +819,26 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         const uint64_t now_us = asc_utime();
         uint64_t retry_us = 0;
         if(!ca_stream->is_keys || !ca_stream->last_ecm_ok || ca_stream->cand_pending)
-            retry_us = 250000; /* fast recovery */
+        {
+            /* Adaptive backoff: avoid ECM storms when CAM is degraded. */
+            uint32_t fail = ca_stream->ecm_fail_count;
+            if(fail == UINT32_MAX)
+                fail = 4;
+            uint32_t exp = fail;
+            if(exp > 3)
+                exp = 3;
+            retry_us = 250000ULL * (1ULL << exp);
+            if(retry_us > 2000000ULL)
+                retry_us = 2000000ULL;
+        }
         else
-            retry_us = 2000000; /* keep some retry to tolerate short glitches */
+        {
+            /* Stable: keep a small keepalive resend interval to tolerate short glitches. */
+            retry_us = 2000000ULL;
+        }
+
+        /* Deterministic jitter (by PID) to reduce lockstep spikes across many streams. */
+        retry_us += ((uint64_t)(psi->pid % 53)) * 1000ULL; /* 0..52ms */
 
         const bool is_retry = (em_type == ca_stream->last_ecm_type && ca_stream->last_ecm_send_us != 0);
 
