@@ -5,7 +5,7 @@ This document describes network resilience for HTTP-TS and HLS inputs.
 ## Compatibility (important)
 Nothing changes for existing configs unless you explicitly enable it:
 - Global: `settings.input_resilience.enabled=true`
-- Or per-input: add `#net_profile=dc|wan|bad` to the input URL
+- Or per-input: add `#net_profile=dc|wan|bad|max` to the input URL
 
 ## What it does
 - Reconnects on errors and stalls.
@@ -13,11 +13,12 @@ Nothing changes for existing configs unless you explicitly enable it:
 - Tracks input health (online/degraded/offline).
 - Optional jitter buffer to smooth short gaps.
 
-## Profiles (dc/wan/bad)
+## Profiles (dc/wan/bad/max)
 You can select a network profile per input:
 - `dc`: stable datacenter networks
 - `wan`: typical WAN between sites
 - `bad`: unstable internet / poor connectivity
+- `max`: aggressive profile for very unstable sources
 
 When profiles are enabled (globally or per-input), Astral uses:
 - `settings.input_resilience.profiles[profile]` as base net timeouts/backoff
@@ -33,6 +34,11 @@ http://host:port/stream.ts#net_profile=bad&net_auto=1
 ```
 This gradually increases timeouts and relaxes low-speed limits after repeated errors,
 then slowly returns to normal when the input is stable again.
+
+You can tune auto thresholds and relax timing:
+```
+http://host:port/stream.ts#net_profile=max&net_auto=1&net_auto_max_level=4&net_auto_burst=3&net_auto_relax_sec=180&net_auto_window_sec=25&net_auto_min_interval_sec=5
+```
 
 ## Global defaults (Settings -> General -> Inputs)
 There are two layers:
@@ -85,7 +91,7 @@ Auto sizing (profiles enabled):
 - If `jitter_buffer_ms` is set (explicitly or via profile defaults) and `jitter_max_buffer_mb` is not set,
   Astral computes a safe buffer size automatically based on an assumed bitrate for the active profile.
 - Defaults are controlled by:
-  - `settings.input_resilience.jitter_assumed_mbps.{dc,wan,bad}`
+  - `settings.input_resilience.jitter_assumed_mbps.{dc,wan,bad,max}`
   - `settings.input_resilience.jitter_max_auto_mb`
 
 ## Health and metrics

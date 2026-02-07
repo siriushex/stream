@@ -3172,6 +3172,7 @@
               <option value="dc">dc (datacenter)</option>
               <option value="wan">wan (WAN)</option>
               <option value="bad">bad (unstable)</option>
+              <option value="max">max (aggressive)</option>
             </select>
           </label>
           <label class="field">
@@ -3263,6 +3264,26 @@
             <label class="checkline">
               <input type="checkbox" id="input-net-auto" />
               <span>Adaptive auto-tune (unstable networks)</span>
+            </label>
+            <label class="field">
+              <span>Auto max level</span>
+              <input type="number" id="input-net-auto-max-level" placeholder="3" />
+            </label>
+            <label class="field">
+              <span>Auto relax (sec)</span>
+              <input type="number" id="input-net-auto-relax-sec" placeholder="120" />
+            </label>
+            <label class="field">
+              <span>Auto error window (sec)</span>
+              <input type="number" id="input-net-auto-window-sec" placeholder="30" />
+            </label>
+            <label class="field">
+              <span>Auto min interval (sec)</span>
+              <input type="number" id="input-net-auto-min-interval" placeholder="5" />
+            </label>
+            <label class="field">
+              <span>Auto burst threshold (errors)</span>
+              <input type="number" id="input-net-auto-burst" placeholder="2" />
             </label>
             <label class="field">
               <span>Jitter max (MB)</span>
