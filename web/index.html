@@ -2188,10 +2188,10 @@
 	            <input type="checkbox" id="stream-transcode-ladder-enabled" />
 	            <span>Multi-bitrate ladder (profiles + publish)</span>
 	          </label>
-	          <div class="form-hint">
-	            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead.
-	          </div>
-	          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
+		          <div class="form-hint">
+		            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead.
+		          </div>
+		          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
 	            <div class="form-grid">
 	              <div class="field span-12">
 	                <span>Quick presets</span>
@@ -2209,13 +2209,18 @@
 	              <span>Publish targets (JSON)</span>
 	              <textarea id="stream-transcode-publish-json" class="textarea-grow" rows="5" placeholder='[{"type":"hls","variants":["HDHigh","HDMedium"]}]'></textarea>
 	            </label>
-	            <div class="form-hint">
-	              Internal pull endpoints are always available when ladder is running:
-	              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,
-	              <code>/hls/&lt;stream_id&gt;/index.m3u8</code>,
-	              <code>/dash/&lt;stream_id&gt;/manifest.mpd</code>.
-	            </div>
-	          </div>
+		            <div class="form-hint">
+		              Internal pull endpoints are always available when ladder is running:
+		              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,
+		              <code>/hls/&lt;stream_id&gt;/index.m3u8</code>,
+		              <code>/dash/&lt;stream_id&gt;/manifest.mpd</code>,
+		              <code>/embed/&lt;stream_id&gt;</code>.
+		            </div>
+		            <details class="fold" id="stream-transcode-ladder-links-fold" hidden>
+		              <summary class="fold-summary">Publish URLs</summary>
+		              <div class="fold-body" id="stream-transcode-ladder-links"></div>
+		            </details>
+		          </div>
 
 	          <details class="fold">
 	            <summary class="fold-summary">FFmpeg args</summary>
