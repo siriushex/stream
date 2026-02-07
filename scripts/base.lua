@@ -832,6 +832,46 @@ local function net_mark_ok(state)
     state.last_error_ts = nil
 end
 
+-- Нормализуем текст ошибок в компактный ASCII-суффикс для health_reason.
+-- Это нужно, чтобы вместо бесполезных `http_0` в статусе было что-то вроде
+-- `http_err_connection_timeout` / `playlist_err_low_speed`.
+local function sanitize_reason_suffix(value)
+    local s = tostring(value or "")
+    s = s:lower()
+    -- Любые не-алфанум символы (включая UTF-8 байты) заменяем на подчёркивания.
+    s = s:gsub("[^%w]+", "_")
+    s = s:gsub("^_+", ""):gsub("_+$", "")
+    if s == "" then
+        s = "error"
+    end
+    -- Ограничиваем длину, чтобы reason не разрастался в логах/статусе.
+    if #s > 64 then
+        s = s:sub(1, 64)
+    end
+    return s
+end
+
+local function http_reason(response)
+    if not response then
+        return "http_no_response"
+    end
+    local code = tonumber(response.code) or 0
+    if code ~= 0 then
+        return "http_" .. tostring(code)
+    end
+    local msg = response.message or response.error or "error"
+    return "http_err_" .. sanitize_reason_suffix(msg)
+end
+
+local function hls_reason(prefix, response)
+    local code = tonumber(response and response.code) or 0
+    if code ~= 0 then
+        return prefix .. "_http_" .. tostring(code)
+    end
+    local msg = (response and (response.message or response.error)) or "error"
+    return prefix .. "_err_" .. sanitize_reason_suffix(msg)
+end
+
 local function http_auth_bool(value, fallback)
     if value == nil then
         return fallback
@@ -1735,7 +1775,7 @@ init_input_module.http = function(conf)
                 local code = tonumber(response.code) or 0
                 local message = response.message or "error"
                 instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
-                schedule_retry("http_" .. tostring(code))
+                schedule_retry(http_reason(response))
             end
             instance.request = http_request(instance.http_conf)
         end
@@ -1926,7 +1966,7 @@ local function init_input_module_https_direct(conf)
                 local code = tonumber(response.code) or 0
                 local message = response.message or "error"
                 instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
-                schedule_retry("http_" .. tostring(code))
+                schedule_retry(http_reason(response))
             end
             local ok, req = pcall(http_request, instance.http_conf)
             if ok and req then
@@ -2371,7 +2411,8 @@ local function hls_start_next_segment(instance)
             end
 
             if response.code ~= 200 then
-                log.error("[hls] segment http error: " .. response.code)
+                local msg = response.message or "error"
+                log.error("[hls] segment http error: " .. tostring(response.code) .. ":" .. tostring(msg))
                 self:close()
                 instance.segment_request = nil
                 local retries = instance.hls.segment_retries or 0
@@ -2387,7 +2428,7 @@ local function hls_start_next_segment(instance)
                     hls_start_next_segment(instance)
                     return
                 end
-                hls_mark_error(instance, "segment_http_" .. tostring(response.code), true)
+                hls_mark_error(instance, hls_reason("segment", response), true)
                 table.insert(instance.queue, 1, item)
                 if instance.queued then
                     instance.queued[item.seq] = true
@@ -2586,8 +2627,9 @@ local function hls_start(instance)
                 elseif response.code == 200 and response.content then
                     hls_handle_playlist(instance, response.content)
                 else
-                    log.error("[hls] playlist http error: " .. response.code)
-                    hls_schedule_backoff(instance, "playlist_http_" .. tostring(response.code))
+                    local msg = response.message or "error"
+                    log.error("[hls] playlist http error: " .. tostring(response.code) .. ":" .. tostring(msg))
+                    hls_schedule_backoff(instance, hls_reason("playlist", response))
                 end
 
                 if instance.playlist_request then
