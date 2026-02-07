@@ -18545,14 +18545,15 @@ function buildUpdateChannelNamesNode() {
     )
   );
   node.appendChild(createEl('div', 'form-note', 'По умолчанию DRY-RUN и низкий параллелизм, чтобы не грузить сервер.'));
+  const apiBase = (window && window.location && window.location.origin) ? window.location.origin : 'http://127.0.0.1:9060';
   const pre = createEl('pre', 'ai-chat-cli');
   pre.textContent =
     '# Dry-run (default)\n' +
-    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --parallel 2 --timeout-sec 10 --rate-per-min 30\n\n' +
+    `python3 tools/update_stream_names_from_sdt.py --api ${apiBase} --parallel 2 --timeout-sec 10 --rate-per-min 30\n\n` +
     '# Only streams matching regex by id or name\n' +
-    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --match \"(ntv|viasat)\" --parallel 2\n\n' +
-    '# Apply changes (writes names)\n' +
-    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --apply --parallel 2';
+    `python3 tools/update_stream_names_from_sdt.py --api ${apiBase} --match \"(ntv|viasat)\" --parallel 2\n\n` +
+    '# Apply changes (writes names) + backup export\n' +
+    `python3 tools/update_stream_names_from_sdt.py --api ${apiBase} --apply --backup --parallel 2`;
   node.appendChild(pre);
   node.appendChild(createEl('div', 'form-note', 'Tip: use --force to update even if current name already looks human.'));
   return node;

@@ -93,10 +93,22 @@ def ensure_list(value: Any) -> List[str]:
         for item in value:
             if item is None:
                 continue
+            if isinstance(item, dict):
+                u = item.get("url")
+                if u is None:
+                    continue
+                text = str(u).strip()
+                if text:
+                    out.append(text)
+                continue
             text = str(item).strip()
             if text:
                 out.append(text)
         return out
+    if isinstance(value, dict):
+        u = value.get("url")
+        text = str(u).strip() if u is not None else ""
+        return [text] if text else []
     text = str(value).strip()
     return [text] if text else []
 
@@ -334,7 +346,7 @@ async def main_async() -> int:
     parser.add_argument("--token", default="", help="API token (Bearer). If empty, will login.")
     parser.add_argument("--username", default=os.getenv("ASTRAL_USER", "admin"), help="Login username (default: admin)")
     parser.add_argument("--password", default=os.getenv("ASTRAL_PASS", "admin"), help="Login password (default: admin)")
-    parser.add_argument("--astral-bin", default="", help="Path to astral binary (default: ./astral or astral)")
+    parser.add_argument("--astral-bin", "--astra-bin", dest="astral_bin", default="", help="Path to astral binary (default: ./astral or astral)")
     parser.add_argument("--timeout-sec", type=int, default=10, help="Per-input analyze timeout in seconds (default: 10)")
     parser.add_argument("--parallel", type=int, default=2, help="Max concurrent streams (default: 2)")
     parser.add_argument("--rate-per-min", type=int, default=30, help="Max streams per minute (default: 30)")
@@ -343,7 +355,15 @@ async def main_async() -> int:
     parser.add_argument("--id", dest="ids", action="append", default=[], help="Stream id to process (repeatable)")
     parser.add_argument("--match", default="", help="Regex to match streams by id or name")
     parser.add_argument("--force", action="store_true", help="Update even if current name looks human")
+    parser.add_argument("--dry-run", action="store_true", help="Dry-run (default). Overrides --apply.")
     parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
+    parser.add_argument(
+        "--backup",
+        nargs="?",
+        const="AUTO",
+        default="",
+        help="Export config to JSON before apply (admin-only). Optional path; if omitted, uses ./backup-<ts>.json",
+    )
     parser.add_argument("--max-streams", type=int, default=0, help="Optional limit on processed streams (0 = no limit)")
     parser.add_argument("--mock-analyze-file", default="", help="Use static analyze output from file (testing)")
 
@@ -356,7 +376,7 @@ async def main_async() -> int:
     default_bin = str(repo_root / "astral") if (repo_root / "astral").exists() else "astral"
     astral_bin = args.astral_bin.strip() or default_bin
 
-    dry_run = not bool(args.apply)
+    dry_run = bool(args.dry_run) or not bool(args.apply)
     only_enabled = bool(args.only_enabled) and not bool(args.all)
     parallel = max(1, int(args.parallel))
 
@@ -396,7 +416,22 @@ async def main_async() -> int:
     if args.max_streams and args.max_streams > 0:
         work = work[: int(args.max_streams)]
 
-    eprint(f"Streams selected: {len(work)} (dry_run={dry_run}, parallel={parallel}, timeout={args.timeout_sec}s)")
+    backup_path: Optional[Path] = None
+    if not dry_run and args.backup:
+        if args.backup == "AUTO":
+            ts = time.strftime("%Y%m%d-%H%M%S")
+            backup_path = Path(f"backup-{ts}.json")
+        else:
+            backup_path = Path(args.backup)
+
+    eprint(f"Streams selected: {len(work)} (dry_run={dry_run}, parallel={parallel}, timeout={args.timeout_sec}s, rate={args.rate_per_min}/min)")
+    if backup_path is not None:
+        eprint(f"Backup export: {backup_path}")
+
+    if backup_path is not None:
+        export_payload = await asyncio.to_thread(http_json, "GET", f"{base_v1}/export", token, None)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        backup_path.write_text(json.dumps(export_payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     updated = 0
     skipped = 0
@@ -505,4 +540,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
