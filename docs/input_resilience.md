@@ -73,6 +73,13 @@ Jitter buffer (optional):
 http://host:port/stream.ts#jitter_buffer_ms=500&jitter_max_buffer_mb=4
 ```
 
+Auto sizing (profiles enabled):
+- If `jitter_buffer_ms` is set (explicitly or via profile defaults) and `jitter_max_buffer_mb` is not set,
+  Astral computes a safe buffer size automatically based on an assumed bitrate for the active profile.
+- Defaults are controlled by:
+  - `settings.input_resilience.jitter_assumed_mbps.{dc,wan,bad}`
+  - `settings.input_resilience.jitter_max_auto_mb`
+
 ## Health and metrics
 Each input reports:
 - `health_state`: online / degraded / offline

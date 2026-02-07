@@ -22,6 +22,7 @@
   - Inputs: add `settings.input_resilience` profiles (dc/wan/bad) with per-input `#net_profile` and status fields (configured/effective profile + enabled).
   - Inputs: improve HTTP/HLS `health_reason` strings for `http_request` errors (code=0 now includes the error message instead of `http_0`).
   - Inputs: add jitter buffer module + per-input jitter controls and input health metrics (net/hls/jitter) in status/Analyze.
+  - Inputs: auto-calc jitter buffer memory limit for profile-enabled inputs using assumed bitrate defaults.
   - UI: add Settings → Inputs card “Input Resilience” (enable profiles + default profile + jitter/HLS defaults).
   - UI: expose Network resilience defaults in Settings -> General and input advanced controls for resilience/jitter.
   - Transcode: add an internal loop channel fallback for `/play/<id>` when `input_use_play` is enabled but the play URL cannot be resolved.
