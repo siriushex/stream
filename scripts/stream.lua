@@ -3941,7 +3941,8 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
     if audio_fix.probe then
         return
     end
-    if not analyze or type(analyze) ~= "function" then
+    -- Module constructors may be callable tables (metatable __call), not plain functions.
+    if not analyze then
         audio_fix.last_error = "analyze module not available"
         return
     end
