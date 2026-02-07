@@ -1729,21 +1729,64 @@ function main()
             return nil
         end
         local channel = entry.channel
-        if not channel and internal and entry.job then
-            local n = loop_input_id or 1
-            if entry.job.loop_channels and entry.job.loop_channels[n] then
-                channel = entry.job.loop_channels[n]
-            elseif entry.job.loop_channel then
-                channel = entry.job.loop_channel
+        local transcode_upstream = nil
+        if not channel and entry.job then
+            local job = entry.job
+            if job.ladder_enabled == true then
+                local first = job.profiles and job.profiles[1] or nil
+                local pid = first and first.id or nil
+                local bus = pid and job.profile_buses and job.profile_buses[pid] or nil
+                if bus and bus.switch then
+                    transcode_upstream = bus.switch:stream()
+                else
+                    server:send(client, {
+                        code = 503,
+                        headers = {
+                            "Content-Type: text/plain",
+                            "Cache-Control: no-store",
+                            "Pragma: no-cache",
+                            "Retry-After: 1",
+                            "Connection: close",
+                        },
+                        content = "transcode ladder output not ready",
+                    })
+                    return nil
+                end
+            elseif job.process_per_output == true then
+                local worker = job.workers and job.workers[1] or nil
+                if worker and worker.proxy_enabled == true and worker.proxy_switch then
+                    transcode_upstream = worker.proxy_switch:stream()
+                else
+                    server:send(client, {
+                        code = 503,
+                        headers = {
+                            "Content-Type: text/plain",
+                            "Cache-Control: no-store",
+                            "Pragma: no-cache",
+                            "Retry-After: 1",
+                            "Connection: close",
+                        },
+                        content = "transcode output not ready (enable per-output + udp proxy)",
+                    })
+                    return nil
+                end
+            else
+                -- Legacy single-process transcode does not expose a stable internal bus for /play.
+                server:abort(client, 404)
+                return nil
             end
         end
-        if not channel then
+        if not channel and not transcode_upstream then
             server:abort(client, 404)
             return nil
         end
 
         local function allow_stream(session)
-            client_data.output_data = { channel_data = channel }
+            if channel then
+                client_data.output_data = { channel_data = channel }
+            else
+                client_data.output_data = {}
+            end
             http_output_client(server, client, request, client_data.output_data)
 
             if session and session.session_id and auth and auth.register_client then
@@ -1751,15 +1794,19 @@ function main()
                 client_data.auth_session_id = session.session_id
             end
 
-            local channel_data = channel
-            if channel_data.keep_timer then
-                channel_data.keep_timer:close()
-                channel_data.keep_timer = nil
-            end
-            channel_data.clients = channel_data.clients + 1
+            local upstream = transcode_upstream
+            if channel then
+                local channel_data = channel
+                if channel_data.keep_timer then
+                    channel_data.keep_timer:close()
+                    channel_data.keep_timer = nil
+                end
+                channel_data.clients = channel_data.clients + 1
 
-            if not channel_data.input[1].input then
-                channel_init_input(channel_data, 1)
+                if not channel_data.input[1].input then
+                    channel_init_input(channel_data, 1)
+                end
+                upstream = channel_data.tail:stream()
             end
 
             local buffer_size = math.max(128, http_play_buffer_kb)
@@ -1790,7 +1837,7 @@ function main()
                 end
             end
             server:send(client, {
-                upstream = channel_data.tail:stream(),
+                upstream = upstream,
                 buffer_size = buffer_size,
                 buffer_fill = buffer_fill,
             }, "video/MP2T")
@@ -1826,8 +1873,180 @@ function main()
 	            return nil
 	        end
 
-			        allow_stream(nil)
-			    end
+				        allow_stream(nil)
+				    end
+
+        local function http_input_stream(server, client, request)
+            local client_data = server:data(client)
+
+            if not request then
+                if client_data.output_data and client_data.output_data.channel_data then
+                    local channel_data = client_data.output_data.channel_data
+                    channel_data.clients = channel_data.clients - 1
+                    if channel_data.keep_timer then
+                        channel_data.keep_timer:close()
+                        channel_data.keep_timer = nil
+                    end
+                    if channel_data.clients == 0 and channel_data.input[1].input ~= nil then
+                        local keep_active = tonumber(channel_data.config.http_keep_active or 0) or 0
+                        if keep_active == 0 then
+                            for input_id, input_data in ipairs(channel_data.input) do
+                                if input_data.input then
+                                    channel_kill_input(channel_data, input_id)
+                                end
+                            end
+                            channel_data.active_input_id = 0
+                        elseif keep_active > 0 then
+                            channel_data.keep_timer = timer({
+                                interval = keep_active,
+                                callback = function(self)
+                                    self:close()
+                                    channel_data.keep_timer = nil
+                                    if channel_data.clients == 0 then
+                                        for input_id, input_data in ipairs(channel_data.input) do
+                                            if input_data.input then
+                                                channel_kill_input(channel_data, input_id)
+                                            end
+                                        end
+                                        channel_data.active_input_id = 0
+                                    end
+                                end,
+                            })
+                        end
+                    end
+                end
+
+                http_output_client(server, client, nil)
+                if client_data.auth_session_id and auth and auth.unregister_client then
+                    auth.unregister_client(client_data.auth_session_id, server, client)
+                    client_data.auth_session_id = nil
+                end
+                client_data.output_data = nil
+                return nil
+            end
+
+            local function is_internal_input_request(req)
+                if not req or not req.query then
+                    return false
+                end
+                local flag = req.query.internal or req.query._internal
+                if flag == nil then
+                    return false
+                end
+                local text = tostring(flag):lower()
+                if not (text == "1" or text == "true" or text == "yes" or text == "on") then
+                    return false
+                end
+                local ip = tostring(req.addr or "")
+                if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+                    local headers = req.headers or {}
+                    if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                        or headers["forwarded"] or headers["Forwarded"]
+                        or headers["x-real-ip"] or headers["X-Real-IP"] then
+                        return false
+                    end
+                    return true
+                end
+                return false
+            end
+
+            local internal = is_internal_input_request(request)
+            if not internal then
+                server:abort(client, 404)
+                return nil
+            end
+
+            if not http_auth_check(request) then
+                server:abort(client, 401)
+                return nil
+            end
+
+            local raw_stream_id = http_play_stream_id(request.path)
+            if not raw_stream_id then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local stream_id = raw_stream_id
+            local loop_input_id = nil
+            local base, idx = raw_stream_id:match("^(.+)~([0-9]+)$")
+            if base and idx then
+                stream_id = base
+                loop_input_id = tonumber(idx)
+            end
+
+            local entry = runtime.streams[stream_id]
+            if not entry then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local channel = entry.channel
+            if not channel and entry.job then
+                local n = loop_input_id or 1
+                if transcode and transcode.ensure_loop_channel then
+                    pcall(transcode.ensure_loop_channel, entry.job, n)
+                end
+                if entry.job.loop_channels and entry.job.loop_channels[n] then
+                    channel = entry.job.loop_channels[n]
+                elseif entry.job.loop_channel then
+                    channel = entry.job.loop_channel
+                end
+            end
+            if not channel then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local function allow_stream(_session)
+                client_data.output_data = { channel_data = channel }
+                http_output_client(server, client, request, client_data.output_data)
+
+                local channel_data = channel
+                if channel_data.keep_timer then
+                    channel_data.keep_timer:close()
+                    channel_data.keep_timer = nil
+                end
+                channel_data.clients = channel_data.clients + 1
+
+                if not channel_data.input[1].input then
+                    channel_init_input(channel_data, 1)
+                end
+
+                local buffer_size = math.max(128, http_play_buffer_kb)
+                if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                    buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                end
+                local buffer_fill = math.floor(buffer_size / 4)
+                if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                    buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                end
+
+                local query = request and request.query or nil
+                if query then
+                    local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
+                    if qbuf and qbuf > 0 then
+                        buffer_size = math.max(128, math.floor(qbuf))
+                        buffer_fill = math.floor(buffer_size / 4)
+                        if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                            buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                        end
+                    end
+                    local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
+                    if qfill and qfill > 0 then
+                        buffer_fill = math.min(buffer_size, math.floor(qfill))
+                    end
+                end
+                server:send(client, {
+                    upstream = channel_data.tail:stream(),
+                    buffer_size = buffer_size,
+                    buffer_fill = buffer_fill,
+                }, "video/MP2T")
+            end
+
+            allow_stream(nil)
+            return nil
+        end
 
     local function update_live_stats(job, profile_id, delta, internal)
         if not job or not profile_id or profile_id == "" then
