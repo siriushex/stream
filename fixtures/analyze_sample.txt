@@ -1,0 +1,7 @@
+PAT    programs: 801, 802
+PMT    sid=801 pmt_pid=100
+PMT    sid=802 pmt_pid=200
+SDT: service_name: sid=801 value=КИНОТВ
+SDT: service_name: sid=802 value=Комедия
+SDT: Service: Shopping Live
+
