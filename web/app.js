@@ -18498,6 +18498,7 @@ function getAiHelpHints() {
     'make mpts',
     'delete all disable channel',
     'transcode all stream',
+    'update channel names',
   ];
 }
 
@@ -18523,6 +18524,7 @@ function buildAiHelpNode() {
   details.appendChild(createEl('div', '', '- make mpts: объяснит MPTS и предложит план настройки'));
   details.appendChild(createEl('div', '', '- delete all disable channel: удалить все выключенные streams из конфига'));
   details.appendChild(createEl('div', '', '- transcode all stream: подготовить transcode streams (по умолчанию DISABLED)'));
+  details.appendChild(createEl('div', '', '- update channel names: обновить stream.name по SDT (через CLI analyze, отдельный инструмент)'));
   wrapper.appendChild(details);
   wrapper.appendChild(createEl(
     'div',
@@ -18530,6 +18532,30 @@ function buildAiHelpNode() {
     'Примеры: "почему stream a019 DOWN?", "поставь no_data_timeout_sec=20 для stream a019".'
   ));
   return wrapper;
+}
+
+function buildUpdateChannelNamesNode() {
+  const node = createEl('div');
+  node.appendChild(createEl('div', '', 'Update channel names from SDT (service name) using `astral --analyze`.'));
+  node.appendChild(
+    createEl(
+      'div',
+      'form-note',
+      'Это CLI инструмент. Он по очереди проверяет входы (input) в порядке приоритета, берет первое рабочее значение SDT service name и обновляет stream.name.'
+    )
+  );
+  node.appendChild(createEl('div', 'form-note', 'По умолчанию DRY-RUN и низкий параллелизм, чтобы не грузить сервер.'));
+  const pre = createEl('pre', 'ai-chat-cli');
+  pre.textContent =
+    '# Dry-run (default)\n' +
+    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --parallel 2 --timeout-sec 10 --rate-per-min 30\n\n' +
+    '# Only streams matching regex by id or name\n' +
+    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --match \"(ntv|viasat)\" --parallel 2\n\n' +
+    '# Apply changes (writes names)\n' +
+    'python3 tools/update_stream_names_from_sdt.py --api http://127.0.0.1:9060 --apply --parallel 2';
+  node.appendChild(pre);
+  node.appendChild(createEl('div', 'form-note', 'Tip: use --force to update even if current name already looks human.'));
+  return node;
 }
 
 function clearAiChatPolling() {
@@ -18654,7 +18680,20 @@ function renderAiPlanResult(job) {
   const totalAdded = summary && Number.isFinite(Number(summary.added)) ? Number(summary.added) : 0;
   const totalUpdated = summary && Number.isFinite(Number(summary.updated)) ? Number(summary.updated) : 0;
   const totalRemoved = summary && Number.isFinite(Number(summary.removed)) ? Number(summary.removed) : 0;
-  const hasChanges = (totalAdded + totalUpdated + totalRemoved) > 0;
+  // Prefer section counts (most reliable). Some diff implementations may produce a summary even when sections are empty.
+  const sections = diff && diff.sections && typeof diff.sections === 'object' ? diff.sections : null;
+  let sectionChanges = 0;
+  if (sections) {
+    Object.keys(sections).forEach((key) => {
+      const section = sections[key];
+      if (!section) return;
+      const added = Array.isArray(section.added) ? section.added.length : 0;
+      const removed = Array.isArray(section.removed) ? section.removed.length : 0;
+      const updated = Array.isArray(section.updated) ? section.updated.length : 0;
+      sectionChanges += (added + removed + updated);
+    });
+  }
+  const hasChanges = sectionChanges > 0 || (totalAdded + totalUpdated + totalRemoved) > 0;
   wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
   if (Array.isArray(plan.help_lines) && plan.help_lines.length) {
     const helpBlock = createEl('div', 'ai-help-lines');
@@ -18689,12 +18728,12 @@ function renderAiPlanResult(job) {
     wrapper.appendChild(createEl('div', 'form-note', `Diff preview failed: ${diffError}`));
   }
   // Hide diff/apply blocks for pure chat replies (plan.ops is empty).
-  if (hasOps && hasChanges && diff && diff.sections) {
+  if (hasOps && hasChanges && diff && sections) {
     const diffBlock = document.createElement('div');
     diffBlock.className = 'ai-summary-section';
     diffBlock.appendChild(createEl('div', 'ai-summary-label', 'Diff preview'));
-    Object.keys(diff.sections).forEach((key) => {
-      const section = diff.sections[key];
+    Object.keys(sections).forEach((key) => {
+      const section = sections[key];
       if (!section) return;
       const added = Array.isArray(section.added) ? section.added.length : 0;
       const removed = Array.isArray(section.removed) ? section.removed.length : 0;
@@ -18810,6 +18849,22 @@ async function sendAiChatMessage() {
     elements.aiChatInput.value = '';
     appendAiChatMessage('user', prompt);
     appendAiChatMessage('assistant', buildAiHelpNode());
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    return;
+  }
+  if (
+    normalized === 'update channel names' ||
+    normalized === 'update channel names sdt' ||
+    normalized === 'update names' ||
+    normalized === 'update names sdt'
+  ) {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    appendAiChatMessage('assistant', buildUpdateChannelNamesNode());
     setAiChatStatus('');
     if (elements.aiChatFiles) {
       elements.aiChatFiles.value = '';
