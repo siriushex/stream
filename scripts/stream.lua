@@ -3408,7 +3408,8 @@ local function is_audio_fix_force_run(conf)
     if not conf then
         return false
     end
-    return conf.force_on == true or conf.mode == "auto" or conf.silence_fallback == true
+    local mode = conf.mode
+    return conf.force_on == true or mode == "auto" or mode == "aac" or conf.silence_fallback == true
 end
 
 local function normalize_aac_profile(profile)
@@ -3583,6 +3584,11 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     end
 
     local localaddr = resolve_output_localaddr(output_data.config) or output_data.config.localaddr
+    local sync = output_data.config.sync
+    if sync == nil then
+        -- Keep audio-fix output pacing stable by default when the output sync buffer is not set.
+        sync = 1
+    end
     local proxy_output = udp_output({
         upstream = proxy_switch:stream(),
         addr = output_data.config.addr,
@@ -3591,7 +3597,7 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
         localaddr = localaddr,
         socket_size = output_data.config.socket_size,
         rtp = (output_data.config.format == "rtp"),
-        sync = output_data.config.sync,
+        sync = sync,
         cbr = output_data.config.cbr,
     })
 
