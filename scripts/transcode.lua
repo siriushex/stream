@@ -1303,17 +1303,29 @@ local function build_failover_inputs(cfg, label)
         -- Failover probes must be able to read stream refs ("stream://id") because ladder mode uses /play fanout.
         -- Convert stream refs to an internal /play URL so init_input_module + warmup/compat probes keep working.
         local probe_url = source_url
+        local probe_is_play = false
         do
             local play_id = extract_play_id_from_input(entry)
             if play_id then
                 local play_url = build_transcode_play_url(play_id)
                 if play_url and play_url ~= "" then
                     probe_url = play_url
+                    probe_is_play = true
                 end
             end
         end
 
         local parsed = probe_url and parse_url(probe_url) or nil
+        if parsed and probe_is_play then
+            -- Failover probes use /play fanout (burst delivery). parse_url() defaults /play to sync=1,
+            -- which is good for stability, but the default sync buffer (1MB) adds a long startup delay
+            -- on low-bitrate streams (buffer must fill before PCR-paced output starts).
+            -- Keep sync enabled, but shrink buffer_size so probes become "on_air" quickly and don't
+            -- trigger no_data_timeout during normal startup.
+            if parsed.buffer_size == nil then
+                parsed.buffer_size = 64 -- KB
+            end
+        end
         if not parsed or not parsed.format or not init_input_module or not init_input_module[parsed.format] then
             invalid = true
         end
