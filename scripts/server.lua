@@ -1709,10 +1709,18 @@ function main()
 	            return nil
 	        end
 
-	        local stream_id = http_play_stream_id(request.path)
-	        if not stream_id then
-	            server:abort(client, 404)
+        local raw_stream_id = http_play_stream_id(request.path)
+        if not raw_stream_id then
+            server:abort(client, 404)
             return nil
+        end
+
+        local stream_id = raw_stream_id
+        local loop_input_id = nil
+        local base, idx = raw_stream_id:match("^(.+)~([0-9]+)$")
+        if base and idx then
+            stream_id = base
+            loop_input_id = tonumber(idx)
         end
 
         local entry = runtime.streams[stream_id]
@@ -1721,8 +1729,13 @@ function main()
             return nil
         end
         local channel = entry.channel
-        if not channel and internal and entry.job and entry.job.loop_channel then
-            channel = entry.job.loop_channel
+        if not channel and internal and entry.job then
+            local n = loop_input_id or 1
+            if entry.job.loop_channels and entry.job.loop_channels[n] then
+                channel = entry.job.loop_channels[n]
+            elseif entry.job.loop_channel then
+                channel = entry.job.loop_channel
+            end
         end
         if not channel then
             server:abort(client, 404)

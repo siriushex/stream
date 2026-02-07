@@ -220,7 +220,7 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-local function build_transcode_play_url(stream_id)
+local function build_transcode_play_url(stream_id, input_id)
     if not stream_id or stream_id == "" then
         return nil
     end
@@ -240,7 +240,12 @@ local function build_transcode_play_url(stream_id)
         return nil
     end
     -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. "?internal=1"
+    local suffix = ""
+    local idx = tonumber(input_id)
+    if idx and idx > 1 then
+        suffix = "~" .. tostring(idx)
+    end
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. suffix .. "?internal=1"
 end
 
 local function build_transcode_live_url(stream_id, profile_id)
@@ -381,9 +386,20 @@ end
 
 -- NOTE: не делаем это `local function ...`, потому что `transcode.lua` уже близко к лимиту
 -- локальных переменных Lua (200) на уровне чанка. Добавление ещё пары `local` ломает загрузку.
-function transcode.ensure_loop_channel(job)
-    if not job or job.loop_channel then
-        return job and job.loop_channel ~= nil
+function transcode.ensure_loop_channel(job, input_id)
+    if not job then
+        return false
+    end
+    local idx = tonumber(input_id) or 1
+    if idx < 1 then
+        idx = 1
+    end
+    job.loop_channels = job.loop_channels or {}
+    if job.loop_channels[idx] then
+        if idx == 1 and not job.loop_channel then
+            job.loop_channel = job.loop_channels[1]
+        end
+        return true
     end
     if type(make_channel) ~= "function" then
         return false
@@ -392,32 +408,50 @@ function transcode.ensure_loop_channel(job)
     if not cfg or type(cfg.input) ~= "table" or #cfg.input == 0 then
         return false
     end
+    local entry = pick_input_entry(cfg, idx, true)
+    if not entry then
+        return false
+    end
     local loop_cfg = {}
     for k, v in pairs(cfg) do
         loop_cfg[k] = v
     end
     loop_cfg.type = nil
     loop_cfg.transcode = nil
+    loop_cfg.backup_type = "disabled"
+    loop_cfg.input = { entry }
     loop_cfg.output = {}
     loop_cfg.__disable_auto_hls = true
-    loop_cfg.name = tostring(loop_cfg.name or ("Stream " .. tostring(job.id))) .. " (loop)"
+    loop_cfg.name = tostring(loop_cfg.name or ("Stream " .. tostring(job.id))) .. " (loop " .. tostring(idx) .. ")"
     loop_cfg.enable = true
     local channel = make_channel(loop_cfg)
     if not channel then
-        log.error("[transcode " .. tostring(job.id) .. "] failed to create loop channel")
+        log.error("[transcode " .. tostring(job.id) .. "] failed to create loop channel " .. tostring(idx))
         return false
     end
-    job.loop_channel = channel
+    job.loop_channels[idx] = channel
+    if idx == 1 then
+        job.loop_channel = channel
+    end
     return true
 end
 
 function transcode.stop_loop_channel(job)
-    if not job or not job.loop_channel then
+    if not job then
         return
     end
     if type(kill_channel) == "function" then
-        kill_channel(job.loop_channel)
+        if type(job.loop_channels) == "table" then
+            for _, channel in pairs(job.loop_channels) do
+                if channel then
+                    kill_channel(channel)
+                end
+            end
+        elseif job.loop_channel then
+            kill_channel(job.loop_channel)
+        end
     end
+    job.loop_channels = nil
     job.loop_channel = nil
 end
 
@@ -449,8 +483,8 @@ local function resolve_job_input_url(job)
         if play_id then
             play_url = build_transcode_play_url(play_id)
         end
-        if not play_url and transcode.ensure_loop_channel(job) then
-            play_url = build_transcode_play_url(job.id)
+        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
+            play_url = build_transcode_play_url(job.id, job.active_input_id)
         end
         if play_url then
             play_url = append_play_buffer(play_url, play_buffer_kb)
@@ -6668,7 +6702,7 @@ function transcode.start(job, opts)
     if normalize_bool(tc.input_use_play, true) then
         local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
         if not play_id then
-            transcode.ensure_loop_channel(job)
+            transcode.ensure_loop_channel(job, job.active_input_id)
         end
     end
     local engine = normalize_engine(tc)
