@@ -13850,6 +13850,13 @@ function updateEditorTranscodeStatus() {
         if (worker.pid) parts.push(`pid ${worker.pid}`);
         if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
         if (worker.reason) parts.push(String(worker.reason));
+        if (Number.isFinite(worker.clients)) {
+          const internal = Number.isFinite(worker.internal_clients) ? ` (internal ${worker.internal_clients})` : '';
+          parts.push(`clients ${worker.clients}${internal}`);
+        }
+        if (Number.isFinite(worker.requests_total)) parts.push(`requests ${worker.requests_total}`);
+        if (Number.isFinite(worker.segments_total)) parts.push(`segments ${worker.segments_total}`);
+        if (Number.isFinite(worker.active_variants)) parts.push(`active ${worker.active_variants}`);
         if (worker.url) parts.push(worker.url);
         lines.push(parts.join(' | '));
       });
