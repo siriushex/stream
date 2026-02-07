@@ -1395,6 +1395,31 @@ local function channel_prepare_input(channel_data, input_id, opts)
         return true
     end
 
+    -- Network/HLS resilience stats callback (used by UI/health).
+    if input_data.config then
+        input_data.config.on_net_stats = function(state)
+            input_data.net = state
+            if state then
+                if state.last_error and state.last_error ~= "" then
+                    input_data.last_error = state.last_error
+                    input_data.health_reason = state.last_error
+                end
+                if state.state then
+                    input_data.health_state = state.state
+                end
+            end
+        end
+        input_data.config.on_hls_stats = function(stats)
+            input_data.hls = stats
+            if stats and stats.state then
+                input_data.health_state = stats.state
+                if stats.last_error and stats.last_error ~= "" then
+                    input_data.health_reason = stats.last_error
+                end
+            end
+        end
+    end
+
     local input = init_input(input_data.config)
     if not input or not input.tail then
         input_data.input = nil
@@ -1563,7 +1588,23 @@ local function update_input_health(input_data, now, no_data_timeout)
         end
     end
 
-    return ok
+    -- Network/HLS health overrides: degraded/offline should trigger failover.
+    local health_state = "online"
+    if input_data.net and input_data.net.state and input_data.net.state ~= "running" and input_data.net.state ~= "init" then
+        health_state = input_data.net.state
+    end
+    if input_data.hls and input_data.hls.state and input_data.hls.state ~= "running" and input_data.hls.state ~= "init" then
+        health_state = input_data.hls.state
+    end
+    input_data.health_state = health_state
+    if health_state ~= "online" and health_state ~= "running" and health_state ~= "init" then
+        input_data.is_ok = false
+        if not input_data.fail_since then
+            input_data.fail_since = now
+        end
+    end
+
+    return input_data.is_ok
 end
 
 local function update_input_state(channel_data, input_id, input_data)

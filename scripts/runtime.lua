@@ -434,6 +434,28 @@ local function collect_input_stats(channel)
         if input_data and input_data.state then
             entry.state = input_data.state
         end
+        if input_data and input_data.health_state then
+            entry.health_state = input_data.health_state
+        end
+        if input_data and input_data.health_reason then
+            entry.health_reason = input_data.health_reason
+        end
+        if input_data and input_data.net then
+            entry.net = input_data.net
+        end
+        if input_data and input_data.hls then
+            entry.hls = input_data.hls
+        end
+        if input_data and input_data.input and input_data.input.jitter
+            and input_data.input.jitter.stats
+        then
+            local ok, stats = pcall(function()
+                return input_data.input.jitter:stats()
+            end)
+            if ok and type(stats) == "table" then
+                entry.jitter = stats
+            end
+        end
 
         if input_data and input_data.stats and input_data.stats.bitrate then
             entry.bitrate_kbps = tonumber(input_data.stats.bitrate)
