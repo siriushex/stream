@@ -2578,6 +2578,25 @@ local function get_stream_cam_stats(server, client, id)
             item.softcam_id = softcam_id
         end
 
+        -- Best-effort: backup softcam id (dual-CAM redundancy).
+        local softcam_backup_id = nil
+        if input and input.__softcam_backup_id then
+            softcam_backup_id = tostring(input.__softcam_backup_id)
+        else
+            local cam_cfg = input_data.config and input_data.config.cam_backup or nil
+            if type(cam_cfg) == "string" or type(cam_cfg) == "number" then
+                softcam_backup_id = tostring(cam_cfg)
+            elseif type(cam_cfg) == "table" then
+                local opts = cam_cfg.__options or {}
+                if opts.id then
+                    softcam_backup_id = tostring(opts.id)
+                end
+            end
+        end
+        if softcam_backup_id and softcam_backup_id ~= "" then
+            item.softcam_backup_id = softcam_backup_id
+        end
+
         local decrypt = input and input.decrypt or nil
         if decrypt and decrypt.stats then
             local ok, data = pcall(function()
@@ -2626,6 +2645,45 @@ local function get_stream_cam_stats(server, client, id)
                 item.cam = data
             else
                 item.cam_error = tostring(data)
+            end
+        end
+
+        -- Backup CAM connection stats (dual-CAM redundancy).
+        local cam_backup = nil
+        if input and type(input.__softcam_backup_clone) == "table" and input.__softcam_backup_clone.stats then
+            cam_backup = input.__softcam_backup_clone
+        elseif input and type(input.__softcam_backup_instance) == "table" and input.__softcam_backup_instance.stats then
+            cam_backup = input.__softcam_backup_instance
+        elseif softcam_backup_id then
+            local shared = _G[tostring(softcam_backup_id)]
+            if type(shared) == "table" and shared.stats then
+                cam_backup = shared
+            elseif type(softcam_list) == "table" then
+                for _, entry in ipairs(softcam_list) do
+                    if type(entry) == "table" and entry.stats and entry.__options and tostring(entry.__options.id) == tostring(softcam_backup_id) then
+                        cam_backup = entry
+                        break
+                    end
+                end
+            end
+        end
+        if cam_backup and cam_backup.stats then
+            local ok, data = pcall(function()
+                return cam_backup:stats()
+            end)
+            if ok then
+                if type(cam_backup) == "table" and type(cam_backup.__options) == "table" then
+                    local opts = cam_backup.__options
+                    if opts.pool_index ~= nil then
+                        data.pool_index = tonumber(opts.pool_index) or opts.pool_index
+                    end
+                    if opts.pool_size ~= nil then
+                        data.pool_size = tonumber(opts.pool_size) or opts.pool_size
+                    end
+                end
+                item.cam_backup = data
+            else
+                item.cam_backup_error = tostring(data)
             end
         end
 
