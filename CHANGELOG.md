@@ -12,26 +12,32 @@
 ## Entries
 ### 2026-02-07
 - Changes:
-  - Install: extend install.sh to support CentOS/RHEL family (dnf/yum), source/binary download from a.centv.ru, and systemd template install.
-  - Softcam: add dual-CAM hedge delay (backup ECM after threshold), input-level cam_backup selection, and richer CAM stats (backup usage + RTT histogram).
-  - Softcam: fix hedged dual-CAM stats fields and implement backup send timer to match UI stats (build/runtime).
-  - HTTP input: apply /play-style sync/timeout defaults for /stream URLs (burst delivery).
-  - Softcam: drop duplicate module_data_t typedef in decrypt.c (silence -Wpedantic warning).
-  - Analyze: show dual-CAM hedge, backup activity share, and ECM RTT distribution with primary/backup counts.
-  - AI Chat: add chip/command `update channel names` (no OpenAI call) with CLI instructions to refresh stream names from SDT via `astral --analyze`.
-  - Tools: add `tools/update_stream_names_from_sdt.py` (dry-run by default, low parallelism + rate limiting) to update `stream.name` from SDT service name through API.
-  - UI: fix AI chat Diff/Apply preview gating: when diff sections are empty, do not show Diff preview or Apply plan (prevents confusing `+0 ~0 -0` blocks).
-  - Softcam: add `POST /api/v1/softcam/test` and a Softcam modal "Test" button (separate from Save; saving does not depend on reachability).
-  - API: remove a duplicate `/api/v1/softcam/test` route block (no behavior change).
-  - UI: show a clearer allowlist/origin hint for Softcam save/test network errors.
-  - UI: bump asset version stamp to `20260207c` to ensure browsers pick up the latest Softcam UI updates.
-  - Runtime: skip invalid Softcam entries during apply to avoid aborting the server on incomplete configs.
-  - Softcam: show test results modal (CAID/AU/UA/idents) and expose AU/idents in newcamd stats.
-  - Softcam: allow saving settings without applying runtime (`softcam_apply=0`) to avoid network errors; always persist to JSON.
+  - UI: add common Ladder publish controls for HLS/DASH (enable + variants) and keep full publish JSON under an Advanced fold.
 - Tests:
-  - `python3 -m py_compile tools/update_stream_names_from_sdt.py`
-  - `python3 tools/update_stream_names_from_sdt.py --help`
-  - Not run (softcam changes).
+  - `contrib/ci/smoke.sh`
+### 2026-02-07
+- Changes:
+  - UI: add common Ladder publish controls for HTTP-TS/Embed and push targets (UDP/RTP/RTMP/RTSP) with validation.
+- Tests:
+  - `contrib/ci/smoke.sh`
+### 2026-02-07
+- Changes:
+  - UI: add ladder profiles list + modal editor, keep Profiles JSON under Advanced fold.
+- Tests:
+  - Not run (UI only)
+### 2026-02-07
+- Changes:
+  - UI: replace single push publish fields with a multi-row publish target list + editor modal.
+- Tests:
+  - Not run (UI only)
+### 2026-02-07
+- Changes:
+  - Publish: fix `/embed/<stream_id>` handler crash (missing `escape_html()`).
+  - CI: add `smoke_transcode_ladder_embed.sh` and wire it into `contrib/ci/smoke.sh` behind `TRANSCODE_LADDER_EMBED_SMOKE=1`.
+  - UI: show Ladder publish URLs (embed/live/hls/dash + push destinations) in the stream editor.
+- Tests:
+  - `contrib/ci/smoke_transcode_ladder_embed.sh`
+  - `contrib/ci/smoke.sh`
 ### 2026-02-06
 - Changes:
   - AI Chat: make prompt chips clickable (ChatGPT-style) and hide Diff/Apply when the plan has no config changes.
@@ -2574,3 +2580,15 @@
   - `contrib/ci/smoke_mpts_spts_only.sh`
   - `contrib/ci/smoke_mpts_auto_probe.sh`
   - `contrib/ci/smoke_mpts_multisection.sh`
+### 2026-02-07
+- Changes:
+  - Phase 3 ladder publish: publish metrics for HTTP-TS and HLS; UI shows metrics and experimental publish labels.
+  - Audio fix stability: AAC mode now forces transcode; /stream defaults to sync=1.
+- Tests:
+  - `contrib/ci/smoke_transcode_ladder_http_ts_pull.sh`
+  - `contrib/ci/smoke_transcode_ladder_hls_publish.sh`
+  - `contrib/ci/smoke_transcode_ladder_dash_publish.sh`
+  - `contrib/ci/smoke_transcode_ladder_udp_publish.sh`
+  - `contrib/ci/smoke_transcode_ladder_failover_hls_publish.sh`
+  - `contrib/ci/smoke_transcode_ladder_economical_hls_publish.sh`
+  - `contrib/ci/smoke_transcode_ladder_failover_hls_publish.sh`
