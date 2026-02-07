@@ -292,6 +292,85 @@ local function softcam_shallow_copy(entry)
     return out
 end
 
+local function softcam_entry_label(entry)
+    if type(entry) ~= "table" then
+        return "softcam"
+    end
+    if entry.id ~= nil and tostring(entry.id) ~= "" then
+        return tostring(entry.id)
+    end
+    if entry.name ~= nil and tostring(entry.name) ~= "" then
+        return tostring(entry.name)
+    end
+    return tostring(entry.type or "softcam")
+end
+
+local function softcam_sanitize_newcamd(entry)
+    if type(entry) ~= "table" then
+        return false, nil, "invalid entry"
+    end
+
+    local name = entry.name
+    if name == nil or tostring(name) == "" then
+        if entry.id ~= nil and tostring(entry.id) ~= "" then
+            name = entry.id
+        else
+            name = "softcam"
+        end
+    end
+
+    local host = entry.host
+    if host == nil then
+        return false, nil, "host is required"
+    end
+
+    local port = tonumber(entry.port or 0) or 0
+    port = math.floor(port)
+    if port <= 0 then
+        return false, nil, "port is required"
+    end
+
+    local user = entry.user
+    if user == nil then
+        return false, nil, "user is required"
+    end
+
+    local pass = entry.pass
+    if pass == nil then
+        return false, nil, "pass is required"
+    end
+
+    local cfg = softcam_shallow_copy(entry)
+    cfg.name = tostring(name)
+    cfg.host = tostring(host)
+    cfg.port = port
+    cfg.user = tostring(user)
+    cfg.pass = tostring(pass)
+
+    if entry.timeout ~= nil then
+        local timeout = tonumber(entry.timeout or 0) or 0
+        timeout = math.floor(timeout)
+        if timeout > 0 then
+            cfg.timeout = timeout
+        end
+    end
+
+    if entry.key ~= nil then
+        local key = tostring(entry.key or ""):gsub("%s+", "")
+        if key ~= "" then
+            if key:sub(1, 2):lower() == "0x" then
+                key = key:sub(3)
+            end
+            if not key:match("^[0-9a-fA-F]+$") or #key ~= 28 then
+                return false, nil, "key must be 28 hex chars"
+            end
+            cfg.key = key:lower()
+        end
+    end
+
+    return true, cfg, nil
+end
+
 local function softcam_clone(self, tag)
     local opts = type(self) == "table" and self.__options or nil
     local raw = opts and opts.raw_cfg
@@ -397,28 +476,46 @@ function apply_softcam_settings()
         if type(entry) == "table" and entry.type then
             local enabled = entry.enable
             if enabled == nil or enabled == true or enabled == 1 or enabled == "1" then
-                local ctor = _G[tostring(entry.type)]
-                local ctor_type = type(ctor)
-                if ctor_type ~= "function" and ctor_type ~= "table" then
-                    log.error("[softcam] unknown type: " .. tostring(entry.type))
-                else
-                    local ok, instance = pcall(ctor, entry)
-                    if ok and instance then
-                        table.insert(new_list, instance)
-                        local id = entry.id or (instance.__options and instance.__options.id)
-                        if id then
-                            instance.__options = instance.__options or {}
-                            instance.__options.id = instance.__options.id or id
-                            instance.__options.type = entry.type
-                            instance.__options.split_cam = softcam_is_truthy(entry.split_cam)
-                            instance.__options.split_cam_pool_size = tonumber(entry.split_cam_pool_size) or 0
-                            instance.__options.raw_cfg = softcam_shallow_copy(entry)
-                            instance.clone = softcam_clone
-                            instance.get_pool = softcam_get_pool
-                            _G[tostring(id)] = instance
-                        end
+                local cam_type = tostring(entry.type)
+                local cfg = entry
+                local raw_cfg = entry
+                if cam_type == "newcamd" then
+                    local ok_cfg, sanitized, cfg_err = softcam_sanitize_newcamd(entry)
+                    if not ok_cfg then
+                        log.error("[softcam] skip invalid newcamd (" .. softcam_entry_label(entry) .. "): " .. tostring(cfg_err))
+                        cfg = nil
                     else
-                        log.error("[softcam] failed to init: " .. tostring(entry.id or entry.type))
+                        cfg = sanitized
+                        raw_cfg = sanitized
+                    end
+                end
+
+                if cfg == nil then
+                    -- keep going
+                else
+                    local ctor = _G[tostring(cfg.type or cam_type)]
+                    local ctor_type = type(ctor)
+                    if ctor_type ~= "function" and ctor_type ~= "table" then
+                        log.error("[softcam] unknown type: " .. tostring(cfg.type or cam_type))
+                    else
+                        local ok, instance = pcall(ctor, cfg)
+                        if ok and instance then
+                            table.insert(new_list, instance)
+                            local id = (type(cfg) == "table" and cfg.id) or entry.id or (instance.__options and instance.__options.id)
+                            if id then
+                                instance.__options = instance.__options or {}
+                                instance.__options.id = instance.__options.id or id
+                                instance.__options.type = cfg.type or cam_type
+                                instance.__options.split_cam = softcam_is_truthy(cfg.split_cam)
+                                instance.__options.split_cam_pool_size = tonumber(cfg.split_cam_pool_size) or 0
+                                instance.__options.raw_cfg = softcam_shallow_copy(raw_cfg)
+                                instance.clone = softcam_clone
+                                instance.get_pool = softcam_get_pool
+                                _G[tostring(id)] = instance
+                            end
+                        else
+                            log.error("[softcam] failed to init: " .. tostring(softcam_entry_label(entry)))
+                        end
                     end
                 end
             end
