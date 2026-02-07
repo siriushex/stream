@@ -2,14 +2,34 @@
 
 This document describes network resilience for HTTP-TS and HLS inputs.
 
+## Compatibility (important)
+Nothing changes for existing configs unless you explicitly enable it:
+- Global: `settings.input_resilience.enabled=true`
+- Or per-input: add `#net_profile=dc|wan|bad` to the input URL
+
 ## What it does
 - Reconnects on errors and stalls.
 - Uses backoff + jitter to avoid request storms.
 - Tracks input health (online/degraded/offline).
 - Optional jitter buffer to smooth short gaps.
 
+## Profiles (dc/wan/bad)
+You can select a network profile per input:
+- `dc`: stable datacenter networks
+- `wan`: typical WAN between sites
+- `bad`: unstable internet / poor connectivity
+
+When profiles are enabled (globally or per-input), Astral uses:
+- `settings.input_resilience.profiles[profile]` as base net timeouts/backoff
+- `settings.input_resilience.hls_defaults` for HLS ingest defaults (if set)
+- `settings.input_resilience.jitter_defaults_ms[profile]` as default jitter (if input does not set `jitter_buffer_ms`)
+
+Per-input URL options always override the profile defaults.
+
 ## Global defaults (Settings -> General -> Inputs)
-These defaults apply to all HTTP/HLS inputs unless overridden in the input URL.
+There are two layers:
+1) **Input Resilience (profiles)**: `settings.input_resilience.*` (new)
+2) **Network resilience (advanced)**: legacy `settings.net_resilience` (still supported)
 
 Recommended safe defaults (already set):
 - connect_timeout_ms: 3000
@@ -26,6 +46,17 @@ Recommended safe defaults (already set):
 
 ## Per-input overrides (URL options)
 Add options to the input URL with `#key=value`.
+
+### Enable a profile per input
+HTTP-TS (bad network):
+```
+http://host:port/stream.ts#net_profile=bad&jitter_buffer_ms=800
+```
+
+HLS (typical WAN) + HLS overrides:
+```
+hls://host:port/live/playlist.m3u8#net_profile=wan&hls_max_segments=10&hls_max_gap_segments=3&hls_segment_retries=3
+```
 
 HTTP-TS example:
 ```
