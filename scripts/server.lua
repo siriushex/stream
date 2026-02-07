@@ -1696,13 +1696,13 @@ function main()
 	            return false
 	        end
 
-	        local internal = is_internal_play_request(request)
-	        -- When http_play_allow is disabled we still allow internal ffmpeg consumers
-	        -- to read /play (used by transcode/audio-fix), but hide it from external clients.
-	        if not http_play_allow and not internal then
-	            server:abort(client, 404)
-	            return nil
-	        end
+		        local internal = is_internal_play_request(request)
+		        -- When http_play_allow is disabled we still allow internal loopback consumers
+		        -- to read /play (stream refs) and /input (raw loop channels), but hide /play from external clients.
+		        if not http_play_allow and not internal then
+		            server:abort(client, 404)
+		            return nil
+		        end
 
 	        if not http_auth_check(request) then
 	            server:abort(client, 401)
@@ -1802,30 +1802,32 @@ function main()
 	                allow_stream(nil)
 	                return nil
 	            end
+	            local stream_cfg = (entry.channel and entry.channel.config) or (entry.job and entry.job.config) or nil
+	            local stream_name = (stream_cfg and stream_cfg.name) or (entry.job and entry.job.name) or stream_id
 	            local headers = request.headers or {}
 	            auth.check_play({
 	                stream_id = stream_id,
-	                stream_name = entry.channel.config and entry.channel.config.name or stream_id,
-	                stream_cfg = entry.channel.config,
-                proto = "http_ts",
-                request = request,
-                ip = request.addr,
-                token = auth.get_token and auth.get_token(request) or nil,
-                user_agent = header_value(headers, "user-agent") or "",
-                referer = header_value(headers, "referer") or "",
-                uri = build_request_uri(request),
-            }, function(allowed, session)
-                if not allowed then
-                    server:abort(client, 403)
-                    return
-                end
-                allow_stream(session)
-            end)
-            return nil
-        end
+	                stream_name = stream_name,
+	                stream_cfg = stream_cfg,
+	                proto = "http_ts",
+	                request = request,
+	                ip = request.addr,
+	                token = auth.get_token and auth.get_token(request) or nil,
+	                user_agent = header_value(headers, "user-agent") or "",
+	                referer = header_value(headers, "referer") or "",
+	                uri = build_request_uri(request),
+	            }, function(allowed, session)
+	                if not allowed then
+	                    server:abort(client, 403)
+	                    return
+	                end
+	                allow_stream(session)
+	            end)
+	            return nil
+	        end
 
-	        allow_stream(nil)
-	    end
+			        allow_stream(nil)
+			    end
 
     local function update_live_stats(job, profile_id, delta, internal)
         if not job or not profile_id or profile_id == "" then
@@ -2593,30 +2595,35 @@ function main()
         return routes
     end
 
-    local live_upstream = http_upstream({ callback = http_live_stream })
+	    local play_upstream = http_upstream({ callback = http_play_stream })
+	    local input_upstream = http_upstream({ callback = http_input_stream })
+	    local live_upstream = http_upstream({ callback = http_live_stream })
 
-	    local main_routes = {
-	        { "/api/*", api.handle_request },
-	        { "/live/*", live_upstream },
-	        { "/favicon.ico", http_favicon },
-	        { "/index.html", web_static },
-	    }
+		    local main_routes = {
+		        { "/api/*", api.handle_request },
+		        { "/live/*", live_upstream },
+		        { "/input/*", input_upstream },
+		        { "/favicon.ico", http_favicon },
+		        { "/index.html", web_static },
+		    }
 
-	    if http_play_enabled and http_play_port == opt.port then
-	        for _, route in ipairs(build_http_play_routes(false, false, false)) do
-	            table.insert(main_routes, route)
-	        end
-	    elseif not http_play_enabled then
-	        -- Internal-only /play (transcode/audio-fix) even when http_play_allow/http_play_hls are disabled.
-	        local upstream = http_upstream({ callback = http_play_stream })
-	        table.insert(main_routes, { "/stream/*", upstream })
-	        table.insert(main_routes, { "/play/*", upstream })
-	    end
+		    if http_play_enabled and http_play_port == opt.port then
+		        for _, route in ipairs(build_http_play_routes(false, false, false)) do
+		            table.insert(main_routes, route)
+		        end
+		    end
+		
+		    -- Internal-only /play (stream refs) even when external http_play is disabled.
+		    -- Note: direct inputs use /input/* loopback instead of /play/*.
+		    if not http_play_allow then
+		        table.insert(main_routes, { "/stream/*", play_upstream })
+		        table.insert(main_routes, { "/play/*", play_upstream })
+		    end
 
-	    table.insert(main_routes, { "/preview/*", preview_route_handler })
-	    table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
-	    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
-	    table.insert(main_routes, { embed_route .. "/*", embed_route_handler })
+		    table.insert(main_routes, { "/preview/*", preview_route_handler })
+		    table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
+		    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
+		    table.insert(main_routes, { embed_route .. "/*", embed_route_handler })
 	    table.insert(main_routes, { "/", web_index })
 	    table.insert(main_routes, { "/*", web_index })
 
