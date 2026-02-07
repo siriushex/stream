@@ -18680,7 +18680,7 @@ function renderAiPlanResult(job) {
   const totalAdded = summary && Number.isFinite(Number(summary.added)) ? Number(summary.added) : 0;
   const totalUpdated = summary && Number.isFinite(Number(summary.updated)) ? Number(summary.updated) : 0;
   const totalRemoved = summary && Number.isFinite(Number(summary.removed)) ? Number(summary.removed) : 0;
-  // Prefer section counts (most reliable). Some diff implementations may produce a summary even when sections are empty.
+  // Prefer section counts (most reliable). Some diff implementations may produce a non-zero summary even when sections are empty.
   const sections = diff && diff.sections && typeof diff.sections === 'object' ? diff.sections : null;
   let sectionChanges = 0;
   if (sections) {
@@ -18693,7 +18693,7 @@ function renderAiPlanResult(job) {
       sectionChanges += (added + removed + updated);
     });
   }
-  const hasChanges = sectionChanges > 0 || (totalAdded + totalUpdated + totalRemoved) > 0;
+  const hasChanges = sections ? (sectionChanges > 0) : ((totalAdded + totalUpdated + totalRemoved) > 0);
   wrapper.appendChild(createEl('div', '', plan.summary || 'Plan ready.'));
   if (Array.isArray(plan.help_lines) && plan.help_lines.length) {
     const helpBlock = createEl('div', 'ai-help-lines');
