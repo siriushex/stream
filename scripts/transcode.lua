@@ -220,33 +220,40 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-local function build_transcode_play_url(stream_id, input_id)
-    if not stream_id or stream_id == "" then
-        return nil
-    end
-    if not (config and config.get_setting) then
-        return nil
-    end
-    local http_port = tonumber(config.get_setting("http_port"))
-    local play_port = tonumber(config.get_setting("http_play_port"))
-    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
-    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
-    local http_play_enabled = http_play_allow or http_play_hls
-    local port = http_port
-    if http_play_enabled and play_port then
-        port = play_port
-    end
-    if not port then
-        return nil
-    end
-    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-    local suffix = ""
-    local idx = tonumber(input_id)
-    if idx and idx > 1 then
-        suffix = "~" .. tostring(idx)
-    end
-    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(stream_id) .. suffix .. "?internal=1"
-end
+local function build_transcode_play_url(stream_id, input_id, opts)
+	    if not stream_id or stream_id == "" then
+	        return nil
+	    end
+	    if not (config and config.get_setting) then
+	        return nil
+	    end
+	    if type(opts) ~= "table" then
+	        opts = {}
+	    end
+	    local path = tostring(opts.path or "/play/")
+	    local force_http_port = (opts.force_http_port == true) or (path == "/input/")
+	    local http_port = tonumber(config.get_setting("http_port"))
+	    local play_port = tonumber(config.get_setting("http_play_port"))
+	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
+	    local http_play_enabled = http_play_allow or http_play_hls
+	    local port = http_port
+	    -- Only use the separate http_play port when /play is actually exposed there.
+	    -- When http_play_allow is disabled, /play is served internal-only from the main server.
+	    if not force_http_port and http_play_enabled and http_play_allow and play_port then
+	        port = play_port
+	    end
+	    if not port then
+	        return nil
+	    end
+	    -- Pass internal=1 so localhost consumers can bypass http auth (see http_auth_check()).
+	    local suffix = ""
+	    local idx = tonumber(input_id)
+	    if idx and idx > 1 then
+	        suffix = "~" .. tostring(idx)
+	    end
+	    return "http://127.0.0.1:" .. tostring(port) .. path .. tostring(stream_id) .. suffix .. "?internal=1"
+	end
 
 local function build_transcode_live_url(stream_id, profile_id)
     if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
@@ -457,17 +464,21 @@ function transcode.stop_loop_channel(job)
 end
 
 local function resolve_job_input_url(job)
-    if not job or not job.config then
-        return nil
-    end
-    local tc = job.config.transcode or {}
-    local use_play = normalize_bool(tc.input_use_play, true)
-    local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
-    local has_play_buffer_fill = tc.input_play_buffer_fill_kb ~= nil or tc.play_buffer_fill_kb ~= nil
-    local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
-    if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
-        play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
-    end
+	    if not job or not job.config then
+	        return nil
+	    end
+	    local tc = job.config.transcode or {}
+	    local allow_direct = normalize_bool(tc.input_allow_direct, true)
+	    local use_play = normalize_bool(tc.input_use_play, true)
+	    if allow_direct == false then
+	        use_play = true
+	    end
+	    local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
+	    local has_play_buffer_fill = tc.input_play_buffer_fill_kb ~= nil or tc.play_buffer_fill_kb ~= nil
+	    local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
+	    if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
+	        play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
+	    end
     local play_buffer_fill_kb = resolve_play_buffer_kb(tc.input_play_buffer_fill_kb)
     if play_buffer_fill_kb == nil and tc.input_play_buffer_fill_kb == nil then
         play_buffer_fill_kb = resolve_play_buffer_kb(tc.play_buffer_fill_kb)
@@ -478,25 +489,29 @@ local function resolve_job_input_url(job)
     if not has_play_buffer_fill then
         play_buffer_fill_kb = TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT
     end
-    local play_url = nil
-    if use_play then
-        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
-        if play_id then
-            play_url = build_transcode_play_url(play_id)
-        end
-        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
-            play_url = build_transcode_play_url(job.id, job.active_input_id)
-        end
-        if play_url then
-            play_url = append_play_buffer(play_url, play_buffer_kb)
-            play_url = append_play_buffer_fill(play_url, play_buffer_fill_kb)
-            return play_url
-        end
-        log.warning("[transcode " .. tostring(job.id) .. "] play input unavailable; using configured input")
-    end
-    local raw = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
-    return raw
-end
+	    local play_url = nil
+	    if use_play then
+	        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
+	        if play_id then
+	            play_url = build_transcode_play_url(play_id)
+	        end
+	        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
+	            play_url = build_transcode_play_url(job.id, job.active_input_id, { path = "/input/" })
+	        end
+	        if play_url then
+	            play_url = append_play_buffer(play_url, play_buffer_kb)
+	            play_url = append_play_buffer_fill(play_url, play_buffer_fill_kb)
+	            return play_url
+	        end
+	        if allow_direct == false then
+	            log.error("[transcode " .. tostring(job.id) .. "] loopback input unavailable; direct inputs are disabled")
+	            return nil
+	        end
+	        log.warning("[transcode " .. tostring(job.id) .. "] loopback input unavailable; using configured input")
+	    end
+	    local raw = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
+	    return raw
+	end
 
 local function is_udp_url(url)
     if not url or url == "" then
@@ -841,12 +856,15 @@ local function check_gpu_overload(tc, metrics, gpu_id)
 end
 
 local function build_ffmpeg_args(cfg, opts)
-    local tc = cfg.transcode or {}
-    local inputs = ensure_list(cfg.input)
-    local selected_url = nil
-    if opts and opts.play_input_url and opts.play_input_url ~= "" then
-        inputs = { tostring(opts.play_input_url) }
-    end
+	    local tc = cfg.transcode or {}
+	    local inputs = ensure_list(cfg.input)
+	    local selected_url = nil
+	    if opts and opts.require_play_input_url == true and (not opts.play_input_url or opts.play_input_url == "") then
+	        return nil, "loopback input is required but unavailable", nil
+	    end
+	    if opts and opts.play_input_url and opts.play_input_url ~= "" then
+	        inputs = { tostring(opts.play_input_url) }
+	    end
     if #inputs > 1 then
         local entry = pick_input_entry(cfg, opts and opts.active_input_id or nil, true)
         if entry then
@@ -5890,16 +5908,19 @@ local function build_worker_output_override(job, worker)
 end
 
 local function build_worker_ffmpeg_args(job, worker)
-    local output_override = build_worker_output_override(job, worker)
-    local play_input_url = resolve_job_input_url(job)
-    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
-        active_input_id = job.active_input_id,
-        gpu_device = job.gpu_device,
-        outputs_override = { output_override },
-        play_input_url = play_input_url,
-    })
-    return argv, err, selected_url, bin_info
-end
+	    local output_override = build_worker_output_override(job, worker)
+	    local play_input_url = resolve_job_input_url(job)
+	    local tc = job.config and job.config.transcode or {}
+	    local require_loopback = normalize_bool(tc.input_allow_direct, true) == false
+	    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
+	        active_input_id = job.active_input_id,
+	        gpu_device = job.gpu_device,
+	        outputs_override = { output_override },
+	        play_input_url = play_input_url,
+	        require_play_input_url = require_loopback,
+	    })
+	    return argv, err, selected_url, bin_info
+	end
 
 local function build_ladder_encoder_ffmpeg_args(job)
     if not job or job.ladder_enabled ~= true then
@@ -5912,18 +5933,21 @@ local function build_ladder_encoder_ffmpeg_args(job)
             table.insert(outputs_override, w.output)
         end
     end
-    if #outputs_override == 0 then
-        return nil, "no ladder outputs"
-    end
-    local play_input_url = resolve_job_input_url(job)
-    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
-        active_input_id = job.active_input_id,
-        gpu_device = job.gpu_device,
-        outputs_override = outputs_override,
-        play_input_url = play_input_url,
-    })
-    return argv, err, selected_url, bin_info
-end
+	    if #outputs_override == 0 then
+	        return nil, "no ladder outputs"
+	    end
+	    local play_input_url = resolve_job_input_url(job)
+	    local tc = job.config and job.config.transcode or {}
+	    local require_loopback = normalize_bool(tc.input_allow_direct, true) == false
+	    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
+	        active_input_id = job.active_input_id,
+	        gpu_device = job.gpu_device,
+	        outputs_override = outputs_override,
+	        play_input_url = play_input_url,
+	        require_play_input_url = require_loopback,
+	    })
+	    return argv, err, selected_url, bin_info
+	end
 
 start_ladder_encoder = function(job, worker)
     if not job or job.ladder_enabled ~= true then
@@ -6858,12 +6882,15 @@ function transcode.start(job, opts)
         return true
     end
 
-    local play_input_url = resolve_job_input_url(job)
-    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
-        active_input_id = job.active_input_id,
-        gpu_device = job.gpu_device,
-        play_input_url = play_input_url,
-    })
+	    local play_input_url = resolve_job_input_url(job)
+	    local tc = job.config and job.config.transcode or {}
+	    local require_loopback = normalize_bool(tc.input_allow_direct, true) == false
+	    local argv, err, selected_url, bin_info = build_ffmpeg_args(job.config, {
+	        active_input_id = job.active_input_id,
+	        gpu_device = job.gpu_device,
+	        play_input_url = play_input_url,
+	        require_play_input_url = require_loopback,
+	    })
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", nil)
         job.state = "ERROR"
@@ -7146,10 +7173,23 @@ function transcode.upsert(id, row, force)
     -- process_per_output=false -> economical (single encoder for all profiles)
     -- When the key is omitted (nil), keep the current reliable behavior for backward compatibility.
     job.ladder_single_process = job.ladder_enabled == true and (tc.process_per_output == false)
-    job.outputs = normalize_outputs(tc.outputs, job.watchdog)
-    job.process_per_output = normalize_bool(tc.process_per_output, false)
-    job.seamless_udp_proxy = normalize_bool(tc.seamless_udp_proxy, false)
-    job.output_monitors = {}
+	    job.outputs = normalize_outputs(tc.outputs, job.watchdog)
+	    job.process_per_output = normalize_bool(tc.process_per_output, false)
+	    job.seamless_udp_proxy = normalize_bool(tc.seamless_udp_proxy, false)
+	    if tc.seamless_udp_proxy == nil then
+	        local always_proxy = normalize_bool(tc.always_proxy_outputs, false)
+	        if always_proxy == true then
+	            job.seamless_udp_proxy = true
+	        elseif job.ladder_enabled ~= true and job.process_per_output == true then
+	            for _, output in ipairs(job.outputs or {}) do
+	                if output and is_udp_url(output.url) then
+	                    job.seamless_udp_proxy = true
+	                    break
+	                end
+	            end
+	        end
+	    end
+	    job.output_monitors = {}
     for index, output in ipairs(job.outputs) do
         job.output_monitors[index] = {
             index = index,
