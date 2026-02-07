@@ -2525,6 +2525,47 @@ local function get_stream_status(server, client, id)
     json_response(server, client, 200, status)
 end
 
+local function get_stream_cam_stats(server, client, id)
+    local entry = runtime and runtime.streams and runtime.streams[tostring(id)] or nil
+    if not entry or entry.kind ~= "stream" or not entry.channel then
+        return error_response(server, client, 404, "stream not found")
+    end
+
+    local channel = entry.channel
+    local active_id = tonumber(channel.active_input_id or 0) or 0
+
+    local inputs = {}
+    for input_id, input_data in ipairs(channel.input or {}) do
+        local item = {
+            input_id = input_id,
+            active = (active_id == input_id),
+            name = input_data.config and input_data.config.name or nil,
+            format = input_data.config and input_data.config.format or nil,
+        }
+
+        local input = input_data.input
+        local decrypt = input and input.decrypt or nil
+        if decrypt and decrypt.stats then
+            local ok, data = pcall(function()
+                return decrypt:stats()
+            end)
+            if ok then
+                item.decrypt = data
+            else
+                item.decrypt_error = tostring(data)
+            end
+        end
+
+        inputs[#inputs + 1] = item
+    end
+
+    json_response(server, client, 200, {
+        stream_id = tostring(id),
+        active_input_id = active_id,
+        inputs = inputs,
+    })
+end
+
 local function list_sessions(server, client, request)
     local query = request and request.query or {}
     local mode = query.type or query.kind
@@ -5147,6 +5188,11 @@ function api.handle_request(server, client, request)
     end
     if stream_id and method == "DELETE" then
         return delete_stream(server, client, stream_id, request)
+    end
+
+    local stream_cam_stats = path:match("^/api/v1/streams/([%w%-%_]+)/cam%-stats$")
+    if stream_cam_stats and method == "GET" then
+        return get_stream_cam_stats(server, client, stream_cam_stats)
     end
 
     local stream_analyze_id = path:match("^/api/v1/streams/analyze/([%w%-%_]+)$")
