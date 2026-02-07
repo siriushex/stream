@@ -12,6 +12,7 @@
 ## Entries
 ### 2026-02-07
 - Changes:
+  - Install: extend install.sh to support CentOS/RHEL family (dnf/yum), source/binary download from a.centv.ru, and systemd template install.
   - Softcam: add dual-CAM hedge delay (backup ECM after threshold), input-level cam_backup selection, and richer CAM stats (backup usage + RTT histogram).
   - Softcam: fix hedged dual-CAM stats fields and implement backup send timer to match UI stats (build/runtime).
   - HTTP input: apply /play-style sync/timeout defaults for /stream URLs (burst delivery).
