@@ -17790,6 +17790,9 @@ function buildAnalyzeCamSection(camStats) {
   if (activeInput.softcam_id) {
     items.push(`Softcam: ${String(activeInput.softcam_id)}`);
   }
+  if (activeInput.softcam_backup_id) {
+    items.push(`Softcam backup: ${String(activeInput.softcam_backup_id)}`);
+  }
 
   if (activeInput.decrypt_error) {
     items.push(`Decrypt error: ${String(activeInput.decrypt_error)}`);
@@ -17799,9 +17802,12 @@ function buildAnalyzeCamSection(camStats) {
   if (activeInput.cam_error) {
     items.push(`Softcam error: ${String(activeInput.cam_error)}`);
   }
+  if (activeInput.cam_backup_error) {
+    items.push(`Softcam backup error: ${String(activeInput.cam_backup_error)}`);
+  }
 
-  const cam = activeInput.cam || null;
-  if (cam) {
+  function addCamConnectionBlock(cam, title) {
+    if (!cam) return;
     const ready = cam.ready === true;
     const status = cam.status != null ? String(cam.status) : 'n/a';
     const host = cam.host ? String(cam.host) : '';
@@ -17839,11 +17845,14 @@ function buildAnalyzeCamSection(camStats) {
       sub.push(`Last error: ${lastErr}`);
     }
     items.push({
-      text: 'Softcam connection',
+      text: title,
       sub,
       level: warn ? 'warn' : undefined,
     });
   }
+
+  addCamConnectionBlock(activeInput.cam || null, 'Softcam connection');
+  addCamConnectionBlock(activeInput.cam_backup || null, 'Softcam backup connection');
 
   const dec = activeInput.decrypt || null;
   if (!dec) {
@@ -17852,6 +17861,7 @@ function buildAnalyzeCamSection(camStats) {
   }
 
   items.push(`CAM ready: ${dec.cam_ready ? 'Yes' : 'No'}`);
+  items.push(`Dual CAM: ${dec.dual_cam ? 'On' : 'Off'}`);
   items.push(`Key guard: ${dec.key_guard ? 'On' : 'Off'}`);
 
   const shift = dec.shift || {};
