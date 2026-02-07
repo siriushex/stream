@@ -18,6 +18,23 @@ local error_patterns = {
     "max delay reached",
 }
 
+local publish_network_error_patterns = {
+    "connection refused",
+    "connection reset",
+    "connection timed out",
+    "connection timeout",
+    "network is unreachable",
+    "no route to host",
+    "broken pipe",
+    "connection aborted",
+    "connection closed",
+    "could not resolve host",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "server returned",
+    "http error",
+}
+
 local UDP_PROBE_ANALYZE_US = 2000000
 local UDP_PROBE_SIZE = 2000000
 local ANALYZE_MAX_CONCURRENCY_DEFAULT = 4
@@ -902,6 +919,13 @@ local function normalize_watchdog_defaults(tc)
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
         pat_timeout_sec = num("pat_timeout_sec", 0),
         pmt_timeout_sec = num("pmt_timeout_sec", 0),
+        pcr_jitter_limit_ms = num("pcr_jitter_limit_ms", 0),
+        pcr_jitter_hold_sec = num("pcr_jitter_hold_sec", 0),
+        pcr_missing_hold_sec = num("pcr_missing_hold_sec", 0),
+        buffer_target_kbps = num("buffer_target_kbps", 0),
+        buffer_fullness_min_pct = num("buffer_fullness_min_pct", 0),
+        buffer_fullness_max_pct = num("buffer_fullness_max_pct", 0),
+        buffer_fullness_hold_sec = num("buffer_fullness_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(wd.monitor_engine),
         low_bitrate_enabled = normalize_bool(wd.low_bitrate_enabled, true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -955,6 +979,13 @@ local function normalize_output_watchdog(wd, base)
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
         pat_timeout_sec = num("pat_timeout_sec", 0),
         pmt_timeout_sec = num("pmt_timeout_sec", 0),
+        pcr_jitter_limit_ms = num("pcr_jitter_limit_ms", 0),
+        pcr_jitter_hold_sec = num("pcr_jitter_hold_sec", 0),
+        pcr_missing_hold_sec = num("pcr_missing_hold_sec", 0),
+        buffer_target_kbps = num("buffer_target_kbps", 0),
+        buffer_fullness_min_pct = num("buffer_fullness_min_pct", 0),
+        buffer_fullness_max_pct = num("buffer_fullness_max_pct", 0),
+        buffer_fullness_hold_sec = num("buffer_fullness_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(pick("monitor_engine")),
         low_bitrate_enabled = normalize_bool(pick("low_bitrate_enabled"), true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -1116,6 +1147,52 @@ local function normalize_publish_config(tc, profiles)
     local function push_err(msg)
         table.insert(errors, msg)
     end
+    local function normalize_publish_retry(tc_cfg, raw_cfg)
+        local base = type(tc_cfg and tc_cfg.publish_retry) == "table" and tc_cfg.publish_retry or nil
+        local override = type(raw_cfg and raw_cfg.retry) == "table" and raw_cfg.retry or nil
+        if not base and not override then
+            return nil
+        end
+        local function pick(key)
+            if override and override[key] ~= nil then
+                return override[key]
+            end
+            if base and base[key] ~= nil then
+                return base[key]
+            end
+            return nil
+        end
+        local function num(key)
+            local v = pick(key)
+            if v == nil then
+                return nil
+            end
+            local n = tonumber(v)
+            if n == nil or n < 0 then
+                return nil
+            end
+            return n
+        end
+        local out = {
+            restart_delay_sec = num("restart_delay_sec"),
+            restart_jitter_sec = num("restart_jitter_sec"),
+            restart_backoff_base_sec = num("restart_backoff_base_sec"),
+            restart_backoff_factor = num("restart_backoff_factor"),
+            restart_backoff_max_sec = num("restart_backoff_max_sec"),
+            restart_cooldown_sec = num("restart_cooldown_sec"),
+            max_restarts_per_10min = num("max_restarts_per_10min"),
+            no_progress_timeout_sec = num("no_progress_timeout_sec"),
+            max_error_lines_per_min = num("max_error_lines_per_min"),
+        }
+        local net = pick("retry_on_network_error")
+        if net ~= nil then
+            out.retry_on_network_error = normalize_bool(net, nil)
+        end
+        if next(out) == nil then
+            return nil
+        end
+        return out
+    end
     for idx, raw in ipairs(publish) do
         if type(raw) ~= "table" then
             push_err("publish[" .. tostring(idx) .. "]: must be an object")
@@ -1133,6 +1210,10 @@ local function normalize_publish_config(tc, profiles)
                 url = raw.url and tostring(raw.url) or nil,
                 path = raw.path and tostring(raw.path) or nil,
             }
+            local retry = normalize_publish_retry(tc, raw)
+            if retry then
+                entry.retry = retry
+            end
             if raw.profile ~= nil then
                 entry.profile = normalize_profile_id(raw.profile)
                 if entry.profile and not known_profiles[entry.profile] then
@@ -3081,6 +3162,19 @@ local function match_error_line(line)
     return false
 end
 
+local function match_publish_network_error(line)
+    if not line or line == "" then
+        return false
+    end
+    local lower = string.lower(line)
+    for _, pat in ipairs(publish_network_error_patterns) do
+        if lower:find(pat, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
 local function parse_bitrate_kbps(value)
     if not value or value == "" then
         return nil
@@ -3251,6 +3345,25 @@ local function parse_analyze_psi_presence(line)
         return "pmt"
     end
     return nil
+end
+
+local function parse_analyze_pcr_jitter(line)
+    if not line or line == "" then
+        return nil
+    end
+    local max_ms = line:match("PCRJitter:%s*max_ms=([%d%.]+)")
+    if not max_ms then
+        return nil
+    end
+    local avg_ms = line:match("avg_ms=([%d%.]+)")
+    return tonumber(max_ms), tonumber(avg_ms)
+end
+
+local function parse_analyze_pcr_missing(line)
+    if not line or line == "" then
+        return false
+    end
+    return line:find("PCR: missing", 1, true) ~= nil
 end
 
 local function should_trigger_error(now, last_ts, hold_sec)
@@ -3486,6 +3599,22 @@ local function restart_allowed_worker(job, worker, watchdog)
     return true, history
 end
 
+local function merge_watchdog(base, override)
+    if type(override) ~= "table" then
+        return base
+    end
+    local out = {}
+    for k, v in pairs(base or {}) do
+        out[k] = v
+    end
+    for k, v in pairs(override) do
+        if k ~= "retry_on_network_error" and v ~= nil then
+            out[k] = v
+        end
+    end
+    return out
+end
+
 schedule_worker_restart = function(job, worker, code, message, meta)
     if not job or not worker then
         return false
@@ -3719,6 +3848,43 @@ local function update_output_bitrate(job, output_state, bitrate, now)
     end
 
     local wd = output_state.watchdog
+    if wd and (wd.buffer_target_kbps or 0) > 0 then
+        local target = tonumber(wd.buffer_target_kbps) or 0
+        if target > 0 then
+            local fullness = (bitrate / target) * 100
+            output_state.buffer_fullness_pct = fullness
+            output_state.buffer_fullness_ts = now
+            output_state.buffer_underflow_active = false
+            output_state.buffer_overflow_active = false
+
+            local min_pct = tonumber(wd.buffer_fullness_min_pct) or 0
+            if min_pct > 0 and fullness < min_pct then
+                output_state.buffer_underflow_active = true
+                if should_trigger_error(now, output_state.buffer_underflow_trigger_ts, wd.buffer_fullness_hold_sec) then
+                    output_state.buffer_underflow_trigger_ts = now
+                    schedule_restart(job, output_state, "BUFFER_UNDERFLOW", "buffer underflow detected", {
+                        fullness_pct = fullness,
+                        min_pct = min_pct,
+                        target_kbps = target,
+                    })
+                end
+            end
+
+            local max_pct = tonumber(wd.buffer_fullness_max_pct) or 0
+            if max_pct > 0 and fullness > max_pct then
+                output_state.buffer_overflow_active = true
+                if should_trigger_error(now, output_state.buffer_overflow_trigger_ts, wd.buffer_fullness_hold_sec) then
+                    output_state.buffer_overflow_trigger_ts = now
+                    schedule_restart(job, output_state, "BUFFER_OVERFLOW", "buffer overflow detected", {
+                        fullness_pct = fullness,
+                        max_pct = max_pct,
+                        target_kbps = target,
+                    })
+                end
+            end
+        end
+    end
+
     if not wd or wd.low_bitrate_enabled ~= true then
         output_state.low_bitrate_active = false
         output_state.low_bitrate_since = nil
@@ -3890,6 +4056,37 @@ local function tick_output_probe(job, output_state, now)
                                 count = scrambled,
                                 limit = wd.scrambled_limit,
                             })
+                        end
+                    end
+                end
+
+                local jitter_max, jitter_avg = parse_analyze_pcr_jitter(line)
+                if jitter_max then
+                    output_state.pcr_jitter_max_ms = jitter_max
+                    output_state.pcr_jitter_avg_ms = jitter_avg
+                    output_state.pcr_jitter_ts = now
+                    output_state.pcr_missing_active = false
+                    local wd = output_state.watchdog
+                    if wd and wd.pcr_jitter_limit_ms and wd.pcr_jitter_limit_ms > 0 and jitter_max >= wd.pcr_jitter_limit_ms then
+                        if should_trigger_error(now, output_state.pcr_jitter_trigger_ts, wd.pcr_jitter_hold_sec) then
+                            output_state.pcr_jitter_trigger_ts = now
+                            schedule_restart(job, output_state, "PCR_JITTER", "PCR jitter detected", {
+                                max_ms = jitter_max,
+                                avg_ms = jitter_avg,
+                                limit_ms = wd.pcr_jitter_limit_ms,
+                            })
+                        end
+                    end
+                end
+
+                if parse_analyze_pcr_missing(line) then
+                    output_state.pcr_missing_active = true
+                    output_state.pcr_missing_ts = now
+                    local wd = output_state.watchdog
+                    if wd and wd.pcr_missing_hold_sec and wd.pcr_missing_hold_sec > 0 then
+                        if should_trigger_error(now, output_state.pcr_missing_trigger_ts, wd.pcr_missing_hold_sec) then
+                            output_state.pcr_missing_trigger_ts = now
+                            schedule_restart(job, output_state, "PCR_MISSING", "PCR missing", {})
                         end
                     end
                 end
@@ -4474,14 +4671,19 @@ local function is_vaapi_codec(vcodec)
     return tostring(vcodec or ""):lower():find("vaapi") ~= nil
 end
 
+local function should_use_gpu_filters(job, vcodec)
+    local tc = job and job.config and job.config.transcode or {}
+    local engine = normalize_engine(tc)
+    local gpu_mode = normalize_gpu_filter_mode(tc.gpu_filters or tc.ladder_gpu_filters)
+    return (gpu_mode == "on")
+        or (gpu_mode == "auto" and (engine == "nvidia" or engine == "vaapi" or is_nvenc_codec(vcodec) or is_vaapi_codec(vcodec)))
+end
 local function build_ladder_vf(job, profile, vcodec)
     local filters = {}
     local tc = job and job.config and job.config.transcode or {}
     local engine = normalize_engine(tc)
     local deint = tostring(profile.deinterlace or "auto"):lower()
-    local gpu_mode = normalize_gpu_filter_mode(tc.gpu_filters or tc.ladder_gpu_filters)
-    local use_gpu_filters = (gpu_mode == "on")
-        or (gpu_mode == "auto" and (engine == "nvidia" or engine == "vaapi" or is_nvenc_codec(vcodec) or is_vaapi_codec(vcodec)))
+    local use_gpu_filters = should_use_gpu_filters(job, vcodec)
 
     if use_gpu_filters and engine == "nvidia" and is_nvenc_codec(vcodec) then
         table.insert(filters, "format=nv12")
@@ -4511,7 +4713,7 @@ local function build_ladder_vf(job, profile, vcodec)
         end
     end
 
-    if profile.fps then
+    if profile.fps and not use_gpu_filters then
         table.insert(filters, "fps=" .. tostring(profile.fps))
     end
     if #filters == 0 then
@@ -4607,6 +4809,7 @@ local function build_ladder_output(job, profile, bus_port)
 
     local v_args = {}
     local preset = normalize_encoder_preset(profile.encoder_preset or profile.preset or tc.encoder_preset)
+    local use_gpu_filters = should_use_gpu_filters(job, vcodec)
     if profile.bitrate_kbps then
         table.insert(v_args, "-b:v")
         table.insert(v_args, tostring(profile.bitrate_kbps) .. "k")
@@ -4638,6 +4841,10 @@ local function build_ladder_output(job, profile, bus_port)
 
     append_encoder_preset_args(v_args, vcodec, preset, tc)
 
+    if use_gpu_filters and profile.fps and not args_has_flag(v_args, "-r") then
+        table.insert(v_args, "-r")
+        table.insert(v_args, tostring(profile.fps))
+    end
     -- Many publish consumers (DASH packagers, RTMP/RTSP pushers, etc.) are "late joiners"
     -- that connect to the TS stream mid-flight. Ensure SPS/PPS are re-sent on keyframes
     -- so decoders can lock without requiring a full encoder restart.
@@ -5186,18 +5393,23 @@ local function read_publish_output(job, worker)
         update_progress(worker, line)
     end)
 
-    local err_chunk = worker.proc:read_stderr()
-    consume_lines(worker, "stderr_buf", err_chunk, function(line)
-        update_progress(worker, line)
-        local is_error = match_error_line(line)
-        if is_error then
-            mark_error_line(worker, line)
-        end
-        append_stderr_tail(worker, line)
-        if log_mode == "all" then
-            log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
-        elseif log_mode == "errors" and is_error then
-            log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        local err_chunk = worker.proc:read_stderr()
+        consume_lines(worker, "stderr_buf", err_chunk, function(line)
+            update_progress(worker, line)
+            local is_error = match_error_line(line)
+            if is_error then
+                mark_error_line(worker, line)
+            end
+            if worker.retry_on_network_error ~= false and match_publish_network_error(line) then
+                schedule_publish_restart(job, worker, "PUBLISH_NETWORK_ERROR", "network error", {
+                    line = line,
+                })
+            end
+            append_stderr_tail(worker, line)
+            if log_mode == "all" then
+                log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+            elseif log_mode == "errors" and is_error then
+                log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
         end
         if job.log_file_handle then
             job.log_file_handle:write("[publish " .. label .. "] " .. line .. "\n")
@@ -5375,13 +5587,13 @@ ensure_publish_workers = function(job)
                 local url = pub.url
                 if pid and pid ~= "" and url and url ~= "" then
                     local key = t .. ":" .. pid
-                    desired[key] = { type = t, profile_id = pid, url = url }
+                    desired[key] = { type = t, profile_id = pid, url = url, retry = pub.retry }
                 end
             elseif t == "dash" then
                 local variants = type(pub.variants) == "table" and pub.variants or nil
                 if variants and #variants > 0 then
                     local key = t .. ":" .. table.concat(variants, "+")
-                    desired[key] = { type = t, variants = variants, path = pub.path }
+                    desired[key] = { type = t, variants = variants, path = pub.path, retry = pub.retry }
                 end
             end
         end
@@ -5395,7 +5607,9 @@ ensure_publish_workers = function(job)
                 profile_id = spec.profile_id,
                 publish_url = spec.url,
                 variants = spec.variants,
-                watchdog = job.watchdog,
+                watchdog = merge_watchdog(job.watchdog, spec.retry),
+                retry_on_network_error = (spec.retry and spec.retry.retry_on_network_error ~= nil)
+                    and spec.retry.retry_on_network_error or true,
                 state = "STOPPED",
                 restart_history = {},
                 error_events = {},
@@ -6970,8 +7184,22 @@ function transcode.get_status(id)
                 scrambled_active = output_state.scrambled_active or false,
                 psi_pat_ts = output_state.psi_pat_ts,
                 psi_pmt_ts = output_state.psi_pmt_ts,
+                pcr_jitter_max_ms = output_state.pcr_jitter_max_ms,
+                pcr_jitter_avg_ms = output_state.pcr_jitter_avg_ms,
+                pcr_jitter_ts = output_state.pcr_jitter_ts,
+                pcr_missing_active = output_state.pcr_missing_active or false,
+                pcr_missing_ts = output_state.pcr_missing_ts,
                 pat_timeout_sec = output_state.watchdog and output_state.watchdog.pat_timeout_sec or nil,
                 pmt_timeout_sec = output_state.watchdog and output_state.watchdog.pmt_timeout_sec or nil,
+                pcr_jitter_limit_ms = output_state.watchdog and output_state.watchdog.pcr_jitter_limit_ms or nil,
+                pcr_missing_hold_sec = output_state.watchdog and output_state.watchdog.pcr_missing_hold_sec or nil,
+                buffer_target_kbps = output_state.watchdog and output_state.watchdog.buffer_target_kbps or nil,
+                buffer_fullness_min_pct = output_state.watchdog and output_state.watchdog.buffer_fullness_min_pct or nil,
+                buffer_fullness_max_pct = output_state.watchdog and output_state.watchdog.buffer_fullness_max_pct or nil,
+                buffer_fullness_pct = output_state.buffer_fullness_pct,
+                buffer_fullness_ts = output_state.buffer_fullness_ts,
+                buffer_underflow_active = output_state.buffer_underflow_active or false,
+                buffer_overflow_active = output_state.buffer_overflow_active or false,
                 low_bitrate_active = output_state.low_bitrate_active or false,
                 low_bitrate_seconds_accum = output_state.low_bitrate_active and output_state.low_bitrate_seconds or 0,
                 last_restart_ts = output_state.last_restart_ts,
