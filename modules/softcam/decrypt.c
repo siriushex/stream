@@ -59,6 +59,13 @@ typedef struct
     bool is_keys;
     uint8_t parity;
 
+    /* ECM retry state (helps recovery when CAM returns Not Found or responds late) */
+    uint8_t last_ecm_type;
+    bool last_ecm_ok;
+    uint32_t ecm_fail_count;
+    uint64_t last_ecm_send_us;
+    uint64_t last_ecm_ok_us;
+
 #if FFDECSA == 1
 
     void *keys;
@@ -648,14 +655,27 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         if(!ca_stream)
             return;
 
-        if(em_type == ca_stream->ecm_type)
-            return;
-
         if(!module_cas_check_em(mod->__decrypt.cas, psi))
             return;
 
+        const uint64_t now_us = asc_utime();
+        uint64_t retry_us = 0;
+        if(!ca_stream->is_keys || !ca_stream->last_ecm_ok)
+            retry_us = 250000; /* fast recovery */
+        else
+            retry_us = 2000000; /* keep some retry to tolerate short glitches */
+
+        if(em_type == ca_stream->last_ecm_type && ca_stream->last_ecm_send_us != 0)
+        {
+            const uint64_t since_us = now_us - ca_stream->last_ecm_send_us;
+            if(since_us < retry_us)
+                return;
+        }
+
         ca_stream->ecm_type = em_type;
-        ca_stream->sendtime = asc_utime();
+        ca_stream->last_ecm_type = em_type;
+        ca_stream->last_ecm_send_us = now_us;
+        ca_stream->sendtime = now_us;
     }
     else if(em_type >= 0x82 && em_type <= 0x8F)
     { /* EMM */
@@ -951,6 +971,10 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
 
     if(is_keys_ok)
     {
+        ca_stream->last_ecm_ok = true;
+        ca_stream->ecm_fail_count = 0;
+        ca_stream->last_ecm_ok_us = asc_utime();
+
         if(!is_cw_checksum_ok && asc_log_is_debug())
             asc_log_debug(MSG("ECM CW checksum mismatch (accepting keys anyway)"));
 
@@ -988,9 +1012,21 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
     }
     else
     {
+        ca_stream->last_ecm_ok = false;
+        if(ca_stream->ecm_fail_count != UINT32_MAX)
+            ++ca_stream->ecm_fail_count;
+
         const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
-        asc_log_error(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d")
-                      , data[0], responsetime, data[2]);
+        if(ca_stream->ecm_fail_count <= 3 && !asc_log_is_debug())
+        {
+            asc_log_warning(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d")
+                            , data[0], responsetime, data[2]);
+        }
+        else
+        {
+            asc_log_error(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d")
+                          , data[0], responsetime, data[2]);
+        }
     }
 }
 
