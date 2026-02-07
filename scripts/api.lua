@@ -5902,9 +5902,6 @@ function api.handle_request(server, client, request)
     if path == "/api/v1/servers/test" and method == "POST" then
         return server_test(server, client, request)
     end
-    if path == "/api/v1/softcam/test" and method == "POST" then
-        return softcam_test(server, client, request)
-    end
     if path == "/api/v1/import" and method == "POST" then
         return import_config(server, client, request)
     end
