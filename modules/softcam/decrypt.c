@@ -51,7 +51,6 @@
 #   error "DVB-CSA is not defined"
 #endif
 
-typedef struct module_data_t module_data_t;
 typedef struct ca_stream_t ca_stream_t;
 
 typedef struct
