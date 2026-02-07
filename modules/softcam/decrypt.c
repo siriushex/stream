@@ -131,6 +131,12 @@ struct module_data_t
     int ecm_pid;
     bool key_guard;
     bool dual_cam;
+    uint32_t cam_backup_hedge_ms;
+    uint64_t cam_backup_hedge_us;
+    uint64_t backup_active_ms;
+    uint64_t backup_active_since_us;
+    bool backup_active;
+    uint64_t started_us;
 
     /* CAM redundancy */
     module_cam_t *cam_primary;
@@ -1636,6 +1642,25 @@ static int method_stats(module_data_t *mod)
     lua_pushboolean(lua, mod->dual_cam);
     lua_setfield(lua, -2, "dual_cam");
 
+    lua_pushinteger(lua, (lua_Integer)mod->cam_backup_hedge_ms);
+    lua_setfield(lua, -2, "cam_backup_hedge_ms");
+
+    const uint64_t now_us = asc_utime();
+    uint64_t backup_ms = mod->backup_active_ms;
+    if(mod->backup_active && mod->backup_active_since_us)
+        backup_ms += (now_us - mod->backup_active_since_us) / 1000ULL;
+    lua_pushinteger(lua, (lua_Integer)backup_ms);
+    lua_setfield(lua, -2, "backup_active_ms");
+    if(mod->started_us && now_us > mod->started_us)
+    {
+        const uint64_t uptime_ms = (now_us - mod->started_us) / 1000ULL;
+        if(uptime_ms > 0)
+        {
+            lua_pushnumber(lua, (lua_Number)backup_ms / (lua_Number)uptime_ms);
+            lua_setfield(lua, -2, "backup_active_pct");
+        }
+    }
+
     /* shift buffer observability */
     lua_newtable(lua);
     lua_pushinteger(lua, (lua_Integer)mod->shift.size);
@@ -1651,7 +1676,6 @@ static int method_stats(module_data_t *mod)
     lua_setfield(lua, -2, "shift");
 
     /* per-ECM PID stats */
-    const uint64_t now_us = asc_utime();
     lua_newtable(lua);
     int idx = 1;
     asc_list_for(mod->ca_list)
@@ -1694,6 +1718,10 @@ static int method_stats(module_data_t *mod)
         lua_setfield(lua, -2, "retry");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_ok);
         lua_setfield(lua, -2, "ok");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_ok_primary);
+        lua_setfield(lua, -2, "ok_primary");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_ok_backup);
+        lua_setfield(lua, -2, "ok_backup");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_not_found);
         lua_setfield(lua, -2, "not_found");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_count);
@@ -1703,6 +1731,28 @@ static int method_stats(module_data_t *mod)
             lua_pushinteger(lua, (lua_Integer)(ca_stream->stat_rtt_sum_ms / ca_stream->stat_rtt_count));
             lua_setfield(lua, -2, "rtt_avg_ms");
         }
+        if(ca_stream->stat_rtt_min_ms)
+        {
+            lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_min_ms);
+            lua_setfield(lua, -2, "rtt_min_ms");
+        }
+        if(ca_stream->stat_rtt_max_ms)
+        {
+            lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_max_ms);
+            lua_setfield(lua, -2, "rtt_max_ms");
+        }
+        lua_newtable(lua);
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[0]);
+        lua_setfield(lua, -2, "le50");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[1]);
+        lua_setfield(lua, -2, "le100");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[2]);
+        lua_setfield(lua, -2, "le250");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[3]);
+        lua_setfield(lua, -2, "le500");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[4]);
+        lua_setfield(lua, -2, "gt500");
+        lua_setfield(lua, -2, "rtt_hist");
         lua_setfield(lua, -2, "ecm");
 
         lua_newtable(lua);

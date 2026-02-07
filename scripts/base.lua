@@ -813,6 +813,17 @@ function init_input(conf)
                 key_guard = (v == true or v == 1 or v == "1")
             end
 
+            -- Optional dual-CAM hedge: send ECM to backup only after this delay (ms).
+            local cam_backup_hedge_ms = 0
+            if opts and type(opts.raw_cfg) == "table" then
+                local raw = opts.raw_cfg
+                local hv = raw.cam_backup_hedge_ms or raw.dual_cam_hedge_ms or 0
+                cam_backup_hedge_ms = tonumber(hv) or 0
+            end
+            if cam_backup_hedge_ms < 0 then
+                cam_backup_hedge_ms = 0
+            end
+
             -- shift: if stream doesn't specify one, allow softcam entry to provide a default.
             local shift = conf.shift
             if (shift == nil or shift == 0 or shift == "0" or shift == "") and opts and type(opts.raw_cfg) == "table" then
@@ -836,6 +847,7 @@ function init_input(conf)
                 ecm_pid = conf.ecm_pid,
                 shift = shift,
                 key_guard = key_guard,
+                cam_backup_hedge_ms = cam_backup_hedge_ms,
             })
             instance.tail = instance.decrypt
         end
