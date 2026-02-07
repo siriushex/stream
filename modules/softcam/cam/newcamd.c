@@ -79,6 +79,12 @@ struct module_data_t
     uint8_t buffer[NEWCAMD_MSG_SIZE];
     size_t payload_size;    // to send
     size_t buffer_skip;     // to recv
+
+    /* Observability */
+    uint64_t stat_reconnects;
+    uint64_t stat_timeouts;
+    uint64_t last_io_us;
+    const char *last_error;
 };
 
 typedef enum {
@@ -164,6 +170,8 @@ static void on_timeout(void *arg)
     asc_timer_destroy(mod->timeout);
     mod->timeout = NULL;
 
+    mod->stat_timeouts += 1;
+
     switch(mod->status)
     {
         case -1:
@@ -171,9 +179,11 @@ static void on_timeout(void *arg)
             return;
         case 0:
             asc_log_error(MSG("connection timeout"));
+            mod->last_error = "connection_timeout";
             break;
         default:
             asc_log_error(MSG("response timeout"));
+            mod->last_error = "response_timeout";
             break;
     }
 
@@ -296,9 +306,11 @@ static void on_newcamd_ready(void *arg)
     if(asc_socket_send(mod->sock, mod->buffer, packet_size) != (ssize_t)packet_size)
     {
         asc_log_error(MSG("failed to send message"));
+        mod->last_error = "send_failed";
         newcamd_reconnect(mod, true);
         return;
     }
+    mod->last_io_us = asc_utime();
 
     asc_socket_set_on_ready(mod->sock, NULL);
 
@@ -330,9 +342,11 @@ static void on_newcamd_read_packet(void *arg)
         if(len <= 0)
         {
             asc_log_error(MSG("failed to read header"));
+            mod->last_error = "read_header";
             newcamd_reconnect(mod, true);
             return;
         }
+        mod->last_io_us = asc_utime();
         mod->buffer_skip += len;
         if(mod->buffer_skip != 2)
             return;
@@ -341,6 +355,7 @@ static void on_newcamd_read_packet(void *arg)
         if(mod->payload_size > NEWCAMD_MSG_SIZE)
         {
             asc_log_error(MSG("wrong message size"));
+            mod->last_error = "wrong_msg_size";
             newcamd_reconnect(mod, true);
             return;
         }
@@ -354,9 +369,11 @@ static void on_newcamd_read_packet(void *arg)
     if(len <= 0)
     {
         asc_log_error(MSG("failed to read message"));
+        mod->last_error = "read_message";
         newcamd_reconnect(mod, true);
         return;
     }
+    mod->last_io_us = asc_utime();
 
     mod->buffer_skip += len;
     if(mod->buffer_skip != mod->payload_size)
@@ -380,6 +397,7 @@ static void on_newcamd_read_packet(void *arg)
     if(xor_sum(&mod->buffer[2], packet_size))
     {
         asc_log_error(MSG("bad message checksum"));
+        mod->last_error = "bad_checksum";
         newcamd_reconnect(mod, true);
         return;
     }
@@ -470,6 +488,7 @@ static void on_newcamd_read_packet(void *arg)
         if(msg_type != NEWCAMD_MSG_CLIENT_2_SERVER_LOGIN_ACK)
         {
             asc_log_error(MSG("login failed [0x%02X]"), msg_type);
+            mod->last_error = "login_failed";
             newcamd_reconnect(mod, true);
             return;
         }
@@ -491,6 +510,7 @@ static void on_newcamd_read_packet(void *arg)
         if(msg_type != NEWCAMD_MSG_CARD_DATA)
         {
             asc_log_error(MSG("NEWCAMD_MSG_CARD_DATA"));
+            mod->last_error = "card_data_failed";
             newcamd_reconnect(mod, true);
             return;
         }
@@ -543,9 +563,11 @@ static void on_newcamd_read_init(void *arg)
     if(len <= 0)
     {
         asc_log_error(MSG("failed to read initial response"));
+        mod->last_error = "read_init";
         newcamd_reconnect(mod, true);
         return;
     }
+    mod->last_io_us = asc_utime();
     mod->buffer_skip += len;
     if(mod->buffer_skip != KEY_SIZE)
         return;
@@ -580,6 +602,7 @@ static void on_newcamd_connect(void *arg)
     module_data_t *mod = arg;
 
     mod->status = 1;
+    mod->last_error = NULL;
 
     asc_timer_destroy(mod->timeout);
     mod->timeout = asc_timer_init(mod->config.timeout, on_timeout, mod);
@@ -614,6 +637,7 @@ static void newcamd_disconnect(module_data_t *mod)
 
 static void newcamd_reconnect(module_data_t *mod, bool timeout)
 {
+    mod->stat_reconnects += 1;
     mod->status = -1;
     on_newcamd_close(mod);
 
@@ -674,6 +698,61 @@ void newcamd_send_em(  module_data_t *mod
     asc_socket_set_on_ready(mod->sock, on_newcamd_ready);
 }
 
+static int method_stats(module_data_t *mod)
+{
+    lua_newtable(lua);
+
+    lua_pushboolean(lua, mod->__cam.is_ready);
+    lua_setfield(lua, -2, "ready");
+
+    lua_pushinteger(lua, mod->status);
+    lua_setfield(lua, -2, "status");
+
+    lua_pushstring(lua, mod->config.host ? mod->config.host : "");
+    lua_setfield(lua, -2, "host");
+
+    lua_pushinteger(lua, mod->config.port);
+    lua_setfield(lua, -2, "port");
+
+    lua_pushinteger(lua, mod->config.timeout);
+    lua_setfield(lua, -2, "timeout_ms");
+
+    lua_pushinteger(lua, mod->__cam.caid);
+    lua_setfield(lua, -2, "caid");
+
+    char ua_hex[17];
+    hex_to_str(ua_hex, mod->__cam.ua, 8);
+    lua_pushstring(lua, ua_hex);
+    lua_setfield(lua, -2, "ua");
+
+    lua_pushinteger(lua, (lua_Integer)asc_list_size(mod->__cam.packet_queue));
+    lua_setfield(lua, -2, "queue_len");
+
+    lua_pushboolean(lua, mod->packet != NULL);
+    lua_setfield(lua, -2, "in_flight");
+
+    lua_pushinteger(lua, (lua_Integer)mod->stat_reconnects);
+    lua_setfield(lua, -2, "reconnects");
+
+    lua_pushinteger(lua, (lua_Integer)mod->stat_timeouts);
+    lua_setfield(lua, -2, "timeouts");
+
+    if(mod->last_error && mod->last_error[0] != '\0')
+    {
+        lua_pushstring(lua, mod->last_error);
+        lua_setfield(lua, -2, "last_error");
+    }
+
+    if(mod->last_io_us)
+    {
+        const uint64_t now_us = asc_utime();
+        lua_pushinteger(lua, (lua_Integer)((now_us - mod->last_io_us) / 1000ULL));
+        lua_setfield(lua, -2, "last_io_ago_ms");
+    }
+
+    return 1;
+}
+
 static void module_init(module_data_t *mod)
 {
     module_option_string("name", &mod->config.name, NULL);
@@ -719,6 +798,8 @@ static void module_destroy(module_data_t *mod)
 MODULE_CAM_METHODS()
 MODULE_LUA_METHODS()
 {
-    MODULE_CAM_METHODS_REF()
+    MODULE_CAM_METHODS_REF(),
+    { "stats", method_stats },
+    { NULL, NULL },
 };
 MODULE_LUA_REGISTER(newcamd)
