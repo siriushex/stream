@@ -4609,6 +4609,161 @@ local function server_test(server, client, request)
     do_health(nil)
 end
 
+local function softcam_test(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+
+    local host = tostring(body.host or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local port = tonumber(body.port or 0) or 0
+    local user = tostring(body.user or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local pass = tostring(body.pass or "")
+    local key = tostring(body.key or ""):gsub("%s+", "")
+    local caid = tostring(body.caid or ""):gsub("%s+", "")
+
+    if host == "" then
+        return error_response(server, client, 400, "host is required")
+    end
+    if port <= 0 then
+        return error_response(server, client, 400, "port is required")
+    end
+    if user == "" then
+        return error_response(server, client, 400, "user is required")
+    end
+    if pass == "" then
+        return error_response(server, client, 400, "pass is required")
+    end
+
+    if key ~= "" then
+        if key:sub(1, 2):lower() == "0x" then
+            key = key:sub(3)
+        end
+        if not key:match("^[0-9a-fA-F]+$") or #key ~= 28 then
+            return error_response(server, client, 400, "key must be 28 hex chars")
+        end
+        key = key:lower()
+    end
+
+    if caid ~= "" then
+        if caid:sub(1, 2):lower() == "0x" then
+            caid = caid:sub(3)
+        end
+        if not caid:match("^[0-9a-fA-F]+$") or #caid ~= 4 then
+            return error_response(server, client, 400, "caid must be 4 hex chars")
+        end
+        caid = caid:upper()
+    end
+
+    local timeout = tonumber(body.timeout or 0) or 0
+    if timeout <= 0 then
+        local timeout_ms = tonumber(body.timeout_ms or 0) or 0
+        if timeout_ms > 0 then
+            timeout = math.floor(timeout_ms / 1000)
+        end
+    end
+    if timeout <= 0 then
+        timeout = 8
+    end
+
+    local ctor = _G["newcamd"]
+    if type(ctor) ~= "function" and type(ctor) ~= "table" then
+        return error_response(server, client, 500, "newcamd module unavailable")
+    end
+
+    local cfg = {
+        name = "Softcam test",
+        type = "newcamd",
+        host = host,
+        port = port,
+        user = user,
+        pass = pass,
+        timeout = timeout,
+        disable_emm = true,
+    }
+    if key ~= "" then
+        cfg.key = key
+    end
+    if caid ~= "" then
+        cfg.caid = caid
+    end
+
+    local ok, cam = pcall(ctor, cfg)
+    if not ok or not cam then
+        return error_response(server, client, 400, "softcam init failed")
+    end
+    if type(cam) ~= "table" or type(cam.stats) ~= "function" then
+        pcall(function()
+            if cam and cam.close then cam:close() end
+        end)
+        return error_response(server, client, 500, "softcam stats unavailable")
+    end
+
+    local responded = false
+    local poller = nil
+    local tries = 0
+    local last_stats = nil
+
+    local function finish_ok(message, stats)
+        if responded then return end
+        responded = true
+        if poller then poller:close() end
+        pcall(function()
+            if cam and cam.close then cam:close() end
+        end)
+        json_response(server, client, 200, {
+            status = "ok",
+            message = message or "ok",
+            cam = stats,
+        })
+    end
+
+    local function finish_err(code, message, stats)
+        if responded then return end
+        responded = true
+        if poller then poller:close() end
+        pcall(function()
+            if cam and cam.close then cam:close() end
+        end)
+        json_response(server, client, code or 400, {
+            error = message or "softcam test failed",
+            cam = stats,
+        })
+    end
+
+    local max_wait_sec = tonumber(body.max_wait_sec or 3) or 3
+    if max_wait_sec < 0.5 then max_wait_sec = 0.5 end
+    if max_wait_sec > 10 then max_wait_sec = 10 end
+    local max_tries = math.max(3, math.floor((max_wait_sec / 0.1) + 0.5))
+
+    poller = timer({
+        interval = 0.1,
+        callback = function()
+            tries = tries + 1
+            local ok2, stats = pcall(function()
+                return cam:stats()
+            end)
+            if ok2 and type(stats) == "table" then
+                last_stats = stats
+                if stats.ready == true then
+                    return finish_ok("ready", stats)
+                end
+            end
+            if tries >= max_tries then
+                local err = "timeout"
+                if last_stats and last_stats.last_error then
+                    err = tostring(last_stats.last_error)
+                end
+                return finish_err(400, "softcam not ready: " .. err, last_stats)
+            end
+        end,
+    })
+end
+
 local function list_server_entries(filter_id)
     local list = (config and config.get_setting) and config.get_setting("servers") or nil
     if type(list) ~= "table" then
@@ -5731,6 +5886,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/ai/telegram" and method == "POST" then
         return ai_telegram(server, client, request)
+    end
+    if path == "/api/v1/softcam/test" and method == "POST" then
+        return softcam_test(server, client, request)
     end
     if path == "/api/v1/servers/status" and method == "GET" then
         return server_status_list(server, client, request)
