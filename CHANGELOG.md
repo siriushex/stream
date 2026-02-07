@@ -10,6 +10,14 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-07
+- Changes:
+  - Publish: fix `/embed/<stream_id>` handler crash (missing `escape_html()`).
+  - CI: add `smoke_transcode_ladder_embed.sh` and wire it into `contrib/ci/smoke.sh` behind `TRANSCODE_LADDER_EMBED_SMOKE=1`.
+  - UI: show Ladder publish URLs (embed/live/hls/dash + push destinations) in the stream editor.
+- Tests:
+  - `contrib/ci/smoke_transcode_ladder_embed.sh`
+  - `contrib/ci/smoke.sh`
 ### 2026-02-06
 - Changes:
   - AI Chat: make prompt chips clickable (ChatGPT-style) and hide Diff/Apply when the plan has no config changes.
