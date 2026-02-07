@@ -1018,9 +1018,9 @@ function http_auth_check(request)
     -- - loopback source IP
     -- - no forwarded headers (avoid accidental reverse-proxy bypass)
     -- - explicit query flag (?internal=1)
-    -- - /play/* and /live/* only
+    -- - /play/*, /live/*, /input/* only
     local path = request and request.path or ""
-    if path:sub(1, 6) == "/play/" or path:sub(1, 6) == "/live/" then
+    if path:sub(1, 6) == "/play/" or path:sub(1, 6) == "/live/" or path:sub(1, 7) == "/input/" then
         local ip = request and request.addr or ""
         local headers = request and request.headers or {}
         local query = request and request.query or nil
