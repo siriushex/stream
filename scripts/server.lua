@@ -379,6 +379,7 @@ local function softcam_get_pool(self, tag)
     clone.__options = clone.__options or {}
     clone.__options.is_pool_clone = true
     clone.__options.pool_index = idx
+    clone.__options.pool_size = size
     opts.pool_clones[idx] = clone
     return clone
 end
