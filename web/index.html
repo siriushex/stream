@@ -2205,10 +2205,30 @@
 	              <span>Profiles (JSON)</span>
 	              <textarea id="stream-transcode-profiles-json" class="textarea-grow" rows="6" placeholder='[{"id":"HDHigh","width":1280,"height":720,"bitrate_kbps":2500}]'></textarea>
 	            </label>
-	            <label class="field">
-	              <span>Publish targets (JSON)</span>
-	              <textarea id="stream-transcode-publish-json" class="textarea-grow" rows="5" placeholder='[{"type":"hls","variants":["HDHigh","HDMedium"]}]'></textarea>
-	            </label>
+	            <div class="form-grid">
+	              <label class="checkline span-3">
+	                <input type="checkbox" id="stream-transcode-publish-hls-enabled" />
+	                <span>HLS</span>
+	              </label>
+	              <label class="field span-9">
+	                <span>HLS variants (comma-separated profile ids, empty = all)</span>
+	                <input type="text" id="stream-transcode-publish-hls-variants" placeholder="HDHigh,HDMedium" />
+	              </label>
+	              <label class="checkline span-3">
+	                <input type="checkbox" id="stream-transcode-publish-dash-enabled" />
+	                <span>DASH</span>
+	              </label>
+	              <label class="field span-9">
+	                <span>DASH variants (comma-separated profile ids, empty = all)</span>
+	                <input type="text" id="stream-transcode-publish-dash-variants" placeholder="HDHigh,HDMedium" />
+	              </label>
+	            </div>
+	            <details class="fold">
+	              <summary class="fold-summary">Publish targets (JSON)</summary>
+	              <div class="fold-body">
+	                <textarea id="stream-transcode-publish-json" class="textarea-grow" rows="6" placeholder='[{"type":"hls","variants":["HDHigh","HDMedium"]}]'></textarea>
+	              </div>
+	            </details>
 		            <div class="form-hint">
 		              Internal pull endpoints are always available when ladder is running:
 		              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,

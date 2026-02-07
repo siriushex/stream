@@ -847,6 +847,10 @@ const elements = {
   streamTranscodeLadderPreset2: $('#stream-transcode-ladder-preset-2'),
   streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
   streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
+  streamTranscodePublishHlsEnabled: $('#stream-transcode-publish-hls-enabled'),
+  streamTranscodePublishHlsVariants: $('#stream-transcode-publish-hls-variants'),
+  streamTranscodePublishDashEnabled: $('#stream-transcode-publish-dash-enabled'),
+  streamTranscodePublishDashVariants: $('#stream-transcode-publish-dash-variants'),
   streamTranscodePublishJson: $('#stream-transcode-publish-json'),
   streamTranscodeLadderLinksFold: $('#stream-transcode-ladder-links-fold'),
   streamTranscodeLadderLinks: $('#stream-transcode-ladder-links'),
@@ -5717,6 +5721,96 @@ function getLadderPresetPublish(mode) {
   ];
 }
 
+function parseCsvIds(text) {
+  return String(text || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function pickPublishEntry(publish, type) {
+  if (!Array.isArray(publish)) return null;
+  for (const entry of publish) {
+    if (entry && typeof entry === 'object' && entry.type === type) return entry;
+  }
+  return null;
+}
+
+function syncTranscodeLadderPublishCommonUiFromJson() {
+  if (!elements.streamTranscodePublishJson) return;
+  if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
+  if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+
+  let publish = null;
+  try {
+    publish = parseJsonValue(elements.streamTranscodePublishJson.value, 'Publish targets (Transcode tab)');
+  } catch (_err) {
+    // Keep the UI state as-is when JSON is invalid.
+    return;
+  }
+  if (!Array.isArray(publish)) publish = [];
+
+  const hls = pickPublishEntry(publish, 'hls');
+  elements.streamTranscodePublishHlsEnabled.checked = Boolean(hls && hls.enabled !== false);
+  elements.streamTranscodePublishHlsVariants.value = (hls && Array.isArray(hls.variants)) ? hls.variants.join(',') : '';
+
+  const dash = pickPublishEntry(publish, 'dash');
+  elements.streamTranscodePublishDashEnabled.checked = Boolean(dash && dash.enabled !== false);
+  elements.streamTranscodePublishDashVariants.value = (dash && Array.isArray(dash.variants)) ? dash.variants.join(',') : '';
+}
+
+function syncTranscodeLadderPublishJsonFromCommonUi() {
+  if (!elements.streamTranscodePublishJson) return;
+  if (!elements.streamTranscodeProfilesJson) return;
+  if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
+  if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+
+  let current = null;
+  try {
+    current = parseJsonValue(elements.streamTranscodePublishJson.value, 'Publish targets (Transcode tab)');
+  } catch (_err) {
+    current = null;
+  }
+  if (!Array.isArray(current)) current = [];
+  const next = current.filter((entry) => entry && typeof entry === 'object');
+
+  let profiles = [];
+  try {
+    const parsed = parseJsonValue(elements.streamTranscodeProfilesJson.value, 'Profiles (Transcode tab)');
+    if (Array.isArray(parsed)) profiles = parsed;
+  } catch (_err) {}
+  const allProfileIds = profiles
+    .map((p) => String(p && p.id || '').trim())
+    .filter(Boolean);
+
+  const maybeVariants = (variantsText) => {
+    const ids = parseCsvIds(variantsText);
+    return ids.length ? ids : allProfileIds;
+  };
+
+  const hlsVariants = maybeVariants(elements.streamTranscodePublishHlsVariants.value);
+  const hlsEnabled = elements.streamTranscodePublishHlsEnabled.checked;
+  const hls = pickPublishEntry(next, 'hls');
+  if (hls) {
+    hls.enabled = hlsEnabled;
+    hls.variants = hlsVariants;
+  } else if (hlsEnabled) {
+    next.push({ type: 'hls', enabled: true, variants: hlsVariants });
+  }
+
+  const dashVariants = maybeVariants(elements.streamTranscodePublishDashVariants.value);
+  const dashEnabled = elements.streamTranscodePublishDashEnabled.checked;
+  const dash = pickPublishEntry(next, 'dash');
+  if (dash) {
+    dash.enabled = dashEnabled;
+    dash.variants = dashVariants;
+  } else if (dashEnabled) {
+    next.push({ type: 'dash', enabled: true, variants: dashVariants });
+  }
+
+  elements.streamTranscodePublishJson.value = next.length ? formatJson(next) : '';
+}
+
 function applyTranscodeLadderPreset(mode) {
   if (!elements.streamTranscodeLadderEnabled) return;
   elements.streamTranscodeLadderEnabled.checked = true;
@@ -5727,6 +5821,7 @@ function applyTranscodeLadderPreset(mode) {
   if (elements.streamTranscodePublishJson) {
     elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
   }
+  syncTranscodeLadderPublishCommonUiFromJson();
 }
 
 function updateTranscodeLadderToggle() {
@@ -12020,6 +12115,7 @@ function openEditor(stream, isNew) {
         const publish = Array.isArray(tc.publish) ? tc.publish : [];
         elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
       }
+      syncTranscodeLadderPublishCommonUiFromJson();
     }
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
@@ -20728,6 +20824,31 @@ function bindEvents() {
   if (elements.streamTranscodeLadderPreset3) {
     elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
       applyTranscodeLadderPreset('3');
+    });
+  }
+  if (elements.streamTranscodePublishHlsEnabled) {
+    elements.streamTranscodePublishHlsEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHlsVariants) {
+    elements.streamTranscodePublishHlsVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishDashEnabled) {
+    elements.streamTranscodePublishDashEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishDashVariants) {
+    elements.streamTranscodePublishDashVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishJson) {
+    elements.streamTranscodePublishJson.addEventListener('input', () => {
+      syncTranscodeLadderPublishCommonUiFromJson();
     });
   }
 
