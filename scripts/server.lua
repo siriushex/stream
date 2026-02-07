@@ -220,6 +220,17 @@ local function split_path(path)
     return dir, file
 end
 
+local function escape_html(value)
+    local s = tostring(value or "")
+    -- Keep this minimal and dependency-free. Order matters: escape '&' first.
+    s = s:gsub("&", "&amp;")
+    s = s:gsub("<", "&lt;")
+    s = s:gsub(">", "&gt;")
+    s = s:gsub("\"", "&quot;")
+    s = s:gsub("'", "&#39;")
+    return s
+end
+
 local function strip_extension(name)
     if not name or name == "" then
         return name
