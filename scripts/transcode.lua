@@ -6985,10 +6985,26 @@ function transcode.get_status(id)
                         state = "ERROR"
                     end
                     local variant_urls = {}
+                    local variant_stats = {}
+                    local segments_total = 0
+                    local active_variants = 0
                     for _, pid in ipairs(variants) do
                         local u = build_public_hls_variant_path(job.id, pid)
                         if u then
                             variant_urls[pid] = u
+                        end
+                        local out = job.publish_hls_outputs and job.publish_hls_outputs[pid] or nil
+                        if out and type(out.stats) == "function" then
+                            local ok_stats, stats = pcall(out.stats, out)
+                            if ok_stats and type(stats) == "table" then
+                                variant_stats[pid] = stats
+                                if type(stats.current_segments) == "number" then
+                                    segments_total = segments_total + stats.current_segments
+                                end
+                                if stats.active == true then
+                                    active_variants = active_variants + 1
+                                end
+                            end
                         end
                     end
                     push({
@@ -6998,6 +7014,9 @@ function transcode.get_status(id)
                         url = build_public_hls_master_path(job.id),
                         variants = variants,
                         variant_urls = variant_urls,
+                        variant_stats = next(variant_stats) and variant_stats or nil,
+                        segments_total = segments_total > 0 and segments_total or nil,
+                        active_variants = active_variants > 0 and active_variants or nil,
                         state = state,
                     })
                 elseif t == "http-ts" then
@@ -7014,11 +7033,17 @@ function transcode.get_status(id)
                         end
                     end
                     for _, pid in ipairs(ids) do
+                        local stats = job.publish_live_stats and job.publish_live_stats[pid] or nil
                         push({
                             type = "http-ts",
                             enabled = enabled,
                             profile_id = pid,
                             url = build_public_live_path(job.id, pid),
+                            clients = stats and stats.clients or nil,
+                            internal_clients = stats and stats.internal_clients or nil,
+                            requests_total = stats and stats.requests_total or nil,
+                            last_request_ts = stats and stats.last_request_ts or nil,
+                            last_disconnect_ts = stats and stats.last_disconnect_ts or nil,
                             state = enabled and "AVAILABLE" or "STOPPED",
                         })
                     end

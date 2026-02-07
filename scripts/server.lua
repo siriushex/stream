@@ -1568,8 +1568,41 @@ function main()
 	        allow_stream(nil)
 	    end
 
+    local function update_live_stats(job, profile_id, delta, internal)
+        if not job or not profile_id or profile_id == "" then
+            return nil
+        end
+        job.publish_live_stats = job.publish_live_stats or {}
+        local st = job.publish_live_stats[profile_id] or {
+            clients = 0,
+            internal_clients = 0,
+            requests_total = 0,
+        }
+        local now = os.time()
+        if delta and delta ~= 0 then
+            st.clients = math.max(0, (st.clients or 0) + delta)
+            if internal then
+                st.internal_clients = math.max(0, (st.internal_clients or 0) + delta)
+            end
+            if delta < 0 then
+                st.last_disconnect_ts = now
+            end
+        end
+        job.publish_live_stats[profile_id] = st
+        return st
+    end
+
     local function http_live_stream(server, client, request)
+        local client_data = server:data(client)
         if not request then
+            local meta = client_data and client_data.live_meta or nil
+            if meta and meta.stream_id and meta.profile_id then
+                local job = transcode and transcode.jobs and transcode.jobs[meta.stream_id] or nil
+                update_live_stats(job, meta.profile_id, -1, meta.internal)
+            end
+            if client_data then
+                client_data.live_meta = nil
+            end
             return nil
         end
         if request.method ~= "GET" then
@@ -1650,6 +1683,23 @@ function main()
             end
         end
 
+        local internal = is_internal_live_request(request)
+        if client_data and not client_data.live_meta then
+            local st = update_live_stats(job, profile_id, 1, internal)
+            if st then
+                st.requests_total = (st.requests_total or 0) + 1
+                st.last_request_ts = os.time()
+                if internal then
+                    st.last_internal_ts = st.last_request_ts
+                end
+            end
+            client_data.live_meta = {
+                stream_id = stream_id,
+                profile_id = profile_id,
+                internal = internal == true,
+            }
+        end
+
         local function allow_stream(_session)
             server:send(client, {
                 upstream = bus.switch:stream(),
@@ -1661,7 +1711,7 @@ function main()
         -- /live is used both by external clients and by internal publishers (ffmpeg -c copy).
         -- External access should follow the same token auth rules as /play, but internal publishers
         -- must work even when tokens are required.
-        if is_internal_live_request(request) then
+        if internal then
             allow_stream(nil)
             return nil
         end
