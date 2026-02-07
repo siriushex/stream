@@ -66,6 +66,14 @@ typedef struct
     uint64_t last_ecm_send_us;
     uint64_t last_ecm_ok_us;
 
+    /* Observability (best-effort, debug-friendly) */
+    uint64_t stat_ecm_sent;
+    uint64_t stat_ecm_retry;
+    uint64_t stat_ecm_not_found;
+    uint64_t stat_ecm_ok;
+    uint64_t stat_rtt_sum_ms;
+    uint64_t stat_rtt_count;
+
 #if FFDECSA == 1
 
     void *keys;
@@ -669,6 +677,8 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         else
             retry_us = 2000000; /* keep some retry to tolerate short glitches */
 
+        const bool is_retry = (em_type == ca_stream->last_ecm_type && ca_stream->last_ecm_send_us != 0);
+
         if(em_type == ca_stream->last_ecm_type && ca_stream->last_ecm_send_us != 0)
         {
             const uint64_t since_us = now_us - ca_stream->last_ecm_send_us;
@@ -680,6 +690,9 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         ca_stream->last_ecm_type = em_type;
         ca_stream->last_ecm_send_us = now_us;
         ca_stream->sendtime = now_us;
+        ca_stream->stat_ecm_sent += 1;
+        if(is_retry)
+            ca_stream->stat_ecm_retry += 1;
     }
     else if(em_type >= 0x82 && em_type <= 0x8F)
     { /* EMM */
@@ -982,6 +995,11 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
 
     if(is_keys_ok)
     {
+        const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
+        ca_stream->stat_ecm_ok += 1;
+        ca_stream->stat_rtt_sum_ms += responsetime;
+        ca_stream->stat_rtt_count += 1;
+
         ca_stream->last_ecm_ok = true;
         ca_stream->ecm_fail_count = 0;
         ca_stream->last_ecm_ok_us = asc_utime();
@@ -1015,7 +1033,6 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
             char key_1[17], key_2[17];
             hex_to_str(key_1, &data[3], 8);
             hex_to_str(key_2, &data[11], 8);
-            const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
             asc_log_debug(  MSG("ECM Found id:0x%02X time:%"PRIu64"ms key:%s:%s")
                           , data[0], responsetime, key_1, key_2);
         }
@@ -1028,15 +1045,19 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
             ++ca_stream->ecm_fail_count;
 
         const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
+        ca_stream->stat_ecm_not_found += 1;
+        ca_stream->stat_rtt_sum_ms += responsetime;
+        ca_stream->stat_rtt_count += 1;
+
         if(ca_stream->ecm_fail_count <= 3 && !asc_log_is_debug())
         {
-            asc_log_warning(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d")
-                            , data[0], responsetime, data[2]);
+            asc_log_warning(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d fail:%u")
+                            , data[0], responsetime, data[2], (unsigned)ca_stream->ecm_fail_count);
         }
         else
         {
-            asc_log_error(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d")
-                          , data[0], responsetime, data[2]);
+            asc_log_error(  MSG("ECM Not Found id:0x%02X time:%"PRIu64"ms size:%d fail:%u")
+                          , data[0], responsetime, data[2], (unsigned)ca_stream->ecm_fail_count);
         }
     }
 }
@@ -1155,6 +1176,26 @@ static void module_destroy(module_data_t *mod)
     {
         module_cam_detach_decrypt(mod->__decrypt.cam, &mod->__decrypt);
         mod->__decrypt.cam = NULL;
+    }
+
+    if(asc_log_is_debug())
+    {
+        asc_list_for(mod->ca_list)
+        {
+            ca_stream_t *ca_stream = asc_list_data(mod->ca_list);
+            if(ca_stream->stat_ecm_sent == 0 && ca_stream->stat_ecm_ok == 0 && ca_stream->stat_ecm_not_found == 0)
+                continue;
+            uint64_t rtt_avg_ms = 0;
+            if(ca_stream->stat_rtt_count)
+                rtt_avg_ms = ca_stream->stat_rtt_sum_ms / ca_stream->stat_rtt_count;
+            asc_log_debug(  MSG("ECM stats pid:%d sent:%"PRIu64" retry:%"PRIu64" ok:%"PRIu64" not_found:%"PRIu64" rtt_avg:%"PRIu64"ms")
+                          , ca_stream->ecm_pid
+                          , ca_stream->stat_ecm_sent
+                          , ca_stream->stat_ecm_retry
+                          , ca_stream->stat_ecm_ok
+                          , ca_stream->stat_ecm_not_found
+                          , rtt_avg_ms);
+        }
     }
 
     module_decrypt_cas_destroy(mod);
