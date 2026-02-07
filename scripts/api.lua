@@ -2559,6 +2559,25 @@ local function get_stream_cam_stats(server, client, id)
         }
 
         local input = input_data.input
+        -- Best-effort: expose which softcam id is attached to this input (if any).
+        local softcam_id = nil
+        if input and input.__softcam_id then
+            softcam_id = tostring(input.__softcam_id)
+        else
+            local cam_cfg = input_data.config and input_data.config.cam or nil
+            if type(cam_cfg) == "string" or type(cam_cfg) == "number" then
+                softcam_id = tostring(cam_cfg)
+            elseif type(cam_cfg) == "table" then
+                local opts = cam_cfg.__options or {}
+                if opts.id then
+                    softcam_id = tostring(opts.id)
+                end
+            end
+        end
+        if softcam_id and softcam_id ~= "" then
+            item.softcam_id = softcam_id
+        end
+
         local decrypt = input and input.decrypt or nil
         if decrypt and decrypt.stats then
             local ok, data = pcall(function()
@@ -2568,6 +2587,36 @@ local function get_stream_cam_stats(server, client, id)
                 item.decrypt = data
             else
                 item.decrypt_error = tostring(data)
+            end
+        end
+
+        -- CAM connection stats (if the softcam module supports it, e.g. newcamd:stats()).
+        local cam = nil
+        if input and type(input.__softcam_clone) == "table" and input.__softcam_clone.stats then
+            cam = input.__softcam_clone
+        elseif input and type(input.__softcam_instance) == "table" and input.__softcam_instance.stats then
+            cam = input.__softcam_instance
+        elseif softcam_id then
+            local shared = _G[tostring(softcam_id)]
+            if type(shared) == "table" and shared.stats then
+                cam = shared
+            elseif type(softcam_list) == "table" then
+                for _, entry in ipairs(softcam_list) do
+                    if type(entry) == "table" and entry.stats and entry.__options and tostring(entry.__options.id) == tostring(softcam_id) then
+                        cam = entry
+                        break
+                    end
+                end
+            end
+        end
+        if cam and cam.stats then
+            local ok, data = pcall(function()
+                return cam:stats()
+            end)
+            if ok then
+                item.cam = data
+            else
+                item.cam_error = tostring(data)
             end
         end
 
