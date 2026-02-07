@@ -586,6 +586,7 @@ const elements = {
   softcamKey: $('#softcam-key'),
   softcamCaid: $('#softcam-caid'),
   softcamTimeout: $('#softcam-timeout'),
+  softcamHedge: $('#softcam-hedge'),
   softcamDisableEmm: $('#softcam-disable-emm'),
   softcamSplitCam: $('#softcam-split-cam'),
   softcamShift: $('#softcam-shift'),
@@ -1067,6 +1068,7 @@ const elements = {
   inputSetTsid: $('#input-set-tsid'),
   inputBiss: $('#input-biss'),
   inputCamId: $('#input-cam-id'),
+  inputCamBackupId: $('#input-cam-backup-id'),
   inputEcmPid: $('#input-ecm-pid'),
   inputShift: $('#input-shift'),
   inputMap: $('#input-map'),
@@ -3609,6 +3611,10 @@ function normalizeSoftcams(value) {
     const key = entry.key ? String(entry.key) : '';
     const caid = entry.caid ? String(entry.caid) : '';
     const timeout = entry.timeout !== undefined ? Number(entry.timeout) : undefined;
+    const hedgeRaw = entry.cam_backup_hedge_ms !== undefined
+      ? entry.cam_backup_hedge_ms
+      : entry.dual_cam_hedge_ms;
+    const hedge = hedgeRaw !== undefined && hedgeRaw !== null ? Number(hedgeRaw) : undefined;
     const shift = entry.shift !== undefined && entry.shift !== null ? String(entry.shift) : '';
     const comment = entry.comment ? String(entry.comment) : '';
     out.push({
@@ -3625,6 +3631,7 @@ function normalizeSoftcams(value) {
       key,
       caid,
       timeout: Number.isFinite(timeout) ? timeout : undefined,
+      cam_backup_hedge_ms: Number.isFinite(hedge) ? hedge : undefined,
       shift,
       comment,
     });
@@ -3646,9 +3653,8 @@ function formatSoftcamOptionLabel(softcam) {
   return label;
 }
 
-function refreshInputCamOptions(selectedValue) {
-  if (!elements.inputCamId) return;
-  const select = elements.inputCamId;
+function refreshInputCamOptionsFor(select, selectedValue) {
+  if (!select) return;
   const desired = selectedValue !== undefined ? String(selectedValue || '') : String(select.value || '');
   const softcams = (Array.isArray(state.softcams) ? state.softcams : [])
     .slice()
@@ -3686,6 +3692,15 @@ function refreshInputCamOptions(selectedValue) {
 
   select.replaceChildren(fragment);
   select.value = hasSelected ? desired : '';
+}
+
+function refreshInputCamOptions(selectedValue) {
+  refreshInputCamOptionsFor(elements.inputCamId, selectedValue);
+}
+
+function refreshAllInputCamOptions() {
+  refreshInputCamOptionsFor(elements.inputCamId);
+  refreshInputCamOptionsFor(elements.inputCamBackupId);
 }
 
 function getSettingNumber(key, fallback) {
@@ -3916,6 +3931,11 @@ function openSoftcamModal(softcam) {
   if (elements.softcamCaid) elements.softcamCaid.value = softcam ? (softcam.caid || '') : '';
   if (elements.softcamTimeout) {
     elements.softcamTimeout.value = (softcam && Number.isFinite(Number(softcam.timeout))) ? String(softcam.timeout) : '';
+  }
+  if (elements.softcamHedge) {
+    elements.softcamHedge.value = (softcam && Number.isFinite(Number(softcam.cam_backup_hedge_ms)))
+      ? String(softcam.cam_backup_hedge_ms)
+      : '';
   }
   if (elements.softcamDisableEmm) elements.softcamDisableEmm.checked = softcam ? !!softcam.disable_emm : false;
   if (elements.softcamSplitCam) elements.softcamSplitCam.checked = softcam ? !!softcam.split_cam : false;
@@ -4314,6 +4334,7 @@ async function saveSoftcam() {
   const keyRaw = elements.softcamKey ? elements.softcamKey.value.trim().replace(/\s+/g, '') : '';
   const caidRaw = elements.softcamCaid ? elements.softcamCaid.value.trim() : '';
   const timeoutRaw = toNumber(elements.softcamTimeout && elements.softcamTimeout.value);
+  const hedgeRaw = toNumber(elements.softcamHedge && elements.softcamHedge.value);
   const enable = elements.softcamEnabled ? elements.softcamEnabled.checked : true;
   const disableEmm = elements.softcamDisableEmm ? elements.softcamDisableEmm.checked : false;
   const splitCam = elements.softcamSplitCam ? elements.softcamSplitCam.checked : false;
@@ -4342,6 +4363,7 @@ async function saveSoftcam() {
   }
 
   const timeout = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.floor(timeoutRaw) : undefined;
+  const camBackupHedge = (Number.isFinite(hedgeRaw) && hedgeRaw >= 0) ? Math.floor(hedgeRaw) : undefined;
 
   const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
   const existingIdx = softcams.findIndex((s) => s && s.id === id);
@@ -4359,6 +4381,7 @@ async function saveSoftcam() {
     enable,
     disable_emm: disableEmm,
     split_cam: splitCam,
+    cam_backup_hedge_ms: camBackupHedge,
     shift,
     comment,
   };
@@ -4399,7 +4422,7 @@ async function saveSoftcam() {
   await saveSettings({ softcam: softcams });
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
-  refreshInputCamOptions();
+  refreshAllInputCamOptions();
   closeSoftcamModal();
 }
 
@@ -4409,7 +4432,7 @@ async function deleteSoftcam(id) {
   await saveSettings({ softcam: next });
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
-  refreshInputCamOptions();
+  refreshAllInputCamOptions();
 }
 
 async function testSoftcam() {
@@ -6991,6 +7014,7 @@ function buildInputUrl(data) {
   addOpt('set_tsid', o.set_tsid);
   addOpt('biss', o.biss);
   addOpt('cam', o.cam);
+  addOpt('cam_backup', o.cam_backup);
   addOpt('ecm_pid', o.ecm_pid);
   addOpt('shift', o.shift);
   addOpt('cas', o.cas);
@@ -8688,6 +8712,7 @@ function openInputModal(index) {
     'set_tsid',
     'biss',
     'cam',
+    'cam_backup',
     'ecm_pid',
     'shift',
     'cas',
@@ -8746,7 +8771,11 @@ function openInputModal(index) {
   elements.inputSetTsid.value = opts.set_tsid || '';
   elements.inputBiss.value = opts.biss || '';
   const camValue = (opts.cam && opts.cam !== true && opts.cam !== 'true') ? String(opts.cam) : '';
-  refreshInputCamOptions(camValue);
+  const camBackupValue = (opts.cam_backup && opts.cam_backup !== true && opts.cam_backup !== 'true')
+    ? String(opts.cam_backup)
+    : '';
+  refreshInputCamOptionsFor(elements.inputCamId, camValue);
+  refreshInputCamOptionsFor(elements.inputCamBackupId, camBackupValue);
   elements.inputEcmPid.value = opts.ecm_pid || '';
   elements.inputShift.value = opts.shift || '';
   elements.inputMap.value = opts.map || '';
@@ -8755,7 +8784,8 @@ function openInputModal(index) {
   elements.inputCcLimit.value = opts.cc_limit || '';
   elements.inputBitrateLimit.value = opts.bitrate_limit || '';
 
-  elements.inputCam.checked = asBool(opts.cam) || !!elements.inputCamId.value;
+  const backupSelected = elements.inputCamBackupId && elements.inputCamBackupId.value;
+  elements.inputCam.checked = asBool(opts.cam) || !!elements.inputCamId.value || !!backupSelected;
   elements.inputCas.checked = asBool(opts.cas);
   elements.inputPassSdt.checked = asBool(opts.pass_sdt);
   elements.inputPassEit.checked = asBool(opts.pass_eit);
@@ -8801,6 +8831,10 @@ function readInputForm() {
     options.cam = camId || true;
   } else if (elements.inputCamId.value.trim()) {
     options.cam = elements.inputCamId.value.trim();
+  }
+
+  if (elements.inputCamBackupId && elements.inputCamBackupId.value.trim()) {
+    options.cam_backup = elements.inputCamBackupId.value.trim();
   }
 
   if (elements.inputCas.checked) options.cas = true;
@@ -16507,7 +16541,7 @@ async function loadSettings() {
   state.groups = normalizeGroups(state.settings.groups);
   state.servers = normalizeServers(state.settings.servers);
   state.softcams = normalizeSoftcams(state.settings.softcam);
-  refreshInputCamOptions();
+  refreshAllInputCamOptions();
 
   applySettingsToUI();
 }
@@ -17903,7 +17937,16 @@ function buildAnalyzeCamSection(camStats) {
 
   items.push(`CAM ready: ${dec.cam_ready ? 'Yes' : 'No'}`);
   items.push(`Dual CAM: ${dec.dual_cam ? 'On' : 'Off'}`);
+  if (dec.cam_backup_hedge_ms && Number(dec.cam_backup_hedge_ms) > 0) {
+    items.push(`Backup hedge: ${Math.round(Number(dec.cam_backup_hedge_ms))}ms`);
+  }
   items.push(`Key guard: ${dec.key_guard ? 'On' : 'Off'}`);
+  if (Number.isFinite(Number(dec.backup_active_pct))) {
+    const pct = Math.round(Number(dec.backup_active_pct) * 100);
+    const ms = Number(dec.backup_active_ms) || 0;
+    const sec = ms > 0 ? `${Math.round(ms / 1000)}s` : '0s';
+    items.push(`Backup active: ${pct}% (${sec})`);
+  }
 
   const shift = dec.shift || {};
   const shiftSize = Number(shift.size_bytes) || 0;
@@ -17935,14 +17978,25 @@ function buildAnalyzeCamSection(camStats) {
     const sent = Number(ecm.sent) || 0;
     const retry = Number(ecm.retry) || 0;
     const okCount = Number(ecm.ok) || 0;
+    const okPrimary = Number(ecm.ok_primary) || 0;
+    const okBackup = Number(ecm.ok_backup) || 0;
     const nf = Number(ecm.not_found) || 0;
     const rttAvg = Number.isFinite(Number(ecm.rtt_avg_ms)) ? `${Math.round(Number(ecm.rtt_avg_ms))}ms` : 'n/a';
+    const rttMin = Number.isFinite(Number(ecm.rtt_min_ms)) ? `${Math.round(Number(ecm.rtt_min_ms))}ms` : 'n/a';
+    const rttMax = Number.isFinite(Number(ecm.rtt_max_ms)) ? `${Math.round(Number(ecm.rtt_max_ms))}ms` : 'n/a';
+    const rttHist = ecm.rtt_hist || {};
+    const histText = (rttHist.le50 != null || rttHist.le100 != null || rttHist.le250 != null || rttHist.le500 != null || rttHist.gt500 != null)
+      ? `RTT hist: ≤50:${rttHist.le50 || 0} ≤100:${rttHist.le100 || 0} ≤250:${rttHist.le250 || 0} ≤500:${rttHist.le500 || 0} >500:${rttHist.gt500 || 0}`
+      : '';
+    const backupPct = (okPrimary + okBackup) > 0 ? Math.round((okBackup / (okPrimary + okBackup)) * 100) : 0;
 
     const sub = [
       `Keys: ${cs.is_keys ? 'Yes' : 'No'} | Last OK: ${ok ? 'Yes' : 'No'} | Fail: ${failCount}`,
-      `ECM sent:${sent} retry:${retry} ok:${okCount} not_found:${nf} rtt_avg:${rttAvg}`,
+      `ECM sent:${sent} retry:${retry} ok:${okCount} (pri:${okPrimary} bak:${okBackup} ${backupPct}%) not_found:${nf} rtt_avg:${rttAvg}`,
+      `RTT min:${rttMin} max:${rttMax}`,
       `Last send: ${agoSend} | Last OK: ${agoOk}`,
     ];
+    if (histText) sub.push(histText);
 
     const cand = cs.candidate || {};
     if (cand.pending) {
