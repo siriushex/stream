@@ -17587,22 +17587,25 @@ function renderAnalyzeSections(sections) {
         listItems.push(item);
       }
     });
-    if (listItems.length) {
-      const list = document.createElement('ul');
-      list.className = 'analyze-list';
-      listItems.forEach((item) => {
-        if (!item) return;
-        const li = document.createElement('li');
-        li.className = 'analyze-item';
-        if (typeof item === 'string') {
-          li.textContent = item;
-        } else if (typeof item === 'object') {
-          li.textContent = item.text || '';
-          const subs = item.sub || item.subs;
-          if (subs) {
-            const subList = Array.isArray(subs) ? subs : [subs];
-            subList.forEach((subline) => {
-              if (!subline) return;
+      if (listItems.length) {
+        const list = document.createElement('ul');
+        list.className = 'analyze-list';
+        listItems.forEach((item) => {
+          if (!item) return;
+          const li = document.createElement('li');
+          li.className = 'analyze-item';
+          if (typeof item === 'string') {
+            li.textContent = item;
+          } else if (typeof item === 'object') {
+            li.textContent = item.text || '';
+            const level = item.level || item.severity;
+            if (level === 'warn' || level === 'warning') li.classList.add('is-warn');
+            if (level === 'error') li.classList.add('is-error');
+            const subs = item.sub || item.subs;
+            if (subs) {
+              const subList = Array.isArray(subs) ? subs : [subs];
+              subList.forEach((subline) => {
+                if (!subline) return;
               const sub = document.createElement('div');
               sub.className = 'analyze-subline';
               sub.textContent = subline;
@@ -17645,6 +17648,9 @@ function renderAnalyzeSections(sections) {
               li.textContent = item;
             } else if (typeof item === 'object') {
               li.textContent = item.text || '';
+              const level = item.level || item.severity;
+              if (level === 'warn' || level === 'warning') li.classList.add('is-warn');
+              if (level === 'error') li.classList.add('is-error');
               const subs = item.sub || item.subs;
               if (subs) {
                 const subLines = Array.isArray(subs) ? subs : [subs];
@@ -17781,10 +17787,55 @@ function buildAnalyzeCamSection(camStats) {
   const inputLabel = activeInput.name ? `#${activeInput.input_id} (${activeInput.name})` : `#${activeInput.input_id}`;
   const fmt = activeInput.format ? ` • ${activeInput.format}` : '';
   items.push(`Active input: ${inputLabel}${fmt}`);
+  if (activeInput.softcam_id) {
+    items.push(`Softcam: ${String(activeInput.softcam_id)}`);
+  }
 
   if (activeInput.decrypt_error) {
     items.push(`Decrypt error: ${String(activeInput.decrypt_error)}`);
     return { title: 'CAM / Softcam', items };
+  }
+
+  if (activeInput.cam_error) {
+    items.push(`Softcam error: ${String(activeInput.cam_error)}`);
+  }
+
+  const cam = activeInput.cam || null;
+  if (cam) {
+    const ready = cam.ready === true;
+    const status = cam.status != null ? String(cam.status) : 'n/a';
+    const host = cam.host ? String(cam.host) : '';
+    const port = cam.port != null ? String(cam.port) : '';
+    const timeout = cam.timeout_ms != null ? `${String(cam.timeout_ms)}ms` : 'n/a';
+    const caid = cam.caid ? String(cam.caid) : '';
+    const ua = cam.ua ? String(cam.ua) : '';
+    const queueLen = Number(cam.queue_len) || 0;
+    const inFlight = cam.in_flight ? 'Yes' : 'No';
+    const reconnects = Number(cam.reconnects) || 0;
+    const timeouts = Number(cam.timeouts) || 0;
+    const lastErr = cam.last_error ? String(cam.last_error) : '';
+    const lastIoAgo = Number(cam.last_io_ago_ms);
+    const lastIoText = Number.isFinite(lastIoAgo) ? `${Math.round(lastIoAgo)}ms ago` : 'n/a';
+
+    const warn = !ready || queueLen > 0 || (Number.isFinite(lastIoAgo) && lastIoAgo > 5000);
+    const endpoint = (host && port) ? `${host}:${port}` : (host || port ? `${host}${port ? ':' + port : ''}` : 'n/a');
+    const sub = [
+      `Ready: ${ready ? 'Yes' : 'No'} | Status: ${status}`,
+      `Endpoint: ${endpoint} | Timeout: ${timeout}`,
+      `Queue: ${queueLen} | In-flight: ${inFlight} | Last IO: ${lastIoText}`,
+      `Reconnects: ${reconnects} | Timeouts: ${timeouts}`,
+    ];
+    if (caid || ua) {
+      sub.push(`CAID: ${caid || 'n/a'} | UA: ${ua || 'n/a'}`);
+    }
+    if (lastErr) {
+      sub.push(`Last error: ${lastErr}`);
+    }
+    items.push({
+      text: 'Softcam connection',
+      sub,
+      level: warn ? 'warn' : undefined,
+    });
   }
 
   const dec = activeInput.decrypt || null;

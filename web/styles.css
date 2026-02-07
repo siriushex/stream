@@ -3578,6 +3578,16 @@ details.fold[open] > .fold-summary::after {
   color: var(--text);
 }
 
+.analyze-item.is-warn {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.analyze-item.is-error {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .analyze-subline {
   color: var(--muted);
   font-size: 12px;
