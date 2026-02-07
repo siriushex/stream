@@ -420,6 +420,7 @@ local NET_RESILIENCE_DEFAULTS = {
     backoff_min_ms = 500,
     backoff_max_ms = 10000,
     backoff_jitter_pct = 20,
+    cooldown_sec = 30,
     low_speed_limit_bytes_sec = 1024,
     low_speed_time_sec = 5,
     keepalive = false,
@@ -433,12 +434,206 @@ local NET_RESILIENCE_KEYS = {
     "backoff_min_ms",
     "backoff_max_ms",
     "backoff_jitter_pct",
+    "cooldown_sec",
     "low_speed_limit_bytes_sec",
     "low_speed_time_sec",
     "user_agent",
     "keepalive",
     "dns_cache_ttl_sec",
 }
+
+-- Профили устойчивости сети для HTTP/HLS входов. Важно: по умолчанию выключено,
+-- чтобы не менять поведение старых конфигов без явного включения.
+local INPUT_RESILIENCE_DEFAULTS = {
+    enabled = false,
+    default_profile = "wan",
+    profiles = {
+        dc = {
+            connect_timeout_ms = 2500,
+            read_timeout_ms = 8000,
+            stall_timeout_ms = 4000,
+            max_retries = 0,
+            backoff_min_ms = 300,
+            backoff_max_ms = 4000,
+            backoff_jitter_pct = 20,
+            cooldown_sec = 10,
+            low_speed_limit_bytes_sec = 32768,
+            low_speed_time_sec = 4,
+            keepalive = true,
+            user_agent = "Astral/1.0",
+        },
+        wan = {
+            connect_timeout_ms = 5000,
+            read_timeout_ms = 15000,
+            stall_timeout_ms = 7000,
+            max_retries = 0,
+            backoff_min_ms = 700,
+            backoff_max_ms = 10000,
+            backoff_jitter_pct = 25,
+            cooldown_sec = 20,
+            low_speed_limit_bytes_sec = 16384,
+            low_speed_time_sec = 6,
+            keepalive = true,
+            user_agent = "Astral/1.0",
+        },
+        bad = {
+            connect_timeout_ms = 8000,
+            read_timeout_ms = 25000,
+            stall_timeout_ms = 10000,
+            max_retries = 0,
+            backoff_min_ms = 1000,
+            backoff_max_ms = 20000,
+            backoff_jitter_pct = 30,
+            cooldown_sec = 45,
+            low_speed_limit_bytes_sec = 8192,
+            low_speed_time_sec = 10,
+            keepalive = true,
+            user_agent = "Astral/1.0",
+        },
+    },
+    hls_defaults = {
+        max_segments = 10,
+        max_gap_segments = 3,
+        segment_retries = 3,
+        max_parallel = 1,
+    },
+    jitter_defaults_ms = {
+        dc = 200,
+        wan = 400,
+        bad = 800,
+    },
+    max_active_resilient_inputs = 50,
+}
+
+local function copy_shallow(tbl)
+    if type(tbl) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for k, v in pairs(tbl) do
+        out[k] = v
+    end
+    return out
+end
+
+local function normalize_net_profile(value)
+    if value == nil then
+        return nil
+    end
+    local s = tostring(value or ""):lower()
+    if s == "dc" or s == "wan" or s == "bad" then
+        return s
+    end
+    return nil
+end
+
+local function get_input_resilience_settings()
+    local raw = nil
+    if config and config.get_setting then
+        local value = config.get_setting("input_resilience")
+        if type(value) == "table" then
+            raw = value
+        end
+    end
+
+    local out = {
+        enabled = INPUT_RESILIENCE_DEFAULTS.enabled == true,
+        default_profile = INPUT_RESILIENCE_DEFAULTS.default_profile,
+        profiles = {
+            dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.dc),
+            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.wan),
+            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.bad),
+        },
+        hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
+        jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
+        max_active_resilient_inputs = INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs,
+    }
+
+    if type(raw) ~= "table" then
+        return out
+    end
+
+    if raw.enabled ~= nil then
+        out.enabled = raw.enabled == true
+    end
+
+    local dp = normalize_net_profile(raw.default_profile)
+    if dp then
+        out.default_profile = dp
+    end
+
+    if raw.max_active_resilient_inputs ~= nil then
+        local n = tonumber(raw.max_active_resilient_inputs)
+        if n ~= nil and n >= 0 then
+            out.max_active_resilient_inputs = math.floor(n)
+        end
+    end
+
+    if type(raw.profiles) == "table" then
+        for _, name in ipairs({ "dc", "wan", "bad" }) do
+            local p = raw.profiles[name]
+            if type(p) == "table" then
+                for k, v in pairs(p) do
+                    out.profiles[name][k] = v
+                end
+            end
+        end
+    end
+
+    if type(raw.hls_defaults) == "table" then
+        for k, v in pairs(raw.hls_defaults) do
+            out.hls_defaults[k] = v
+        end
+    end
+
+    if type(raw.jitter_defaults_ms) == "table" then
+        for k, v in pairs(raw.jitter_defaults_ms) do
+            out.jitter_defaults_ms[k] = v
+        end
+    end
+
+    return out
+end
+
+local function resolve_input_resilience(conf)
+    local settings = get_input_resilience_settings()
+    local configured = normalize_net_profile(conf and conf.net_profile)
+    local enabled = (settings.enabled == true) or (configured ~= nil)
+    local effective = configured or settings.default_profile or "wan"
+    if not normalize_net_profile(effective) then
+        effective = "wan"
+    end
+
+    local base = nil
+    if type(settings.profiles) == "table" then
+        base = settings.profiles[effective]
+    end
+    if type(base) ~= "table" then
+        base = settings.profiles.wan or INPUT_RESILIENCE_DEFAULTS.profiles.wan
+    end
+
+    local jitter_ms = nil
+    if type(settings.jitter_defaults_ms) == "table" then
+        jitter_ms = tonumber(settings.jitter_defaults_ms[effective])
+    end
+    if jitter_ms ~= nil and jitter_ms < 0 then
+        jitter_ms = nil
+    end
+
+    local hls_defaults = nil
+    if type(settings.hls_defaults) == "table" then
+        hls_defaults = settings.hls_defaults
+    end
+
+    return {
+        enabled = enabled,
+        profile_configured = configured,
+        profile_effective = effective,
+        net_defaults = base,
+        jitter_default_ms = jitter_ms,
+        hls_defaults = hls_defaults,
+    }
+end
 
 local function net_bool(value)
     if value == nil then
@@ -476,7 +671,8 @@ local function net_has_values(tbl)
     return false
 end
 
-local function build_net_resilience(conf)
+local function build_net_resilience(conf, res)
+    res = res or resolve_input_resilience(conf)
     local global = nil
     if config and config.get_setting then
         local value = config.get_setting("net_resilience")
@@ -485,6 +681,7 @@ local function build_net_resilience(conf)
         end
     end
     local local_cfg = type(conf.net_resilience) == "table" and conf.net_resilience or nil
+    local profile_defaults = (res and res.enabled and type(res.net_defaults) == "table") and res.net_defaults or NET_RESILIENCE_DEFAULTS
     local function pick(key)
         if local_cfg and local_cfg[key] ~= nil then
             return local_cfg[key]
@@ -507,11 +704,15 @@ local function build_net_resilience(conf)
         "backoff_min_ms",
         "backoff_max_ms",
         "backoff_jitter_pct",
+        "cooldown_sec",
         "low_speed_limit_bytes_sec",
         "low_speed_time_sec",
         "dns_cache_ttl_sec",
     }) do
         local value = net_number(pick(key))
+        if value == nil then
+            value = net_number(profile_defaults[key])
+        end
         if value == nil then
             value = NET_RESILIENCE_DEFAULTS[key]
         end
@@ -521,13 +722,27 @@ local function build_net_resilience(conf)
     local ua = pick("user_agent")
     if ua ~= nil and ua ~= "" then
         out.user_agent = tostring(ua)
+    elseif res and res.enabled and profile_defaults.user_agent ~= nil and profile_defaults.user_agent ~= "" then
+        out.user_agent = tostring(profile_defaults.user_agent)
     end
 
     local keepalive = net_bool(pick("keepalive"))
     if keepalive == nil then
+        keepalive = net_bool(profile_defaults.keepalive)
+    end
+    if keepalive == nil then
         keepalive = NET_RESILIENCE_DEFAULTS.keepalive
     end
     out.keepalive = keepalive
+
+    -- Default jitter buffer can be applied only when resilience profiles are enabled
+    -- (globally or per-input via #net_profile=...).
+    if res and res.enabled then
+        local has_jitter_opt = (conf.jitter_buffer_ms ~= nil) or (conf.jitter_ms ~= nil)
+        if not has_jitter_opt and res.jitter_default_ms and res.jitter_default_ms > 0 then
+            conf.jitter_buffer_ms = math.floor(res.jitter_default_ms)
+        end
+    end
 
     return out
 end
@@ -1410,8 +1625,10 @@ init_input_module.http = function(conf)
             local max_retries = tonumber(instance.net_cfg.max_retries) or 0
             if max_retries > 0 and instance.net.fail_count >= max_retries then
                 instance.net.state = "offline"
-                instance.net.cooldown_until = os.time() + 30
-                delay_ms = math.max(delay_ms, 30000)
+                local cooldown = tonumber(instance.net_cfg.cooldown_sec) or 30
+                if cooldown < 0 then cooldown = 0 end
+                instance.net.cooldown_until = os.time() + math.floor(cooldown)
+                delay_ms = math.max(delay_ms, math.floor(cooldown * 1000))
             end
             instance.net.current_backoff_ms = delay_ms
             net_emit(conf, instance.net)
@@ -1594,8 +1811,10 @@ local function init_input_module_https_direct(conf)
             local max_retries = tonumber(instance.net_cfg.max_retries) or 0
             if max_retries > 0 and instance.net.fail_count >= max_retries then
                 instance.net.state = "offline"
-                instance.net.cooldown_until = os.time() + 30
-                delay_ms = math.max(delay_ms, 30000)
+                local cooldown = tonumber(instance.net_cfg.cooldown_sec) or 30
+                if cooldown < 0 then cooldown = 0 end
+                instance.net.cooldown_until = os.time() + math.floor(cooldown)
+                delay_ms = math.max(delay_ms, math.floor(cooldown * 1000))
             end
             instance.net.current_backoff_ms = delay_ms
             net_emit(conf, instance.net)
@@ -2222,8 +2441,12 @@ local function hls_schedule_backoff(instance, reason)
         if max_retries > 0 and instance.net and instance.net.fail_count >= max_retries then
             instance.net.state = "offline"
             hls_set_state(instance, "failed", "hls_retry_limit")
-            local cooldown = math.max(30, math.floor((instance.net_cfg.backoff_max_ms or 10000) / 1000))
-            delay_ms = math.max(delay_ms, cooldown * 1000)
+            local cooldown = tonumber(instance.net_cfg.cooldown_sec)
+            if cooldown == nil then
+                cooldown = math.max(30, math.floor((instance.net_cfg.backoff_max_ms or 10000) / 1000))
+            end
+            if cooldown < 0 then cooldown = 0 end
+            delay_ms = math.max(delay_ms, math.floor(cooldown * 1000))
         end
     end
     if instance.hls and reason and (reason:find("timeout") or reason:find("stall")) then
@@ -2419,12 +2642,22 @@ init_input_module.hls = function(conf)
         if conf.ua and not conf.user_agent then
             conf.user_agent = conf.ua
         end
+        local res = resolve_input_resilience(conf)
+        local hls_defaults = HLS_INPUT_DEFAULTS
+        if res and res.enabled and type(res.hls_defaults) == "table" then
+            -- В profile-mode используем input_resilience.hls_defaults как основу, но
+            -- сохраняем совместимость: отсутствующие поля берём из старых дефолтов.
+            hls_defaults = copy_shallow(HLS_INPUT_DEFAULTS)
+            for k, v in pairs(res.hls_defaults) do
+                hls_defaults[k] = v
+            end
+        end
         instance = {
             clients = 0,
             config = conf,
             queue = {},
             queued = {},
-            net_cfg = build_net_resilience(conf),
+            net_cfg = build_net_resilience(conf, res),
             net = nil,
             hls = {
                 state = "init",
@@ -2435,9 +2668,10 @@ init_input_module.hls = function(conf)
                 segment_errors_total = 0,
                 stall_events_total = 0,
                 gap_count = 0,
-                max_segments = hls_cfg_number(conf, "hls_max_segments", HLS_INPUT_DEFAULTS.max_segments),
-                max_gap_segments = hls_cfg_number(conf, "hls_max_gap_segments", HLS_INPUT_DEFAULTS.max_gap_segments),
-                segment_retries = hls_cfg_number(conf, "hls_segment_retries", HLS_INPUT_DEFAULTS.segment_retries),
+                max_segments = hls_cfg_number(conf, "hls_max_segments", hls_defaults.max_segments),
+                max_gap_segments = hls_cfg_number(conf, "hls_max_gap_segments", hls_defaults.max_gap_segments),
+                segment_retries = hls_cfg_number(conf, "hls_segment_retries", hls_defaults.segment_retries),
+                max_parallel = hls_cfg_number(conf, "hls_max_parallel", hls_defaults.max_parallel),
             },
             transmit = transmit({ instance_id = instance_id }),
             playlist_conf = {
@@ -2449,6 +2683,12 @@ init_input_module.hls = function(conf)
                 format = conf.format == "https" and "https" or "http",
             },
         }
+        if instance.hls.max_parallel ~= nil then
+            local mp = tonumber(instance.hls.max_parallel) or 1
+            if mp < 1 then mp = 1 end
+            if mp > 2 then mp = 2 end
+            instance.hls.max_parallel = mp
+        end
         instance.net = net_make_state(instance.net_cfg)
 
         hls_input_instance_list[instance_id] = instance

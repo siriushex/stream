@@ -414,8 +414,58 @@ local function collect_input_stats(channel)
         return {}
     end
 
+    local function normalize_net_profile(value)
+        if value == nil then
+            return nil
+        end
+        local s = tostring(value or ""):lower()
+        if s == "dc" or s == "wan" or s == "bad" then
+            return s
+        end
+        return nil
+    end
+
+    local function get_input_resilience_setting()
+        local raw = nil
+        if config and config.get_setting then
+            local value = config.get_setting("input_resilience")
+            if type(value) == "table" then
+                raw = value
+            end
+        end
+        local enabled = false
+        local default_profile = "wan"
+        if type(raw) == "table" then
+            enabled = raw.enabled == true
+            local dp = normalize_net_profile(raw.default_profile)
+            if dp then
+                default_profile = dp
+            end
+        end
+        return {
+            enabled = enabled,
+            default_profile = default_profile,
+        }
+    end
+
+    local function resolve_input_profile_status(input_cfg, global_cfg)
+        global_cfg = global_cfg or get_input_resilience_setting()
+        local configured = normalize_net_profile(input_cfg and input_cfg.net_profile)
+        local enabled = (global_cfg.enabled == true) or (configured ~= nil)
+        local effective = configured or global_cfg.default_profile or "wan"
+        if not normalize_net_profile(effective) then
+            effective = "wan"
+        end
+        return {
+            configured = configured,
+            effective = effective,
+            enabled = enabled,
+        }
+    end
+
     local inputs = {}
     local active_id = channel.active_input_id
+    local resilience_global = get_input_resilience_setting()
 
     for idx, input_data in ipairs(channel.input) do
         local entry = {
@@ -462,6 +512,19 @@ local function collect_input_stats(channel)
         else
             entry.bitrate_kbps = nil
         end
+
+        -- Профиль сети (dc/wan/bad) и факт включения resilience для входа.
+        -- Это нужно для UI Analyze, чтобы оператор понимал, почему вход "degraded/offline".
+        if input_data and input_data.config and entry.format then
+            local fmt = tostring(entry.format or ""):lower()
+            if fmt == "http" or fmt == "https" or fmt == "hls" then
+                local prof = resolve_input_profile_status(input_data.config, resilience_global)
+                entry.net_profile_configured = prof.configured
+                entry.net_profile_effective = prof.effective
+                entry.resilience_enabled = prof.enabled
+            end
+        end
+
         entry.last_ok_ts = input_data and input_data.last_ok_ts or nil
         entry.last_error = input_data and input_data.last_error or nil
         entry.fail_count = input_data and tonumber(input_data.fail_count) or 0
