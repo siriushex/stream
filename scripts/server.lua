@@ -947,6 +947,8 @@ local function http_play_stream_id(path)
         prefix = "/stream/"
     elseif path:sub(1, 6) == "/play/" then
         prefix = "/play/"
+    elseif path:sub(1, 7) == "/input/" then
+        prefix = "/input/"
     else
         return nil
     end
