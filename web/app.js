@@ -185,6 +185,8 @@ const state = {
   transcodeOutputs: [],
   transcodeOutputEditingIndex: null,
   transcodeOutputMonitorIndex: null,
+  transcodeProfiles: [],
+  transcodeProfileEditingIndex: null,
   transcodeWatchdogDefaults: null,
   inputs: [],
   mptsServices: [],
@@ -900,6 +902,27 @@ const elements = {
   transcodeOutputFormatArgs: $('#transcode-output-format-args'),
   transcodeOutputMetadata: $('#transcode-output-metadata'),
   transcodeOutputError: $('#transcode-output-error'),
+  transcodeProfileList: $('#transcode-profile-list'),
+  btnAddTranscodeProfile: $('#btn-add-transcode-profile'),
+  transcodeProfileOverlay: $('#transcode-profile-overlay'),
+  transcodeProfileForm: $('#transcode-profile-form'),
+  transcodeProfileTitle: $('#transcode-profile-title'),
+  transcodeProfileClose: $('#transcode-profile-close'),
+  transcodeProfileCancel: $('#transcode-profile-cancel'),
+  transcodeProfileSave: $('#transcode-profile-save'),
+  transcodeProfileId: $('#transcode-profile-id'),
+  transcodeProfileName: $('#transcode-profile-name'),
+  transcodeProfileFps: $('#transcode-profile-fps'),
+  transcodeProfileWidth: $('#transcode-profile-width'),
+  transcodeProfileHeight: $('#transcode-profile-height'),
+  transcodeProfileBitrate: $('#transcode-profile-bitrate'),
+  transcodeProfileMaxrate: $('#transcode-profile-maxrate'),
+  transcodeProfileAudioMode: $('#transcode-profile-audio-mode'),
+  transcodeProfileAudioBitrate: $('#transcode-profile-audio-bitrate'),
+  transcodeProfileAudioSr: $('#transcode-profile-audio-sr'),
+  transcodeProfileAudioChannels: $('#transcode-profile-audio-channels'),
+  transcodeProfileDeinterlace: $('#transcode-profile-deinterlace'),
+  transcodeProfileError: $('#transcode-profile-error'),
   transcodeMonitorOverlay: $('#transcode-monitor-overlay'),
   transcodeMonitorForm: $('#transcode-monitor-form'),
   transcodeMonitorTitle: $('#transcode-monitor-title'),
@@ -5941,9 +5964,12 @@ function applyTranscodeLadderPreset(mode) {
   if (!elements.streamTranscodeLadderEnabled) return;
   elements.streamTranscodeLadderEnabled.checked = true;
   updateTranscodeLadderToggle();
+  const presetProfiles = getLadderPresetProfiles(mode);
   if (elements.streamTranscodeProfilesJson) {
-    elements.streamTranscodeProfilesJson.value = formatJson(getLadderPresetProfiles(mode));
+    elements.streamTranscodeProfilesJson.value = formatJson(presetProfiles);
   }
+  state.transcodeProfiles = presetProfiles;
+  renderTranscodeProfileList();
   if (elements.streamTranscodePublishJson) {
     elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
   }
@@ -5959,6 +5985,75 @@ function updateTranscodeLadderToggle() {
   if (elements.streamTranscodeOutputsBlock) {
     elements.streamTranscodeOutputsBlock.hidden = enabled;
   }
+  if (!enabled) {
+    if (elements.transcodeProfileList) {
+      elements.transcodeProfileList.innerHTML = '';
+    }
+    state.transcodeProfiles = [];
+  } else {
+    renderTranscodeProfileList();
+  }
+}
+
+function closeTranscodeProfileModal() {
+  setOverlay(elements.transcodeProfileOverlay, false);
+  state.transcodeProfileEditingIndex = null;
+  if (elements.transcodeProfileError) {
+    elements.transcodeProfileError.textContent = '';
+  }
+}
+
+function openTranscodeProfileModal(profile, index) {
+  if (!elements.transcodeProfileOverlay) return;
+  state.transcodeProfileEditingIndex = index;
+  if (elements.transcodeProfileTitle) {
+    elements.transcodeProfileTitle.textContent = profile && profile.id ? `Profile ${profile.id}` : 'Profile';
+  }
+  elements.transcodeProfileId.value = (profile && profile.id) || '';
+  elements.transcodeProfileName.value = (profile && profile.name) || '';
+  elements.transcodeProfileFps.value = (profile && profile.fps) || '';
+  elements.transcodeProfileWidth.value = (profile && profile.width) || '';
+  elements.transcodeProfileHeight.value = (profile && profile.height) || '';
+  elements.transcodeProfileBitrate.value = (profile && profile.bitrate_kbps) || '';
+  elements.transcodeProfileMaxrate.value = (profile && profile.maxrate_kbps) || '';
+  elements.transcodeProfileAudioMode.value = (profile && profile.audio_mode) || 'aac';
+  elements.transcodeProfileAudioBitrate.value = (profile && profile.audio_bitrate_kbps) || '';
+  elements.transcodeProfileAudioSr.value = (profile && profile.audio_sr) || '';
+  elements.transcodeProfileAudioChannels.value = (profile && profile.audio_channels) || '';
+  elements.transcodeProfileDeinterlace.value = (profile && profile.deinterlace) || 'auto';
+  if (elements.transcodeProfileError) {
+    elements.transcodeProfileError.textContent = '';
+  }
+  setOverlay(elements.transcodeProfileOverlay, true);
+}
+
+function readTranscodeProfileForm() {
+  const id = String(elements.transcodeProfileId.value || '').trim();
+  if (!id) throw new Error('Profile id is required');
+  if (!isValidProfileId(id)) throw new Error('Profile id must be URL-safe (letters, numbers, _, -)');
+  const width = toNumber(elements.transcodeProfileWidth.value);
+  const height = toNumber(elements.transcodeProfileHeight.value);
+  const bitrate = toNumber(elements.transcodeProfileBitrate.value);
+  if (width === undefined || width <= 0) throw new Error('Width must be > 0');
+  if (height === undefined || height <= 0) throw new Error('Height must be > 0');
+  if (bitrate === undefined || bitrate <= 0) throw new Error('Bitrate must be > 0');
+
+  const profile = {
+    id,
+    name: String(elements.transcodeProfileName.value || '').trim() || undefined,
+    fps: toNumber(elements.transcodeProfileFps.value),
+    width,
+    height,
+    bitrate_kbps: bitrate,
+    maxrate_kbps: toNumber(elements.transcodeProfileMaxrate.value),
+    audio_mode: String(elements.transcodeProfileAudioMode.value || 'aac'),
+    audio_bitrate_kbps: toNumber(elements.transcodeProfileAudioBitrate.value),
+    audio_sr: toNumber(elements.transcodeProfileAudioSr.value),
+    audio_channels: toNumber(elements.transcodeProfileAudioChannels.value),
+    deinterlace: String(elements.transcodeProfileDeinterlace.value || 'auto'),
+  };
+
+  return profile;
 }
 
 const TRANSCODE_OUTPUT_PRESETS = {
@@ -7520,6 +7615,60 @@ function renderTranscodeOutputList() {
     row.appendChild(remove);
 
     elements.transcodeOutputList.appendChild(row);
+  });
+}
+
+function summarizeProfile(profile) {
+  if (!profile) return 'Profile';
+  const id = profile.id || 'profile';
+  const size = (profile.width && profile.height) ? `${profile.width}x${profile.height}` : 'size?';
+  const bitrate = profile.bitrate_kbps ? `${profile.bitrate_kbps}k` : 'bitrate?';
+  const fps = profile.fps ? `${profile.fps}fps` : '';
+  return `${id} · ${size} · ${bitrate}${fps ? ' · ' + fps : ''}`;
+}
+
+function renderTranscodeProfileList() {
+  if (!elements.transcodeProfileList) return;
+  elements.transcodeProfileList.innerHTML = '';
+  if (!state.transcodeProfiles || state.transcodeProfiles.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No profiles configured.';
+    elements.transcodeProfileList.appendChild(empty);
+    return;
+  }
+
+  state.transcodeProfiles.forEach((profile, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row transcode-profile-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const label = document.createElement('div');
+    label.className = 'list-input transcode-profile-label';
+    label.textContent = summarizeProfile(profile);
+
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn';
+    edit.type = 'button';
+    edit.dataset.action = 'transcode-profile-edit';
+    edit.textContent = '...';
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'transcode-profile-remove';
+    remove.textContent = 'x';
+
+    row.appendChild(idx);
+    row.appendChild(label);
+    row.appendChild(edit);
+    row.appendChild(remove);
+
+    elements.transcodeProfileList.appendChild(row);
   });
 }
 
@@ -12241,6 +12390,8 @@ function openEditor(stream, isNew) {
         const publish = Array.isArray(tc.publish) ? tc.publish : [];
         elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
       }
+      state.transcodeProfiles = ladderEnabled ? (tc.profiles || []) : [];
+      renderTranscodeProfileList();
       syncTranscodeLadderPublishCommonUiFromJson();
     }
     updateInputProbeRestartToggle();
@@ -12821,14 +12972,17 @@ function readStreamForm() {
     const commonArgs = linesToArgs(elements.streamTranscodeCommonArgs && elements.streamTranscodeCommonArgs.value);
     if (commonArgs.length) transcode.common_output_args = commonArgs;
 
-    const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
+  const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
   if (ladderEnabled) {
     syncTranscodeLadderPublishJsonFromCommonUi();
-    const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
-      'Profiles (Transcode tab)');
+    let profiles = state.transcodeProfiles;
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+        'Profiles (Transcode tab)');
+    }
     if (!Array.isArray(profiles) || profiles.length === 0) {
       throw new Error('Transcode ladder profiles are required (Transcode tab)');
-      }
+    }
       const seen = new Set();
       profiles.forEach((profile, index) => {
         if (!profile || typeof profile !== 'object') {
@@ -21005,6 +21159,65 @@ function bindEvents() {
   if (elements.streamTranscodeLadderPreset3) {
     elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
       applyTranscodeLadderPreset('3');
+    });
+  }
+  if (elements.btnAddTranscodeProfile) {
+    elements.btnAddTranscodeProfile.addEventListener('click', () => {
+      openTranscodeProfileModal({ audio_mode: 'aac', deinterlace: 'auto' }, null);
+    });
+  }
+  if (elements.transcodeProfileList) {
+    elements.transcodeProfileList.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-action]');
+      if (!btn) return;
+      const row = btn.closest('.transcode-profile-row');
+      if (!row) return;
+      const idx = Number(row.dataset.index);
+      if (Number.isNaN(idx)) return;
+      const profile = state.transcodeProfiles[idx];
+      const action = btn.dataset.action;
+      if (action === 'transcode-profile-edit') {
+        openTranscodeProfileModal(profile, idx);
+      } else if (action === 'transcode-profile-remove') {
+        state.transcodeProfiles.splice(idx, 1);
+        renderTranscodeProfileList();
+        if (elements.streamTranscodeProfilesJson) {
+          elements.streamTranscodeProfilesJson.value = state.transcodeProfiles.length
+            ? formatJson(state.transcodeProfiles)
+            : '';
+        }
+        syncTranscodeLadderPublishJsonFromCommonUi();
+      }
+    });
+  }
+  if (elements.transcodeProfileClose) {
+    elements.transcodeProfileClose.addEventListener('click', closeTranscodeProfileModal);
+  }
+  if (elements.transcodeProfileCancel) {
+    elements.transcodeProfileCancel.addEventListener('click', closeTranscodeProfileModal);
+  }
+  if (elements.transcodeProfileForm) {
+    elements.transcodeProfileForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      try {
+        const profile = readTranscodeProfileForm();
+        const idx = state.transcodeProfileEditingIndex;
+        if (idx === null || idx === undefined) {
+          state.transcodeProfiles.push(profile);
+        } else {
+          state.transcodeProfiles[idx] = profile;
+        }
+        renderTranscodeProfileList();
+        if (elements.streamTranscodeProfilesJson) {
+          elements.streamTranscodeProfilesJson.value = formatJson(state.transcodeProfiles);
+        }
+        syncTranscodeLadderPublishJsonFromCommonUi();
+        closeTranscodeProfileModal();
+      } catch (err) {
+        if (elements.transcodeProfileError) {
+          elements.transcodeProfileError.textContent = err.message || String(err);
+        }
+      }
     });
   }
   if (elements.streamTranscodePublishHlsEnabled) {

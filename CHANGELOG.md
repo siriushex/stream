@@ -22,6 +22,11 @@
   - `contrib/ci/smoke.sh`
 ### 2026-02-07
 - Changes:
+  - UI: add ladder profiles list + modal editor, keep Profiles JSON under Advanced fold.
+- Tests:
+  - Not run (UI only)
+### 2026-02-07
+- Changes:
   - Publish: fix `/embed/<stream_id>` handler crash (missing `escape_html()`).
   - CI: add `smoke_transcode_ladder_embed.sh` and wire it into `contrib/ci/smoke.sh` behind `TRANSCODE_LADDER_EMBED_SMOKE=1`.
   - UI: show Ladder publish URLs (embed/live/hls/dash + push destinations) in the stream editor.
