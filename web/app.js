@@ -4498,7 +4498,11 @@ async function saveSoftcam() {
     };
   }
 
-  await saveSettings({ softcam: softcams });
+  await saveSettings({ softcam: softcams }, {
+    reload: false,
+    query: 'softcam_apply=0',
+    status: 'Softcam saved',
+  });
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
   refreshAllInputCamOptions();
@@ -16549,7 +16553,14 @@ function collectHttpAuthSettings() {
 }
 
 async function saveSettings(update, opts = {}) {
-  await apiJson('/api/v1/settings', {
+  let path = '/api/v1/settings';
+  if (opts.query) {
+    const query = String(opts.query || '');
+    if (query) {
+      path += query.startsWith('?') ? query : `?${query}`;
+    }
+  }
+  await apiJson(path, {
     method: 'PUT',
     body: JSON.stringify(update),
   });
