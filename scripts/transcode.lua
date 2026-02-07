@@ -18,6 +18,23 @@ local error_patterns = {
     "max delay reached",
 }
 
+local publish_network_error_patterns = {
+    "connection refused",
+    "connection reset",
+    "connection timed out",
+    "connection timeout",
+    "network is unreachable",
+    "no route to host",
+    "broken pipe",
+    "connection aborted",
+    "connection closed",
+    "could not resolve host",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "server returned",
+    "http error",
+}
+
 local UDP_PROBE_ANALYZE_US = 2000000
 local UDP_PROBE_SIZE = 2000000
 local ANALYZE_MAX_CONCURRENCY_DEFAULT = 4
@@ -1111,6 +1128,52 @@ local function normalize_publish_config(tc, profiles)
     local function push_err(msg)
         table.insert(errors, msg)
     end
+    local function normalize_publish_retry(tc_cfg, raw_cfg)
+        local base = type(tc_cfg and tc_cfg.publish_retry) == "table" and tc_cfg.publish_retry or nil
+        local override = type(raw_cfg and raw_cfg.retry) == "table" and raw_cfg.retry or nil
+        if not base and not override then
+            return nil
+        end
+        local function pick(key)
+            if override and override[key] ~= nil then
+                return override[key]
+            end
+            if base and base[key] ~= nil then
+                return base[key]
+            end
+            return nil
+        end
+        local function num(key)
+            local v = pick(key)
+            if v == nil then
+                return nil
+            end
+            local n = tonumber(v)
+            if n == nil or n < 0 then
+                return nil
+            end
+            return n
+        end
+        local out = {
+            restart_delay_sec = num("restart_delay_sec"),
+            restart_jitter_sec = num("restart_jitter_sec"),
+            restart_backoff_base_sec = num("restart_backoff_base_sec"),
+            restart_backoff_factor = num("restart_backoff_factor"),
+            restart_backoff_max_sec = num("restart_backoff_max_sec"),
+            restart_cooldown_sec = num("restart_cooldown_sec"),
+            max_restarts_per_10min = num("max_restarts_per_10min"),
+            no_progress_timeout_sec = num("no_progress_timeout_sec"),
+            max_error_lines_per_min = num("max_error_lines_per_min"),
+        }
+        local net = pick("retry_on_network_error")
+        if net ~= nil then
+            out.retry_on_network_error = normalize_bool(net, nil)
+        end
+        if next(out) == nil then
+            return nil
+        end
+        return out
+    end
     for idx, raw in ipairs(publish) do
         if type(raw) ~= "table" then
             push_err("publish[" .. tostring(idx) .. "]: must be an object")
@@ -1128,6 +1191,10 @@ local function normalize_publish_config(tc, profiles)
                 url = raw.url and tostring(raw.url) or nil,
                 path = raw.path and tostring(raw.path) or nil,
             }
+            local retry = normalize_publish_retry(tc, raw)
+            if retry then
+                entry.retry = retry
+            end
             if raw.profile ~= nil then
                 entry.profile = normalize_profile_id(raw.profile)
                 if entry.profile and not known_profiles[entry.profile] then
@@ -3076,6 +3143,19 @@ local function match_error_line(line)
     return false
 end
 
+local function match_publish_network_error(line)
+    if not line or line == "" then
+        return false
+    end
+    local lower = string.lower(line)
+    for _, pat in ipairs(publish_network_error_patterns) do
+        if lower:find(pat, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
 local function parse_bitrate_kbps(value)
     if not value or value == "" then
         return nil
@@ -3479,6 +3559,22 @@ local function restart_allowed_worker(job, worker, watchdog)
         return false, history
     end
     return true, history
+end
+
+local function merge_watchdog(base, override)
+    if type(override) ~= "table" then
+        return base
+    end
+    local out = {}
+    for k, v in pairs(base or {}) do
+        out[k] = v
+    end
+    for k, v in pairs(override) do
+        if k ~= "retry_on_network_error" and v ~= nil then
+            out[k] = v
+        end
+    end
+    return out
 end
 
 schedule_worker_restart = function(job, worker, code, message, meta)
@@ -5046,18 +5142,23 @@ local function read_publish_output(job, worker)
         update_progress(worker, line)
     end)
 
-    local err_chunk = worker.proc:read_stderr()
-    consume_lines(worker, "stderr_buf", err_chunk, function(line)
-        update_progress(worker, line)
-        local is_error = match_error_line(line)
-        if is_error then
-            mark_error_line(worker, line)
-        end
-        append_stderr_tail(worker, line)
-        if log_mode == "all" then
-            log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
-        elseif log_mode == "errors" and is_error then
-            log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+        local err_chunk = worker.proc:read_stderr()
+        consume_lines(worker, "stderr_buf", err_chunk, function(line)
+            update_progress(worker, line)
+            local is_error = match_error_line(line)
+            if is_error then
+                mark_error_line(worker, line)
+            end
+            if worker.retry_on_network_error ~= false and match_publish_network_error(line) then
+                schedule_publish_restart(job, worker, "PUBLISH_NETWORK_ERROR", "network error", {
+                    line = line,
+                })
+            end
+            append_stderr_tail(worker, line)
+            if log_mode == "all" then
+                log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
+            elseif log_mode == "errors" and is_error then
+                log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
         end
         if job.log_file_handle then
             job.log_file_handle:write("[publish " .. label .. "] " .. line .. "\n")
@@ -5235,13 +5336,13 @@ ensure_publish_workers = function(job)
                 local url = pub.url
                 if pid and pid ~= "" and url and url ~= "" then
                     local key = t .. ":" .. pid
-                    desired[key] = { type = t, profile_id = pid, url = url }
+                    desired[key] = { type = t, profile_id = pid, url = url, retry = pub.retry }
                 end
             elseif t == "dash" then
                 local variants = type(pub.variants) == "table" and pub.variants or nil
                 if variants and #variants > 0 then
                     local key = t .. ":" .. table.concat(variants, "+")
-                    desired[key] = { type = t, variants = variants, path = pub.path }
+                    desired[key] = { type = t, variants = variants, path = pub.path, retry = pub.retry }
                 end
             end
         end
@@ -5255,7 +5356,9 @@ ensure_publish_workers = function(job)
                 profile_id = spec.profile_id,
                 publish_url = spec.url,
                 variants = spec.variants,
-                watchdog = job.watchdog,
+                watchdog = merge_watchdog(job.watchdog, spec.retry),
+                retry_on_network_error = (spec.retry and spec.retry.retry_on_network_error ~= nil)
+                    and spec.retry.retry_on_network_error or true,
                 state = "STOPPED",
                 restart_history = {},
                 error_events = {},

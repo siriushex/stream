@@ -71,6 +71,49 @@
 }
 ```
 
+### Retry policy (publish)
+
+Для push/packager процессов (`dash`, `rtmp`, `rtsp`) можно задать retry‑политику.
+Поддерживается как глобально на `transcode.publish_retry`, так и на каждом publish target через `publish[].retry`
+(локальный override сильнее).
+
+Поддерживаемые поля:
+- `restart_delay_sec`
+- `restart_jitter_sec`
+- `restart_backoff_base_sec`
+- `restart_backoff_factor`
+- `restart_backoff_max_sec`
+- `restart_cooldown_sec`
+- `max_restarts_per_10min`
+- `no_progress_timeout_sec`
+- `max_error_lines_per_min`
+- `retry_on_network_error` (bool, default `true`)
+
+Пример (per‑target override):
+
+```json
+{
+  "transcode": {
+    "publish": [
+      {
+        "type": "rtmp",
+        "enabled": true,
+        "profile": "HDHigh",
+        "url": "rtmp://example/app/stream",
+        "retry": {
+          "restart_delay_sec": 2,
+          "restart_backoff_base_sec": 2,
+          "restart_backoff_max_sec": 30,
+          "restart_jitter_sec": 1,
+          "max_restarts_per_10min": 20,
+          "retry_on_network_error": true
+        }
+      }
+    ]
+  }
+}
+```
+
 ## Pull endpoints (всегда доступны при ladder)
 
 Когда ladder запущен, доступны pull URL:
