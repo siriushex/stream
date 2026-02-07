@@ -85,6 +85,7 @@ struct module_data_t
     uint64_t stat_timeouts;
     uint64_t last_io_us;
     const char *last_error;
+    bool au_enabled;
 };
 
 typedef enum {
@@ -207,6 +208,7 @@ static void on_newcamd_close(void *arg)
     }
 
     module_cam_reset(&mod->__cam);
+    mod->au_enabled = false;
 
     if(mod->prov_buffer)
     {
@@ -519,6 +521,7 @@ static void on_newcamd_read_packet(void *arg)
 
         mod->__cam.caid = (buffer[4] << 8) | buffer[5];
         memcpy(mod->__cam.ua, &buffer[6], 8);
+        mod->au_enabled = (buffer[3] == 1);
 
         char hex_str[32];
         asc_log_info(  MSG("CaID=0x%04X AU=%s UA=%s")
@@ -720,10 +723,36 @@ static int method_stats(module_data_t *mod)
     lua_pushinteger(lua, mod->__cam.caid);
     lua_setfield(lua, -2, "caid");
 
+    lua_pushboolean(lua, mod->au_enabled);
+    lua_setfield(lua, -2, "au");
+
     char ua_hex[17];
     hex_to_str(ua_hex, mod->__cam.ua, 8);
     lua_pushstring(lua, ua_hex);
     lua_setfield(lua, -2, "ua");
+
+    lua_newtable(lua);
+    int idx = 1;
+    if(mod->__cam.prov_list)
+    {
+        asc_list_for(mod->__cam.prov_list)
+        {
+            uint8_t *p = asc_list_data(mod->__cam.prov_list);
+            if(!p)
+                continue;
+            char ident_hex[7];
+            char sa_hex[17];
+            hex_to_str(ident_hex, &p[0], 3);
+            hex_to_str(sa_hex, &p[3], 8);
+            lua_newtable(lua);
+            lua_pushstring(lua, ident_hex);
+            lua_setfield(lua, -2, "ident");
+            lua_pushstring(lua, sa_hex);
+            lua_setfield(lua, -2, "sa");
+            lua_rawseti(lua, -2, idx++);
+        }
+    }
+    lua_setfield(lua, -2, "idents");
 
     lua_pushinteger(lua, (lua_Integer)asc_list_size(mod->__cam.packet_queue));
     lua_setfield(lua, -2, "queue_len");

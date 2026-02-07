@@ -596,6 +596,14 @@ const elements = {
   softcamTest: $('#softcam-test'),
   softcamClose: $('#softcam-close'),
   softcamError: $('#softcam-error'),
+  softcamTestOverlay: $('#softcam-test-overlay'),
+  softcamTestTitle: $('#softcam-test-title'),
+  softcamTestCaid: $('#softcam-test-caid'),
+  softcamTestAu: $('#softcam-test-au'),
+  softcamTestUa: $('#softcam-test-ua'),
+  softcamTestIdents: $('#softcam-test-idents'),
+  softcamTestClose: $('#softcam-test-close'),
+  softcamTestOk: $('#softcam-test-ok'),
   serverNew: $('#server-new'),
   serverTable: $('#server-table'),
   serverEmpty: $('#server-empty'),
@@ -3951,6 +3959,77 @@ function closeSoftcamModal() {
   setOverlay(elements.softcamOverlay, false);
 }
 
+function formatSoftcamTestCaid(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    if (/^0x/i.test(trimmed)) {
+      return `0x${trimmed.slice(2).toUpperCase()}`;
+    }
+    if (/^[0-9a-fA-F]+$/.test(trimmed)) {
+      return `0x${trimmed.toUpperCase()}`;
+    }
+    return trimmed;
+  }
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  const hex = Math.max(0, num).toString(16).toUpperCase().padStart(4, '0');
+  return `0x${hex}`;
+}
+
+function formatSoftcamTestAu(cam) {
+  if (!cam) return '';
+  if (cam.au !== undefined && cam.au !== null) {
+    return cam.au ? 'YES' : 'NO';
+  }
+  if (cam.disable_emm !== undefined && cam.disable_emm !== null) {
+    return cam.disable_emm ? 'NO' : 'YES';
+  }
+  return '';
+}
+
+function renderSoftcamTestIdents(idents) {
+  if (!elements.softcamTestIdents) return;
+  elements.softcamTestIdents.innerHTML = '';
+  if (!Array.isArray(idents) || idents.length === 0) {
+    const row = document.createElement('label');
+    row.className = 'field span-2';
+    row.innerHTML = '<span>—</span><input type="text" value="—" readonly />';
+    elements.softcamTestIdents.appendChild(row);
+    return;
+  }
+  idents.forEach((entry) => {
+    if (!entry) return;
+    const ident = entry.ident !== undefined ? String(entry.ident).toUpperCase() : '';
+    const sa = entry.sa !== undefined ? String(entry.sa).toUpperCase() : '';
+    const row = document.createElement('label');
+    row.className = 'field span-2';
+    row.innerHTML = `<span>${escapeHtml(ident || '—')}</span><input type="text" value="${escapeHtml(sa || '—')}" readonly />`;
+    elements.softcamTestIdents.appendChild(row);
+  });
+}
+
+function openSoftcamTestModal(result) {
+  const cam = result && result.cam ? result.cam : null;
+  if (elements.softcamTestCaid) {
+    elements.softcamTestCaid.value = formatSoftcamTestCaid(cam && cam.caid);
+  }
+  if (elements.softcamTestAu) {
+    elements.softcamTestAu.value = formatSoftcamTestAu(cam);
+  }
+  if (elements.softcamTestUa) {
+    const ua = cam && cam.ua ? String(cam.ua).toUpperCase() : '';
+    elements.softcamTestUa.value = ua || '';
+  }
+  renderSoftcamTestIdents(cam && cam.idents);
+  setOverlay(elements.softcamTestOverlay, true);
+}
+
+function closeSoftcamTestModal() {
+  setOverlay(elements.softcamTestOverlay, false);
+}
+
 function openGroupModal(group) {
   state.groupEditing = group ? { ...group } : null;
   state.groupIdAuto = !group;
@@ -4470,9 +4549,7 @@ async function testSoftcam() {
   });
   const message = (result && result.message) ? String(result.message) : 'OK';
   setStatus(`Softcam test: ${message}`);
-  if (elements.softcamError) {
-    elements.softcamError.textContent = `Test OK: ${message}`;
-  }
+  openSoftcamTestModal(result);
 }
 
 async function testServer(id, payload) {
@@ -20088,6 +20165,12 @@ function bindEvents() {
         }
       }
     });
+  }
+  if (elements.softcamTestClose) {
+    elements.softcamTestClose.addEventListener('click', closeSoftcamTestModal);
+  }
+  if (elements.softcamTestOk) {
+    elements.softcamTestOk.addEventListener('click', closeSoftcamTestModal);
   }
   if (elements.softcamTable) {
     elements.softcamTable.addEventListener('click', (event) => {

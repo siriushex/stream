@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260207a</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260207b</div>
       </div>
     </header>
 
@@ -3481,6 +3481,44 @@
           <div class="form-note" id="softcam-error"></div>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="softcam-test-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="softcam-test-title">Softcam test</div>
+        <button class="icon-btn" id="softcam-test-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <div class="modal-body-scroll">
+        <div class="softcam-test-body">
+          <div class="softcam-grid">
+            <label class="field span-2">
+              <span>CAID</span>
+              <input type="text" id="softcam-test-caid" readonly />
+            </label>
+            <label class="field span-2">
+              <span>AU</span>
+              <input type="text" id="softcam-test-au" readonly />
+            </label>
+            <label class="field span-2">
+              <span>UA</span>
+              <input type="text" id="softcam-test-ua" readonly />
+            </label>
+          </div>
+          <div class="softcam-test-idents">
+            <div class="softcam-test-idents-title">IDENTS</div>
+            <div class="softcam-grid" id="softcam-test-idents"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <div class="footer-actions">
+          <button class="btn" type="button" id="softcam-test-ok">OK</button>
+        </div>
+      </div>
     </div>
   </div>
 
