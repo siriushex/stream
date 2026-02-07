@@ -419,7 +419,7 @@ local function collect_input_stats(channel)
             return nil
         end
         local s = tostring(value or ""):lower()
-        if s == "dc" or s == "wan" or s == "bad" then
+        if s == "dc" or s == "wan" or s == "bad" or s == "max" then
             return s
         end
         return nil
@@ -513,7 +513,7 @@ local function collect_input_stats(channel)
             entry.bitrate_kbps = nil
         end
 
-        -- Профиль сети (dc/wan/bad) и факт включения resilience для входа.
+        -- Профиль сети (dc/wan/bad/max) и факт включения resilience для входа.
         -- Это нужно для UI Analyze, чтобы оператор понимал, почему вход "degraded/offline".
         if input_data and input_data.config and entry.format then
             local fmt = tostring(entry.format or ""):lower()

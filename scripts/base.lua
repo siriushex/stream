@@ -490,6 +490,20 @@ local INPUT_RESILIENCE_DEFAULTS = {
             keepalive = true,
             user_agent = "Astral/1.0",
         },
+        max = {
+            connect_timeout_ms = 12000,
+            read_timeout_ms = 40000,
+            stall_timeout_ms = 20000,
+            max_retries = 0,
+            backoff_min_ms = 1500,
+            backoff_max_ms = 30000,
+            backoff_jitter_pct = 35,
+            cooldown_sec = 60,
+            low_speed_limit_bytes_sec = 4096,
+            low_speed_time_sec = 15,
+            keepalive = true,
+            user_agent = "Astral/1.0",
+        },
     },
     hls_defaults = {
         max_segments = 10,
@@ -501,12 +515,14 @@ local INPUT_RESILIENCE_DEFAULTS = {
         dc = 200,
         wan = 400,
         bad = 800,
+        max = 1200,
     },
     -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
     jitter_assumed_mbps = {
         dc = 20,
         wan = 12,
         bad = 8,
+        max = 6,
     },
     -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
     jitter_max_auto_mb = 32,
@@ -529,7 +545,7 @@ local function normalize_net_profile(value)
         return nil
     end
     local s = tostring(value or ""):lower()
-    if s == "dc" or s == "wan" or s == "bad" then
+    if s == "dc" or s == "wan" or s == "bad" or s == "max" then
         return s
     end
     return nil
@@ -551,6 +567,7 @@ local function get_input_resilience_settings()
             dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.dc),
             wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.wan),
             bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.bad),
+            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.max),
         },
         hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
         jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
@@ -580,7 +597,7 @@ local function get_input_resilience_settings()
     end
 
     if type(raw.profiles) == "table" then
-        for _, name in ipairs({ "dc", "wan", "bad" }) do
+        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
             local p = raw.profiles[name]
             if type(p) == "table" then
                 for k, v in pairs(p) do
@@ -749,6 +766,8 @@ local function net_auto_init(conf, base_cfg)
     if window_sec < 5 then window_sec = 5 end
     local min_interval = tonumber(conf.net_auto_min_interval_sec) or 5
     if min_interval < 1 then min_interval = 1 end
+    local burst_threshold = tonumber(conf.net_auto_burst or conf.net_auto_burst_threshold) or 2
+    if burst_threshold < 1 then burst_threshold = 1 end
     return {
         enabled = true,
         level = 0,
@@ -756,6 +775,7 @@ local function net_auto_init(conf, base_cfg)
         relax_sec = math.floor(relax_sec),
         window_sec = math.floor(window_sec),
         min_interval_sec = math.floor(min_interval),
+        burst_threshold = math.floor(burst_threshold),
         base = copy_shallow(base_cfg),
         window_ts = nil,
         error_burst = 0,
@@ -830,7 +850,8 @@ local function net_auto_escalate(instance, reason)
     if auto.level >= auto.max_level then
         return
     end
-    if auto.error_burst < 2 then
+    local burst_limit = tonumber(auto.burst_threshold) or 2
+    if auto.error_burst < burst_limit then
         return
     end
     if auto.last_change_ts and (now - auto.last_change_ts) < auto.min_interval_sec then
@@ -1839,8 +1860,6 @@ init_input_module.http = function(conf)
         if instance.net_auto then
             net_auto_apply(instance)
         end
-        instance.net_auto = net_auto_init(conf, instance.net_cfg)
-        instance.net_auto = net_auto_init(conf, instance.net_cfg)
 
         local function build_headers(host, port)
             local ua = (instance.net_cfg and instance.net_cfg.user_agent) or conf.user_agent or http_user_agent
@@ -1868,7 +1887,6 @@ init_input_module.http = function(conf)
             instance.net.state = "degraded"
             instance.net.state_ts = os.time()
             instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
-            net_auto_escalate(instance, reason)
             net_auto_escalate(instance, reason)
 
             local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)

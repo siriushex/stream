@@ -382,6 +382,20 @@ const INPUT_RESILIENCE_DEFAULTS = {
       keepalive: true,
       user_agent: 'Astral/1.0',
     },
+    max: {
+      connect_timeout_ms: 12000,
+      read_timeout_ms: 40000,
+      stall_timeout_ms: 20000,
+      max_retries: 0,
+      backoff_min_ms: 1500,
+      backoff_max_ms: 30000,
+      backoff_jitter_pct: 35,
+      cooldown_sec: 60,
+      low_speed_limit_bytes_sec: 4096,
+      low_speed_time_sec: 15,
+      keepalive: true,
+      user_agent: 'Astral/1.0',
+    },
   },
   hls_defaults: {
     max_segments: 10,
@@ -393,6 +407,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
     dc: 200,
     wan: 400,
     bad: 800,
+    max: 1200,
   },
   max_active_resilient_inputs: 50,
 };
@@ -1210,6 +1225,11 @@ const elements = {
   inputNetDnsTtl: $('#input-net-dns-ttl'),
   inputNetKeepalive: $('#input-net-keepalive'),
   inputNetAuto: $('#input-net-auto'),
+  inputNetAutoMaxLevel: $('#input-net-auto-max-level'),
+  inputNetAutoRelaxSec: $('#input-net-auto-relax-sec'),
+  inputNetAutoWindowSec: $('#input-net-auto-window-sec'),
+  inputNetAutoMinInterval: $('#input-net-auto-min-interval'),
+  inputNetAutoBurst: $('#input-net-auto-burst'),
   inputNetFold: $('#input-net-fold'),
   inputJitterMs: $('#input-jitter-ms'),
   inputJitterMaxMb: $('#input-jitter-max-mb'),
@@ -1620,11 +1640,12 @@ const SETTINGS_GENERAL_SECTIONS = [
               { value: 'dc', label: 'dc (datacenter)' },
               { value: 'wan', label: 'wan' },
               { value: 'bad', label: 'bad (unstable)' },
+              { value: 'max', label: 'max (aggressive)' },
             ],
           },
           {
             type: 'note',
-            text: 'Если глобально выключено, resilience можно включить на конкретном input через `#net_profile=dc|wan|bad`.',
+            text: 'Если глобально выключено, resilience можно включить на конкретном input через `#net_profile=dc|wan|bad|max`.',
             level: 'basic',
           },
           {
@@ -1663,6 +1684,14 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'number',
             level: 'advanced',
             placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad),
+          },
+          {
+            id: 'settings-input-resilience-jitter-max',
+            label: 'max jitter (ms)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max),
           },
           {
             type: 'heading',
@@ -1722,6 +1751,10 @@ const SETTINGS_GENERAL_SECTIONS = [
             'settings-input-resilience-jitter-bad',
             INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad
           );
+          const jitterMax = readNumberValue(
+            'settings-input-resilience-jitter-max',
+            INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max
+          );
           const hlsSeg = readNumberValue(
             'settings-input-resilience-hls-max-segments',
             INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments
@@ -1738,7 +1771,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             'settings-input-resilience-hls-max-parallel',
             INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel
           );
-          return `${enabled ? 'Включено' : 'Выключено'} · Default: ${profile} · Jitter: ${jitterDc}/${jitterWan}/${jitterBad}ms · HLS: seg ${hlsSeg} gap ${hlsGap} retries ${hlsRetries} par ${hlsPar}`;
+          return `${enabled ? 'Включено' : 'Выключено'} · Default: ${profile} · Jitter: ${jitterDc}/${jitterWan}/${jitterBad}/${jitterMax}ms · HLS: seg ${hlsSeg} gap ${hlsGap} retries ${hlsRetries} par ${hlsPar}`;
         },
       },
       {
@@ -3252,6 +3285,7 @@ function bindGeneralElements() {
     settingsInputResilienceJitterDc: 'settings-input-resilience-jitter-dc',
     settingsInputResilienceJitterWan: 'settings-input-resilience-jitter-wan',
     settingsInputResilienceJitterBad: 'settings-input-resilience-jitter-bad',
+    settingsInputResilienceJitterMax: 'settings-input-resilience-jitter-max',
     settingsInputResilienceHlsMaxSegments: 'settings-input-resilience-hls-max-segments',
     settingsInputResilienceHlsMaxGap: 'settings-input-resilience-hls-max-gap',
     settingsInputResilienceHlsSegRetries: 'settings-input-resilience-hls-seg-retries',
@@ -10014,6 +10048,12 @@ function openInputModal(index) {
     'dns_cache_ttl_sec',
     'keepalive',
     'net_auto',
+    'net_auto_max_level',
+    'net_auto_relax_sec',
+    'net_auto_window_sec',
+    'net_auto_min_interval_sec',
+    'net_auto_burst',
+    'net_auto_burst_threshold',
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
@@ -10062,6 +10102,14 @@ function openInputModal(index) {
   if (elements.inputNetDnsTtl) elements.inputNetDnsTtl.value = opts.dns_cache_ttl_sec || '';
   if (elements.inputNetKeepalive) elements.inputNetKeepalive.checked = asBool(opts.keepalive);
   if (elements.inputNetAuto) elements.inputNetAuto.checked = asBool(opts.net_auto);
+  if (elements.inputNetAutoMaxLevel) elements.inputNetAutoMaxLevel.value = opts.net_auto_max_level || '';
+  if (elements.inputNetAutoRelaxSec) elements.inputNetAutoRelaxSec.value = opts.net_auto_relax_sec || '';
+  if (elements.inputNetAutoWindowSec) elements.inputNetAutoWindowSec.value = opts.net_auto_window_sec || '';
+  if (elements.inputNetAutoMinInterval) elements.inputNetAutoMinInterval.value = opts.net_auto_min_interval_sec || '';
+  if (elements.inputNetAutoBurst) {
+    const burst = opts.net_auto_burst || opts.net_auto_burst_threshold;
+    elements.inputNetAutoBurst.value = burst || '';
+  }
   if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
   if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
   if (elements.inputHlsMaxSegments) elements.inputHlsMaxSegments.value = opts.hls_max_segments || '';
@@ -10149,6 +10197,11 @@ function readInputForm() {
   addNumber('dns_cache_ttl_sec', elements.inputNetDnsTtl && elements.inputNetDnsTtl.value);
   if (elements.inputNetKeepalive && elements.inputNetKeepalive.checked) options.keepalive = true;
   if (elements.inputNetAuto && elements.inputNetAuto.checked) options.net_auto = true;
+  addNumber('net_auto_max_level', elements.inputNetAutoMaxLevel && elements.inputNetAutoMaxLevel.value);
+  addNumber('net_auto_relax_sec', elements.inputNetAutoRelaxSec && elements.inputNetAutoRelaxSec.value);
+  addNumber('net_auto_window_sec', elements.inputNetAutoWindowSec && elements.inputNetAutoWindowSec.value);
+  addNumber('net_auto_min_interval_sec', elements.inputNetAutoMinInterval && elements.inputNetAutoMinInterval.value);
+  addNumber('net_auto_burst', elements.inputNetAutoBurst && elements.inputNetAutoBurst.value);
   addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
   addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
   addString('net_profile', elements.inputNetProfile && elements.inputNetProfile.value);
@@ -16933,7 +16986,7 @@ function applySettingsToUI() {
   }
   const inputRes = getSettingObject('input_resilience', {});
   const inputResEnabled = inputRes && inputRes.enabled === true;
-  const allowedProfiles = ['dc', 'wan', 'bad'];
+  const allowedProfiles = ['dc', 'wan', 'bad', 'max'];
   const inputResDefault = allowedProfiles.includes(String(inputRes.default_profile))
     ? String(inputRes.default_profile)
     : INPUT_RESILIENCE_DEFAULTS.default_profile;
@@ -16952,6 +17005,9 @@ function applySettingsToUI() {
   const jitterBad = Number.isFinite(Number(inputResJitter.bad))
     ? Number(inputResJitter.bad)
     : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad;
+  const jitterMax = Number.isFinite(Number(inputResJitter.max))
+    ? Number(inputResJitter.max)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max;
   const inputResHls = (inputRes && inputRes.hls_defaults && typeof inputRes.hls_defaults === 'object')
     ? inputRes.hls_defaults
     : {};
@@ -16984,6 +17040,9 @@ function applySettingsToUI() {
   }
   if (elements.settingsInputResilienceJitterBad) {
     elements.settingsInputResilienceJitterBad.value = jitterBad;
+  }
+  if (elements.settingsInputResilienceJitterMax) {
+    elements.settingsInputResilienceJitterMax.value = jitterMax;
   }
   if (elements.settingsInputResilienceHlsMaxSegments) {
     elements.settingsInputResilienceHlsMaxSegments.value = hlsMaxSegments;
@@ -17655,6 +17714,10 @@ function collectGeneralSettings() {
   if (inputResJitterBad !== undefined && inputResJitterBad < 0) {
     throw new Error('bad jitter must be >= 0');
   }
+  const inputResJitterMax = toNumber(elements.settingsInputResilienceJitterMax && elements.settingsInputResilienceJitterMax.value);
+  if (inputResJitterMax !== undefined && inputResJitterMax < 0) {
+    throw new Error('max jitter must be >= 0');
+  }
   const inputResHlsMaxSegments = toNumber(elements.settingsInputResilienceHlsMaxSegments && elements.settingsInputResilienceHlsMaxSegments.value);
   if (inputResHlsMaxSegments !== undefined && inputResHlsMaxSegments < 0) {
     throw new Error('HLS max segments must be >= 0');
@@ -17948,6 +18011,7 @@ function collectGeneralSettings() {
     dc: inputResJitterDc !== undefined ? Math.floor(inputResJitterDc) : (Number.isFinite(Number(currentJitterDefaults.dc)) ? Number(currentJitterDefaults.dc) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.dc),
     wan: inputResJitterWan !== undefined ? Math.floor(inputResJitterWan) : (Number.isFinite(Number(currentJitterDefaults.wan)) ? Number(currentJitterDefaults.wan) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan),
     bad: inputResJitterBad !== undefined ? Math.floor(inputResJitterBad) : (Number.isFinite(Number(currentJitterDefaults.bad)) ? Number(currentJitterDefaults.bad) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad),
+    max: inputResJitterMax !== undefined ? Math.floor(inputResJitterMax) : (Number.isFinite(Number(currentJitterDefaults.max)) ? Number(currentJitterDefaults.max) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max),
   };
   payload.input_resilience = mergedInputRes;
   if (elements.settingsEventRequest) {
