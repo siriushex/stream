@@ -2977,6 +2977,24 @@ details.fold[open] > .fold-summary::after {
   grid-column: span 2;
 }
 
+.softcam-test-body {
+  display: grid;
+  gap: 12px;
+}
+
+.softcam-test-idents {
+  display: grid;
+  gap: 8px;
+}
+
+.softcam-test-idents-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 @media (max-width: 520px) {
   .softcam-grid {
     grid-template-columns: 1fr;
