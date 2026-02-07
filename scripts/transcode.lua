@@ -914,6 +914,13 @@ local function normalize_watchdog_defaults(tc)
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
         pat_timeout_sec = num("pat_timeout_sec", 0),
         pmt_timeout_sec = num("pmt_timeout_sec", 0),
+        pcr_jitter_limit_ms = num("pcr_jitter_limit_ms", 0),
+        pcr_jitter_hold_sec = num("pcr_jitter_hold_sec", 0),
+        pcr_missing_hold_sec = num("pcr_missing_hold_sec", 0),
+        buffer_target_kbps = num("buffer_target_kbps", 0),
+        buffer_fullness_min_pct = num("buffer_fullness_min_pct", 0),
+        buffer_fullness_max_pct = num("buffer_fullness_max_pct", 0),
+        buffer_fullness_hold_sec = num("buffer_fullness_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(wd.monitor_engine),
         low_bitrate_enabled = normalize_bool(wd.low_bitrate_enabled, true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -967,6 +974,13 @@ local function normalize_output_watchdog(wd, base)
         scrambled_hold_sec = num("scrambled_hold_sec", 0),
         pat_timeout_sec = num("pat_timeout_sec", 0),
         pmt_timeout_sec = num("pmt_timeout_sec", 0),
+        pcr_jitter_limit_ms = num("pcr_jitter_limit_ms", 0),
+        pcr_jitter_hold_sec = num("pcr_jitter_hold_sec", 0),
+        pcr_missing_hold_sec = num("pcr_missing_hold_sec", 0),
+        buffer_target_kbps = num("buffer_target_kbps", 0),
+        buffer_fullness_min_pct = num("buffer_fullness_min_pct", 0),
+        buffer_fullness_max_pct = num("buffer_fullness_max_pct", 0),
+        buffer_fullness_hold_sec = num("buffer_fullness_hold_sec", 0),
         monitor_engine = normalize_monitor_engine(pick("monitor_engine")),
         low_bitrate_enabled = normalize_bool(pick("low_bitrate_enabled"), true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
@@ -3328,6 +3342,25 @@ local function parse_analyze_psi_presence(line)
     return nil
 end
 
+local function parse_analyze_pcr_jitter(line)
+    if not line or line == "" then
+        return nil
+    end
+    local max_ms = line:match("PCRJitter:%s*max_ms=([%d%.]+)")
+    if not max_ms then
+        return nil
+    end
+    local avg_ms = line:match("avg_ms=([%d%.]+)")
+    return tonumber(max_ms), tonumber(avg_ms)
+end
+
+local function parse_analyze_pcr_missing(line)
+    if not line or line == "" then
+        return false
+    end
+    return line:find("PCR: missing", 1, true) ~= nil
+end
+
 local function should_trigger_error(now, last_ts, hold_sec)
     if not last_ts then
         return true
@@ -3810,6 +3843,43 @@ local function update_output_bitrate(job, output_state, bitrate, now)
     end
 
     local wd = output_state.watchdog
+    if wd and (wd.buffer_target_kbps or 0) > 0 then
+        local target = tonumber(wd.buffer_target_kbps) or 0
+        if target > 0 then
+            local fullness = (bitrate / target) * 100
+            output_state.buffer_fullness_pct = fullness
+            output_state.buffer_fullness_ts = now
+            output_state.buffer_underflow_active = false
+            output_state.buffer_overflow_active = false
+
+            local min_pct = tonumber(wd.buffer_fullness_min_pct) or 0
+            if min_pct > 0 and fullness < min_pct then
+                output_state.buffer_underflow_active = true
+                if should_trigger_error(now, output_state.buffer_underflow_trigger_ts, wd.buffer_fullness_hold_sec) then
+                    output_state.buffer_underflow_trigger_ts = now
+                    schedule_restart(job, output_state, "BUFFER_UNDERFLOW", "buffer underflow detected", {
+                        fullness_pct = fullness,
+                        min_pct = min_pct,
+                        target_kbps = target,
+                    })
+                end
+            end
+
+            local max_pct = tonumber(wd.buffer_fullness_max_pct) or 0
+            if max_pct > 0 and fullness > max_pct then
+                output_state.buffer_overflow_active = true
+                if should_trigger_error(now, output_state.buffer_overflow_trigger_ts, wd.buffer_fullness_hold_sec) then
+                    output_state.buffer_overflow_trigger_ts = now
+                    schedule_restart(job, output_state, "BUFFER_OVERFLOW", "buffer overflow detected", {
+                        fullness_pct = fullness,
+                        max_pct = max_pct,
+                        target_kbps = target,
+                    })
+                end
+            end
+        end
+    end
+
     if not wd or wd.low_bitrate_enabled ~= true then
         output_state.low_bitrate_active = false
         output_state.low_bitrate_since = nil
@@ -3981,6 +4051,37 @@ local function tick_output_probe(job, output_state, now)
                                 count = scrambled,
                                 limit = wd.scrambled_limit,
                             })
+                        end
+                    end
+                end
+
+                local jitter_max, jitter_avg = parse_analyze_pcr_jitter(line)
+                if jitter_max then
+                    output_state.pcr_jitter_max_ms = jitter_max
+                    output_state.pcr_jitter_avg_ms = jitter_avg
+                    output_state.pcr_jitter_ts = now
+                    output_state.pcr_missing_active = false
+                    local wd = output_state.watchdog
+                    if wd and wd.pcr_jitter_limit_ms and wd.pcr_jitter_limit_ms > 0 and jitter_max >= wd.pcr_jitter_limit_ms then
+                        if should_trigger_error(now, output_state.pcr_jitter_trigger_ts, wd.pcr_jitter_hold_sec) then
+                            output_state.pcr_jitter_trigger_ts = now
+                            schedule_restart(job, output_state, "PCR_JITTER", "PCR jitter detected", {
+                                max_ms = jitter_max,
+                                avg_ms = jitter_avg,
+                                limit_ms = wd.pcr_jitter_limit_ms,
+                            })
+                        end
+                    end
+                end
+
+                if parse_analyze_pcr_missing(line) then
+                    output_state.pcr_missing_active = true
+                    output_state.pcr_missing_ts = now
+                    local wd = output_state.watchdog
+                    if wd and wd.pcr_missing_hold_sec and wd.pcr_missing_hold_sec > 0 then
+                        if should_trigger_error(now, output_state.pcr_missing_trigger_ts, wd.pcr_missing_hold_sec) then
+                            output_state.pcr_missing_trigger_ts = now
+                            schedule_restart(job, output_state, "PCR_MISSING", "PCR missing", {})
                         end
                     end
                 end
@@ -6933,8 +7034,22 @@ function transcode.get_status(id)
                 scrambled_active = output_state.scrambled_active or false,
                 psi_pat_ts = output_state.psi_pat_ts,
                 psi_pmt_ts = output_state.psi_pmt_ts,
+                pcr_jitter_max_ms = output_state.pcr_jitter_max_ms,
+                pcr_jitter_avg_ms = output_state.pcr_jitter_avg_ms,
+                pcr_jitter_ts = output_state.pcr_jitter_ts,
+                pcr_missing_active = output_state.pcr_missing_active or false,
+                pcr_missing_ts = output_state.pcr_missing_ts,
                 pat_timeout_sec = output_state.watchdog and output_state.watchdog.pat_timeout_sec or nil,
                 pmt_timeout_sec = output_state.watchdog and output_state.watchdog.pmt_timeout_sec or nil,
+                pcr_jitter_limit_ms = output_state.watchdog and output_state.watchdog.pcr_jitter_limit_ms or nil,
+                pcr_missing_hold_sec = output_state.watchdog and output_state.watchdog.pcr_missing_hold_sec or nil,
+                buffer_target_kbps = output_state.watchdog and output_state.watchdog.buffer_target_kbps or nil,
+                buffer_fullness_min_pct = output_state.watchdog and output_state.watchdog.buffer_fullness_min_pct or nil,
+                buffer_fullness_max_pct = output_state.watchdog and output_state.watchdog.buffer_fullness_max_pct or nil,
+                buffer_fullness_pct = output_state.buffer_fullness_pct,
+                buffer_fullness_ts = output_state.buffer_fullness_ts,
+                buffer_underflow_active = output_state.buffer_underflow_active or false,
+                buffer_overflow_active = output_state.buffer_overflow_active or false,
                 low_bitrate_active = output_state.low_bitrate_active or false,
                 low_bitrate_seconds_accum = output_state.low_bitrate_active and output_state.low_bitrate_seconds or 0,
                 last_restart_ts = output_state.last_restart_ts,

@@ -93,6 +93,14 @@ struct module_data_t
     uint8_t sdt_max_section_id;
     uint32_t *sdt_checksum_list;
 
+    uint16_t pcr_pid;
+    bool pcr_seen;
+    uint64_t last_pcr;
+    uint64_t last_pcr_wall_us;
+    uint32_t pcr_jitter_max_us;
+    uint64_t pcr_jitter_sum_us;
+    uint32_t pcr_jitter_count;
+
     // rate_stat
     uint64_t last_ts;
     uint32_t ts_count;
@@ -717,6 +725,7 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
 
     lua_pushnumber(lua, PMT_GET_PCR(psi));
     lua_setfield(lua, -2, "pcr");
+    mod->pcr_pid = PMT_GET_PCR(psi);
 
     int streams_count = 1;
     lua_newtable(lua);
@@ -1053,6 +1062,33 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
         }
     }
 
+    if(mod->pcr_pid != 0 && pid == mod->pcr_pid && TS_IS_PCR(ts))
+    {
+        const uint64_t now_us = asc_utime();
+        const uint64_t pcr_value = TS_GET_PCR(ts);
+        if(mod->last_pcr != 0 && mod->last_pcr_wall_us != 0)
+        {
+            const uint64_t delta_pcr_us = mpegts_pcr_block_us(&mod->last_pcr, &pcr_value);
+            if(delta_pcr_us > 0)
+            {
+                const uint64_t delta_wall_us = now_us - mod->last_pcr_wall_us;
+                const uint64_t jitter_us = (delta_wall_us > delta_pcr_us)
+                                         ? (delta_wall_us - delta_pcr_us)
+                                         : (delta_pcr_us - delta_wall_us);
+                if(jitter_us > mod->pcr_jitter_max_us)
+                    mod->pcr_jitter_max_us = (uint32_t)jitter_us;
+                mod->pcr_jitter_sum_us += jitter_us;
+                mod->pcr_jitter_count += 1;
+            }
+        }
+        else
+        {
+            mod->last_pcr = pcr_value;
+        }
+        mod->last_pcr_wall_us = now_us;
+        mod->pcr_seen = true;
+    }
+
     // Analyze
 
     // skip packets without payload
@@ -1158,6 +1194,20 @@ static void on_check_stat(void *arg)
 
         lua_settable(lua, -3);
     }
+    lua_pushnumber(lua, (lua_Number)mod->pcr_jitter_max_us / 1000.0);
+    lua_setfield(lua, -2, "pcr_jitter_max_ms");
+    if(mod->pcr_jitter_count > 0)
+    {
+        const double avg_ms = (double)mod->pcr_jitter_sum_us / (double)mod->pcr_jitter_count / 1000.0;
+        lua_pushnumber(lua, avg_ms);
+    }
+    else
+    {
+        lua_pushnumber(lua, 0);
+    }
+    lua_setfield(lua, -2, "pcr_jitter_avg_ms");
+    lua_pushboolean(lua, mod->pcr_seen);
+    lua_setfield(lua, -2, "pcr_present");
     lua_setfield(lua, -2, "analyze");
 
     lua_newtable(lua);
@@ -1187,6 +1237,11 @@ static void on_check_stat(void *arg)
     lua_setfield(lua, -2, "on_air");
 
     callback(mod);
+
+    mod->pcr_jitter_max_us = 0;
+    mod->pcr_jitter_sum_us = 0;
+    mod->pcr_jitter_count = 0;
+    mod->pcr_seen = false;
 }
 
 /*
