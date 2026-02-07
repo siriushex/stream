@@ -4411,15 +4411,31 @@ local function pick_audio_fix_effective_mode(audio_fix)
     if not audio_fix or not audio_fix.config then
         return "aac"
     end
-    if audio_fix.config.silence_fallback and audio_fix.input_audio and audio_fix.input_audio.missing == true then
-        return "silence"
+    local current = audio_fix.effective_mode or "aac"
+
+    if audio_fix.config.silence_fallback then
+        -- When ffprobe temporarily fails, avoid flip-flopping between silence/aac/copy.
+        if audio_fix.input_audio and audio_fix.input_audio.missing == true then
+            return "silence"
+        end
+        if audio_fix.proc and audio_fix.input_probe_error ~= nil then
+            return current
+        end
     end
+
     if audio_fix.config.mode == "auto" then
+        -- Auto mode depends on ffprobe input probe to decide whether we can safely copy audio.
+        -- Keep the current mode when ffprobe didn't provide a valid descriptor to avoid frequent
+        -- warm restarts (output "jerks") on transient probe errors/timeouts.
+        if audio_fix.proc and (audio_fix.input_audio == nil or audio_fix.input_probe_error ~= nil) then
+            return current
+        end
         if is_audio_fix_auto_copy_match(audio_fix) then
             return "copy"
         end
         return "aac"
     end
+
     return "aac"
 end
 
