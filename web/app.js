@@ -233,6 +233,12 @@ const state = {
   analyzePoll: null,
   analyzeStreamId: null,
   analyzeCopyText: '',
+  analyzeJob: null,
+  analyzeStarting: false,
+  analyzeError: '',
+  analyzeCamPoll: null,
+  analyzeCamStats: null,
+  analyzeCamError: '',
   statusTimer: null,
   statusPollStartMs: 0,
   statusPollInFlight: false,
@@ -17752,6 +17758,101 @@ function buildAnalyzeBaseSections(stream, stats) {
   return sections;
 }
 
+function buildAnalyzeCamSection(camStats) {
+  if (!camStats && !state.analyzeCamError) return null;
+
+  const inputs = Array.isArray(camStats && camStats.inputs) ? camStats.inputs : [];
+  const activeId = Number(camStats && camStats.active_input_id) || 0;
+  const activeInput = inputs.find((it) => it && Number(it.input_id) === activeId)
+    || inputs.find((it) => it && it.active === true)
+    || inputs[0]
+    || null;
+
+  const items = [];
+  if (state.analyzeCamError) {
+    items.push(`Error: ${state.analyzeCamError}`);
+  }
+
+  if (!activeInput) {
+    items.push('No active input data.');
+    return { title: 'CAM / Softcam', items };
+  }
+
+  const inputLabel = activeInput.name ? `#${activeInput.input_id} (${activeInput.name})` : `#${activeInput.input_id}`;
+  const fmt = activeInput.format ? ` • ${activeInput.format}` : '';
+  items.push(`Active input: ${inputLabel}${fmt}`);
+
+  if (activeInput.decrypt_error) {
+    items.push(`Decrypt error: ${String(activeInput.decrypt_error)}`);
+    return { title: 'CAM / Softcam', items };
+  }
+
+  const dec = activeInput.decrypt || null;
+  if (!dec) {
+    items.push('Decrypt: not attached (no CAM or input not running).');
+    return { title: 'CAM / Softcam', items };
+  }
+
+  items.push(`CAM ready: ${dec.cam_ready ? 'Yes' : 'No'}`);
+  items.push(`Key guard: ${dec.key_guard ? 'On' : 'Off'}`);
+
+  const shift = dec.shift || {};
+  const shiftSize = Number(shift.size_bytes) || 0;
+  if (shiftSize > 0) {
+    const fillBytes = Number(shift.fill_bytes) || 0;
+    const pct = Number.isFinite(shift.fill_pct) ? Math.round(Number(shift.fill_pct) * 100) : null;
+    const pctText = pct == null ? '' : ` / ${pct}%`;
+    items.push(`Shift buffer: ${formatBytes(shiftSize)} (fill ${formatBytes(fillBytes)}${pctText})`);
+  } else {
+    items.push('Shift buffer: off');
+  }
+
+  const caList = Array.isArray(dec.ca_streams) ? dec.ca_streams : [];
+  if (!caList.length) {
+    items.push('ECM: no streams (not scrambled or no ECM selected yet).');
+    return { title: 'CAM / Softcam', items };
+  }
+
+  caList.forEach((cs) => {
+    if (!cs) return;
+    const pid = cs.ecm_pid != null ? cs.ecm_pid : 'n/a';
+    const type = cs.ecm_type != null ? formatHexByte(cs.ecm_type) : 'n/a';
+    const ok = cs.last_ecm_ok === true;
+    const failCount = Number(cs.ecm_fail_count) || 0;
+    const agoOk = Number.isFinite(Number(cs.last_ecm_ok_ago_ms)) ? `${Math.round(Number(cs.last_ecm_ok_ago_ms))}ms ago` : 'n/a';
+    const agoSend = Number.isFinite(Number(cs.last_ecm_send_ago_ms)) ? `${Math.round(Number(cs.last_ecm_send_ago_ms))}ms ago` : 'n/a';
+
+    const ecm = cs.ecm || {};
+    const sent = Number(ecm.sent) || 0;
+    const retry = Number(ecm.retry) || 0;
+    const okCount = Number(ecm.ok) || 0;
+    const nf = Number(ecm.not_found) || 0;
+    const rttAvg = Number.isFinite(Number(ecm.rtt_avg_ms)) ? `${Math.round(Number(ecm.rtt_avg_ms))}ms` : 'n/a';
+
+    const sub = [
+      `Keys: ${cs.is_keys ? 'Yes' : 'No'} | Last OK: ${ok ? 'Yes' : 'No'} | Fail: ${failCount}`,
+      `ECM sent:${sent} retry:${retry} ok:${okCount} not_found:${nf} rtt_avg:${rttAvg}`,
+      `Last send: ${agoSend} | Last OK: ${agoOk}`,
+    ];
+
+    const cand = cs.candidate || {};
+    if (cand.pending) {
+      const age = Number.isFinite(Number(cand.age_ms)) ? `${Math.round(Number(cand.age_ms))}ms` : 'n/a';
+      const mask = cand.mask != null ? String(cand.mask) : 'n/a';
+      const cok = Number(cand.ok_count) || 0;
+      const cfail = Number(cand.fail_count) || 0;
+      sub.push(`Candidate: pending mask=${mask} ok=${cok} fail=${cfail} age=${age}`);
+    }
+
+    items.push({
+      text: `ECM PID:${pid} TYPE:${type}`,
+      sub,
+    });
+  });
+
+  return { title: 'CAM / Softcam', items };
+}
+
 function buildAnalyzeProgramLines(programs) {
   if (!Array.isArray(programs) || programs.length === 0) {
     return ['No PSI/PMT data collected.'];
@@ -18026,12 +18127,25 @@ function buildAnalyzeJobSections(job) {
   return sections;
 }
 
+function clearAnalyzeCamPoll() {
+  if (state.analyzeCamPoll) {
+    clearTimeout(state.analyzeCamPoll);
+    state.analyzeCamPoll = null;
+  }
+  state.analyzeCamStats = null;
+  state.analyzeCamError = '';
+}
+
 function clearAnalyzePoll() {
   if (state.analyzePoll) {
     clearTimeout(state.analyzePoll);
     state.analyzePoll = null;
   }
   state.analyzeJobId = null;
+  state.analyzeJob = null;
+  state.analyzeStarting = false;
+  state.analyzeError = '';
+  clearAnalyzeCamPoll();
 }
 
 function formatAnalyzeError(err) {
@@ -18045,6 +18159,57 @@ function formatAnalyzeError(err) {
   return text || 'Analyze failed to start.';
 }
 
+function renderAnalyzeAll(stream, stats) {
+  const base = buildAnalyzeBaseSections(stream, stats);
+  let sections = base;
+
+  const camSection = buildAnalyzeCamSection(state.analyzeCamStats);
+  if (camSection) {
+    sections = sections.concat([camSection]);
+  }
+
+  if (state.analyzeJob) {
+    sections = sections.concat(buildAnalyzeJobSections(state.analyzeJob));
+  } else if (state.analyzeStarting) {
+    sections = sections.concat([{
+      title: 'Analyze details',
+      items: ['Starting analyze...'],
+    }]);
+  } else if (state.analyzeError) {
+    sections = sections.concat([{
+      title: 'Analyze details',
+      items: [state.analyzeError],
+    }]);
+  }
+
+  renderAnalyzeSections(sections);
+}
+
+function pollAnalyzeCamStats(stream, stats) {
+  if (state.analyzeStreamId !== stream.id) return;
+  apiJson(`/api/v1/streams/${stream.id}/cam-stats`).then((payload) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    state.analyzeCamStats = payload;
+    state.analyzeCamError = '';
+    renderAnalyzeAll(stream, stats);
+  }).catch((err) => {
+    if (state.analyzeStreamId !== stream.id) return;
+    const msg = formatNetworkError(err) || (err && err.message) || 'CAM stats unavailable';
+    state.analyzeCamError = String(msg);
+    renderAnalyzeAll(stream, stats);
+  }).finally(() => {
+    if (state.analyzeStreamId !== stream.id) return;
+    state.analyzeCamPoll = setTimeout(() => {
+      pollAnalyzeCamStats(stream, stats);
+    }, 1500);
+  });
+}
+
+function startAnalyzeCamPoll(stream, stats) {
+  clearAnalyzeCamPoll();
+  pollAnalyzeCamStats(stream, stats);
+}
+
 function pollAnalyzeJob(stream, stats, jobId, attempt) {
   const maxAttempts = 20;
   if (state.analyzeStreamId !== stream.id) return;
@@ -18052,9 +18217,10 @@ function pollAnalyzeJob(stream, stats, jobId, attempt) {
     if (state.analyzeStreamId !== stream.id) return;
     // Показываем частичные результаты во время анализа (PAT/PMT/SDT и bitrate появляются сразу).
     updateAnalyzeHeaderFromTotals(job.totals, stats.on_air === true);
-    const base = buildAnalyzeBaseSections(stream, stats);
-    const sections = base.concat(buildAnalyzeJobSections(job));
-    renderAnalyzeSections(sections);
+    state.analyzeStarting = false;
+    state.analyzeError = '';
+    state.analyzeJob = job;
+    renderAnalyzeAll(stream, stats);
     if (job.status === 'running' && attempt < maxAttempts) {
       state.analyzePoll = setTimeout(() => {
         pollAnalyzeJob(stream, stats, jobId, attempt + 1);
@@ -18062,24 +18228,21 @@ function pollAnalyzeJob(stream, stats, jobId, attempt) {
     }
   }).catch((err) => {
     if (state.analyzeStreamId !== stream.id) return;
-    const base = buildAnalyzeBaseSections(stream, stats);
-    const sections = base.concat([{
-      title: 'Analyze details',
-      items: [formatAnalyzeError(err)],
-    }]);
-    renderAnalyzeSections(sections);
+    state.analyzeStarting = false;
+    state.analyzeJob = null;
+    state.analyzeError = formatAnalyzeError(err);
+    renderAnalyzeAll(stream, stats);
   });
 }
 
 async function startAnalyzeDetails(stream, stats) {
   clearAnalyzePoll();
   state.analyzeStreamId = stream.id;
-  const base = buildAnalyzeBaseSections(stream, stats);
-  const sections = base.concat([{
-    title: 'Analyze details',
-    items: ['Starting analyze...'],
-  }]);
-  renderAnalyzeSections(sections);
+  state.analyzeStarting = true;
+  state.analyzeError = '';
+  state.analyzeJob = null;
+  startAnalyzeCamPoll(stream, stats);
+  renderAnalyzeAll(stream, stats);
 
   try {
     const payload = await apiJson(`/api/v1/streams/${stream.id}/analyze`, {
@@ -18089,11 +18252,9 @@ async function startAnalyzeDetails(stream, stats) {
     state.analyzeJobId = payload.id;
     pollAnalyzeJob(stream, stats, payload.id, 0);
   } catch (err) {
-    const failSections = base.concat([{
-      title: 'Analyze details',
-      items: [formatAnalyzeError(err)],
-    }]);
-    renderAnalyzeSections(failSections);
+    state.analyzeStarting = false;
+    state.analyzeError = formatAnalyzeError(err);
+    renderAnalyzeAll(stream, stats);
   }
 }
 
