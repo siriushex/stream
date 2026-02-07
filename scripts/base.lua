@@ -697,18 +697,53 @@ function init_input(conf)
         end
         local cam = get_softcam()
         if cam then
+            -- split_cam: create a dedicated CAM connection per stream to avoid head-of-line blocking
+            -- when many streams share one softcam instance.
+            local cam_for_decrypt = cam
+            local opts = type(cam) == "table" and cam.__options or nil
+            local split_cam = opts and (opts.split_cam == true or opts.split_cam == 1 or opts.split_cam == "1")
+            if split_cam and type(cam.clone) == "function" and not (opts and opts.is_clone) then
+                local tag = conf.id or conf.name or tostring(conf.pnr or "")
+                local ok, cam2 = pcall(function()
+                    return cam:clone(tag)
+                end)
+                if ok and cam2 then
+                    instance.__softcam_clone = cam2
+                    cam_for_decrypt = cam2
+                else
+                    log.error("[" .. conf.name .. "] split_cam clone failed, using shared cam")
+                end
+            end
+
+            -- Optional global guard: reject suspicious CW updates (keeps compatibility by default).
+            local key_guard = false
+            if type(config) == "table" and type(config.get_setting) == "function" then
+                local v = config.get_setting("softcam_key_guard")
+                key_guard = (v == true or v == 1 or v == "1")
+            end
+
+            -- shift: if stream doesn't specify one, allow softcam entry to provide a default.
+            local shift = conf.shift
+            if (shift == nil or shift == 0 or shift == "0" or shift == "") and opts and type(opts.raw_cfg) == "table" then
+                local sv = opts.raw_cfg.shift
+                if sv ~= nil and sv ~= "" then
+                    shift = tonumber(sv) or shift
+                end
+            end
+
             local cas_pnr = nil
             if conf.pnr and conf.set_pnr then cas_pnr = conf.pnr end
 
             instance.decrypt = decrypt({
                 upstream = instance.tail:stream(),
                 name = conf.name,
-                cam = cam:cam(),
+                cam = cam_for_decrypt:cam(),
                 cas_data = conf.cas_data,
                 cas_pnr = cas_pnr,
                 disable_emm = conf.no_emm,
                 ecm_pid = conf.ecm_pid,
-                shift = conf.shift,
+                shift = shift,
+                key_guard = key_guard,
             })
             instance.tail = instance.decrypt
         end
@@ -728,6 +763,14 @@ function kill_input(instance)
 
     instance.channel = nil
     instance.decrypt = nil
+
+    if instance.__softcam_clone then
+        local cam = instance.__softcam_clone
+        instance.__softcam_clone = nil
+        if cam.close then
+            pcall(function() cam:close() end)
+        end
+    end
 end
 
 local function append_bridge_args(args, extra)

@@ -268,6 +268,64 @@ local function close_softcam_list(list)
     end
 end
 
+local function softcam_is_truthy(value)
+    return value == true or value == 1 or value == "1"
+end
+
+local function softcam_shallow_copy(entry)
+    if type(entry) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for k, v in pairs(entry) do
+        out[k] = v
+    end
+    return out
+end
+
+local function softcam_clone(self, tag)
+    local opts = type(self) == "table" and self.__options or nil
+    local raw = opts and opts.raw_cfg
+    if type(raw) ~= "table" then
+        return nil, "missing raw_cfg"
+    end
+
+    local cfg = softcam_shallow_copy(raw)
+    -- Avoid global id collisions. Clones are not addressable by id and live only as stream attachments.
+    cfg.id = nil
+
+    local cam_type = cfg.type or (opts and opts.type)
+    if not cam_type or cam_type == "" then
+        return nil, "missing type"
+    end
+    cfg.type = cam_type
+
+    -- Prevent accidental recursive splitting if a clone is re-used as a base cam.
+    cfg.split_cam = false
+
+    local base_name = cfg.name or (opts and opts.id) or raw.id or "softcam"
+    cfg.name = tostring(base_name) .. "@" .. tostring(tag or "clone")
+
+    local ctor = _G[tostring(cam_type)]
+    local ctor_type = type(ctor)
+    if ctor_type ~= "function" and ctor_type ~= "table" then
+        return nil, "unknown type: " .. tostring(cam_type)
+    end
+
+    local ok, instance = pcall(ctor, cfg)
+    if not ok or not instance then
+        return nil, tostring(instance or "failed to init clone")
+    end
+
+    instance.__options = instance.__options or {}
+    instance.__options.raw_cfg = cfg
+    instance.__options.type = cam_type
+    instance.__options.split_cam = false
+    instance.__options.is_clone = true
+    instance.clone = softcam_clone
+    return instance
+end
+
 function apply_softcam_settings()
     local softcam_cfg = config.get_setting("softcam")
     if type(softcam_cfg) ~= "table" then
@@ -291,6 +349,12 @@ function apply_softcam_settings()
                         table.insert(new_list, instance)
                         local id = entry.id or (instance.__options and instance.__options.id)
                         if id then
+                            instance.__options = instance.__options or {}
+                            instance.__options.id = instance.__options.id or id
+                            instance.__options.type = entry.type
+                            instance.__options.split_cam = softcam_is_truthy(entry.split_cam)
+                            instance.__options.raw_cfg = softcam_shallow_copy(entry)
+                            instance.clone = softcam_clone
                             _G[tostring(id)] = instance
                         end
                     else
