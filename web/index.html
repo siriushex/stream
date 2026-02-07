@@ -2201,10 +2201,19 @@
 	                </div>
 	              </div>
 	            </div>
-	            <label class="field">
-	              <span>Profiles (JSON)</span>
-	              <textarea id="stream-transcode-profiles-json" class="textarea-grow" rows="6" placeholder='[{"id":"HDHigh","width":1280,"height":720,"bitrate_kbps":2500}]'></textarea>
-	            </label>
+	            <div class="list-block" id="stream-transcode-profiles-block">
+	              <div class="list-header">
+	                <span>PROFILES</span>
+	                <button class="text-link" type="button" id="btn-add-transcode-profile">ADD PROFILE</button>
+	              </div>
+	              <div class="list" id="transcode-profile-list"></div>
+	            </div>
+	            <details class="fold">
+	              <summary class="fold-summary">Profiles (JSON)</summary>
+	              <div class="fold-body">
+	                <textarea id="stream-transcode-profiles-json" class="textarea-grow" rows="6" placeholder='[{"id":"HDHigh","width":1280,"height":720,"bitrate_kbps":2500}]'></textarea>
+	              </div>
+	            </details>
 	            <div class="form-grid">
 	              <label class="checkline span-3">
 	                <input type="checkbox" id="stream-transcode-publish-hls-enabled" />
@@ -2888,6 +2897,83 @@
         <div class="modal-footer">
           <button class="btn" type="submit" id="transcode-output-save">OK</button>
           <button class="btn ghost" type="button" id="transcode-output-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="transcode-profile-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="transcode-profile-title">Transcode profile</div>
+        <button class="icon-btn" id="transcode-profile-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="transcode-profile-form">
+        <div class="modal-body-scroll">
+          <label class="field">
+            <span>Profile ID</span>
+            <input type="text" id="transcode-profile-id" placeholder="HDHigh" />
+          </label>
+          <label class="field">
+            <span>Name</span>
+            <input type="text" id="transcode-profile-name" placeholder="720p" />
+          </label>
+          <label class="field">
+            <span>FPS</span>
+            <input type="number" id="transcode-profile-fps" placeholder="25" min="1" />
+          </label>
+          <label class="field">
+            <span>Width</span>
+            <input type="number" id="transcode-profile-width" placeholder="1280" min="1" />
+          </label>
+          <label class="field">
+            <span>Height</span>
+            <input type="number" id="transcode-profile-height" placeholder="720" min="1" />
+          </label>
+          <label class="field">
+            <span>Bitrate (kbps)</span>
+            <input type="number" id="transcode-profile-bitrate" placeholder="2500" min="1" />
+          </label>
+          <label class="field">
+            <span>Maxrate (kbps)</span>
+            <input type="number" id="transcode-profile-maxrate" placeholder="3000" min="1" />
+          </label>
+          <label class="field">
+            <span>Audio mode</span>
+            <select id="transcode-profile-audio-mode">
+              <option value="aac">AAC</option>
+              <option value="copy">Copy</option>
+              <option value="auto">Auto</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Audio bitrate (kbps)</span>
+            <input type="number" id="transcode-profile-audio-bitrate" placeholder="128" min="1" />
+          </label>
+          <label class="field">
+            <span>Audio rate (Hz)</span>
+            <input type="number" id="transcode-profile-audio-sr" placeholder="48000" min="1" />
+          </label>
+          <label class="field">
+            <span>Audio channels</span>
+            <input type="number" id="transcode-profile-audio-channels" placeholder="2" min="1" />
+          </label>
+          <label class="field">
+            <span>Deinterlace</span>
+            <select id="transcode-profile-deinterlace">
+              <option value="auto">Auto</option>
+              <option value="yadif">Yadif</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="form-note" id="transcode-profile-error"></div>
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="transcode-profile-save">OK</button>
+          <button class="btn ghost" type="button" id="transcode-profile-cancel">Cancel</button>
         </div>
       </form>
     </div>
