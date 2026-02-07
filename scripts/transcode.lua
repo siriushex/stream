@@ -1317,7 +1317,7 @@ local function build_failover_inputs(cfg, label)
 
         local parsed = probe_url and parse_url(probe_url) or nil
         if parsed and probe_is_play then
-            -- Failover probes use /play fanout (burst delivery). parse_url() defaults /play to sync=1,
+            -- Failover probes use /play fanout (burst delivery). http input defaults /play to sync=1,
             -- which is good for stability, but the default sync buffer (1MB) adds a long startup delay
             -- on low-bitrate streams (buffer must fill before PCR-paced output starts).
             -- Keep sync enabled, but shrink buffer_size so probes become "on_air" quickly and don't
