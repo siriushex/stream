@@ -522,6 +522,7 @@ build_prompt_text = function(prompt, context)
     table.insert(parts, "Do not include markdown or extra text.")
     table.insert(parts, "Allowed ops: set_setting, set_stream_field, set_adapter_field, enable_stream, disable_stream, enable_adapter, disable_adapter, rename_stream, rename_adapter.")
     table.insert(parts, "Never use destructive ops (delete/remove/replace-all).")
+    table.insert(parts, "If the user request is chat-only or analysis-only (no config change), set ops=[] and warnings=[] and charts=[]. Put your answer into summary.")
     table.insert(parts, "If asked for charts, include a 'charts' array with line/bar series values.")
     if context then
         table.insert(parts, "Context:")
