@@ -4811,6 +4811,52 @@ local function ensure_ladder_publish(job)
     end
 end
 
+local function mark_publish_hls_discontinuity(job, profile_ids)
+    if not job or type(job.publish_hls_outputs) ~= "table" then
+        return
+    end
+
+    local function mark(pid)
+        if not pid or pid == "" then
+            return
+        end
+        local out = job.publish_hls_outputs[pid]
+        if out and type(out.discontinuity) == "function" then
+            pcall(out.discontinuity, out)
+        end
+    end
+
+    if profile_ids == nil then
+        for pid, out in pairs(job.publish_hls_outputs) do
+            if out and type(out.discontinuity) == "function" then
+                pcall(out.discontinuity, out)
+            elseif pid and pid ~= "" then
+                mark(pid)
+            end
+        end
+        return
+    end
+
+    if type(profile_ids) == "string" then
+        mark(profile_ids)
+        return
+    end
+
+    if type(profile_ids) ~= "table" then
+        return
+    end
+
+    if #profile_ids > 0 then
+        for _, pid in ipairs(profile_ids) do
+            mark(pid)
+        end
+    else
+        for pid in pairs(profile_ids) do
+            mark(pid)
+        end
+    end
+end
+
 local function reset_publish_runtime(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
@@ -5864,6 +5910,9 @@ tick_worker = function(job, worker, now)
                         worker.last_cutover.sender = sender
                     end
 
+                    -- HLS playlists need a discontinuity marker when we switch encoders/senders.
+                    mark_publish_hls_discontinuity(job, worker.profile_id)
+
                     if worker.proc then
                         worker.retire = {
                             proc = worker.proc,
@@ -6162,6 +6211,9 @@ tick_ladder_encoder = function(job, now)
                         switched_at = now,
                         profiles = senders_by_profile,
                     }
+
+                    -- HLS playlists need a discontinuity marker when we switch encoders/senders.
+                    mark_publish_hls_discontinuity(job, senders_by_profile)
 
                     if worker.proc then
                         worker.retire = {
