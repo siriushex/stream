@@ -25,6 +25,7 @@ local STDERR_TAIL_MAX = 200
 local WARMUP_STDERR_MAX = 30
 local WARMUP_TIMEOUT_EXTRA = 2
 local TRANSCODE_PLAY_BUFFER_KB_DEFAULT = 512
+local TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT = 16
 
 local function normalize_stream_type(cfg)
     local t = cfg and cfg.type
@@ -150,6 +151,21 @@ local function append_play_buffer(url, buffer_kb)
         return url
     end
     local suffix = "buf_kb=" .. tostring(math.floor(value))
+    if tostring(url):find("?", 1, true) then
+        return tostring(url) .. "&" .. suffix
+    end
+    return tostring(url) .. "?" .. suffix
+end
+
+local function append_play_buffer_fill(url, fill_kb)
+    if not url or url == "" then
+        return url
+    end
+    local value = tonumber(fill_kb)
+    if not value or value <= 0 then
+        return url
+    end
+    local suffix = "buf_fill_kb=" .. tostring(math.floor(value))
     if tostring(url):find("?", 1, true) then
         return tostring(url) .. "&" .. suffix
     end
@@ -323,6 +339,18 @@ local function extract_play_id_from_input(entry)
     if id and id ~= "" then
         return id
     end
+    -- Accept explicit /play/<id> URLs as stream references (normalize to loopback /play later).
+    -- This avoids accidentally pulling from an external host when a user pasted the public /play URL.
+    local play_id = text:match("^https?://[^/]+/play/([^?#/]+)") or text:match("^https?://[^/]+/stream/([^?#/]+)")
+    if not play_id then
+        play_id = text:match("^/play/([^?#/]+)") or text:match("^/stream/([^?#/]+)")
+    end
+    if play_id == "playlist.m3u8" or play_id == "playlist.xspf" then
+        play_id = nil
+    end
+    if play_id and play_id ~= "" then
+        return play_id
+    end
     if not text:find("://", 1, true) then
         return text
     end
@@ -341,12 +369,20 @@ local function resolve_job_input_url(job)
     local tc = job.config.transcode or {}
     local use_play = normalize_bool(tc.input_use_play, true)
     local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
+    local has_play_buffer_fill = tc.input_play_buffer_fill_kb ~= nil or tc.play_buffer_fill_kb ~= nil
     local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
     if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
         play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
     end
+    local play_buffer_fill_kb = resolve_play_buffer_kb(tc.input_play_buffer_fill_kb)
+    if play_buffer_fill_kb == nil and tc.input_play_buffer_fill_kb == nil then
+        play_buffer_fill_kb = resolve_play_buffer_kb(tc.play_buffer_fill_kb)
+    end
     if not has_play_buffer then
         play_buffer_kb = TRANSCODE_PLAY_BUFFER_KB_DEFAULT
+    end
+    if not has_play_buffer_fill then
+        play_buffer_fill_kb = TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT
     end
     local play_url = nil
     if use_play then
@@ -356,6 +392,7 @@ local function resolve_job_input_url(job)
         end
         if play_url then
             play_url = append_play_buffer(play_url, play_buffer_kb)
+            play_url = append_play_buffer_fill(play_url, play_buffer_fill_kb)
             return play_url
         end
         log.warning("[transcode " .. tostring(job.id) .. "] play input unavailable; using configured input")
