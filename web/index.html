@@ -2222,7 +2222,78 @@
 	                <span>DASH variants (comma-separated profile ids, empty = all)</span>
 	                <input type="text" id="stream-transcode-publish-dash-variants" placeholder="HDHigh,HDMedium" />
 	              </label>
+	              <label class="checkline span-3">
+	                <input type="checkbox" id="stream-transcode-publish-http-ts-enabled" />
+	                <span>HTTP-TS</span>
+	              </label>
+	              <label class="field span-9">
+	                <span>HTTP-TS variants (comma-separated profile ids, empty = all)</span>
+	                <input type="text" id="stream-transcode-publish-http-ts-variants" placeholder="HDHigh" />
+	              </label>
+	              <label class="checkline span-3">
+	                <input type="checkbox" id="stream-transcode-publish-embed-enabled" />
+	                <span>Embed page</span>
+	              </label>
+	              <div class="form-hint span-9">Embed uses the HLS master playlist.</div>
 	            </div>
+	            <details class="fold">
+	              <summary class="fold-summary">Push targets</summary>
+	              <div class="fold-body">
+	                <div class="form-grid">
+	                  <label class="checkline span-3">
+	                    <input type="checkbox" id="stream-transcode-publish-udp-enabled" />
+	                    <span>UDP</span>
+	                  </label>
+	                  <label class="field span-3">
+	                    <span>Profile</span>
+	                    <input type="text" id="stream-transcode-publish-udp-profile" placeholder="HDHigh" />
+	                  </label>
+	                  <label class="field span-6">
+	                    <span>URL</span>
+	                    <input type="text" id="stream-transcode-publish-udp-url" placeholder="udp://239.0.0.1:1234" />
+	                  </label>
+
+	                  <label class="checkline span-3">
+	                    <input type="checkbox" id="stream-transcode-publish-rtp-enabled" />
+	                    <span>RTP</span>
+	                  </label>
+	                  <label class="field span-3">
+	                    <span>Profile</span>
+	                    <input type="text" id="stream-transcode-publish-rtp-profile" placeholder="HDHigh" />
+	                  </label>
+	                  <label class="field span-6">
+	                    <span>URL</span>
+	                    <input type="text" id="stream-transcode-publish-rtp-url" placeholder="rtp://239.0.0.1:1234" />
+	                  </label>
+
+	                  <label class="checkline span-3">
+	                    <input type="checkbox" id="stream-transcode-publish-rtmp-enabled" />
+	                    <span>RTMP</span>
+	                  </label>
+	                  <label class="field span-3">
+	                    <span>Profile</span>
+	                    <input type="text" id="stream-transcode-publish-rtmp-profile" placeholder="HDHigh" />
+	                  </label>
+	                  <label class="field span-6">
+	                    <span>URL</span>
+	                    <input type="text" id="stream-transcode-publish-rtmp-url" placeholder="rtmp://example/app/stream" />
+	                  </label>
+
+	                  <label class="checkline span-3">
+	                    <input type="checkbox" id="stream-transcode-publish-rtsp-enabled" />
+	                    <span>RTSP</span>
+	                  </label>
+	                  <label class="field span-3">
+	                    <span>Profile</span>
+	                    <input type="text" id="stream-transcode-publish-rtsp-profile" placeholder="HDHigh" />
+	                  </label>
+	                  <label class="field span-6">
+	                    <span>URL</span>
+	                    <input type="text" id="stream-transcode-publish-rtsp-url" placeholder="rtsp://example/live/stream" />
+	                  </label>
+	                </div>
+	              </div>
+	            </details>
 	            <details class="fold">
 	              <summary class="fold-summary">Publish targets (JSON)</summary>
 	              <div class="fold-body">

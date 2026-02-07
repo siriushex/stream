@@ -851,6 +851,21 @@ const elements = {
   streamTranscodePublishHlsVariants: $('#stream-transcode-publish-hls-variants'),
   streamTranscodePublishDashEnabled: $('#stream-transcode-publish-dash-enabled'),
   streamTranscodePublishDashVariants: $('#stream-transcode-publish-dash-variants'),
+  streamTranscodePublishHttpTsEnabled: $('#stream-transcode-publish-http-ts-enabled'),
+  streamTranscodePublishHttpTsVariants: $('#stream-transcode-publish-http-ts-variants'),
+  streamTranscodePublishEmbedEnabled: $('#stream-transcode-publish-embed-enabled'),
+  streamTranscodePublishUdpEnabled: $('#stream-transcode-publish-udp-enabled'),
+  streamTranscodePublishUdpProfile: $('#stream-transcode-publish-udp-profile'),
+  streamTranscodePublishUdpUrl: $('#stream-transcode-publish-udp-url'),
+  streamTranscodePublishRtpEnabled: $('#stream-transcode-publish-rtp-enabled'),
+  streamTranscodePublishRtpProfile: $('#stream-transcode-publish-rtp-profile'),
+  streamTranscodePublishRtpUrl: $('#stream-transcode-publish-rtp-url'),
+  streamTranscodePublishRtmpEnabled: $('#stream-transcode-publish-rtmp-enabled'),
+  streamTranscodePublishRtmpProfile: $('#stream-transcode-publish-rtmp-profile'),
+  streamTranscodePublishRtmpUrl: $('#stream-transcode-publish-rtmp-url'),
+  streamTranscodePublishRtspEnabled: $('#stream-transcode-publish-rtsp-enabled'),
+  streamTranscodePublishRtspProfile: $('#stream-transcode-publish-rtsp-profile'),
+  streamTranscodePublishRtspUrl: $('#stream-transcode-publish-rtsp-url'),
   streamTranscodePublishJson: $('#stream-transcode-publish-json'),
   streamTranscodeLadderLinksFold: $('#stream-transcode-ladder-links-fold'),
   streamTranscodeLadderLinks: $('#stream-transcode-ladder-links'),
@@ -5728,6 +5743,16 @@ function parseCsvIds(text) {
     .filter(Boolean);
 }
 
+function normalizePublishVariants(variants, profiles) {
+  if (variants.length) return variants;
+  return profiles.map((p) => String(p && p.id || '').trim()).filter(Boolean);
+}
+
+function isValidProfileId(value) {
+  if (!value) return false;
+  return /^[A-Za-z0-9_-]+$/.test(value);
+}
+
 function pickPublishEntry(publish, type) {
   if (!Array.isArray(publish)) return null;
   for (const entry of publish) {
@@ -5740,6 +5765,12 @@ function syncTranscodeLadderPublishCommonUiFromJson() {
   if (!elements.streamTranscodePublishJson) return;
   if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
   if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+  if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
+  if (!elements.streamTranscodePublishEmbedEnabled) return;
+  if (!elements.streamTranscodePublishUdpEnabled || !elements.streamTranscodePublishUdpProfile || !elements.streamTranscodePublishUdpUrl) return;
+  if (!elements.streamTranscodePublishRtpEnabled || !elements.streamTranscodePublishRtpProfile || !elements.streamTranscodePublishRtpUrl) return;
+  if (!elements.streamTranscodePublishRtmpEnabled || !elements.streamTranscodePublishRtmpProfile || !elements.streamTranscodePublishRtmpUrl) return;
+  if (!elements.streamTranscodePublishRtspEnabled || !elements.streamTranscodePublishRtspProfile || !elements.streamTranscodePublishRtspUrl) return;
 
   let publish = null;
   try {
@@ -5757,6 +5788,39 @@ function syncTranscodeLadderPublishCommonUiFromJson() {
   const dash = pickPublishEntry(publish, 'dash');
   elements.streamTranscodePublishDashEnabled.checked = Boolean(dash && dash.enabled !== false);
   elements.streamTranscodePublishDashVariants.value = (dash && Array.isArray(dash.variants)) ? dash.variants.join(',') : '';
+
+  const httpTs = pickPublishEntry(publish, 'http-ts');
+  elements.streamTranscodePublishHttpTsEnabled.checked = Boolean(httpTs && httpTs.enabled !== false);
+  if (httpTs) {
+    const variants = Array.isArray(httpTs.variants) ? httpTs.variants
+      : (httpTs.profile ? [httpTs.profile] : []);
+    elements.streamTranscodePublishHttpTsVariants.value = variants.join(',');
+  } else {
+    elements.streamTranscodePublishHttpTsVariants.value = '';
+  }
+
+  const embed = pickPublishEntry(publish, 'embed');
+  elements.streamTranscodePublishEmbedEnabled.checked = Boolean(embed && embed.enabled !== false);
+
+  const udp = pickPublishEntry(publish, 'udp');
+  elements.streamTranscodePublishUdpEnabled.checked = Boolean(udp && udp.enabled !== false);
+  elements.streamTranscodePublishUdpProfile.value = udp && udp.profile ? udp.profile : '';
+  elements.streamTranscodePublishUdpUrl.value = udp && udp.url ? udp.url : '';
+
+  const rtp = pickPublishEntry(publish, 'rtp');
+  elements.streamTranscodePublishRtpEnabled.checked = Boolean(rtp && rtp.enabled !== false);
+  elements.streamTranscodePublishRtpProfile.value = rtp && rtp.profile ? rtp.profile : '';
+  elements.streamTranscodePublishRtpUrl.value = rtp && rtp.url ? rtp.url : '';
+
+  const rtmp = pickPublishEntry(publish, 'rtmp');
+  elements.streamTranscodePublishRtmpEnabled.checked = Boolean(rtmp && rtmp.enabled !== false);
+  elements.streamTranscodePublishRtmpProfile.value = rtmp && rtmp.profile ? rtmp.profile : '';
+  elements.streamTranscodePublishRtmpUrl.value = rtmp && rtmp.url ? rtmp.url : '';
+
+  const rtsp = pickPublishEntry(publish, 'rtsp');
+  elements.streamTranscodePublishRtspEnabled.checked = Boolean(rtsp && rtsp.enabled !== false);
+  elements.streamTranscodePublishRtspProfile.value = rtsp && rtsp.profile ? rtsp.profile : '';
+  elements.streamTranscodePublishRtspUrl.value = rtsp && rtsp.url ? rtsp.url : '';
 }
 
 function syncTranscodeLadderPublishJsonFromCommonUi() {
@@ -5764,6 +5828,12 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
   if (!elements.streamTranscodeProfilesJson) return;
   if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
   if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+  if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
+  if (!elements.streamTranscodePublishEmbedEnabled) return;
+  if (!elements.streamTranscodePublishUdpEnabled || !elements.streamTranscodePublishUdpProfile || !elements.streamTranscodePublishUdpUrl) return;
+  if (!elements.streamTranscodePublishRtpEnabled || !elements.streamTranscodePublishRtpProfile || !elements.streamTranscodePublishRtpUrl) return;
+  if (!elements.streamTranscodePublishRtmpEnabled || !elements.streamTranscodePublishRtmpProfile || !elements.streamTranscodePublishRtmpUrl) return;
+  if (!elements.streamTranscodePublishRtspEnabled || !elements.streamTranscodePublishRtspProfile || !elements.streamTranscodePublishRtspUrl) return;
 
   let current = null;
   try {
@@ -5785,7 +5855,7 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
 
   const maybeVariants = (variantsText) => {
     const ids = parseCsvIds(variantsText);
-    return ids.length ? ids : allProfileIds;
+    return normalizePublishVariants(ids, profiles);
   };
 
   const hlsVariants = maybeVariants(elements.streamTranscodePublishHlsVariants.value);
@@ -5807,6 +5877,62 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
   } else if (dashEnabled) {
     next.push({ type: 'dash', enabled: true, variants: dashVariants });
   }
+
+  const httpTsEnabled = elements.streamTranscodePublishHttpTsEnabled.checked;
+  const httpTs = pickPublishEntry(next, 'http-ts');
+  const httpTsVariants = parseCsvIds(elements.streamTranscodePublishHttpTsVariants.value);
+  if (httpTs) {
+    httpTs.enabled = httpTsEnabled;
+    if (httpTsVariants.length === 1) {
+      httpTs.profile = httpTsVariants[0];
+      delete httpTs.variants;
+    } else if (httpTsVariants.length > 1) {
+      httpTs.variants = httpTsVariants;
+      delete httpTs.profile;
+    } else {
+      delete httpTs.profile;
+      delete httpTs.variants;
+    }
+  } else if (httpTsEnabled) {
+    const entry = { type: 'http-ts', enabled: true };
+    if (httpTsVariants.length === 1) {
+      entry.profile = httpTsVariants[0];
+    } else if (httpTsVariants.length > 1) {
+      entry.variants = httpTsVariants;
+    }
+    next.push(entry);
+  }
+
+  const embedEnabled = elements.streamTranscodePublishEmbedEnabled.checked;
+  const embed = pickPublishEntry(next, 'embed');
+  if (embed) {
+    embed.enabled = embedEnabled;
+  } else if (embedEnabled) {
+    next.push({ type: 'embed', enabled: true });
+  }
+
+  const updatePushTarget = (type, enabledEl, profileEl, urlEl) => {
+    const enabled = enabledEl.checked;
+    const profile = String(profileEl.value || '').trim();
+    const url = String(urlEl.value || '').trim();
+    const entry = pickPublishEntry(next, type);
+    if (entry) {
+      entry.enabled = enabled;
+      entry.profile = profile || undefined;
+      entry.url = url || undefined;
+    } else if (enabled) {
+      next.push({ type, enabled: true, profile, url });
+    }
+  };
+
+  updatePushTarget('udp', elements.streamTranscodePublishUdpEnabled,
+    elements.streamTranscodePublishUdpProfile, elements.streamTranscodePublishUdpUrl);
+  updatePushTarget('rtp', elements.streamTranscodePublishRtpEnabled,
+    elements.streamTranscodePublishRtpProfile, elements.streamTranscodePublishRtpUrl);
+  updatePushTarget('rtmp', elements.streamTranscodePublishRtmpEnabled,
+    elements.streamTranscodePublishRtmpProfile, elements.streamTranscodePublishRtmpUrl);
+  updatePushTarget('rtsp', elements.streamTranscodePublishRtspEnabled,
+    elements.streamTranscodePublishRtspProfile, elements.streamTranscodePublishRtspUrl);
 
   elements.streamTranscodePublishJson.value = next.length ? formatJson(next) : '';
 }
@@ -12696,11 +12822,12 @@ function readStreamForm() {
     if (commonArgs.length) transcode.common_output_args = commonArgs;
 
     const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
-    if (ladderEnabled) {
-      const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
-        'Profiles (Transcode tab)');
-      if (!Array.isArray(profiles) || profiles.length === 0) {
-        throw new Error('Transcode ladder profiles are required (Transcode tab)');
+  if (ladderEnabled) {
+    syncTranscodeLadderPublishJsonFromCommonUi();
+    const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+      'Profiles (Transcode tab)');
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      throw new Error('Transcode ladder profiles are required (Transcode tab)');
       }
       const seen = new Set();
       profiles.forEach((profile, index) => {
@@ -12729,15 +12856,69 @@ function readStreamForm() {
         }
         if (bitrate === undefined || bitrate <= 0) {
           throw new Error(`Profile #${index + 1}: bitrate_kbps must be > 0 (Transcode tab)`);
+      }
+    });
+    transcode.profiles = profiles;
+
+    const profileIds = new Set(profiles.map((profile) => String(profile.id || '').trim()).filter(Boolean));
+    const validateVariants = (label, text) => {
+      const ids = parseCsvIds(text);
+      ids.forEach((id) => {
+        if (!isValidProfileId(id)) {
+          throw new Error(`${label}: invalid profile id "${id}" (Transcode tab)`);
+        }
+        if (!profileIds.has(id)) {
+          throw new Error(`${label}: unknown profile id "${id}" (Transcode tab)`);
         }
       });
-      transcode.profiles = profiles;
+      return ids;
+    };
+    const validatePush = (label, enabledEl, profileEl, urlEl) => {
+      if (!enabledEl || !enabledEl.checked) return;
+      const profile = String(profileEl && profileEl.value || '').trim();
+      const url = String(urlEl && urlEl.value || '').trim();
+      if (!profile) {
+        throw new Error(`${label}: profile is required (Transcode tab)`);
+      }
+      if (!isValidProfileId(profile)) {
+        throw new Error(`${label}: invalid profile id "${profile}" (Transcode tab)`);
+      }
+      if (!profileIds.has(profile)) {
+        throw new Error(`${label}: unknown profile id "${profile}" (Transcode tab)`);
+      }
+      if (!url) {
+        throw new Error(`${label}: url is required (Transcode tab)`);
+      }
+    };
+    if (elements.streamTranscodePublishHlsEnabled && elements.streamTranscodePublishHlsVariants) {
+      if (elements.streamTranscodePublishHlsEnabled.checked) {
+        validateVariants('HLS variants', elements.streamTranscodePublishHlsVariants.value);
+      }
+    }
+    if (elements.streamTranscodePublishDashEnabled && elements.streamTranscodePublishDashVariants) {
+      if (elements.streamTranscodePublishDashEnabled.checked) {
+        validateVariants('DASH variants', elements.streamTranscodePublishDashVariants.value);
+      }
+    }
+    if (elements.streamTranscodePublishHttpTsEnabled && elements.streamTranscodePublishHttpTsVariants) {
+      if (elements.streamTranscodePublishHttpTsEnabled.checked) {
+        validateVariants('HTTP-TS variants', elements.streamTranscodePublishHttpTsVariants.value);
+      }
+    }
+    validatePush('UDP publish', elements.streamTranscodePublishUdpEnabled,
+      elements.streamTranscodePublishUdpProfile, elements.streamTranscodePublishUdpUrl);
+    validatePush('RTP publish', elements.streamTranscodePublishRtpEnabled,
+      elements.streamTranscodePublishRtpProfile, elements.streamTranscodePublishRtpUrl);
+    validatePush('RTMP publish', elements.streamTranscodePublishRtmpEnabled,
+      elements.streamTranscodePublishRtmpProfile, elements.streamTranscodePublishRtmpUrl);
+    validatePush('RTSP publish', elements.streamTranscodePublishRtspEnabled,
+      elements.streamTranscodePublishRtspProfile, elements.streamTranscodePublishRtspUrl);
 
-      const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
-        'Publish targets (Transcode tab)');
-      if (publish !== null) {
-        if (!Array.isArray(publish)) {
-          throw new Error('Publish targets must be a JSON array (Transcode tab)');
+    const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
+      'Publish targets (Transcode tab)');
+    if (publish !== null) {
+      if (!Array.isArray(publish)) {
+        throw new Error('Publish targets must be a JSON array (Transcode tab)');
         }
         if (publish.length) {
           transcode.publish = publish;
@@ -20843,6 +21024,81 @@ function bindEvents() {
   }
   if (elements.streamTranscodePublishDashVariants) {
     elements.streamTranscodePublishDashVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHttpTsEnabled) {
+    elements.streamTranscodePublishHttpTsEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHttpTsVariants) {
+    elements.streamTranscodePublishHttpTsVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishEmbedEnabled) {
+    elements.streamTranscodePublishEmbedEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishUdpEnabled) {
+    elements.streamTranscodePublishUdpEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishUdpProfile) {
+    elements.streamTranscodePublishUdpProfile.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishUdpUrl) {
+    elements.streamTranscodePublishUdpUrl.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtpEnabled) {
+    elements.streamTranscodePublishRtpEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtpProfile) {
+    elements.streamTranscodePublishRtpProfile.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtpUrl) {
+    elements.streamTranscodePublishRtpUrl.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtmpEnabled) {
+    elements.streamTranscodePublishRtmpEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtmpProfile) {
+    elements.streamTranscodePublishRtmpProfile.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtmpUrl) {
+    elements.streamTranscodePublishRtmpUrl.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtspEnabled) {
+    elements.streamTranscodePublishRtspEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtspProfile) {
+    elements.streamTranscodePublishRtspProfile.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishRtspUrl) {
+    elements.streamTranscodePublishRtspUrl.addEventListener('input', () => {
       syncTranscodeLadderPublishJsonFromCommonUi();
     });
   }
