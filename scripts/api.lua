@@ -2614,6 +2614,15 @@ local function get_stream_cam_stats(server, client, id)
                 return cam:stats()
             end)
             if ok then
+                if type(cam) == "table" and type(cam.__options) == "table" then
+                    local opts = cam.__options
+                    if opts.pool_index ~= nil then
+                        data.pool_index = tonumber(opts.pool_index) or opts.pool_index
+                    end
+                    if opts.pool_size ~= nil then
+                        data.pool_size = tonumber(opts.pool_size) or opts.pool_size
+                    end
+                end
                 item.cam = data
             else
                 item.cam_error = tostring(data)
