@@ -1151,9 +1151,17 @@ static void module_init(module_data_t *mod)
     module_option_number("shift", &shift);
     if(shift > 0)
     {
-        /* shift is milliseconds of buffered delay (time-based, capped) */
+        /*
+         * shift is a buffered delay before decrypt (time-based, capped).
+         * Backward compatibility: small values historically behaved like "units" rather than ms.
+         * We treat shift < 100 as legacy units where 1 == 100ms.
+         */
+        uint64_t shift_ms = (uint64_t)shift;
+        if(shift < 100)
+            shift_ms = (uint64_t)shift * 100ULL;
+
         const uint64_t bits_per_sec = (uint64_t)SHIFT_ASSUME_MBIT * 1000ULL * 1000ULL;
-        uint64_t bytes = ((uint64_t)shift * bits_per_sec) / 8ULL / 1000ULL;
+        uint64_t bytes = (shift_ms * bits_per_sec) / 8ULL / 1000ULL;
         if(bytes < TS_PACKET_SIZE)
             bytes = TS_PACKET_SIZE;
         bytes = ((bytes + TS_PACKET_SIZE - 1) / TS_PACKET_SIZE) * TS_PACKET_SIZE;
@@ -1161,8 +1169,8 @@ static void module_init(module_data_t *mod)
             bytes = SHIFT_MAX_BYTES;
         mod->shift.size = (size_t)bytes;
         mod->shift.buffer = malloc(mod->shift.size);
-        if(shift > 0 && bytes == SHIFT_MAX_BYTES && asc_log_is_debug())
-            asc_log_debug(MSG("shift capped to %d bytes"), SHIFT_MAX_BYTES);
+        if(asc_log_is_debug() && bytes == SHIFT_MAX_BYTES)
+            asc_log_debug(MSG("shift buffer capped to %d bytes"), SHIFT_MAX_BYTES);
     }
 
     stream_reload(mod);
