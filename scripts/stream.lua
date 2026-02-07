@@ -3305,9 +3305,12 @@ local function stop_audio_fix_probe(output_data)
         return
     end
     local probe = audio_fix.probe
-    if probe.proc then
-        probe.proc:kill()
-        probe.proc:close()
+    if probe.analyzer then
+        local mod = probe.analyzer
+        probe.analyzer = nil
+        if type(mod.close) == "function" then
+            pcall(mod.close, mod)
+        end
     end
     release_audio_fix_slot(probe)
     audio_fix.probe = nil
@@ -3911,6 +3914,25 @@ local function tick_audio_fix_drift_probe(channel_data, output_id, output_data, 
     end
 end
 
+local function extract_first_audio_type_id(info)
+    if type(info) ~= "table" then
+        return nil
+    end
+    local streams = info.streams
+    if type(streams) ~= "table" then
+        return nil
+    end
+    for _, s in ipairs(streams) do
+        if type(s) == "table" and s.type_name == "AUDIO" and s.type_id ~= nil then
+            local v = tonumber(s.type_id)
+            if v ~= nil then
+                return v
+            end
+        end
+    end
+    return nil
+end
+
 local function start_audio_fix_probe(channel_data, output_id, output_data)
     local audio_fix = output_data.audio_fix
     if not audio_fix or not audio_fix.config.enabled then
@@ -3919,13 +3941,8 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
     if audio_fix.probe then
         return
     end
-    if not process or type(process.spawn) ~= "function" then
-        audio_fix.last_error = "process module not available"
-        return
-    end
-    local url = format_udp_output_url(output_data.config, false)
-    if not url then
-        audio_fix.last_error = "output url is required"
+    if not analyze or type(analyze) ~= "function" then
+        audio_fix.last_error = "analyze module not available"
         return
     end
     local limit = get_audio_fix_analyze_limit()
@@ -3933,23 +3950,55 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
         audio_fix.analyze_pending = true
         return
     end
-    local args = build_analyze_args(url, audio_fix.config.probe_duration_sec)
-    local ok, proc = pcall(process.spawn, args, { stdout = "pipe", stderr = "pipe" })
-    if not ok or not proc then
-        audio_fix.last_error = "analyze spawn failed"
+
+    local upstream = nil
+    if audio_fix.proc and audio_fix.proxy_switch and type(audio_fix.proxy_switch.stream) == "function" then
+        upstream = audio_fix.proxy_switch:stream()
+    elseif channel_data and channel_data.tail and type(channel_data.tail.stream) == "function" then
+        upstream = channel_data.tail:stream()
+    end
+    if not upstream then
+        audio_fix.last_error = "probe upstream unavailable"
+        return
+    end
+
+    local probe = {
+        analyzer = nil,
+        detected_type = nil,
+        last_error = nil,
+        analyze_slot = true,
+        start_ts = os.time(),
+        duration_sec = math.max(1, tonumber(audio_fix.config.probe_duration_sec) or AUDIO_FIX_PROBE_DURATION_DEFAULT),
+    }
+
+    local ok, analyzer = pcall(analyze, {
+        upstream = upstream,
+        name = get_stream_label(channel_data) .. ":audio-fix:" .. tostring(output_id),
+        join_pid = true,
+        callback = function(data)
+            if type(data) ~= "table" then
+                return
+            end
+            if data.error then
+                probe.last_error = tostring(data.error)
+                return
+            end
+            if data.psi == "pmt" then
+                local t = extract_first_audio_type_id(data)
+                if t ~= nil then
+                    probe.detected_type = t
+                end
+            end
+        end,
+    })
+    if not ok or not analyzer then
+        audio_fix.last_error = "analyze init failed"
         return
     end
     audio_fix_analyze_active = audio_fix_analyze_active + 1
     audio_fix.analyze_pending = false
-    audio_fix.probe = {
-        proc = proc,
-        stdout_buf = "",
-        stderr_buf = "",
-        detected_type = nil,
-        analyze_slot = true,
-        start_ts = os.time(),
-        timeout_sec = math.max(2, audio_fix.config.probe_duration_sec + 2),
-    }
+    probe.analyzer = analyzer
+    audio_fix.probe = probe
 end
 
 local function handle_audio_fix_probe_result(channel_data, output_id, output_data, detected_type, err, now)
@@ -3994,41 +4043,23 @@ end
 local function tick_audio_fix_probe(channel_data, output_id, output_data, now)
     local audio_fix = output_data.audio_fix
     local probe = audio_fix and audio_fix.probe or nil
-    if not probe or not probe.proc then
+    if not probe or not probe.analyzer then
         return
     end
-
-    local out_chunk = probe.proc:read_stdout()
-    if out_chunk then
-        consume_lines(probe, "stdout_buf", out_chunk, function(line)
-            local detected = parse_analyze_audio_type(line)
-            if detected then
-                probe.detected_type = detected
-            end
-        end)
+    local duration = tonumber(probe.duration_sec) or AUDIO_FIX_PROBE_DURATION_DEFAULT
+    if (now - (probe.start_ts or now)) < duration then
+        return
     end
+    local detected = probe.detected_type
+    local perr = probe.last_error
+    stop_audio_fix_probe(output_data)
 
-    local err_chunk = probe.proc:read_stderr()
-    if err_chunk then
-        probe.stderr_buf = (probe.stderr_buf or "") .. err_chunk
+    local err = nil
+    if not detected then
+        err = perr or "audio_type_not_found"
     end
-
-    local status = probe.proc:poll()
-    if status or (now - probe.start_ts) >= probe.timeout_sec then
-        if not status then
-            probe.proc:kill()
-        end
-        probe.proc:close()
-        release_audio_fix_slot(probe)
-        audio_fix.probe = nil
-
-        local err = nil
-        if not probe.detected_type then
-            err = "audio_type_not_found"
-        end
-        handle_audio_fix_probe_result(channel_data, output_id, output_data, probe.detected_type, err, now)
-        audio_fix.next_probe_ts = now + (audio_fix.config.probe_interval_sec or AUDIO_FIX_PROBE_INTERVAL_DEFAULT)
-    end
+    handle_audio_fix_probe_result(channel_data, output_id, output_data, detected, err, now)
+    audio_fix.next_probe_ts = now + (audio_fix.config.probe_interval_sec or AUDIO_FIX_PROBE_INTERVAL_DEFAULT)
 end
 
 local function tick_audio_fix_process(channel_data, output_id, output_data, now)
