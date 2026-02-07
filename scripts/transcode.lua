@@ -379,7 +379,9 @@ local function resolve_transcode_play_id(cfg, active_id, failover_enabled)
     return extract_play_id_from_input(entry)
 end
 
-local function ensure_loop_channel(job)
+-- NOTE: не делаем это `local function ...`, потому что `transcode.lua` уже близко к лимиту
+-- локальных переменных Lua (200) на уровне чанка. Добавление ещё пары `local` ломает загрузку.
+function transcode.ensure_loop_channel(job)
     if not job or job.loop_channel then
         return job and job.loop_channel ~= nil
     end
@@ -409,7 +411,7 @@ local function ensure_loop_channel(job)
     return true
 end
 
-local function stop_loop_channel(job)
+function transcode.stop_loop_channel(job)
     if not job or not job.loop_channel then
         return
     end
@@ -447,7 +449,7 @@ local function resolve_job_input_url(job)
         if play_id then
             play_url = build_transcode_play_url(play_id)
         end
-        if not play_url and ensure_loop_channel(job) then
+        if not play_url and transcode.ensure_loop_channel(job) then
             play_url = build_transcode_play_url(job.id)
         end
         if play_url then
@@ -6666,7 +6668,7 @@ function transcode.start(job, opts)
     if normalize_bool(tc.input_use_play, true) then
         local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
         if not play_id then
-            ensure_loop_channel(job)
+            transcode.ensure_loop_channel(job)
         end
     end
     local engine = normalize_engine(tc)
@@ -6994,7 +6996,7 @@ function transcode.stop(job)
     job.state = "STOPPED"
     job.ffmpeg_input_url = nil
     close_log_file(job)
-    stop_loop_channel(job)
+    transcode.stop_loop_channel(job)
 end
 
 function transcode.restart(job, reason)
