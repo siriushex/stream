@@ -17807,7 +17807,9 @@ function buildAnalyzeCamSection(camStats) {
     const host = cam.host ? String(cam.host) : '';
     const port = cam.port != null ? String(cam.port) : '';
     const timeout = cam.timeout_ms != null ? `${String(cam.timeout_ms)}ms` : 'n/a';
-    const caid = cam.caid ? String(cam.caid) : '';
+    const caid = Number.isFinite(Number(cam.caid))
+      ? `0x${Number(cam.caid).toString(16).toUpperCase().padStart(4, '0')}`
+      : '';
     const ua = cam.ua ? String(cam.ua) : '';
     const queueLen = Number(cam.queue_len) || 0;
     const inFlight = cam.in_flight ? 'Yes' : 'No';
@@ -17816,13 +17818,18 @@ function buildAnalyzeCamSection(camStats) {
     const lastErr = cam.last_error ? String(cam.last_error) : '';
     const lastIoAgo = Number(cam.last_io_ago_ms);
     const lastIoText = Number.isFinite(lastIoAgo) ? `${Math.round(lastIoAgo)}ms ago` : 'n/a';
+    const poolIndex = Number(cam.pool_index);
+    const poolSize = Number(cam.pool_size);
+    const poolText = Number.isFinite(poolIndex) && Number.isFinite(poolSize) && poolSize > 1
+      ? ` | Pool: ${poolIndex}/${poolSize}`
+      : '';
 
     const warn = !ready || queueLen > 0 || (Number.isFinite(lastIoAgo) && lastIoAgo > 5000);
     const endpoint = (host && port) ? `${host}:${port}` : (host || port ? `${host}${port ? ':' + port : ''}` : 'n/a');
     const sub = [
       `Ready: ${ready ? 'Yes' : 'No'} | Status: ${status}`,
       `Endpoint: ${endpoint} | Timeout: ${timeout}`,
-      `Queue: ${queueLen} | In-flight: ${inFlight} | Last IO: ${lastIoText}`,
+      `Queue: ${queueLen} | In-flight: ${inFlight} | Last IO: ${lastIoText}${poolText}`,
       `Reconnects: ${reconnects} | Timeouts: ${timeouts}`,
     ];
     if (caid || ua) {
