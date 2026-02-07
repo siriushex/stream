@@ -1132,14 +1132,16 @@ init_input_module.http = function(conf)
         end
 
         local sync = conf.sync
-        if sync == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
-            -- /play is served via http_upstream (burst delivery); enabling http_request sync
+        if sync == nil and type(conf.path) == "string"
+            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
+            -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
             -- makes consumption stable for downstream pipelines.
             sync = 1
         end
         local timeout = conf.timeout
-        if timeout == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
-            -- /play can be bursty on low-bitrate streams; keep a higher receive timeout by default
+        if timeout == nil and type(conf.path) == "string"
+            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
+            -- /play and /stream can be bursty on low-bitrate streams; keep a higher receive timeout by default
             -- so we don't reconnect on normal gaps.
             timeout = 60
         end

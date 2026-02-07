@@ -51,7 +51,22 @@
 #   error "DVB-CSA is not defined"
 #endif
 
+typedef struct module_data_t module_data_t;
+typedef struct ca_stream_t ca_stream_t;
+
 typedef struct
+{
+    ca_stream_t *stream;
+    bool is_backup;
+} cam_ecm_arg_t;
+
+typedef struct
+{
+    module_data_t *mod;
+    ca_stream_t *stream;
+} cam_backup_timer_arg_t;
+
+struct ca_stream_t
 {
     uint8_t ecm_type;
     uint16_t ecm_pid;
@@ -71,8 +86,28 @@ typedef struct
     uint64_t stat_ecm_retry;
     uint64_t stat_ecm_not_found;
     uint64_t stat_ecm_ok;
+    uint64_t stat_ecm_ok_primary;
+    uint64_t stat_ecm_ok_backup;
     uint64_t stat_rtt_sum_ms;
     uint64_t stat_rtt_count;
+    uint64_t stat_rtt_min_ms;
+    uint64_t stat_rtt_max_ms;
+    uint64_t stat_rtt_hist[5];
+
+    /* Per-CAM send timestamps */
+    uint64_t sendtime_primary;
+    uint64_t sendtime_backup;
+
+    /* Dual-CAM hedge */
+    asc_timer_t *backup_timer;
+    cam_backup_timer_arg_t backup_timer_arg;
+    uint8_t *backup_ecm_buf;
+    uint16_t backup_ecm_len;
+    bool backup_ecm_pending;
+
+    /* Arg wrappers to identify which CAM responded */
+    cam_ecm_arg_t arg_primary;
+    cam_ecm_arg_t arg_backup;
 
     /* Last applied control words (for split updates / key guard) */
     bool active_key_set;
@@ -110,7 +145,7 @@ typedef struct
     uint8_t new_key[16];
 
     uint64_t sendtime;
-} ca_stream_t;
+};
 
 typedef struct
 {
@@ -237,6 +272,12 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
     memset(ca_stream, 0, sizeof(ca_stream_t));
 
     ca_stream->ecm_pid = ecm_pid;
+    ca_stream->arg_primary.stream = ca_stream;
+    ca_stream->arg_primary.is_backup = false;
+    ca_stream->arg_backup.stream = ca_stream;
+    ca_stream->arg_backup.is_backup = true;
+    ca_stream->backup_timer_arg.mod = mod;
+    ca_stream->backup_timer_arg.stream = ca_stream;
 
 #if FFDECSA == 1
 
@@ -258,6 +299,18 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
 
 void ca_stream_destroy(ca_stream_t *ca_stream)
 {
+    if(ca_stream->backup_timer)
+    {
+        asc_timer_destroy(ca_stream->backup_timer);
+        ca_stream->backup_timer = NULL;
+    }
+    if(ca_stream->backup_ecm_buf)
+    {
+        free(ca_stream->backup_ecm_buf);
+        ca_stream->backup_ecm_buf = NULL;
+        ca_stream->backup_ecm_len = 0;
+    }
+
 #if FFDECSA == 1
 
     free_key_struct(ca_stream->keys);
@@ -306,6 +359,70 @@ static void ca_stream_set_active_key(ca_stream_t *ca_stream, int mask, const uin
     if(mask & 0x02)
         memcpy(&ca_stream->active_key[8], &key16[8], 8);
     ca_stream->active_key_set = true;
+}
+
+static void ca_stream_stat_rtt(ca_stream_t *ca_stream, uint64_t ms)
+{
+    ca_stream->stat_rtt_sum_ms += ms;
+    ca_stream->stat_rtt_count += 1;
+    if(ca_stream->stat_rtt_min_ms == 0 || ms < ca_stream->stat_rtt_min_ms)
+        ca_stream->stat_rtt_min_ms = ms;
+    if(ms > ca_stream->stat_rtt_max_ms)
+        ca_stream->stat_rtt_max_ms = ms;
+
+    if(ms <= 50)
+        ca_stream->stat_rtt_hist[0] += 1;
+    else if(ms <= 100)
+        ca_stream->stat_rtt_hist[1] += 1;
+    else if(ms <= 250)
+        ca_stream->stat_rtt_hist[2] += 1;
+    else if(ms <= 500)
+        ca_stream->stat_rtt_hist[3] += 1;
+    else
+        ca_stream->stat_rtt_hist[4] += 1;
+}
+
+static void module_backup_active_set(module_data_t *mod, bool active, uint64_t now_us)
+{
+    if(active)
+    {
+        if(!mod->backup_active)
+        {
+            mod->backup_active = true;
+            mod->backup_active_since_us = now_us;
+        }
+        return;
+    }
+
+    if(mod->backup_active)
+    {
+        if(mod->backup_active_since_us)
+            mod->backup_active_ms += (now_us - mod->backup_active_since_us) / 1000ULL;
+        mod->backup_active = false;
+        mod->backup_active_since_us = 0;
+    }
+}
+
+static void on_cam_backup_hedge(void *arg)
+{
+    cam_backup_timer_arg_t *ctx = (cam_backup_timer_arg_t *)arg;
+    if(!ctx || !ctx->mod || !ctx->stream)
+        return;
+
+    module_data_t *mod = ctx->mod;
+    ca_stream_t *ca_stream = ctx->stream;
+
+    ca_stream->backup_timer = NULL;
+    ca_stream->backup_ecm_pending = false;
+
+    if(!mod->cam_backup || !mod->cam_backup->is_ready)
+        return;
+    if(!ca_stream->backup_ecm_buf || ca_stream->backup_ecm_len == 0)
+        return;
+
+    mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
+                             ca_stream->backup_ecm_buf, ca_stream->backup_ecm_len);
+    ca_stream->sendtime_backup = asc_utime();
 }
 
 static void ca_stream_guard_clear(ca_stream_t *ca_stream)
@@ -922,7 +1039,6 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         ca_stream->ecm_type = em_type;
         ca_stream->last_ecm_type = em_type;
         ca_stream->last_ecm_send_us = now_us;
-        ca_stream->sendtime = now_us;
         ca_stream->stat_ecm_sent += 1;
         if(is_retry)
             ca_stream->stat_ecm_retry += 1;
@@ -941,13 +1057,17 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         return;
     }
 
+    const bool is_ecm = (em_type == 0x80 || em_type == 0x81);
+    bool sent_primary = false;
     bool sent = false;
     if(mod->cam_primary && mod->cam_primary->is_ready)
     {
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_primary->disable_emm)
         {
-            mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, ca_stream,
+            mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, &ca_stream->arg_primary,
                                       psi->buffer, psi->buffer_size);
+            ca_stream->sendtime_primary = asc_utime();
+            sent_primary = true;
             sent = true;
         }
     }
@@ -955,9 +1075,32 @@ static void on_em(void *arg, mpegts_psi_t *psi)
     {
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_backup->disable_emm)
         {
-            mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, ca_stream,
-                                     psi->buffer, psi->buffer_size);
-            sent = true;
+            if(is_ecm && mod->cam_backup_hedge_ms > 0 && sent_primary)
+            {
+                if(ca_stream->backup_timer)
+                {
+                    asc_timer_destroy(ca_stream->backup_timer);
+                    ca_stream->backup_timer = NULL;
+                }
+                ca_stream->backup_ecm_buf = realloc(ca_stream->backup_ecm_buf, psi->buffer_size);
+                if(ca_stream->backup_ecm_buf)
+                {
+                    memcpy(ca_stream->backup_ecm_buf, psi->buffer, psi->buffer_size);
+                    ca_stream->backup_ecm_len = psi->buffer_size;
+                    ca_stream->backup_ecm_pending = true;
+                    ca_stream->backup_timer = asc_timer_one_shot(mod->cam_backup_hedge_ms,
+                                                                 on_cam_backup_hedge,
+                                                                 &ca_stream->backup_timer_arg);
+                    sent = true;
+                }
+            }
+            else
+            {
+                mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
+                                         psi->buffer, psi->buffer_size);
+                ca_stream->sendtime_backup = asc_utime();
+                sent = true;
+            }
         }
     }
     __uarg(sent);
@@ -1286,7 +1429,11 @@ void on_cam_error(module_data_t *mod)
 
 void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
 {
-    ca_stream_t *ca_stream = arg;
+    cam_ecm_arg_t *em_arg = (cam_ecm_arg_t *)arg;
+    ca_stream_t *ca_stream = em_arg ? em_arg->stream : NULL;
+    const bool is_backup = em_arg ? em_arg->is_backup : false;
+    if(!ca_stream)
+        return;
     asc_list_for(mod->ca_list)
     {
         if(asc_list_data(mod->ca_list) == ca_stream)
@@ -1326,14 +1473,29 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
     if(is_keys_ok)
     {
         const uint64_t now_us = asc_utime();
-        const uint64_t responsetime = (now_us - ca_stream->sendtime) / 1000;
+        const uint64_t sendtime = is_backup ? ca_stream->sendtime_backup : ca_stream->sendtime_primary;
+        const uint64_t responsetime = sendtime ? (now_us - sendtime) / 1000 : 0;
         ca_stream->stat_ecm_ok += 1;
-        ca_stream->stat_rtt_sum_ms += responsetime;
-        ca_stream->stat_rtt_count += 1;
+        if(is_backup)
+            ca_stream->stat_ecm_ok_backup += 1;
+        else
+            ca_stream->stat_ecm_ok_primary += 1;
+        if(sendtime)
+            ca_stream_stat_rtt(ca_stream, responsetime);
 
         ca_stream->last_ecm_ok = true;
         ca_stream->ecm_fail_count = 0;
         ca_stream->last_ecm_ok_us = now_us;
+
+        if(mod->dual_cam)
+            module_backup_active_set(mod, is_backup, now_us);
+
+        if(!is_backup && ca_stream->backup_timer)
+        {
+            asc_timer_destroy(ca_stream->backup_timer);
+            ca_stream->backup_timer = NULL;
+            ca_stream->backup_ecm_pending = false;
+        }
 
         if(!is_cw_checksum_ok && asc_log_is_debug())
             asc_log_debug(MSG("ECM CW checksum mismatch"));
@@ -1394,10 +1556,11 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
     else
     {
         const uint64_t now_us = asc_utime();
-        const uint64_t responsetime = (now_us - ca_stream->sendtime) / 1000;
+        const uint64_t sendtime = is_backup ? ca_stream->sendtime_backup : ca_stream->sendtime_primary;
+        const uint64_t responsetime = sendtime ? (now_us - sendtime) / 1000 : 0;
         ca_stream->stat_ecm_not_found += 1;
-        ca_stream->stat_rtt_sum_ms += responsetime;
-        ca_stream->stat_rtt_count += 1;
+        if(sendtime)
+            ca_stream_stat_rtt(ca_stream, responsetime);
 
         if(mod->dual_cam && ca_stream->last_ecm_ok_us && (now_us - ca_stream->last_ecm_ok_us) < 500000ULL)
         {
