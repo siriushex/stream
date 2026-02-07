@@ -592,6 +592,7 @@ const elements = {
   softcamComment: $('#softcam-comment'),
   softcamSave: $('#softcam-save'),
   softcamCancel: $('#softcam-cancel'),
+  softcamTest: $('#softcam-test'),
   softcamClose: $('#softcam-close'),
   softcamError: $('#softcam-error'),
   serverNew: $('#server-new'),
@@ -4409,6 +4410,46 @@ async function deleteSoftcam(id) {
   state.softcams = normalizeSoftcams(state.settings.softcam);
   renderSoftcams();
   refreshInputCamOptions();
+}
+
+async function testSoftcam() {
+  const host = elements.softcamHost ? elements.softcamHost.value.trim() : '';
+  const port = toNumber(elements.softcamPort && elements.softcamPort.value);
+  const user = elements.softcamUser ? elements.softcamUser.value.trim() : '';
+  const passRaw = elements.softcamPass ? elements.softcamPass.value : '';
+  const pass = passRaw || (state.softcamEditing && state.softcamEditing.pass) || '';
+  const keyRaw = elements.softcamKey ? elements.softcamKey.value.trim().replace(/\s+/g, '') : '';
+  const key = keyRaw || (state.softcamEditing && state.softcamEditing.key) || '';
+  const caidRaw = elements.softcamCaid ? elements.softcamCaid.value.trim() : '';
+  const caid = caidRaw || (state.softcamEditing && state.softcamEditing.caid) || '';
+  const timeoutRaw = toNumber(elements.softcamTimeout && elements.softcamTimeout.value);
+  const timeout = (Number.isFinite(timeoutRaw) && timeoutRaw > 0) ? Math.floor(timeoutRaw) : undefined;
+
+  if (!host) throw new Error('Host is required for test');
+  if (!port) throw new Error('Port is required for test');
+  if (!user) throw new Error('User is required for test');
+  if (!pass) throw new Error('Password is required for test');
+
+  if (elements.softcamError) elements.softcamError.textContent = '';
+  setStatus('Softcam test...', 'sticky');
+  const result = await apiJson('/api/v1/softcam/test', {
+    method: 'POST',
+    body: JSON.stringify({
+      host,
+      port,
+      user,
+      pass,
+      key: key || undefined,
+      caid: caid || undefined,
+      timeout,
+      max_wait_sec: 3,
+    }),
+  });
+  const message = (result && result.message) ? String(result.message) : 'OK';
+  setStatus(`Softcam test: ${message}`);
+  if (elements.softcamError) {
+    elements.softcamError.textContent = `Test OK: ${message}`;
+  }
 }
 
 async function testServer(id, payload) {
@@ -19978,7 +20019,18 @@ function bindEvents() {
         await saveSoftcam();
       } catch (err) {
         if (elements.softcamError) {
-          elements.softcamError.textContent = err.message || 'Failed to save softcam';
+          elements.softcamError.textContent = formatNetworkError(err) || err.message || 'Failed to save softcam';
+        }
+      }
+    });
+  }
+  if (elements.softcamTest) {
+    elements.softcamTest.addEventListener('click', async () => {
+      try {
+        await testSoftcam();
+      } catch (err) {
+        if (elements.softcamError) {
+          elements.softcamError.textContent = formatNetworkError(err) || err.message || 'Softcam test failed';
         }
       }
     });
