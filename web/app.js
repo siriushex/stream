@@ -334,6 +334,69 @@ const NET_RESILIENCE_DEFAULTS = {
   user_agent: '',
 };
 
+// Профили устойчивости сети для входов HTTP/HLS (включаются только явно).
+// Держим дефолты в UI, чтобы показывать осмысленные значения даже до первого сохранения.
+const INPUT_RESILIENCE_DEFAULTS = {
+  enabled: false,
+  default_profile: 'wan',
+  profiles: {
+    dc: {
+      connect_timeout_ms: 2500,
+      read_timeout_ms: 8000,
+      stall_timeout_ms: 4000,
+      max_retries: 0,
+      backoff_min_ms: 300,
+      backoff_max_ms: 4000,
+      backoff_jitter_pct: 20,
+      cooldown_sec: 10,
+      low_speed_limit_bytes_sec: 32768,
+      low_speed_time_sec: 4,
+      keepalive: true,
+      user_agent: 'Astral/1.0',
+    },
+    wan: {
+      connect_timeout_ms: 5000,
+      read_timeout_ms: 15000,
+      stall_timeout_ms: 7000,
+      max_retries: 0,
+      backoff_min_ms: 700,
+      backoff_max_ms: 10000,
+      backoff_jitter_pct: 25,
+      cooldown_sec: 20,
+      low_speed_limit_bytes_sec: 16384,
+      low_speed_time_sec: 6,
+      keepalive: true,
+      user_agent: 'Astral/1.0',
+    },
+    bad: {
+      connect_timeout_ms: 8000,
+      read_timeout_ms: 25000,
+      stall_timeout_ms: 10000,
+      max_retries: 0,
+      backoff_min_ms: 1000,
+      backoff_max_ms: 20000,
+      backoff_jitter_pct: 30,
+      cooldown_sec: 45,
+      low_speed_limit_bytes_sec: 8192,
+      low_speed_time_sec: 10,
+      keepalive: true,
+      user_agent: 'Astral/1.0',
+    },
+  },
+  hls_defaults: {
+    max_segments: 10,
+    max_gap_segments: 3,
+    segment_retries: 3,
+    max_parallel: 1,
+  },
+  jitter_defaults_ms: {
+    dc: 200,
+    wan: 400,
+    bad: 800,
+  },
+  max_active_resilient_inputs: 50,
+};
+
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const createEl = (tag, className, text) => {
@@ -1525,6 +1588,144 @@ const SETTINGS_GENERAL_SECTIONS = [
     title: 'Inputs',
     description: 'Сетевые таймауты и устойчивость HTTP/HLS.',
     cards: [
+      {
+        id: 'input-resilience',
+        title: 'Input Resilience',
+        description: 'Профили сети (dc/wan/bad) для устойчивого приёма HTTP/HLS. По умолчанию выключено.',
+        level: 'basic',
+        toggle: { id: 'settings-input-resilience-enabled', label: 'Enable profiles (global)', disableCard: false },
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-input-resilience-default-profile',
+            label: 'Default profile',
+            type: 'select',
+            level: 'basic',
+            options: [
+              { value: 'dc', label: 'dc (datacenter)' },
+              { value: 'wan', label: 'wan' },
+              { value: 'bad', label: 'bad (unstable)' },
+            ],
+          },
+          {
+            type: 'note',
+            text: 'Если глобально выключено, resilience можно включить на конкретном input через `#net_profile=dc|wan|bad`.',
+            level: 'basic',
+          },
+          {
+            id: 'settings-input-resilience-max-active',
+            label: 'Max active resilient inputs',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs),
+          },
+          {
+            type: 'heading',
+            text: 'Jitter defaults (ms)',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-input-resilience-jitter-dc',
+            label: 'dc jitter (ms)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.dc),
+          },
+          {
+            id: 'settings-input-resilience-jitter-wan',
+            label: 'wan jitter (ms)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan),
+          },
+          {
+            id: 'settings-input-resilience-jitter-bad',
+            label: 'bad jitter (ms)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad),
+          },
+          {
+            type: 'heading',
+            text: 'HLS defaults',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-input-resilience-hls-max-segments',
+            label: 'HLS max segments',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments),
+          },
+          {
+            id: 'settings-input-resilience-hls-max-gap',
+            label: 'HLS max gap segments',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_gap_segments),
+          },
+          {
+            id: 'settings-input-resilience-hls-seg-retries',
+            label: 'HLS segment retries',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.hls_defaults.segment_retries),
+          },
+          {
+            id: 'settings-input-resilience-hls-max-parallel',
+            label: 'HLS segment parallelism (1-2)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            min: 1,
+            max: 2,
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel),
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-input-resilience-enabled', false);
+          const profile = readStringValue(
+            'settings-input-resilience-default-profile',
+            INPUT_RESILIENCE_DEFAULTS.default_profile
+          );
+          const jitterDc = readNumberValue(
+            'settings-input-resilience-jitter-dc',
+            INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.dc
+          );
+          const jitterWan = readNumberValue(
+            'settings-input-resilience-jitter-wan',
+            INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan
+          );
+          const jitterBad = readNumberValue(
+            'settings-input-resilience-jitter-bad',
+            INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad
+          );
+          const hlsSeg = readNumberValue(
+            'settings-input-resilience-hls-max-segments',
+            INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments
+          );
+          const hlsGap = readNumberValue(
+            'settings-input-resilience-hls-max-gap',
+            INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_gap_segments
+          );
+          const hlsRetries = readNumberValue(
+            'settings-input-resilience-hls-seg-retries',
+            INPUT_RESILIENCE_DEFAULTS.hls_defaults.segment_retries
+          );
+          const hlsPar = readNumberValue(
+            'settings-input-resilience-hls-max-parallel',
+            INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel
+          );
+          return `${enabled ? 'Включено' : 'Выключено'} · Default: ${profile} · Jitter: ${jitterDc}/${jitterWan}/${jitterBad}ms · HLS: seg ${hlsSeg} gap ${hlsGap} retries ${hlsRetries} par ${hlsPar}`;
+        },
+      },
       {
         id: 'net-resilience',
         title: 'Network resilience',
@@ -3030,6 +3231,16 @@ function bindGeneralElements() {
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
     settingsUiPollingInterval: 'settings-ui-polling-interval',
+    settingsInputResilienceEnabled: 'settings-input-resilience-enabled',
+    settingsInputResilienceDefaultProfile: 'settings-input-resilience-default-profile',
+    settingsInputResilienceMaxActive: 'settings-input-resilience-max-active',
+    settingsInputResilienceJitterDc: 'settings-input-resilience-jitter-dc',
+    settingsInputResilienceJitterWan: 'settings-input-resilience-jitter-wan',
+    settingsInputResilienceJitterBad: 'settings-input-resilience-jitter-bad',
+    settingsInputResilienceHlsMaxSegments: 'settings-input-resilience-hls-max-segments',
+    settingsInputResilienceHlsMaxGap: 'settings-input-resilience-hls-max-gap',
+    settingsInputResilienceHlsSegRetries: 'settings-input-resilience-hls-seg-retries',
+    settingsInputResilienceHlsMaxParallel: 'settings-input-resilience-hls-max-parallel',
     settingsNetConnect: 'settings-net-connect',
     settingsNetRead: 'settings-net-read',
     settingsNetStall: 'settings-net-stall',
@@ -16460,6 +16671,72 @@ function applySettingsToUI() {
   if (elements.settingsUiPollingInterval) {
     setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
   }
+  const inputRes = getSettingObject('input_resilience', {});
+  const inputResEnabled = inputRes && inputRes.enabled === true;
+  const allowedProfiles = ['dc', 'wan', 'bad'];
+  const inputResDefault = allowedProfiles.includes(String(inputRes.default_profile))
+    ? String(inputRes.default_profile)
+    : INPUT_RESILIENCE_DEFAULTS.default_profile;
+  const inputResMaxActive = Number.isFinite(Number(inputRes.max_active_resilient_inputs))
+    ? Number(inputRes.max_active_resilient_inputs)
+    : INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs;
+  const inputResJitter = (inputRes && inputRes.jitter_defaults_ms && typeof inputRes.jitter_defaults_ms === 'object')
+    ? inputRes.jitter_defaults_ms
+    : {};
+  const jitterDc = Number.isFinite(Number(inputResJitter.dc))
+    ? Number(inputResJitter.dc)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.dc;
+  const jitterWan = Number.isFinite(Number(inputResJitter.wan))
+    ? Number(inputResJitter.wan)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan;
+  const jitterBad = Number.isFinite(Number(inputResJitter.bad))
+    ? Number(inputResJitter.bad)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad;
+  const inputResHls = (inputRes && inputRes.hls_defaults && typeof inputRes.hls_defaults === 'object')
+    ? inputRes.hls_defaults
+    : {};
+  const hlsMaxSegments = Number.isFinite(Number(inputResHls.max_segments))
+    ? Number(inputResHls.max_segments)
+    : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments;
+  const hlsMaxGap = Number.isFinite(Number(inputResHls.max_gap_segments))
+    ? Number(inputResHls.max_gap_segments)
+    : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_gap_segments;
+  const hlsRetries = Number.isFinite(Number(inputResHls.segment_retries))
+    ? Number(inputResHls.segment_retries)
+    : INPUT_RESILIENCE_DEFAULTS.hls_defaults.segment_retries;
+  const hlsMaxParallel = Number.isFinite(Number(inputResHls.max_parallel))
+    ? Number(inputResHls.max_parallel)
+    : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel;
+  if (elements.settingsInputResilienceEnabled) {
+    elements.settingsInputResilienceEnabled.checked = inputResEnabled;
+  }
+  if (elements.settingsInputResilienceDefaultProfile) {
+    setSelectValue(elements.settingsInputResilienceDefaultProfile, inputResDefault, INPUT_RESILIENCE_DEFAULTS.default_profile);
+  }
+  if (elements.settingsInputResilienceMaxActive) {
+    elements.settingsInputResilienceMaxActive.value = inputResMaxActive;
+  }
+  if (elements.settingsInputResilienceJitterDc) {
+    elements.settingsInputResilienceJitterDc.value = jitterDc;
+  }
+  if (elements.settingsInputResilienceJitterWan) {
+    elements.settingsInputResilienceJitterWan.value = jitterWan;
+  }
+  if (elements.settingsInputResilienceJitterBad) {
+    elements.settingsInputResilienceJitterBad.value = jitterBad;
+  }
+  if (elements.settingsInputResilienceHlsMaxSegments) {
+    elements.settingsInputResilienceHlsMaxSegments.value = hlsMaxSegments;
+  }
+  if (elements.settingsInputResilienceHlsMaxGap) {
+    elements.settingsInputResilienceHlsMaxGap.value = hlsMaxGap;
+  }
+  if (elements.settingsInputResilienceHlsSegRetries) {
+    elements.settingsInputResilienceHlsSegRetries.value = hlsRetries;
+  }
+  if (elements.settingsInputResilienceHlsMaxParallel) {
+    elements.settingsInputResilienceHlsMaxParallel.value = hlsMaxParallel;
+  }
   const netRes = getSettingObject('net_resilience', {});
   if (elements.settingsNetConnect) {
     elements.settingsNetConnect.value = Number.isFinite(Number(netRes.connect_timeout_ms))
@@ -17094,6 +17371,46 @@ function collectGeneralSettings() {
     ? elements.settingsNetUserAgent.value.trim()
     : '';
   const netKeepalive = elements.settingsNetKeepalive && elements.settingsNetKeepalive.checked;
+  const inputResEnabled = elements.settingsInputResilienceEnabled && elements.settingsInputResilienceEnabled.checked;
+  const inputResDefaultProfileRaw = elements.settingsInputResilienceDefaultProfile
+    ? String(elements.settingsInputResilienceDefaultProfile.value || '').trim()
+    : '';
+  const inputResAllowedProfiles = ['dc', 'wan', 'bad'];
+  const inputResDefaultProfile = inputResAllowedProfiles.includes(inputResDefaultProfileRaw)
+    ? inputResDefaultProfileRaw
+    : INPUT_RESILIENCE_DEFAULTS.default_profile;
+  const inputResMaxActive = toNumber(elements.settingsInputResilienceMaxActive && elements.settingsInputResilienceMaxActive.value);
+  if (inputResMaxActive !== undefined && inputResMaxActive < 0) {
+    throw new Error('Max active resilient inputs must be >= 0');
+  }
+  const inputResJitterDc = toNumber(elements.settingsInputResilienceJitterDc && elements.settingsInputResilienceJitterDc.value);
+  if (inputResJitterDc !== undefined && inputResJitterDc < 0) {
+    throw new Error('dc jitter must be >= 0');
+  }
+  const inputResJitterWan = toNumber(elements.settingsInputResilienceJitterWan && elements.settingsInputResilienceJitterWan.value);
+  if (inputResJitterWan !== undefined && inputResJitterWan < 0) {
+    throw new Error('wan jitter must be >= 0');
+  }
+  const inputResJitterBad = toNumber(elements.settingsInputResilienceJitterBad && elements.settingsInputResilienceJitterBad.value);
+  if (inputResJitterBad !== undefined && inputResJitterBad < 0) {
+    throw new Error('bad jitter must be >= 0');
+  }
+  const inputResHlsMaxSegments = toNumber(elements.settingsInputResilienceHlsMaxSegments && elements.settingsInputResilienceHlsMaxSegments.value);
+  if (inputResHlsMaxSegments !== undefined && inputResHlsMaxSegments < 0) {
+    throw new Error('HLS max segments must be >= 0');
+  }
+  const inputResHlsMaxGap = toNumber(elements.settingsInputResilienceHlsMaxGap && elements.settingsInputResilienceHlsMaxGap.value);
+  if (inputResHlsMaxGap !== undefined && inputResHlsMaxGap < 0) {
+    throw new Error('HLS max gap segments must be >= 0');
+  }
+  const inputResHlsRetries = toNumber(elements.settingsInputResilienceHlsSegRetries && elements.settingsInputResilienceHlsSegRetries.value);
+  if (inputResHlsRetries !== undefined && inputResHlsRetries < 0) {
+    throw new Error('HLS segment retries must be >= 0');
+  }
+  const inputResHlsMaxParallel = toNumber(elements.settingsInputResilienceHlsMaxParallel && elements.settingsInputResilienceHlsMaxParallel.value);
+  if (inputResHlsMaxParallel !== undefined && (inputResHlsMaxParallel < 1 || inputResHlsMaxParallel > 2)) {
+    throw new Error('HLS segment parallelism must be 1 or 2');
+  }
   const logMax = toNumber(elements.settingsLogMaxEntries && elements.settingsLogMaxEntries.value);
   if (logMax !== undefined && logMax < 0) {
     throw new Error('Log max entries must be >= 0');
@@ -17340,6 +17657,39 @@ function collectGeneralSettings() {
   } else {
     payload.net_resilience.user_agent = '';
   }
+  const currentInputRes = getSettingObject('input_resilience', {});
+  const mergedInputRes = (currentInputRes && typeof currentInputRes === 'object') ? { ...currentInputRes } : {};
+  const currentProfiles = (mergedInputRes.profiles && typeof mergedInputRes.profiles === 'object')
+    ? mergedInputRes.profiles
+    : INPUT_RESILIENCE_DEFAULTS.profiles;
+  const currentHlsDefaults = (mergedInputRes.hls_defaults && typeof mergedInputRes.hls_defaults === 'object')
+    ? mergedInputRes.hls_defaults
+    : INPUT_RESILIENCE_DEFAULTS.hls_defaults;
+  const currentJitterDefaults = (mergedInputRes.jitter_defaults_ms && typeof mergedInputRes.jitter_defaults_ms === 'object')
+    ? mergedInputRes.jitter_defaults_ms
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms;
+  mergedInputRes.enabled = !!inputResEnabled;
+  mergedInputRes.default_profile = inputResDefaultProfile;
+  mergedInputRes.max_active_resilient_inputs = inputResMaxActive !== undefined
+    ? Math.floor(inputResMaxActive)
+    : (Number.isFinite(Number(mergedInputRes.max_active_resilient_inputs))
+      ? Math.floor(Number(mergedInputRes.max_active_resilient_inputs))
+      : INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs);
+  mergedInputRes.profiles = currentProfiles;
+  mergedInputRes.hls_defaults = {
+    ...currentHlsDefaults,
+    max_segments: inputResHlsMaxSegments !== undefined ? Math.floor(inputResHlsMaxSegments) : (Number.isFinite(Number(currentHlsDefaults.max_segments)) ? Number(currentHlsDefaults.max_segments) : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments),
+    max_gap_segments: inputResHlsMaxGap !== undefined ? Math.floor(inputResHlsMaxGap) : (Number.isFinite(Number(currentHlsDefaults.max_gap_segments)) ? Number(currentHlsDefaults.max_gap_segments) : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_gap_segments),
+    segment_retries: inputResHlsRetries !== undefined ? Math.floor(inputResHlsRetries) : (Number.isFinite(Number(currentHlsDefaults.segment_retries)) ? Number(currentHlsDefaults.segment_retries) : INPUT_RESILIENCE_DEFAULTS.hls_defaults.segment_retries),
+    max_parallel: inputResHlsMaxParallel !== undefined ? Math.floor(inputResHlsMaxParallel) : (Number.isFinite(Number(currentHlsDefaults.max_parallel)) ? Number(currentHlsDefaults.max_parallel) : INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel),
+  };
+  mergedInputRes.jitter_defaults_ms = {
+    ...currentJitterDefaults,
+    dc: inputResJitterDc !== undefined ? Math.floor(inputResJitterDc) : (Number.isFinite(Number(currentJitterDefaults.dc)) ? Number(currentJitterDefaults.dc) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.dc),
+    wan: inputResJitterWan !== undefined ? Math.floor(inputResJitterWan) : (Number.isFinite(Number(currentJitterDefaults.wan)) ? Number(currentJitterDefaults.wan) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan),
+    bad: inputResJitterBad !== undefined ? Math.floor(inputResJitterBad) : (Number.isFinite(Number(currentJitterDefaults.bad)) ? Number(currentJitterDefaults.bad) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad),
+  };
+  payload.input_resilience = mergedInputRes;
   if (elements.settingsEventRequest) {
     payload.event_request = elements.settingsEventRequest.value.trim();
   }
