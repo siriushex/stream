@@ -1616,9 +1616,9 @@
             <div class="list" id="output-list"></div>
           </div>
 
-          <div class="form-hint stream-transcode-note">
-            Transcode streams use the outputs defined in the Transcode tab.
-          </div>
+	          <div class="form-hint stream-transcode-note">
+	            For transcode ladder streams, configure publish outputs (HLS/DASH/HTTP-TS/Embed/UDP/RTP/RTMP/RTSP) in the OUTPUT LIST.
+	          </div>
         </div>
 
         <div class="tab-content" data-tab-content="groups" data-tab-scope="stream-editor">
@@ -2189,10 +2189,10 @@
 	            <input type="checkbox" id="stream-transcode-ladder-enabled" />
 	            <span>Multi-bitrate ladder (profiles + publish)</span>
 	          </label>
-		          <div class="form-hint">
-		            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead.
-		          </div>
-		          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
+			          <div class="form-hint">
+			            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead. Configure publish outputs in OUTPUT LIST.
+			          </div>
+			          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
 	            <div class="form-grid">
 	              <div class="field span-12">
 	                <span>Quick presets</span>
@@ -2215,73 +2215,11 @@
 	                <textarea id="stream-transcode-profiles-json" class="textarea-grow" rows="6" placeholder='[{"id":"HDHigh","width":1280,"height":720,"bitrate_kbps":2500}]'></textarea>
 	              </div>
 	            </details>
-	            <div class="form-grid">
-	              <label class="checkline span-3">
-	                <input type="checkbox" id="stream-transcode-publish-hls-enabled" />
-	                <span>HLS</span>
-	              </label>
-	              <label class="field span-9">
-	                <span>HLS variants (comma-separated profile ids, empty = all)</span>
-	                <input type="text" id="stream-transcode-publish-hls-variants" placeholder="HDHigh,HDMedium" />
-	              </label>
-	              <label class="checkline span-3">
-	                <input type="checkbox" id="stream-transcode-publish-dash-enabled" />
-	                <span>DASH</span>
-	              </label>
-	              <label class="field span-9">
-	                <span>DASH variants (comma-separated profile ids, empty = all)</span>
-	                <input type="text" id="stream-transcode-publish-dash-variants" placeholder="HDHigh,HDMedium" />
-	              </label>
-	              <label class="checkline span-3">
-	                <input type="checkbox" id="stream-transcode-publish-http-ts-enabled" />
-	                <span>HTTP-TS</span>
-	              </label>
-	              <label class="field span-9">
-	                <span>HTTP-TS variants (comma-separated profile ids, empty = all)</span>
-	                <input type="text" id="stream-transcode-publish-http-ts-variants" placeholder="HDHigh" />
-	              </label>
-	              <label class="checkline span-3">
-	                <input type="checkbox" id="stream-transcode-publish-embed-enabled" />
-	                <span>Embed page</span>
-	              </label>
-	              <div class="form-hint span-9">Embed uses the HLS master playlist.</div>
-	              <label class="checkline span-3">
-	                <input type="checkbox" disabled />
-	                <span>LL-HLS (experimental)</span>
-	              </label>
-	              <div class="form-hint span-9">Not implemented yet. Use Publish JSON to track status.</div>
-	              <label class="checkline span-3">
-	                <input type="checkbox" disabled />
-	                <span>MSS (experimental)</span>
-	              </label>
-	              <div class="form-hint span-9">Not implemented yet. Use Publish JSON to track status.</div>
-	              <label class="checkline span-3">
-	                <input type="checkbox" disabled />
-	                <span>M4F/CMAF (experimental)</span>
-	              </label>
-	              <div class="form-hint span-9">Not implemented yet. Use Publish JSON to track status.</div>
-	            </div>
-	            <details class="fold">
-	              <summary class="fold-summary">Push targets</summary>
-	              <div class="fold-body">
-	                <div class="list-block" id="stream-transcode-publish-targets-block">
-	                  <div class="list-header">
-	                    <span>PUBLISH TARGETS</span>
-	                    <button class="text-link" type="button" id="btn-add-transcode-publish-target">ADD TARGET</button>
-	                  </div>
-	                  <div class="list" id="transcode-publish-target-list"></div>
-	                </div>
-	              </div>
-	            </details>
-	            <details class="fold">
-	              <summary class="fold-summary">Publish targets (JSON)</summary>
-	              <div class="fold-body">
-	                <textarea id="stream-transcode-publish-json" class="textarea-grow" rows="6" placeholder='[{"type":"hls","variants":["HDHigh","HDMedium"]}]'></textarea>
-	              </div>
-	            </details>
-		            <div class="form-hint">
-		              Internal pull endpoints are always available when ladder is running:
-		              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,
+		            <!-- Publish outputs are configured in the main OUTPUT LIST (General tab). -->
+		            <textarea id="stream-transcode-publish-json" hidden></textarea>
+			            <div class="form-hint">
+			              Internal pull endpoints are always available when ladder is running:
+			              <code>/live/&lt;stream_id&gt;~&lt;profile_id&gt;.ts</code>,
 		              <code>/hls/&lt;stream_id&gt;/index.m3u8</code>,
 		              <code>/dash/&lt;stream_id&gt;/manifest.mpd</code>,
 		              <code>/embed/&lt;stream_id&gt;</code>.
@@ -3058,27 +2996,60 @@
   <div class="overlay" id="transcode-publish-target-overlay" aria-hidden="true">
     <div class="modal">
       <div class="modal-head">
-        <div class="modal-title" id="transcode-publish-target-title">Publish target</div>
+        <div class="modal-title" id="transcode-publish-target-title">Output settings</div>
         <button class="icon-btn" id="transcode-publish-target-close" aria-label="Close">
           <span class="icon-x"></span>
         </button>
       </div>
       <form id="transcode-publish-target-form">
         <div class="modal-body-scroll">
+          <div class="form-subsection">
+            <div class="form-grid">
+              <label class="field">
+                <span>Preset</span>
+                <select id="transcode-publish-target-preset">
+                  <option value="">Custom</option>
+                  <option value="hls">HLS</option>
+                  <option value="dash">DASH</option>
+                  <option value="http-ts">HTTP-TS</option>
+                  <option value="embed">Embed page</option>
+                  <option value="udp">UDP</option>
+                  <option value="rtp">RTP</option>
+                  <option value="rtmp">RTMP</option>
+                  <option value="rtsp">RTSP</option>
+                </select>
+              </label>
+              <div class="field">
+                <span>Apply</span>
+                <button class="btn ghost" type="button" id="transcode-publish-target-preset-apply">Apply</button>
+              </div>
+            </div>
+          </div>
           <label class="field">
             <span>Type</span>
             <select id="transcode-publish-target-type">
+              <option value="hls">HLS</option>
+              <option value="dash">DASH</option>
+              <option value="http-ts">HTTP-TS</option>
+              <option value="embed">Embed page</option>
               <option value="udp">UDP</option>
               <option value="rtp">RTP</option>
               <option value="rtmp">RTMP</option>
               <option value="rtsp">RTSP</option>
+              <option value="llhls" disabled>LL-HLS (experimental)</option>
+              <option value="mss" disabled>MSS (experimental)</option>
+              <option value="m4f" disabled>M4F/CMAF (experimental)</option>
             </select>
           </label>
-          <label class="field">
+          <label class="field" id="transcode-publish-target-variants-field">
+            <span>Variants (comma-separated profile ids, empty = all)</span>
+            <input type="text" id="transcode-publish-target-variants" placeholder="HDHigh,HDMedium" />
+          </label>
+          <label class="field" id="transcode-publish-target-profile-field">
             <span>Profile</span>
             <input type="text" id="transcode-publish-target-profile" placeholder="HDHigh" />
           </label>
-          <label class="field">
+          <label class="field" id="transcode-publish-target-url-field">
             <span>URL</span>
             <input type="text" id="transcode-publish-target-url" placeholder="udp://239.0.0.1:1234" />
           </label>
@@ -3086,6 +3057,7 @@
             <input type="checkbox" id="transcode-publish-target-enabled" />
             <span>Enabled</span>
           </label>
+          <div class="form-hint" id="transcode-publish-target-hint"></div>
         </div>
 
         <div class="form-note" id="transcode-publish-target-error"></div>
