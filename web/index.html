@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260207a" />
-  <script defer src="/app.js?v=20260207a"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260207b" />
+  <script defer src="/app.js?v=20260207b"></script>
 </head>
 <body>
   <div class="app">
@@ -3071,6 +3071,12 @@
             </select>
           </label>
           <label class="field">
+            <span>SoftCAM backup id</span>
+            <select id="input-cam-backup-id">
+              <option value="">None</option>
+            </select>
+          </label>
+          <label class="field">
             <span>ECM PID</span>
             <input type="number" id="input-ecm-pid" placeholder="0" />
           </label>
@@ -3437,6 +3443,11 @@
                 <span>Timeout</span>
                 <input type="number" id="softcam-timeout" placeholder="8" />
                 <small class="form-hint">Seconds (default: 8)</small>
+              </label>
+              <label class="field">
+                <span>Dual CAM hedge (ms)</span>
+                <input type="number" id="softcam-hedge" placeholder="0" />
+                <small class="form-hint">Delay backup ECM (0 = immediate)</small>
               </label>
 
               <div class="checkline-row span-2">
