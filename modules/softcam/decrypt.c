@@ -138,6 +138,9 @@ struct module_data_t
 #define BISS_CAID 0x2600
 #define MSG(_msg) "[decrypt %s] " _msg, mod->name
 
+#define SHIFT_ASSUME_MBIT 10
+#define SHIFT_MAX_BYTES (4 * 1024 * 1024)
+
 void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8_t *odd);
 
 ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
@@ -1117,8 +1120,18 @@ static void module_init(module_data_t *mod)
     module_option_number("shift", &shift);
     if(shift > 0)
     {
-        mod->shift.size = (shift * 1000 * 1000) / (TS_PACKET_SIZE * 8) * (TS_PACKET_SIZE);
+        /* shift is milliseconds of buffered delay (time-based, capped) */
+        const uint64_t bits_per_sec = (uint64_t)SHIFT_ASSUME_MBIT * 1000ULL * 1000ULL;
+        uint64_t bytes = ((uint64_t)shift * bits_per_sec) / 8ULL / 1000ULL;
+        if(bytes < TS_PACKET_SIZE)
+            bytes = TS_PACKET_SIZE;
+        bytes = ((bytes + TS_PACKET_SIZE - 1) / TS_PACKET_SIZE) * TS_PACKET_SIZE;
+        if(bytes > SHIFT_MAX_BYTES)
+            bytes = SHIFT_MAX_BYTES;
+        mod->shift.size = (size_t)bytes;
         mod->shift.buffer = malloc(mod->shift.size);
+        if(shift > 0 && bytes == SHIFT_MAX_BYTES && asc_log_is_debug())
+            asc_log_debug(MSG("shift capped to %d bytes"), SHIFT_MAX_BYTES);
     }
 
     stream_reload(mod);
