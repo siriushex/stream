@@ -485,19 +485,6 @@ local function build_net_resilience(conf)
         end
     end
     local local_cfg = type(conf.net_resilience) == "table" and conf.net_resilience or nil
-    if not net_has_values(global) and not net_has_values(local_cfg) then
-        local has_local = false
-        for _, key in ipairs(NET_RESILIENCE_KEYS) do
-            if conf[key] ~= nil then
-                has_local = true
-                break
-            end
-        end
-        if not has_local then
-            return nil
-        end
-    end
-
     local function pick(key)
         if local_cfg and local_cfg[key] ~= nil then
             return local_cfg[key]
@@ -580,6 +567,54 @@ local function calc_backoff_ms(net, attempt)
         delay = 1
     end
     return math.floor(delay)
+end
+
+local function net_make_state(net_cfg)
+    local now = os.time()
+    return {
+        state = "init",
+        state_ts = now,
+        last_error = nil,
+        last_error_ts = nil,
+        fail_count = 0,
+        reconnects_total = 0,
+        last_recv_ts = nil,
+        current_backoff_ms = 0,
+        cooldown_until = nil,
+    }
+end
+
+local function net_emit(conf, state)
+    if not conf or not conf.on_net_stats or not state then
+        return
+    end
+    local payload = {}
+    for k, v in pairs(state) do
+        payload[k] = v
+    end
+    conf.on_net_stats(payload)
+end
+
+local function net_mark_error(state, reason)
+    if not state then
+        return
+    end
+    state.last_error = reason
+    state.last_error_ts = os.time()
+    state.fail_count = (state.fail_count or 0) + 1
+end
+
+local function net_mark_ok(state)
+    if not state then
+        return
+    end
+    state.state = "running"
+    state.state_ts = os.time()
+    state.last_recv_ts = os.time()
+    state.current_backoff_ms = 0
+    state.fail_count = 0
+    state.last_error = nil
+    state.last_error_ts = nil
 end
 
 local function http_auth_bool(value, fallback)
@@ -801,6 +836,18 @@ function init_input(conf)
         return nil
     end
     instance.tail = instance.input
+
+    local jitter_ms = tonumber(conf.jitter_buffer_ms or conf.jitter_ms)
+    if jitter_ms and jitter_ms > 0 then
+        local max_mb = tonumber(conf.jitter_max_buffer_mb) or tonumber(conf.max_buffer_mb) or 4
+        instance.jitter = jitter({
+            upstream = instance.tail:stream(),
+            name = conf.name,
+            jitter_buffer_ms = jitter_ms,
+            max_buffer_mb = max_mb,
+        })
+        instance.tail = instance.jitter
+    end
 
     if conf.pnr == nil then
         local function check_dependent()
@@ -1299,7 +1346,10 @@ init_input_module.http = function(conf)
     local instance = http_input_instance_list[instance_id]
 
     if not instance then
-        instance = { clients = 0, }
+        instance = {
+            clients = 0,
+            running = true,
+        }
         http_input_instance_list[instance_id] = instance
 
         instance.on_error = function(message)
@@ -1326,7 +1376,63 @@ init_input_module.http = function(conf)
             timeout = 60
         end
 
-        local http_conf = {
+        instance.net_cfg = build_net_resilience(conf)
+        instance.net = net_make_state(instance.net_cfg)
+
+        local function build_headers(host, port)
+            local ua = (instance.net_cfg and instance.net_cfg.user_agent) or conf.user_agent or http_user_agent
+            local keepalive = instance.net_cfg and instance.net_cfg.keepalive
+            local conn = keepalive and "keep-alive" or "close"
+            local headers = {
+                "User-Agent: " .. ua,
+                "Host: " .. host .. ":" .. port,
+                "Connection: " .. conn,
+            }
+            if conf.login and conf.password then
+                local auth = base64.encode(conf.login .. ":" .. conf.password)
+                table.insert(headers, "Authorization: Basic " .. auth)
+            end
+            return headers
+        end
+
+        local function schedule_retry(reason)
+            if instance.request then
+                instance.request:close()
+                instance.request = nil
+            end
+
+            net_mark_error(instance.net, reason)
+            instance.net.state = "degraded"
+            instance.net.state_ts = os.time()
+            instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
+
+            local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)
+            local max_retries = tonumber(instance.net_cfg.max_retries) or 0
+            if max_retries > 0 and instance.net.fail_count >= max_retries then
+                instance.net.state = "offline"
+                instance.net.cooldown_until = os.time() + 30
+                delay_ms = math.max(delay_ms, 30000)
+            end
+            instance.net.current_backoff_ms = delay_ms
+            net_emit(conf, instance.net)
+
+            if instance.timeout then
+                instance.timeout:close()
+                instance.timeout = nil
+            end
+            instance.timeout = timer({
+                interval = math.max(1, math.floor(delay_ms / 1000)),
+                callback = function(self)
+                    self:close()
+                    instance.timeout = nil
+                    if instance.running then
+                        instance.start_request()
+                    end
+                end,
+            })
+        end
+
+        instance.http_conf = {
             host = conf.host,
             port = conf.port,
             path = conf.path,
@@ -1335,76 +1441,90 @@ init_input_module.http = function(conf)
             buffer_size = conf.buffer_size,
             timeout = timeout,
             sctp = conf.sctp,
-            headers = {
-                "User-Agent: " .. (conf.user_agent or http_user_agent),
-                "Host: " .. conf.host .. ":" .. conf.port,
-                "Connection: close",
-            }
+            headers = build_headers(conf.host, conf.port),
+            connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
+            read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
+            stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
+            low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
+            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
         }
 
-        if conf.login and conf.password then
-            local auth = base64.encode(conf.login .. ":" .. conf.password)
-            table.insert(http_conf.headers, "Authorization: Basic " .. auth)
-        end
-
-        local timer_conf = {
-            interval = 5,
-            callback = function(self)
-                instance.timeout:close()
-                instance.timeout = nil
-
-                if instance.request then instance.request:close() end
-                instance.request = http_request(http_conf)
+        instance.start_request = function()
+            if instance.request then
+                instance.request:close()
+                instance.request = nil
             end
-        }
-
-        http_conf.callback = function(self, response)
-            if not response then
-                instance.request:close()
-                instance.request = nil
-                instance.timeout = timer(timer_conf)
-
-            elseif response.code == 200 then
-                if instance.timeout then
-                    instance.timeout:close()
-                    instance.timeout = nil
+            if instance.net and instance.net.cooldown_until then
+                local now = os.time()
+                if now < instance.net.cooldown_until then
+                    local wait = (instance.net.cooldown_until - now) * 1000
+                    instance.net.current_backoff_ms = wait
+                    net_emit(conf, instance.net)
+                    if instance.timeout then
+                        instance.timeout:close()
+                        instance.timeout = nil
+                    end
+                    instance.timeout = timer({
+                        interval = math.max(1, math.floor(wait / 1000)),
+                        callback = function(self)
+                            self:close()
+                            instance.timeout = nil
+                            if instance.running then
+                                instance.start_request()
+                            end
+                        end,
+                    })
+                    return
                 end
-
-                instance.transmit:set_upstream(self:stream())
-
-            elseif response.code == 301 or response.code == 302 then
-                if instance.timeout then
-                    instance.timeout:close()
-                    instance.timeout = nil
-                end
-
-                instance.request:close()
-                instance.request = nil
-
-                local o = parse_url(response.headers["location"])
-                if o then
-                    http_conf.host = o.host
-                    http_conf.port = o.port
-                    http_conf.path = o.path
-                    http_conf.headers[2] = "Host: " .. o.host .. ":" .. o.port
-
-                    log.info("[" .. conf.name .. "] Redirect to http://" .. o.host .. ":" .. o.port .. o.path)
-                    instance.request = http_request(http_conf)
-                else
-                    instance.on_error("HTTP Error: Redirect failed")
-                    instance.timeout = timer(timer_conf)
-                end
-
-            else
-                instance.request:close()
-                instance.request = nil
-                instance.on_error("HTTP Error: " .. response.code .. ":" .. response.message)
-                instance.timeout = timer(timer_conf)
+                instance.net.cooldown_until = nil
             end
+
+            if instance.net then
+                instance.net.state = "connecting"
+                instance.net.state_ts = os.time()
+                net_emit(conf, instance.net)
+            end
+
+            instance.http_conf.headers = build_headers(instance.http_conf.host, instance.http_conf.port)
+            instance.http_conf.callback = function(self, response)
+                if not response then
+                    schedule_retry("no_response")
+                    return
+                end
+
+                if response.code == 200 then
+                    instance.net.last_recv_ts = os.time()
+                    net_mark_ok(instance.net)
+                    net_emit(conf, instance.net)
+                    instance.transmit:set_upstream(self:stream())
+                    return
+                end
+
+                if response.code == 301 or response.code == 302 then
+                    local o = parse_url(response.headers["location"])
+                    if o then
+                        instance.http_conf.host = o.host
+                        instance.http_conf.port = o.port
+                        instance.http_conf.path = o.path
+                        log.info("[" .. conf.name .. "] Redirect to http://" .. o.host .. ":" .. o.port .. o.path)
+                        instance.start_request()
+                    else
+                        instance.on_error("HTTP Error: Redirect failed")
+                        schedule_retry("redirect_failed")
+                    end
+                    return
+                end
+
+                local code = tonumber(response.code) or 0
+                local message = response.message or "error"
+                instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
+                schedule_retry("http_" .. tostring(code))
+            end
+            instance.request = http_request(instance.http_conf)
         end
 
         instance.transmit = transmit({ instance_id = instance_id })
-        instance.request = http_request(http_conf)
+        instance.start_request()
     end
 
     instance.clients = instance.clients + 1
@@ -1416,7 +1536,10 @@ local function init_input_module_https_direct(conf)
     local instance = https_direct_instance_list[instance_id]
 
     if not instance then
-        instance = { clients = 0 }
+        instance = {
+            clients = 0,
+            running = true,
+        }
         https_direct_instance_list[instance_id] = instance
 
         instance.on_error = function(message)
@@ -1437,7 +1560,63 @@ local function init_input_module_https_direct(conf)
             timeout = 60
         end
 
-        local http_conf = {
+        instance.net_cfg = build_net_resilience(conf)
+        instance.net = net_make_state(instance.net_cfg)
+
+        local function build_headers(host, port)
+            local ua = (instance.net_cfg and instance.net_cfg.user_agent) or conf.user_agent or http_user_agent
+            local keepalive = instance.net_cfg and instance.net_cfg.keepalive
+            local conn = keepalive and "keep-alive" or "close"
+            local headers = {
+                "User-Agent: " .. ua,
+                "Host: " .. host .. ":" .. port,
+                "Connection: " .. conn,
+            }
+            if conf.login and conf.password then
+                local auth = base64.encode(conf.login .. ":" .. conf.password)
+                table.insert(headers, "Authorization: Basic " .. auth)
+            end
+            return headers
+        end
+
+        local function schedule_retry(reason)
+            if instance.request then
+                instance.request:close()
+                instance.request = nil
+            end
+
+            net_mark_error(instance.net, reason)
+            instance.net.state = "degraded"
+            instance.net.state_ts = os.time()
+            instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
+
+            local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)
+            local max_retries = tonumber(instance.net_cfg.max_retries) or 0
+            if max_retries > 0 and instance.net.fail_count >= max_retries then
+                instance.net.state = "offline"
+                instance.net.cooldown_until = os.time() + 30
+                delay_ms = math.max(delay_ms, 30000)
+            end
+            instance.net.current_backoff_ms = delay_ms
+            net_emit(conf, instance.net)
+
+            if instance.timeout then
+                instance.timeout:close()
+                instance.timeout = nil
+            end
+            instance.timeout = timer({
+                interval = math.max(1, math.floor(delay_ms / 1000)),
+                callback = function(self)
+                    self:close()
+                    instance.timeout = nil
+                    if instance.running then
+                        instance.start_request()
+                    end
+                end,
+            })
+        end
+
+        instance.http_conf = {
             host = conf.host,
             port = conf.port,
             path = conf.path,
@@ -1448,98 +1627,100 @@ local function init_input_module_https_direct(conf)
             sctp = conf.sctp,
             ssl = true,
             tls_verify = conf.tls_verify,
-            headers = {
-                "User-Agent: " .. (conf.user_agent or http_user_agent),
-                "Host: " .. conf.host .. ":" .. conf.port,
-                "Connection: close",
-            },
+            headers = build_headers(conf.host, conf.port),
+            connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
+            read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
+            stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
+            low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
+            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
             instance_id = instance_id,
         }
 
-        if conf.login and conf.password then
-            local auth = base64.encode(conf.login .. ":" .. conf.password)
-            table.insert(http_conf.headers, "Authorization: Basic " .. auth)
-        end
-
-        local timer_conf = {
-            interval = 5,
-            callback = function(self)
-                instance.timeout:close()
-                instance.timeout = nil
-
-                if instance.request then instance.request:close() end
-                local ok, req = pcall(http_request, http_conf)
-                if ok and req then
-                    instance.request = req
-                else
-                    instance.request = nil
-                    instance.on_error("HTTPS Error: init failed")
-                    instance.timeout = timer(timer_conf)
-                end
+        instance.start_request = function()
+            if instance.request then
+                instance.request:close()
+                instance.request = nil
             end
-        }
+            if instance.net and instance.net.cooldown_until then
+                local now = os.time()
+                if now < instance.net.cooldown_until then
+                    local wait = (instance.net.cooldown_until - now) * 1000
+                    instance.net.current_backoff_ms = wait
+                    net_emit(conf, instance.net)
+                    if instance.timeout then
+                        instance.timeout:close()
+                        instance.timeout = nil
+                    end
+                    instance.timeout = timer({
+                        interval = math.max(1, math.floor(wait / 1000)),
+                        callback = function(self)
+                            self:close()
+                            instance.timeout = nil
+                            if instance.running then
+                                instance.start_request()
+                            end
+                        end,
+                    })
+                    return
+                end
+                instance.net.cooldown_until = nil
+            end
 
-        http_conf.callback = function(self, response)
-            if not response then
-                instance.request:close()
-                instance.request = nil
-                instance.timeout = timer(timer_conf)
+            if instance.net then
+                instance.net.state = "connecting"
+                instance.net.state_ts = os.time()
+                net_emit(conf, instance.net)
+            end
 
-            elseif response.code == 200 then
-                if instance.timeout then
-                    instance.timeout:close()
-                    instance.timeout = nil
+            instance.http_conf.headers = build_headers(instance.http_conf.host, instance.http_conf.port)
+            instance.http_conf.callback = function(self, response)
+                if not response then
+                    schedule_retry("no_response")
+                    return
                 end
 
-                instance.transmit:set_upstream(self:stream())
-
-            elseif response.code == 301 or response.code == 302 then
-                if instance.timeout then
-                    instance.timeout:close()
-                    instance.timeout = nil
+                if response.code == 200 then
+                    instance.net.last_recv_ts = os.time()
+                    net_mark_ok(instance.net)
+                    net_emit(conf, instance.net)
+                    instance.transmit:set_upstream(self:stream())
+                    return
                 end
 
-                instance.request:close()
-                instance.request = nil
-
-                local o = parse_url(response.headers["location"])
-                if o then
-                    http_conf.host = o.host
-                    http_conf.port = o.port
-                    http_conf.path = o.path
-                    http_conf.ssl = (o.format == "https")
-                    http_conf.headers[2] = "Host: " .. o.host .. ":" .. o.port
-
-                    log.info("[" .. conf.name .. "] Redirect to " .. tostring(o.format) ..
-                        "://" .. o.host .. ":" .. o.port .. o.path)
-                    local ok, req = pcall(http_request, http_conf)
-                    if ok and req then
-                        instance.request = req
+                if response.code == 301 or response.code == 302 then
+                    local o = parse_url(response.headers["location"])
+                    if o then
+                        instance.http_conf.host = o.host
+                        instance.http_conf.port = o.port
+                        instance.http_conf.path = o.path
+                        instance.http_conf.ssl = (o.format == "https")
+                        log.info("[" .. conf.name .. "] Redirect to " .. tostring(o.format) ..
+                            "://" .. o.host .. ":" .. o.port .. o.path)
+                        instance.start_request()
                     else
                         instance.on_error("HTTPS Error: Redirect failed")
-                        instance.timeout = timer(timer_conf)
+                        schedule_retry("redirect_failed")
                     end
-                else
-                    instance.on_error("HTTPS Error: Redirect failed")
-                    instance.timeout = timer(timer_conf)
+                    return
                 end
 
+                local code = tonumber(response.code) or 0
+                local message = response.message or "error"
+                instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
+                schedule_retry("http_" .. tostring(code))
+            end
+            local ok, req = pcall(http_request, instance.http_conf)
+            if ok and req then
+                instance.request = req
             else
-                instance.request:close()
                 instance.request = nil
-                instance.on_error("HTTP Error: " .. response.code .. ":" .. response.message)
-                instance.timeout = timer(timer_conf)
+                instance.on_error("HTTPS Error: init failed")
+                schedule_retry("init_failed")
             end
         end
 
         instance.transmit = transmit({ instance_id = instance_id })
-        local ok, req = pcall(http_request, http_conf)
-        if ok and req then
-            instance.request = req
-        else
-            https_direct_instance_list[instance_id] = nil
-            return nil, "https request init failed"
-        end
+        instance.start_request()
     end
 
     instance.clients = instance.clients + 1
@@ -1662,18 +1843,19 @@ kill_input_module.https = function(module, conf)
         if not instance then
             return
         end
-        instance.clients = instance.clients - 1
-        if instance.clients <= 0 then
-            if instance.timeout then
-                instance.timeout:close()
-                instance.timeout = nil
-            end
-            if instance.request then
-                instance.request:close()
-                instance.request = nil
-            end
-            instance.transmit = nil
-            https_direct_instance_list[conf.__https_direct_instance_id] = nil
+    instance.clients = instance.clients - 1
+    if instance.clients <= 0 then
+        instance.running = false
+        if instance.timeout then
+            instance.timeout:close()
+            instance.timeout = nil
+        end
+        if instance.request then
+            instance.request:close()
+            instance.request = nil
+        end
+        instance.transmit = nil
+        https_direct_instance_list[conf.__https_direct_instance_id] = nil
         end
         return
     end
@@ -1700,6 +1882,7 @@ kill_input_module.http = function(module)
 
     instance.clients = instance.clients - 1
     if instance.clients == 0 then
+        instance.running = false
         if instance.timeout then
             instance.timeout:close()
             instance.timeout = nil
@@ -1850,6 +2033,17 @@ local function hls_emit_net(instance)
     end
 end
 
+local function hls_emit_stats(instance)
+    if not instance or not instance.hls or not instance.config or not instance.config.on_hls_stats then
+        return
+    end
+    local payload = {}
+    for k, v in pairs(instance.hls) do
+        payload[k] = v
+    end
+    instance.config.on_hls_stats(payload)
+end
+
 local function hls_set_state(instance, state, reason)
     if not instance or not instance.hls then
         return
@@ -1877,6 +2071,7 @@ local function hls_mark_error(instance, reason, is_segment)
         instance.net.state_ts = os.time()
     end
     hls_emit_net(instance)
+    hls_emit_stats(instance)
 end
 
 local function hls_mark_ok(instance)
@@ -1890,6 +2085,7 @@ local function hls_mark_ok(instance)
         net_mark_ok(instance.net)
         hls_emit_net(instance)
     end
+    hls_emit_stats(instance)
 end
 
 local function hls_start_next_segment(instance)
@@ -1916,8 +2112,9 @@ local function hls_start_next_segment(instance)
         return
     end
 
+    local ua = (instance.net_cfg and instance.net_cfg.user_agent) or instance.config.user_agent or http_user_agent
     local headers = {
-        "User-Agent: " .. (instance.config.user_agent or http_user_agent),
+        "User-Agent: " .. ua,
         "Host: " .. seg_conf.host .. ":" .. seg_conf.port,
         "Connection: close",
     }
@@ -2029,6 +2226,9 @@ local function hls_schedule_backoff(instance, reason)
             delay_ms = math.max(delay_ms, cooldown * 1000)
         end
     end
+    if instance.hls and reason and (reason:find("timeout") or reason:find("stall")) then
+        instance.hls.stall_events_total = (instance.hls.stall_events_total or 0) + 1
+    end
     hls_mark_error(instance, reason, false)
     hls_schedule_refresh(instance, math.max(1, math.floor(delay_ms / 1000)))
 end
@@ -2134,8 +2334,9 @@ local function hls_start(instance)
             log.error("[hls] https is not supported (OpenSSL not available)")
             return
         end
+        local ua = (instance.net_cfg and instance.net_cfg.user_agent) or instance.config.user_agent or http_user_agent
         local headers = {
-            "User-Agent: " .. (instance.config.user_agent or http_user_agent),
+            "User-Agent: " .. ua,
             "Host: " .. conf.host .. ":" .. conf.port,
             "Connection: close",
         }
@@ -2186,6 +2387,7 @@ local function hls_stop(instance)
     instance.running = false
     if instance.hls then
         hls_set_state(instance, "offline")
+        hls_emit_stats(instance)
     end
     if instance.timer then
         instance.timer:close()
