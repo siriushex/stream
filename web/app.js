@@ -811,8 +811,8 @@ const elements = {
   streamForm: $('#stream-form'),
   streamId: $('#stream-id'),
   streamName: $('#stream-name'),
-  streamType: $('#stream-type'),
   streamEnabled: $('#stream-enabled'),
+  streamTranscodeEnabled: $('#stream-transcode-enabled'),
   streamMpts: $('#stream-mpts'),
   streamDesc: $('#stream-desc'),
   streamGroup: $('#stream-group'),
@@ -6776,6 +6776,10 @@ function applyTranscodeLadderPreset(mode) {
 function updateTranscodeLadderToggle() {
   if (!elements.streamTranscodeLadderEnabled) return;
   const enabled = elements.streamTranscodeLadderEnabled.checked;
+  if (enabled && elements.streamTranscodeEnabled && !elements.streamTranscodeEnabled.checked) {
+    elements.streamTranscodeEnabled.checked = true;
+    setTranscodeMode(true);
+  }
   if (elements.streamTranscodeLadderBlock) {
     elements.streamTranscodeLadderBlock.hidden = !enabled;
   }
@@ -7114,8 +7118,8 @@ function applyStreamTranscodePreset(key) {
   const preset = TRANSCODE_PRESETS[key];
   if (!preset) return;
 
-  if (elements.streamType) {
-    elements.streamType.value = 'transcode';
+  if (elements.streamTranscodeEnabled) {
+    elements.streamTranscodeEnabled.checked = true;
     setTranscodeMode(true);
   }
   if (elements.streamTranscodeEngine) {
@@ -8159,8 +8163,8 @@ function buildInputUrl(data) {
 }
 
 function isEditingLadderTranscodeStream() {
-  if (!elements.streamType || !elements.streamTranscodeLadderEnabled) return false;
-  return String(elements.streamType.value || '') === 'transcode'
+  if (!elements.streamTranscodeEnabled || !elements.streamTranscodeLadderEnabled) return false;
+  return Boolean(elements.streamTranscodeEnabled.checked)
     && Boolean(elements.streamTranscodeLadderEnabled.checked);
 }
 
@@ -13098,10 +13102,11 @@ function openEditor(stream, isNew) {
     elements.streamId.value = slugifyStreamId(elements.streamName.value.trim());
   }
   elements.streamEnabled.checked = stream.enabled !== false;
-  if (elements.streamType) {
-    const typeValue = (config.type === 'transcode' || config.type === 'ffmpeg') ? 'transcode' : '';
-    elements.streamType.value = typeValue;
-    setTranscodeMode(typeValue === 'transcode');
+  if (elements.streamTranscodeEnabled) {
+    const hasTranscode = (config.type === 'transcode' || config.type === 'ffmpeg')
+      || (config.transcode && typeof config.transcode === 'object' && Object.keys(config.transcode).length > 0);
+    elements.streamTranscodeEnabled.checked = Boolean(hasTranscode);
+    setTranscodeMode(Boolean(hasTranscode));
   }
   elements.streamMpts.checked = config.mpts === true;
   updateMptsFields();
@@ -13540,8 +13545,7 @@ function readStreamForm() {
   const mptsEnabled = elements.streamMpts && elements.streamMpts.checked;
   let inputs = collectInputs();
   const description = elements.streamDesc.value.trim();
-  const streamType = elements.streamType ? elements.streamType.value.trim() : '';
-  const isTranscode = streamType === 'transcode' || streamType === 'ffmpeg';
+  const isTranscode = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
 
   syncOutputInlineValues();
 
@@ -22476,10 +22480,13 @@ function bindEvents() {
       }
     });
   }
-  if (elements.streamType) {
-    elements.streamType.addEventListener('change', () => {
-      const value = elements.streamType.value.trim();
-      setTranscodeMode(value === 'transcode' || value === 'ffmpeg');
+  if (elements.streamTranscodeEnabled) {
+    elements.streamTranscodeEnabled.addEventListener('change', () => {
+      const enabled = elements.streamTranscodeEnabled.checked;
+      setTranscodeMode(enabled);
+      if (enabled) {
+        updateTranscodeLadderToggle();
+      }
     });
   }
   if (elements.streamBackupType) {

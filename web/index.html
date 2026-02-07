@@ -1576,17 +1576,9 @@
               <input type="text" id="stream-name" required />
             </label>
 
-            <label class="field span-3">
+            <label class="field span-6">
               <span>ID</span>
               <input type="text" id="stream-id" required />
-            </label>
-
-            <label class="field span-3">
-              <span>Type</span>
-              <select id="stream-type">
-                <option value="">Stream (default)</option>
-                <option value="transcode">Transcode (ffmpeg)</option>
-              </select>
             </label>
 
             <label class="field span-12 stream-desc-field">
@@ -2126,6 +2118,10 @@
           </div>
         </div>
         <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
+          <label class="checkline">
+            <input type="checkbox" id="stream-transcode-enabled" />
+            <span>Enable Transcode</span>
+          </label>
           <div class="form-subsection">
             <div class="form-grid">
               <label class="field">
@@ -2250,13 +2246,6 @@
               </div>
 	            </div>
 	          </details>
-	          <div class="list-block" id="stream-transcode-outputs-block">
-	            <div class="list-header">
-	              <span>TRANSCODE OUTPUTS</span>
-	              <button class="text-link" type="button" id="btn-add-transcode-output">NEW OUTPUT</button>
-	            </div>
-	            <div class="list" id="transcode-output-list"></div>
-	          </div>
           <div class="form-hint" id="stream-transcode-input-url"></div>
           <div class="form-hint" id="stream-transcode-status"></div>
           <div class="form-hint" id="stream-transcode-warmup"></div>
