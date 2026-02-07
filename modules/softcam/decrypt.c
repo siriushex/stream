@@ -74,16 +74,33 @@ typedef struct
     uint64_t stat_rtt_sum_ms;
     uint64_t stat_rtt_count;
 
+    /* Last applied control words (for split updates / key guard) */
+    bool active_key_set;
+    uint8_t active_key[16]; /* [0..7]=even, [8..15]=odd */
+
+    /* Candidate key guard (PES header validation before applying new keys) */
+    bool cand_pending;
+    uint8_t cand_mask;      /* 1=even, 2=odd, 3=both */
+    uint8_t cand_key[16];
+    uint64_t cand_set_us;
+    uint8_t cand_ok_count;
+    uint8_t cand_fail_count;
+
 #if FFDECSA == 1
 
     void *keys;
     uint8_t **batch;
+
+    void *cand_keys; /* scratch key schedule for candidate validation */
 
 #elif LIBDVBCSA == 1
 
     struct dvbcsa_bs_key_s *even_key;
     struct dvbcsa_bs_key_s *odd_key;
     struct dvbcsa_bs_batch_s *batch;
+
+    struct dvbcsa_bs_key_s *cand_even_key;
+    struct dvbcsa_bs_key_s *cand_odd_key;
 
 #endif
 
@@ -195,12 +212,18 @@ void ca_stream_destroy(ca_stream_t *ca_stream)
 
     free_key_struct(ca_stream->keys);
     free(ca_stream->batch);
+    if(ca_stream->cand_keys)
+        free_key_struct(ca_stream->cand_keys);
 
 #elif LIBDVBCSA == 1
 
     dvbcsa_bs_key_free(ca_stream->even_key);
     dvbcsa_bs_key_free(ca_stream->odd_key);
     free(ca_stream->batch);
+    if(ca_stream->cand_even_key)
+        dvbcsa_bs_key_free(ca_stream->cand_even_key);
+    if(ca_stream->cand_odd_key)
+        dvbcsa_bs_key_free(ca_stream->cand_odd_key);
 
 #endif
 
@@ -224,6 +247,129 @@ void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8
         dvbcsa_bs_key_set(odd, ca_stream->odd_key);
 
 #endif
+}
+
+static void ca_stream_set_active_key(ca_stream_t *ca_stream, int mask, const uint8_t *key16)
+{
+    if(mask & 0x01)
+        memcpy(&ca_stream->active_key[0], &key16[0], 8);
+    if(mask & 0x02)
+        memcpy(&ca_stream->active_key[8], &key16[8], 8);
+    ca_stream->active_key_set = true;
+}
+
+static void ca_stream_guard_clear(ca_stream_t *ca_stream)
+{
+    ca_stream->cand_pending = false;
+    ca_stream->cand_mask = 0;
+    ca_stream->cand_set_us = 0;
+    ca_stream->cand_ok_count = 0;
+    ca_stream->cand_fail_count = 0;
+}
+
+static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask)
+{
+    if(!ca_stream->active_key_set)
+        return;
+
+    if(mask == 0)
+        return;
+
+    /* Build candidate from active keys + updated halves */
+    memcpy(ca_stream->cand_key, ca_stream->active_key, sizeof(ca_stream->cand_key));
+    if(mask & 0x01)
+        memcpy(&ca_stream->cand_key[0], &key16[0], 8);
+    if(mask & 0x02)
+        memcpy(&ca_stream->cand_key[8], &key16[8], 8);
+
+    ca_stream->cand_pending = true;
+    ca_stream->cand_mask = mask;
+    ca_stream->cand_set_us = asc_utime();
+    ca_stream->cand_ok_count = 0;
+    ca_stream->cand_fail_count = 0;
+
+#if FFDECSA == 1
+    if(!ca_stream->cand_keys)
+        ca_stream->cand_keys = get_key_struct();
+    set_control_words(ca_stream->cand_keys, &ca_stream->cand_key[0], &ca_stream->cand_key[8]);
+#elif LIBDVBCSA == 1
+    if(!ca_stream->cand_even_key)
+        ca_stream->cand_even_key = dvbcsa_bs_key_alloc();
+    if(!ca_stream->cand_odd_key)
+        ca_stream->cand_odd_key = dvbcsa_bs_key_alloc();
+    dvbcsa_bs_key_set(&ca_stream->cand_key[0], ca_stream->cand_even_key);
+    dvbcsa_bs_key_set(&ca_stream->cand_key[8], ca_stream->cand_odd_key);
+#endif
+}
+
+static inline bool __ts_payload_has_pes_header(const uint8_t *ts)
+{
+    const uint8_t *payload = TS_GET_PAYLOAD(ts);
+    if(!payload)
+        return false;
+    if(payload + 6 > ts + TS_PACKET_SIZE)
+        return false;
+    return (payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01);
+}
+
+static bool ca_stream_guard_validate_pes(module_data_t *mod, ca_stream_t *ca_stream, const uint8_t *ts)
+{
+    __uarg(mod);
+
+    uint8_t scratch[TS_PACKET_SIZE];
+    memcpy(scratch, ts, TS_PACKET_SIZE);
+
+#if FFDECSA == 1
+    if(!ca_stream->cand_keys)
+        return false;
+    unsigned char *cluster[3];
+    cluster[0] = (unsigned char *)scratch;
+    cluster[1] = (unsigned char *)scratch + TS_PACKET_SIZE;
+    cluster[2] = NULL;
+    decrypt_packets(ca_stream->cand_keys, cluster);
+#elif LIBDVBCSA == 1
+    const uint8_t sc = TS_IS_SCRAMBLED(scratch);
+    int hdr_size = 0;
+    if(TS_IS_PAYLOAD(scratch))
+    {
+        if(TS_IS_AF(scratch))
+            hdr_size = 4 + scratch[4] + 1;
+        else
+            hdr_size = 4;
+    }
+    if(hdr_size <= 0 || hdr_size >= TS_PACKET_SIZE)
+        return false;
+
+    scratch[3] &= ~0xC0;
+
+    struct dvbcsa_bs_batch_s batch[2];
+    batch[0].data = &scratch[hdr_size];
+    batch[0].len = TS_PACKET_SIZE - hdr_size;
+    batch[1].data = NULL;
+
+    if(sc == 0x80 && ca_stream->cand_even_key)
+        dvbcsa_bs_decrypt(ca_stream->cand_even_key, batch, TS_BODY_SIZE);
+    else if(sc == 0xC0 && ca_stream->cand_odd_key)
+        dvbcsa_bs_decrypt(ca_stream->cand_odd_key, batch, TS_BODY_SIZE);
+    else
+        return false;
+#endif
+
+    return __ts_payload_has_pes_header(scratch);
+}
+
+static ca_stream_t * ca_stream_for_pid(module_data_t *mod, uint16_t pid)
+{
+    asc_list_for(mod->el_list)
+    {
+        el_stream_t *el_stream = asc_list_data(mod->el_list);
+        if(el_stream->es_pid == pid)
+            return el_stream->ca_stream;
+    }
+    asc_list_first(mod->ca_list);
+    if(asc_list_eol(mod->ca_list))
+        return NULL;
+    return asc_list_data(mod->ca_list);
 }
 
 static void module_decrypt_cas_init(module_data_t *mod)
@@ -672,7 +818,7 @@ static void on_em(void *arg, mpegts_psi_t *psi)
 
         const uint64_t now_us = asc_utime();
         uint64_t retry_us = 0;
-        if(!ca_stream->is_keys || !ca_stream->last_ecm_ok)
+        if(!ca_stream->is_keys || !ca_stream->last_ecm_ok || ca_stream->cand_pending)
             retry_us = 250000; /* fast recovery */
         else
             retry_us = 2000000; /* keep some retry to tolerate short glitches */
@@ -760,16 +906,22 @@ static void decrypt(module_data_t *mod)
                 break;
             case 1:
                 ca_stream_set_keys(ca_stream, &ca_stream->new_key[0], NULL);
+                ca_stream_set_active_key(ca_stream, 1, ca_stream->new_key);
+                ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
                 break;
             case 2:
                 ca_stream_set_keys(ca_stream, NULL, &ca_stream->new_key[8]);
+                ca_stream_set_active_key(ca_stream, 2, ca_stream->new_key);
+                ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
                 break;
             case 3:
                 ca_stream_set_keys(  ca_stream
                                    , &ca_stream->new_key[0]
                                    , &ca_stream->new_key[8]);
+                ca_stream_set_active_key(ca_stream, 3, ca_stream->new_key);
+                ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
                 break;
         }
@@ -835,6 +987,58 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
         if(mod->shift.read == mod->shift.size)
             mod->shift.read = 0;
         mod->shift.count -= TS_PACKET_SIZE;
+    }
+
+    /* key_guard: validate candidate keys on PES headers before applying */
+    if(mod->key_guard && TS_IS_SCRAMBLED(ts) && TS_IS_PAYLOAD_START(ts))
+    {
+        ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
+        if(ca_stream && ca_stream->cand_pending)
+        {
+            const uint64_t now_us = asc_utime();
+            if(ca_stream->cand_set_us && now_us - ca_stream->cand_set_us > 10000000ULL)
+            {
+                /* Stale candidate: drop silently and retry via ECM resend. */
+                ca_stream_guard_clear(ca_stream);
+            }
+            else
+            {
+                const uint8_t sc = TS_IS_SCRAMBLED(ts);
+                uint8_t p_mask = 0;
+                if(sc == 0x80)
+                    p_mask = 1;
+                else if(sc == 0xC0)
+                    p_mask = 2;
+
+                if(p_mask && (ca_stream->cand_mask & p_mask))
+                {
+                    const bool ok = ca_stream_guard_validate_pes(mod, ca_stream, ts);
+                    if(ok)
+                        ca_stream->cand_ok_count += 1;
+                    else
+                        ca_stream->cand_fail_count += 1;
+
+                    if(ca_stream->cand_ok_count >= 2)
+                    {
+                        ca_stream->new_key_id = ca_stream->cand_mask;
+                        memcpy(ca_stream->new_key, ca_stream->cand_key, sizeof(ca_stream->new_key));
+                        if(asc_log_is_debug())
+                            asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
+                        ca_stream_guard_clear(ca_stream);
+                    }
+                    else if(ca_stream->cand_fail_count >= 2)
+                    {
+                        if(asc_log_is_debug())
+                            asc_log_debug(MSG("key_guard: candidate keys rejected (mask:%u)"), (unsigned)ca_stream->cand_mask);
+                        ca_stream_guard_clear(ca_stream);
+                        ca_stream->last_ecm_ok = false;
+                        ca_stream->last_ecm_send_us = 0;
+                        if(ca_stream->ecm_fail_count != UINT32_MAX)
+                            ++ca_stream->ecm_fail_count;
+                    }
+                }
+            }
+        }
     }
 
     uint8_t *dst = &mod->storage.buffer[mod->storage.write];
@@ -983,13 +1187,6 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         const uint8_t ck2 = (data[7] + data[8] + data[9]) & 0xFF;
         is_cw_checksum_ok = (ck1 == data[6] && ck2 == data[10]);
 
-        if(mod->key_guard && !is_cw_checksum_ok)
-        {
-            if(asc_log_is_debug())
-                asc_log_debug(MSG("ECM CW checksum mismatch (key_guard: rejecting keys)"));
-            break;
-        }
-
         is_keys_ok = true;
     } while(0);
 
@@ -1005,27 +1202,43 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         ca_stream->last_ecm_ok_us = asc_utime();
 
         if(!is_cw_checksum_ok && asc_log_is_debug())
-            asc_log_debug(MSG("ECM CW checksum mismatch (accepting keys anyway)"));
+            asc_log_debug(MSG("ECM CW checksum mismatch"));
 
-        // Set keys
-        if(ca_stream->new_key[11] == data[14] && ca_stream->new_key[15] == data[18])
+        uint8_t key16[16];
+        memcpy(key16, &data[3], sizeof(key16));
+
+        /* Try to detect which key half changed using checksum bytes (best-effort). */
+        uint8_t mask = 3;
+        if(ca_stream->active_key_set)
         {
-            ca_stream->new_key_id = 1;
-            memcpy(&ca_stream->new_key[0], &data[3], 8);
+            /* odd checksum bytes (positions 3 and 7 in CW) */
+            if(ca_stream->active_key[8 + 3] == data[11 + 3] && ca_stream->active_key[8 + 7] == data[11 + 7])
+                mask = 1;
+            /* even checksum bytes */
+            else if(ca_stream->active_key[0 + 3] == data[3 + 3] && ca_stream->active_key[0 + 7] == data[3 + 7])
+                mask = 2;
         }
-        else if(ca_stream->new_key[3] == data[6] && ca_stream->new_key[7] == data[10])
+
+        if(!ca_stream->is_keys)
+            ca_stream->is_keys = true;
+
+        if(mod->key_guard && ca_stream->active_key_set)
         {
-            ca_stream->new_key_id = 2;
-            memcpy(&ca_stream->new_key[8], &data[11], 8);
+            /* Guarded switch: validate candidate keys on PES headers before applying. */
+            ca_stream_guard_set_candidate(ca_stream, key16, mask);
+            if(!is_cw_checksum_ok && asc_log_is_debug())
+                asc_log_debug(MSG("key_guard: candidate keys staged (checksum mismatch)"));
         }
         else
         {
-            ca_stream->new_key_id = 3;
-            memcpy(ca_stream->new_key, &data[3], 16);
-            if(ca_stream->is_keys)
-                asc_log_warning(MSG("Both keys changed"));
-            else
-                ca_stream->is_keys = true;
+            /* Immediate apply path (legacy behavior) */
+            ca_stream->new_key_id = mask;
+            if(mask & 0x01)
+                memcpy(&ca_stream->new_key[0], &key16[0], 8);
+            if(mask & 0x02)
+                memcpy(&ca_stream->new_key[8], &key16[8], 8);
+            if(mask == 3 && ca_stream->active_key_set && asc_log_is_debug())
+                asc_log_debug(MSG("Both keys changed"));
         }
 
         if(asc_log_is_debug())
@@ -1118,6 +1331,10 @@ static void module_init(module_data_t *mod)
 
         ca_stream_t *biss = ca_stream_init(mod, NULL_TS_PID);
         ca_stream_set_keys(biss, key, key);
+        uint8_t key16[16];
+        memcpy(&key16[0], key, 8);
+        memcpy(&key16[8], key, 8);
+        ca_stream_set_active_key(biss, 3, key16);
     }
 
     lua_getfield(lua, 2, "cam");
