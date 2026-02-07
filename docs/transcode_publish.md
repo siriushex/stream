@@ -42,6 +42,29 @@
 - `process_per_output: false`: ladder **economical**  
   1 ffmpeg на все профили (decode 1 раз, encode N).
 
+### Encoder presets + GPU filters
+
+Новые настройки для качества/скорости и GPU‑фильтров:
+
+- `encoder_preset`: `speed|balanced|quality` (default: `balanced`)  
+  Применяется к ladder encode. Для `libx264` выбираются пресеты `veryfast/faster/slow`.  
+  Для `h264_nvenc` — `p2/p4/p6` и базовые параметры качества.
+- `gpu_filters`: `auto|on|off` (default: `auto`)  
+  При `auto` включаются GPU‑фильтры для `nvidia`/`vaapi`:
+  - NVIDIA: `yadif_cuda`, `scale_npp`
+  - VAAPI: `deinterlace_vaapi`, `scale_vaapi`
+
+При необходимости можно отключить GPU‑фильтры:
+
+```json
+{
+  "transcode": {
+    "gpu_filters": "off",
+    "encoder_preset": "quality"
+  }
+}
+```
+
 ## Публикации (publish)
 
 `stream.transcode.publish` (опционально) включает авто-паблишеры:

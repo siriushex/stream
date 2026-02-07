@@ -331,7 +331,7 @@ local function softcam_sanitize_newcamd(entry)
     end
 
     local host = entry.host
-    if host == nil then
+    if host == nil or tostring(host) == "" then
         return false, nil, "host is required"
     end
 
@@ -342,12 +342,12 @@ local function softcam_sanitize_newcamd(entry)
     end
 
     local user = entry.user
-    if user == nil then
+    if user == nil or tostring(user) == "" then
         return false, nil, "user is required"
     end
 
     local pass = entry.pass
-    if pass == nil then
+    if pass == nil or tostring(pass) == "" then
         return false, nil, "pass is required"
     end
 
@@ -368,7 +368,9 @@ local function softcam_sanitize_newcamd(entry)
 
     if entry.key ~= nil then
         local key = tostring(entry.key or ""):gsub("%s+", "")
-        if key ~= "" then
+        if key == "" then
+            cfg.key = nil
+        else
             if key:sub(1, 2):lower() == "0x" then
                 key = key:sub(3)
             end
@@ -376,6 +378,21 @@ local function softcam_sanitize_newcamd(entry)
                 return false, nil, "key must be 28 hex chars"
             end
             cfg.key = key:lower()
+        end
+    end
+
+    if entry.caid ~= nil then
+        local caid = tostring(entry.caid or ""):gsub("%s+", "")
+        if caid == "" then
+            cfg.caid = nil
+        else
+            if caid:sub(1, 2):lower() == "0x" then
+                caid = caid:sub(3)
+            end
+            if not caid:match("^[0-9a-fA-F]+$") or #caid ~= 4 then
+                return false, nil, "caid must be 4 hex chars"
+            end
+            cfg.caid = caid:upper()
         end
     end
 

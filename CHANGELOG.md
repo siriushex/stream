@@ -14,6 +14,7 @@
 - Changes:
   - Softcam: validate cam/cam_backup references in stream inputs (missing/disabled/incomplete softcams return clear errors).
   - UI: validate softcam references on stream save and show test results even when softcam test returns errors with stats.
+  - Softcam: ignore empty key/caid in settings and require non-empty host/user/pass to avoid newcamd aborts.
   - Config: enable SQLite WAL + busy timeout to reduce `database is locked` aborts.
   - UI: bump asset version stamp to `20260207d` to ensure browsers pick up the latest Softcam UI updates.
 - Tests:
@@ -2592,6 +2593,8 @@
 - Changes:
   - Phase 3 ladder publish: publish metrics for HTTP-TS and HLS; UI shows metrics and experimental publish labels.
   - Audio fix stability: AAC mode now forces transcode; /stream defaults to sync=1.
+  - TR-101290-lite: PCR jitter + PCR missing signals and buffer fullness thresholds in transcode watchdog.
+  - Ladder encode: encoder presets and optional GPU filter paths (NVENC/VAAPI).
 - Tests:
   - `contrib/ci/smoke_transcode_ladder_http_ts_pull.sh`
   - `contrib/ci/smoke_transcode_ladder_hls_publish.sh`

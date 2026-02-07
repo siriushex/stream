@@ -420,7 +420,10 @@ end
 
 local function normalize_engine(tc)
     local engine = tostring((tc and tc.engine) or "cpu"):lower()
-    if engine ~= "cpu" and engine ~= "nvidia" then
+    if engine == "intel" then
+        engine = "vaapi"
+    end
+    if engine ~= "cpu" and engine ~= "nvidia" and engine ~= "vaapi" then
         log.warning("[transcode] unknown engine: " .. tostring(tc.engine) .. ", using cpu")
         engine = "cpu"
     end
@@ -765,7 +768,9 @@ local function build_ffmpeg_args(cfg, opts)
     local argv = {}
     local bin, bin_source, bin_exists, bin_bundled = resolve_ffmpeg_path(tc)
     local engine = normalize_engine(tc)
-    local default_vcodec = engine == "nvidia" and "h264_nvenc" or "libx264"
+    local default_vcodec = engine == "nvidia" and "h264_nvenc"
+        or (engine == "vaapi" and "h264_vaapi")
+        or "libx264"
     local default_acodec = "aac"
     table.insert(argv, bin)
     table.insert(argv, "-hide_banner")
@@ -4438,16 +4443,74 @@ ensure_workers = function(job)
     end
 end
 
-local function build_ladder_vf(profile)
+local function normalize_gpu_filter_mode(value)
+    if value == nil then
+        return "auto"
+    end
+    if value == true then
+        return "on"
+    end
+    if value == false then
+        return "off"
+    end
+    local mode = tostring(value or ""):lower()
+    if mode == "on" or mode == "true" or mode == "enabled" then
+        return "on"
+    end
+    if mode == "off" or mode == "false" or mode == "disabled" then
+        return "off"
+    end
+    if mode == "auto" then
+        return "auto"
+    end
+    return "auto"
+end
+
+local function is_nvenc_codec(vcodec)
+    return tostring(vcodec or ""):lower():find("nvenc") ~= nil
+end
+
+local function is_vaapi_codec(vcodec)
+    return tostring(vcodec or ""):lower():find("vaapi") ~= nil
+end
+
+local function build_ladder_vf(job, profile, vcodec)
     local filters = {}
+    local tc = job and job.config and job.config.transcode or {}
+    local engine = normalize_engine(tc)
     local deint = tostring(profile.deinterlace or "auto"):lower()
-    if deint == "auto" or deint == "yadif" then
-        -- Deinterlace only when input is interlaced; safe for progressive sources.
-        table.insert(filters, "yadif=deint=interlaced")
+    local gpu_mode = normalize_gpu_filter_mode(tc.gpu_filters or tc.ladder_gpu_filters)
+    local use_gpu_filters = (gpu_mode == "on")
+        or (gpu_mode == "auto" and (engine == "nvidia" or engine == "vaapi" or is_nvenc_codec(vcodec) or is_vaapi_codec(vcodec)))
+
+    if use_gpu_filters and engine == "nvidia" and is_nvenc_codec(vcodec) then
+        table.insert(filters, "format=nv12")
+        table.insert(filters, "hwupload_cuda")
+        if deint == "auto" or deint == "yadif" then
+            table.insert(filters, "yadif_cuda=mode=send_frame:parity=auto:deint=interlaced")
+        end
+        if profile.width and profile.height then
+            table.insert(filters, "scale_npp=" .. tostring(profile.width) .. ":" .. tostring(profile.height) .. ":format=nv12")
+        end
+    elseif use_gpu_filters and engine == "vaapi" and is_vaapi_codec(vcodec) then
+        table.insert(filters, "format=nv12")
+        table.insert(filters, "hwupload")
+        if deint == "auto" or deint == "yadif" then
+            table.insert(filters, "deinterlace_vaapi=mode=adaptive")
+        end
+        if profile.width and profile.height then
+            table.insert(filters, "scale_vaapi=w=" .. tostring(profile.width) .. ":h=" .. tostring(profile.height))
+        end
+    else
+        if deint == "auto" or deint == "yadif" then
+            -- Deinterlace only when input is interlaced; safe for progressive sources.
+            table.insert(filters, "yadif=deint=interlaced")
+        end
+        if profile.width and profile.height then
+            table.insert(filters, "scale=" .. tostring(profile.width) .. ":" .. tostring(profile.height))
+        end
     end
-    if profile.width and profile.height then
-        table.insert(filters, "scale=" .. tostring(profile.width) .. ":" .. tostring(profile.height))
-    end
+
     if profile.fps then
         table.insert(filters, "fps=" .. tostring(profile.fps))
     end
@@ -4457,10 +4520,84 @@ local function build_ladder_vf(profile)
     return table.concat(filters, ",")
 end
 
+local function normalize_encoder_preset(value)
+    if value == nil or value == "" then
+        return "balanced"
+    end
+    local preset = tostring(value):lower()
+    if preset == "quality" or preset == "slow" then
+        return "quality"
+    end
+    if preset == "speed" or preset == "fast" then
+        return "speed"
+    end
+    return "balanced"
+end
+
+local function args_has_flag(args, flag)
+    if type(args) ~= "table" then
+        return false
+    end
+    for _, value in ipairs(args) do
+        if value == flag then
+            return true
+        end
+    end
+    return false
+end
+
+local function append_encoder_preset_args(v_args, vcodec, preset, tc)
+    if type(v_args) ~= "table" then
+        return
+    end
+    local codec = tostring(vcodec or ""):lower()
+    if codec:find("nvenc") then
+        local map = { speed = "p2", balanced = "p4", quality = "p6" }
+        local nv_preset = map[preset] or "p4"
+        if not args_has_flag(v_args, "-preset") then
+            table.insert(v_args, "-preset")
+            table.insert(v_args, nv_preset)
+        end
+        if not args_has_flag(v_args, "-rc") then
+            local rc = tc and tc.nvenc_rc or nil
+            if not rc then
+                rc = (preset == "speed") and "cbr" or "vbr_hq"
+            end
+            table.insert(v_args, "-rc")
+            table.insert(v_args, tostring(rc))
+        end
+        if not args_has_flag(v_args, "-bf") then
+            local bf = tonumber(tc and tc.nvenc_bframes) or ((preset == "speed") and 0 or 2)
+            if bf > 0 then
+                table.insert(v_args, "-bf")
+                table.insert(v_args, tostring(bf))
+            end
+        end
+        if not args_has_flag(v_args, "-rc-lookahead") then
+            local lookahead = tonumber(tc and tc.nvenc_lookahead) or ((preset == "quality") and 20 or 16)
+            if lookahead > 0 then
+                table.insert(v_args, "-rc-lookahead")
+                table.insert(v_args, tostring(lookahead))
+            end
+        end
+        return
+    end
+    if codec:find("libx264") or codec:find("libx265") then
+        local map = { speed = "veryfast", balanced = "faster", quality = "slow" }
+        local x_preset = map[preset] or "faster"
+        if not args_has_flag(v_args, "-preset") then
+            table.insert(v_args, "-preset")
+            table.insert(v_args, x_preset)
+        end
+    end
+end
+
 local function build_ladder_output(job, profile, bus_port)
     local tc = job and job.config and job.config.transcode or {}
     local engine = normalize_engine(tc)
-    local default_vcodec = engine == "nvidia" and "h264_nvenc" or "libx264"
+    local default_vcodec = engine == "nvidia" and "h264_nvenc"
+        or (engine == "vaapi" and "h264_vaapi")
+        or "libx264"
     local vcodec = profile.video_codec or default_vcodec
 
     local gop_sec = tonumber(tc.gop_sec) or 3
@@ -4469,6 +4606,7 @@ local function build_ladder_output(job, profile, bus_port)
     local gop = fps and math.floor(fps * gop_sec) or nil
 
     local v_args = {}
+    local preset = normalize_encoder_preset(profile.encoder_preset or profile.preset or tc.encoder_preset)
     if profile.bitrate_kbps then
         table.insert(v_args, "-b:v")
         table.insert(v_args, tostring(profile.bitrate_kbps) .. "k")
@@ -4497,6 +4635,8 @@ local function build_ladder_output(job, profile, bus_port)
             table.insert(v_args, "0")
         end
     end
+
+    append_encoder_preset_args(v_args, vcodec, preset, tc)
 
     -- Many publish consumers (DASH packagers, RTMP/RTSP pushers, etc.) are "late joiners"
     -- that connect to the TS stream mid-flight. Ensure SPS/PPS are re-sent on keyframes
@@ -4556,7 +4696,7 @@ local function build_ladder_output(job, profile, bus_port)
 
     return {
         name = profile.id,
-        vf = build_ladder_vf(profile),
+        vf = build_ladder_vf(job, profile, vcodec),
         vcodec = vcodec,
         v_args = v_args,
         acodec = acodec,
