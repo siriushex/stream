@@ -13849,6 +13849,7 @@ function updateEditorTranscodeStatus() {
         const parts = [`${type}:${pid} ${state}`];
         if (worker.pid) parts.push(`pid ${worker.pid}`);
         if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        if (worker.reason) parts.push(String(worker.reason));
         if (worker.url) parts.push(worker.url);
         lines.push(parts.join(' | '));
       });
