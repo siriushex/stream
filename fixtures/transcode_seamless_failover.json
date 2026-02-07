@@ -1,6 +1,28 @@
 {
-  "settings": {},
+  "settings": {
+    "http_play_allow": 1
+  },
   "make_stream": [
+    {
+      "id": "src_primary",
+      "name": "Source UDP Primary",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12100?reuse=1"
+      ],
+      "output": []
+    },
+    {
+      "id": "src_backup",
+      "name": "Source UDP Backup",
+      "type": "udp",
+      "enable": true,
+      "input": [
+        "udp://127.0.0.1:12101?reuse=1"
+      ],
+      "output": []
+    },
     {
       "id": "transcode_seamless_failover",
       "type": "transcode",
@@ -17,8 +39,8 @@
       "backup_switch_warmup_stable_sec": 0,
       "backup_compat_check": false,
       "input": [
-        "udp://239.255.0.1:12100",
-        "udp://239.255.0.1:12101"
+        "stream://src_primary",
+        "stream://src_backup"
       ],
       "transcode": {
         "engine": "cpu",
@@ -61,4 +83,3 @@
     }
   ]
 }
-

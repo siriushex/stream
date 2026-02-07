@@ -8,6 +8,8 @@ if [[ -z "${PORT}" ]]; then
 fi
 WEB_DIR="${WEB_DIR:-$ROOT_DIR/web}"
 STREAM_ID="${STREAM_ID:-transcode_seamless_failover}"
+SRC_PRIMARY_ID="${SRC_PRIMARY_ID:-src_primary}"
+SRC_BACKUP_ID="${SRC_BACKUP_ID:-src_backup}"
 TEMPLATE_FILE="${TEMPLATE_FILE:-$ROOT_DIR/fixtures/transcode_seamless_failover.json}"
 CHECK_OUTPUT="${CHECK_OUTPUT:-1}"
 
@@ -48,7 +50,7 @@ make
 
 # Randomize ports to avoid collisions on shared servers.
 if [[ -z "${MC_GROUP:-}" ]]; then
-  MC_GROUP="239.255.0.1"
+  MC_GROUP="127.0.0.1"
 fi
 BASE_PORT="${BASE_PORT:-$((21000 + (RANDOM % 20000)))}"
 IN_PRIMARY_PORT="${IN_PRIMARY_PORT:-$BASE_PORT}"
@@ -56,9 +58,9 @@ IN_BACKUP_PORT="${IN_BACKUP_PORT:-$((BASE_PORT + 1))}"
 OUT1_PORT="${OUT1_PORT:-$((BASE_PORT + 40))}"
 OUT2_PORT="${OUT2_PORT:-$((BASE_PORT + 41))}"
 
-echo "smoke_transcode_seamless_failover: mc_group=$MC_GROUP in_primary=$IN_PRIMARY_PORT in_backup=$IN_BACKUP_PORT out1=$OUT1_PORT out2=$OUT2_PORT port=$PORT" >&2
+echo "smoke_transcode_seamless_failover: group=$MC_GROUP in_primary=$IN_PRIMARY_PORT in_backup=$IN_BACKUP_PORT out1=$OUT1_PORT out2=$OUT2_PORT port=$PORT" >&2
 
-export TEMPLATE_FILE RUNTIME_CONFIG_FILE STREAM_ID MC_GROUP IN_PRIMARY_PORT IN_BACKUP_PORT OUT1_PORT OUT2_PORT
+export TEMPLATE_FILE RUNTIME_CONFIG_FILE STREAM_ID SRC_PRIMARY_ID SRC_BACKUP_ID MC_GROUP IN_PRIMARY_PORT IN_BACKUP_PORT OUT1_PORT OUT2_PORT
 python3 - <<'PY'
 import json, os
 
@@ -69,17 +71,28 @@ in_primary = int(os.environ["IN_PRIMARY_PORT"])
 in_backup = int(os.environ["IN_BACKUP_PORT"])
 out1 = int(os.environ["OUT1_PORT"])
 out2 = int(os.environ["OUT2_PORT"])
+stream_id = os.environ["STREAM_ID"]
+src_primary_id = os.environ["SRC_PRIMARY_ID"]
+src_backup_id = os.environ["SRC_BACKUP_ID"]
 
 cfg = json.load(open(template, "r", encoding="utf-8"))
-s = (cfg.get("make_stream") or [{}])[0]
-s["id"] = os.environ.get("STREAM_ID") or s.get("id") or "transcode_seamless_failover"
-s["input"] = [f"udp://{group}:{in_primary}", f"udp://{group}:{in_backup}"]
-
-tc = s.get("transcode") or {}
-outs = tc.get("outputs") or []
-if len(outs) >= 2:
-    outs[0]["url"] = f"udp://127.0.0.1:{out1}?pkt_size=1316"
-    outs[1]["url"] = f"udp://127.0.0.1:{out2}?pkt_size=1316"
+rows = cfg.get("make_stream") or []
+for row in rows:
+    rid = row.get("id")
+    if rid == src_primary_id:
+        row["input"] = [f"udp://{group}:{in_primary}?reuse=1"]
+        row["enable"] = True
+    elif rid == src_backup_id:
+        row["input"] = [f"udp://{group}:{in_backup}?reuse=1"]
+        row["enable"] = True
+    elif rid == stream_id:
+        row["enable"] = True
+        row["input"] = [f"stream://{src_primary_id}", f"stream://{src_backup_id}"]
+        tc = row.get("transcode") or {}
+        outs = tc.get("outputs") or []
+        if len(outs) >= 2:
+            outs[0]["url"] = f"udp://127.0.0.1:{out1}?pkt_size=1316"
+            outs[1]["url"] = f"udp://127.0.0.1:{out2}?pkt_size=1316"
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
@@ -133,16 +146,16 @@ if ! command -v "$FFMPEG_BIN" >/dev/null 2>&1; then
 fi
 
 # Primary and backup multicast feeds.
-"$FFMPEG_BIN" -hide_banner -loglevel error -re \
-  -f lavfi -i testsrc=size=160x90:rate=25 \
-  -f lavfi -i sine=frequency=1000 \
+"$FFMPEG_BIN" -hide_banner -loglevel error \
+  -re -f lavfi -i testsrc=size=160x90:rate=25 \
+  -re -f lavfi -i sine=frequency=1000 \
   -shortest -c:v mpeg2video -c:a mp2 \
   -f mpegts "udp://${MC_GROUP}:${IN_PRIMARY_PORT}?pkt_size=1316" >/dev/null 2>&1 &
 FEED_PRIMARY_PID=$!
 
-"$FFMPEG_BIN" -hide_banner -loglevel error -re \
-  -f lavfi -i testsrc=size=160x90:rate=25 \
-  -f lavfi -i sine=frequency=1200 \
+"$FFMPEG_BIN" -hide_banner -loglevel error \
+  -re -f lavfi -i testsrc=size=160x90:rate=25 \
+  -re -f lavfi -i sine=frequency=1200 \
   -shortest -c:v mpeg2video -c:a mp2 \
   -f mpegts "udp://${MC_GROUP}:${IN_BACKUP_PORT}?pkt_size=1316" >/dev/null 2>&1 &
 FEED_BACKUP_PID=$!
