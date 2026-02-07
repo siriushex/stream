@@ -14,7 +14,7 @@
 - Changes:
   - AI Chat: add chip/command `update channel names` (no OpenAI call) with CLI instructions to refresh stream names from SDT via `astral --analyze`.
   - Tools: add `tools/update_stream_names_from_sdt.py` (dry-run by default, low parallelism + rate limiting) to update `stream.name` from SDT service name through API.
-  - UI: make Diff/Apply preview gating more robust by computing changes from diff sections (prevents showing Diff preview when there are no effective changes).
+  - UI: fix AI chat Diff/Apply preview gating: when diff sections are empty, do not show Diff preview or Apply plan (prevents confusing `+0 ~0 -0` blocks).
 - Tests:
   - `python3 -m py_compile tools/update_stream_names_from_sdt.py`
   - `python3 tools/update_stream_names_from_sdt.py --help`
