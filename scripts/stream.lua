@@ -5470,7 +5470,13 @@ function make_channel(channel_config)
     end
 
     if #channel_data.output == 0 then
-        channel_data.clients = 1
+        -- Internal loop channels (used by transcode via /play) must not keep inputs running
+        -- without active HTTP clients, otherwise failover would keep multiple inputs alive.
+        if channel_config and channel_config.__internal_loop == true then
+            channel_data.clients = 0
+        else
+            channel_data.clients = 1
+        end
     else
         for _, o in pairs(channel_data.output) do
             if o.config.format ~= "http" or o.config.keep_active == true then

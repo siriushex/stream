@@ -422,6 +422,7 @@ function transcode.ensure_loop_channel(job, input_id)
     loop_cfg.input = { entry }
     loop_cfg.output = {}
     loop_cfg.__disable_auto_hls = true
+    loop_cfg.__internal_loop = true
     loop_cfg.name = tostring(loop_cfg.name or ("Stream " .. tostring(job.id))) .. " (loop " .. tostring(idx) .. ")"
     loop_cfg.enable = true
     local channel = make_channel(loop_cfg)
