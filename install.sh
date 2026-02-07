@@ -1,35 +1,60 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Astral runtime deps installer for Debian/Ubuntu.
-# - Checks missing shared libraries via ldd (binary runtime deps).
-# - Optionally installs external tools used by features (ffmpeg/ffprobe).
-# - Handles Ubuntu 22.04+ case where libssl1.1 is not in apt repos.
-
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
-  cat <<'EOF'
+  cat <<'USAGE'
 Usage:
-  sudo ./install.sh [--bin /path/to/astral] [--no-ffmpeg] [--dry-run]
+  sudo ./install.sh [options]
 
-Options:
-  --bin PATH       Path to Astral/Astra binary to validate with ldd.
-  --no-ffmpeg      Do not install ffmpeg/ffprobe.
-  --dry-run        Print actions without installing anything.
-  -h, --help       Show this help.
+Modes:
+  --mode source|binary     Download and build from sources, or download a ready binary.
+
+Source/binary download:
+  --url URL                Explicit URL to download (source tarball or binary).
+  --base-url URL           Base URL for artifacts (default: https://a.centv.ru).
+  --artifact NAME          Artifact filename under base URL.
+
+Install paths:
+  --bin PATH               Install path for the binary (default: /usr/local/bin/astra).
+  --data-dir DIR           Config/data root (default: /etc/astral).
+  --workdir DIR            Temporary build dir (default: /tmp/astral-build).
+
+Web assets:
+  --install-web            Copy web assets to /usr/local/share/astral/web (UI enabled).
+  --no-web                 Do not install web assets (UI disabled).
+
+Service:
+  --name NAME              Instance name (creates /etc/astral/NAME.json and NAME.env).
+  --port PORT              HTTP port for the instance (requires --name).
+  --enable                 Enable+start systemd unit after install (requires --name).
+
+Deps:
+  --no-ffmpeg              Skip installing ffmpeg/ffprobe + dev libs.
+  --dry-run                Print actions without running them.
+  -h, --help               Show help.
 
 Notes:
-  - This script targets Debian/Ubuntu with apt.
-  - If the binary requires libssl.so.1.1 on Ubuntu 22.04+, the script can
-    download and install a compatible libssl1.1 .deb from official Ubuntu
-    archives (security.ubuntu.com / ports.ubuntu.com).
-EOF
+  - Supports CentOS/RHEL/Rocky/Alma and Debian/Ubuntu.
+  - Source mode builds locally using ./configure.sh && make.
+  - By default, build artifacts are removed after install.
+USAGE
 }
 
-BIN_PATH=""
+MODE="source"
+URL=""
+BASE_URL="https://a.centv.ru"
+ARTIFACT=""
+BIN_PATH="/usr/local/bin/astra"
+DATA_DIR="/etc/astral"
+WORKDIR="/tmp/astral-build"
+INSTALL_WEB=0
 INSTALL_FFMPEG=1
 DRY_RUN=0
+NAME=""
+PORT=""
+ENABLE_SERVICE=0
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -45,56 +70,58 @@ run() {
 
 while [ "${#:-0}" -gt 0 ]; do
   case "${1:-}" in
+    --mode)
+      MODE="${2:-}"; shift 2;;
+    --url)
+      URL="${2:-}"; shift 2;;
+    --base-url)
+      BASE_URL="${2:-}"; shift 2;;
+    --artifact)
+      ARTIFACT="${2:-}"; shift 2;;
     --bin)
-      BIN_PATH="${2:-}"
-      shift 2
-      ;;
+      BIN_PATH="${2:-}"; shift 2;;
+    --data-dir)
+      DATA_DIR="${2:-}"; shift 2;;
+    --workdir)
+      WORKDIR="${2:-}"; shift 2;;
+    --install-web)
+      INSTALL_WEB=1; shift;;
+    --no-web)
+      INSTALL_WEB=0; shift;;
     --no-ffmpeg)
-      INSTALL_FFMPEG=0
-      shift
-      ;;
+      INSTALL_FFMPEG=0; shift;;
     --dry-run)
-      DRY_RUN=1
-      shift
-      ;;
+      DRY_RUN=1; shift;;
+    --name)
+      NAME="${2:-}"; shift 2;;
+    --port)
+      PORT="${2:-}"; shift 2;;
+    --enable)
+      ENABLE_SERVICE=1; shift;;
     -h|--help)
-      usage
-      exit 0
-      ;;
+      usage; exit 0;;
     *)
-      die "Unknown argument: ${1:-}"
-      ;;
+      die "Unknown argument: ${1:-}";;
   esac
 done
 
 if [ "$(uname -s)" != "Linux" ]; then
-  die "This installer must be run on Linux (Debian/Ubuntu)."
+  die "This installer must be run on Linux."
 fi
 
 if [ "$(id -u)" -ne 0 ]; then
   die "Please run as root (sudo)."
 fi
 
-if ! command -v apt-get >/dev/null 2>&1; then
-  die "apt-get not found. This installer supports Debian/Ubuntu only."
-fi
-
-if [ -z "$BIN_PATH" ]; then
-  for c in ./astral ./astra ./astra-linux-ubuntu22.04 /opt/astra/astra /opt/astral/astral; do
-    if [ -x "$c" ]; then
-      BIN_PATH="$c"
-      break
-    fi
-  done
-fi
-
-if [ -z "$BIN_PATH" ]; then
-  warn "Binary path not provided and no default candidates found."
-  warn "You can still use this script to install ffmpeg, but ldd checks will be skipped."
+PKG_MGR=""
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_MGR="apt"
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_MGR="dnf"
+elif command -v yum >/dev/null 2>&1; then
+  PKG_MGR="yum"
 else
-  if [ ! -x "$BIN_PATH" ]; then
-    die "Binary is not executable: $BIN_PATH"
-  fi
+  die "No supported package manager found (apt, dnf, yum)."
 fi
 
 . /etc/os-release || true
@@ -103,178 +130,213 @@ OS_LIKE="${ID_LIKE:-}"
 OS_VER="${VERSION_ID:-}"
 OS_CODENAME="${VERSION_CODENAME:-}"
 
-if [ "$OS_ID" != "ubuntu" ] && [ "$OS_ID" != "debian" ] && ! printf '%s' "$OS_LIKE" | grep -qi debian; then
-  warn "Detected OS: id=$OS_ID version=$OS_VER codename=$OS_CODENAME (not Debian/Ubuntu)."
-  warn "Proceeding anyway, but package names and repos may differ."
-fi
+ARCH="$(uname -m)"
 
-ARCH="$(dpkg --print-architecture 2>/dev/null || true)"
-if [ -z "$ARCH" ]; then
-  ARCH="$(uname -m)"
-fi
+ensure_dirs() {
+  run mkdir -p "$DATA_DIR"
+  run chmod 755 "$DATA_DIR"
+}
 
-ensure_base_tools() {
-  # curl is used for libssl1.1 fallback download.
+install_deps_debian() {
   run apt-get update -y
-  run apt-get install -y --no-install-recommends ca-certificates curl
+  run apt-get install -y --no-install-recommends ca-certificates curl tar gzip xz-utils git gcc make pkg-config \
+    openssl libssl-dev libsqlite3-dev
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    run apt-get install -y --no-install-recommends ffmpeg libavcodec-dev libavutil-dev
+  fi
+
+  # Optional deps (soft failure if missing in repo)
+  run apt-get install -y --no-install-recommends libdvbcsa-dev libpq-dev || true
 }
 
-unique_words() {
-  # Prints unique tokens preserving first occurrence order.
-  # shellcheck disable=SC2048
-  awk '
-    {
-      for (i=1; i<=NF; i++) {
-        if (!seen[$i]++) out[++n]=$i
-      }
-    }
-    END {
-      for (i=1; i<=n; i++) print out[i]
-    }
-  '
+enable_epel_rhel() {
+  if [ -f /etc/redhat-release ] && ! rpm -q epel-release >/dev/null 2>&1; then
+    run "$PKG_MGR" -y install epel-release || true
+  fi
 }
 
-missing_libs_ldd() {
-  ldd "$BIN_PATH" 2>/dev/null | awk '/=> not found/ {print $1}' | sort -u || true
-}
-
-is_pkg_installed() {
-  dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
-}
-
-apt_install_pkgs() {
-  if [ "$#" -eq 0 ]; then
+enable_rpmfusion() {
+  if rpm -q rpmfusion-free-release >/dev/null 2>&1; then
     return 0
   fi
-  run apt-get install -y --no-install-recommends "$@"
-}
-
-install_libssl11_fallback() {
-  if is_pkg_installed libssl1.1; then
-    return 0
-  fi
-
-log "libssl.so.1.1 is required but libssl1.1 is not available via apt on some Ubuntu releases (22.04+)."
-  warn "Installing legacy libssl1.1 from official Ubuntu archives. Prefer using a build linked to OpenSSL 3 (libssl3) for long-term support."
-
-  # Try apt first (works on older Ubuntu/Debian).
-  if apt-cache show libssl1.1 >/dev/null 2>&1; then
-    apt_install_pkgs libssl1.1
-    return 0
-  fi
-
-  # Determine archive base URL by architecture.
-  local base_url=""
-  case "$ARCH" in
-    amd64|i386)
-      base_url="https://security.ubuntu.com/ubuntu/pool/main/o/openssl"
-      ;;
-    *)
-      base_url="https://ports.ubuntu.com/ubuntu-ports/pool/main/o/openssl"
-      ;;
-  esac
-
-  # Pick the newest deb for our arch by modified time.
-  local listing=""
-  listing="$(curl -fsSL "${base_url}/?C=M;O=D")" || die "Failed to fetch Ubuntu archive listing for libssl1.1."
-
-  local deb=""
-  deb="$(printf '%s' "$listing" | grep -o "libssl1\\.1_[^\"]*_${ARCH}\\.deb" | head -n 1 || true)"
-  if [ -z "$deb" ]; then
-    die "Could not find libssl1.1 .deb for arch=$ARCH at $base_url"
-  fi
-
-  local tmp_dir=""
-  tmp_dir="$(mktemp -d)"
-  local deb_path="$tmp_dir/$deb"
-
-  log "Downloading: $deb"
-  run curl -fsSL -o "$deb_path" "${base_url}/${deb}"
-
-  log "Installing: $deb"
-  # dpkg can fail with missing deps; apt -f fixes them.
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "[dry-run] dpkg -i $deb_path"
-  else
-    if ! dpkg -i "$deb_path" >/dev/null 2>&1; then
-      run apt-get -f install -y
+  if [ -f /etc/redhat-release ]; then
+    local rel
+    rel=$(rpm -E %rhel)
+    if [ -n "$rel" ]; then
+      run "$PKG_MGR" -y install "https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm" || true
     fi
   fi
+}
 
-  rm -rf "$tmp_dir"
+install_deps_rhel() {
+  enable_epel_rhel
+  run "$PKG_MGR" -y install ca-certificates curl tar gzip xz git gcc make pkgconfig \
+    openssl-devel sqlite-devel
+
+  # Optional deps: dvbcsa, postgres
+  run "$PKG_MGR" -y install libdvbcsa-devel postgresql-devel || true
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    enable_rpmfusion
+    run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+  fi
+}
+
+resolve_url() {
+  if [ -n "$URL" ]; then
+    printf '%s' "$URL"
+    return 0
+  fi
+
+  if [ -n "$ARTIFACT" ]; then
+    printf '%s/%s' "$BASE_URL" "$ARTIFACT"
+    return 0
+  fi
+
+  if [ "$MODE" = "binary" ]; then
+    printf '%s/astral-linux-%s' "$BASE_URL" "$ARCH"
+    return 0
+  fi
+
+  # Default source tarball name guesses.
+  printf '%s/astral-src.tar.gz' "$BASE_URL"
+}
+
+fetch_artifact() {
+  local url="$1"
+  local out="$2"
+  run curl -fsSL -o "$out" "$url"
+}
+
+build_from_source() {
+  local url
+  url=$(resolve_url)
+  log "Downloading sources: $url"
+
+  run rm -rf "$WORKDIR"
+  run mkdir -p "$WORKDIR"
+  local archive="$WORKDIR/astral-src.tar.gz"
+  fetch_artifact "$url" "$archive"
+
+  run tar -xf "$archive" -C "$WORKDIR"
+
+  local src_root
+  src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+  if [ -z "$src_root" ]; then
+    die "Could not find configure.sh in extracted sources. Provide --url explicitly."
+  fi
+
+  log "Building from: $src_root"
+  (cd "$src_root" && ./configure.sh && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
+
+  if [ ! -x "$src_root/astra" ]; then
+    die "Build succeeded but binary 'astra' not found."
+  fi
+
+  run install -m 755 "$src_root/astra" "$BIN_PATH"
+
+  if [ "$INSTALL_WEB" -eq 1 ]; then
+    run mkdir -p /usr/local/share/astral/web
+    run cp -r "$src_root/web"/* /usr/local/share/astral/web/
+  fi
+
+  run rm -rf "$WORKDIR"
+}
+
+install_binary() {
+  local url
+  url=$(resolve_url)
+  log "Downloading binary: $url"
+  run mkdir -p "$(dirname "$BIN_PATH")"
+  fetch_artifact "$url" "$BIN_PATH"
+  run chmod 755 "$BIN_PATH"
+}
+
+write_systemd_unit() {
+  local unit_path="/etc/systemd/system/astral@.service"
+  if [ ! -f "$unit_path" ]; then
+    cat > "$unit_path" <<'UNIT'
+[Unit]
+Description=ASTRAL Streaming Server (%i)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/astral/%i.env
+WorkingDirectory=/etc/astral
+ExecStart=/usr/local/bin/astra -c /etc/astral/%i.json -p ${ASTRAL_PORT:-8816}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  fi
+  run systemctl daemon-reload
+}
+
+write_instance_files() {
+  if [ -z "$NAME" ]; then
+    return 0
+  fi
+
+  local cfg="$DATA_DIR/${NAME}.json"
+  local env="$DATA_DIR/${NAME}.env"
+
+  if [ ! -f "$cfg" ]; then
+    printf '{}' > "$cfg"
+  fi
+
+  if [ -z "$PORT" ]; then
+    PORT="8816"
+  fi
+
+  {
+    printf 'ASTRAL_PORT=%s\n' "$PORT"
+    printf 'ASTRA_DATA_ROOT=%s\n' "$DATA_DIR"
+    if [ "$INSTALL_WEB" -eq 1 ]; then
+      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/astral/web"
+    fi
+  } > "$env"
+}
+
+maybe_enable_service() {
+  if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$NAME" ]; then
+    return 0
+  fi
+  run systemctl enable --now "astral@${NAME}.service"
 }
 
 main() {
-  ensure_base_tools
-
-  # External tools used by runtime features (transcode bridge, probes, etc).
-  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-      apt_install_pkgs ffmpeg
-    fi
+  if [ "$MODE" != "source" ] && [ "$MODE" != "binary" ]; then
+    die "Unsupported --mode: $MODE (use source or binary)"
   fi
 
-  if [ -z "$BIN_PATH" ]; then
-    log "No binary selected; skipping ldd checks."
-    return 0
+  ensure_dirs
+
+  if [ "$PKG_MGR" = "apt" ]; then
+    install_deps_debian
+  else
+    install_deps_rhel
   fi
 
-  if ! command -v ldd >/dev/null 2>&1; then
-    die "ldd not found. Cannot validate binary shared library dependencies."
+  if [ "$MODE" = "source" ]; then
+    build_from_source
+  else
+    install_binary
   fi
 
-  local missing_libs=""
-  missing_libs="$(missing_libs_ldd)"
-
-  local needs_ssl11=0
-  local pkgs=""
-
-  # Map missing .so to apt packages.
-  # Keep this list small and focused; unknown libs are reported.
-  local lib
-  while IFS= read -r lib; do
-    [ -z "$lib" ] && continue
-    case "$lib" in
-      libssl.so.1.1|libcrypto.so.1.1)
-        needs_ssl11=1
-        ;;
-      libdvbcsa.so.1)
-        pkgs="$pkgs libdvbcsa1"
-        ;;
-      libpq.so.5)
-        pkgs="$pkgs libpq5"
-        ;;
-      libssl.so.3|libcrypto.so.3)
-        pkgs="$pkgs libssl3"
-        ;;
-      *)
-        warn "Missing shared library (no mapping): $lib"
-        ;;
-    esac
-  done <<<"$missing_libs"
-
-  # Install mapped packages.
-  pkgs="$(printf '%s\n' "$pkgs" | unique_words | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-  if [ -n "$pkgs" ]; then
-    # shellcheck disable=SC2086
-    apt_install_pkgs $pkgs
+  if [ "$INSTALL_WEB" -eq 0 ]; then
+    warn "Web assets not installed. UI will be unavailable unless you set ASTRAL_WEB_DIR to a valid web path."
   fi
 
-  if [ "$needs_ssl11" -eq 1 ]; then
-    install_libssl11_fallback
-  fi
+  write_systemd_unit
+  write_instance_files
+  maybe_enable_service
 
-  # Final verification.
-  local still_missing=""
-  still_missing="$(missing_libs_ldd)"
-  if [ -n "$still_missing" ]; then
-    warn "Some libraries are still missing for: $BIN_PATH"
-    printf '%s\n' "$still_missing" >&2
-    die "Dependency installation incomplete."
-  fi
-
-  log "OK: runtime dependencies look satisfied for $BIN_PATH"
+  log "Done. Binary: $BIN_PATH"
+  log "Config root: $DATA_DIR"
 }
 
 main
-
