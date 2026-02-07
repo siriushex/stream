@@ -65,6 +65,11 @@
 }
 ```
 
+Примечание по VAAPI:
+- при `engine=vaapi` обычно требуется указать устройство, например  
+  `ffmpeg_global_args: ["-vaapi_device", "/dev/dri/renderD128"]`  
+  и при необходимости `decoder_args: ["-hwaccel", "vaapi"]`.
+
 ## Публикации (publish)
 
 `stream.transcode.publish` (опционально) включает авто-паблишеры:
@@ -94,6 +99,49 @@
 }
 ```
 
+### Retry policy (publish)
+
+Для push/packager процессов (`dash`, `rtmp`, `rtsp`) можно задать retry‑политику.
+Поддерживается как глобально на `transcode.publish_retry`, так и на каждом publish target через `publish[].retry`
+(локальный override сильнее).
+
+Поддерживаемые поля:
+- `restart_delay_sec`
+- `restart_jitter_sec`
+- `restart_backoff_base_sec`
+- `restart_backoff_factor`
+- `restart_backoff_max_sec`
+- `restart_cooldown_sec`
+- `max_restarts_per_10min`
+- `no_progress_timeout_sec`
+- `max_error_lines_per_min`
+- `retry_on_network_error` (bool, default `true`)
+
+Пример (per‑target override):
+
+```json
+{
+  "transcode": {
+    "publish": [
+      {
+        "type": "rtmp",
+        "enabled": true,
+        "profile": "HDHigh",
+        "url": "rtmp://example/app/stream",
+        "retry": {
+          "restart_delay_sec": 2,
+          "restart_backoff_base_sec": 2,
+          "restart_backoff_max_sec": 30,
+          "restart_jitter_sec": 1,
+          "max_restarts_per_10min": 20,
+          "retry_on_network_error": true
+        }
+      }
+    ]
+  }
+}
+```
+
 ## Pull endpoints (всегда доступны при ladder)
 
 Когда ladder запущен, доступны pull URL:
@@ -115,6 +163,42 @@
 - ждём readiness,
 - делаем cutover (`udp_switch:set_source(new_sender)`),
 - publish продолжает работать без рестартов.
+
+## TR-101290-lite (расширение сигналов)
+
+Для базовой DVB-диагностики можно включить дополнительные проверки:
+
+Watchdog ключи (per-output):
+- `pcr_jitter_limit_ms` и `pcr_jitter_hold_sec`  
+  Если max PCR jitter превышает лимит дольше hold — срабатывает `PCR_JITTER`.
+- `pcr_missing_hold_sec`  
+  Если PCR не обнаружен дольше hold — срабатывает `PCR_MISSING`.
+- `buffer_target_kbps`  
+  Целевой muxrate/CBR, используется для грубой оценки наполнения буфера.
+- `buffer_fullness_min_pct` / `buffer_fullness_max_pct` / `buffer_fullness_hold_sec`  
+  Если оценка наполнения ниже/выше лимитов дольше hold — `BUFFER_UNDERFLOW` / `BUFFER_OVERFLOW`.
+
+Пример:
+
+```json
+{
+  "transcode": {
+    "watchdog": {
+      "pcr_jitter_limit_ms": 40,
+      "pcr_jitter_hold_sec": 30,
+      "pcr_missing_hold_sec": 10,
+      "buffer_target_kbps": 3500,
+      "buffer_fullness_min_pct": 85,
+      "buffer_fullness_max_pct": 115,
+      "buffer_fullness_hold_sec": 60
+    }
+  }
+}
+```
+
+В `transcode.get_status` будут поля:
+- `pcr_jitter_max_ms`, `pcr_jitter_avg_ms`, `pcr_missing_active`
+- `buffer_fullness_pct`, `buffer_underflow_active`, `buffer_overflow_active`
 
 ## Примечание про auth и internal publishers
 

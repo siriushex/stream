@@ -1825,6 +1825,73 @@ local function hls_parse_media(content, base_url, base_dir)
     }
 end
 
+local HLS_INPUT_DEFAULTS = {
+    max_segments = 12,
+    max_gap_segments = 3,
+    segment_retries = 3,
+    max_parallel = 1,
+}
+
+local function hls_cfg_number(conf, key, fallback)
+    local v = conf[key]
+    if v == nil or v == "" then
+        return fallback
+    end
+    local num = tonumber(v)
+    if num == nil or num < 0 then
+        return fallback
+    end
+    return num
+end
+
+local function hls_emit_net(instance)
+    if instance and instance.net then
+        net_emit(instance.config, instance.net)
+    end
+end
+
+local function hls_set_state(instance, state, reason)
+    if not instance or not instance.hls then
+        return
+    end
+    instance.hls.state = state
+    instance.hls.state_ts = os.time()
+    if reason then
+        instance.hls.last_error = reason
+        instance.hls.last_error_ts = os.time()
+    end
+end
+
+local function hls_mark_error(instance, reason, is_segment)
+    if not instance or not instance.hls then
+        return
+    end
+    if is_segment then
+        instance.hls.segment_errors_total = (instance.hls.segment_errors_total or 0) + 1
+    end
+    hls_set_state(instance, "degraded", reason)
+    if instance.net_cfg and instance.net then
+        net_mark_error(instance.net, reason)
+        instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
+        instance.net.state = "degraded"
+        instance.net.state_ts = os.time()
+    end
+    hls_emit_net(instance)
+end
+
+local function hls_mark_ok(instance)
+    if not instance or not instance.hls then
+        return
+    end
+    instance.hls.playlist_ok = true
+    instance.hls.last_ok_ts = os.time()
+    hls_set_state(instance, "running")
+    if instance.net then
+        net_mark_ok(instance.net)
+        hls_emit_net(instance)
+    end
+end
+
 local function hls_start_next_segment(instance)
     if instance.segment_request or #instance.queue == 0 then
         return
@@ -1835,14 +1902,17 @@ local function hls_start_next_segment(instance)
         instance.queued[item.seq] = nil
     end
     instance.active_seq = item.seq
+    instance.segment_ok = false
 
     local seg_conf = parse_url(item.uri)
     if not seg_conf or (seg_conf.format ~= "http" and seg_conf.format ~= "https") then
         log.error("[hls] unsupported segment url: " .. item.uri)
+        hls_mark_error(instance, "segment_url_invalid", true)
         return
     end
     if seg_conf.format == "https" and not https_native_supported() then
         log.error("[hls] https is not supported (OpenSSL not available)")
+        hls_mark_error(instance, "segment_https_unsupported", true)
         return
     end
 
@@ -1864,10 +1934,21 @@ local function hls_start_next_segment(instance)
         stream = true,
         ssl = (seg_conf.format == "https"),
         headers = headers,
+        connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
+        read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
+        stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
+        low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
+        low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
         callback = function(self, response)
             if not response then
                 instance.segment_request = nil
-                instance.last_seq = instance.active_seq
+                if instance.segment_ok then
+                    instance.last_seq = instance.active_seq
+                    instance.hls.last_seq = instance.active_seq
+                    instance.hls.last_segment_ts = os.time()
+                    instance.hls.gap_count = 0
+                    hls_mark_ok(instance)
+                end
                 instance.active_seq = nil
                 hls_start_next_segment(instance)
                 return
@@ -1877,9 +1958,37 @@ local function hls_start_next_segment(instance)
                 log.error("[hls] segment http error: " .. response.code)
                 self:close()
                 instance.segment_request = nil
+                local retries = instance.hls.segment_retries or 0
+                item.attempts = (item.attempts or 0) + 1
+                if retries > 0 and item.attempts > retries then
+                    instance.hls.gap_count = (instance.hls.gap_count or 0) + 1
+                    if instance.hls.gap_count > (instance.hls.max_gap_segments or 0) then
+                        hls_set_state(instance, "failed", "hls_gap_limit")
+                    end
+                    instance.last_seq = item.seq
+                    instance.hls.last_seq = item.seq
+                    instance.active_seq = nil
+                    hls_start_next_segment(instance)
+                    return
+                end
+                hls_mark_error(instance, "segment_http_" .. tostring(response.code), true)
+                table.insert(instance.queue, 1, item)
+                if instance.queued then
+                    instance.queued[item.seq] = true
+                end
+                local delay_ms = 500
+                if instance.net_cfg then
+                    delay_ms = calc_backoff_ms(instance.net_cfg, item.attempts)
+                end
+                hls_schedule_segment_retry(instance, delay_ms)
                 return
             end
 
+            instance.segment_ok = true
+            if instance.net then
+                net_mark_ok(instance.net)
+                hls_emit_net(instance)
+            end
             instance.transmit:set_upstream(self:stream())
         end,
     })
@@ -1900,6 +2009,42 @@ local function hls_schedule_refresh(instance, interval)
             instance.timer = nil
             if instance.running then
                 instance.request_playlist()
+            end
+        end,
+    })
+end
+
+local function hls_schedule_backoff(instance, reason)
+    local delay_ms = 5000
+    if instance.net_cfg then
+        delay_ms = calc_backoff_ms(instance.net_cfg, instance.net and instance.net.fail_count or 1)
+        if instance.net then
+            instance.net.current_backoff_ms = delay_ms
+        end
+        local max_retries = tonumber(instance.net_cfg.max_retries) or 0
+        if max_retries > 0 and instance.net and instance.net.fail_count >= max_retries then
+            instance.net.state = "offline"
+            hls_set_state(instance, "failed", "hls_retry_limit")
+            local cooldown = math.max(30, math.floor((instance.net_cfg.backoff_max_ms or 10000) / 1000))
+            delay_ms = math.max(delay_ms, cooldown * 1000)
+        end
+    end
+    hls_mark_error(instance, reason, false)
+    hls_schedule_refresh(instance, math.max(1, math.floor(delay_ms / 1000)))
+end
+
+local function hls_schedule_segment_retry(instance, delay_ms)
+    if instance.segment_retry_timer then
+        instance.segment_retry_timer:close()
+        instance.segment_retry_timer = nil
+    end
+    instance.segment_retry_timer = timer({
+        interval = math.max(1, math.floor(delay_ms / 1000)),
+        callback = function(self)
+            self:close()
+            instance.segment_retry_timer = nil
+            if instance.running then
+                hls_start_next_segment(instance)
             end
         end,
     })
@@ -1937,21 +2082,47 @@ local function hls_handle_playlist(instance, content)
     end
 
     local media = hls_parse_media(content, base_url, base_dir)
+    instance.hls.playlist_ok = true
+    instance.hls.last_reload_ts = os.time()
+    instance.hls.target_duration = media.target_duration
+
+    if instance.last_seq and #media.segments > 0 then
+        local seq0 = media.segments[1].seq or instance.last_seq
+        if seq0 + 1 < instance.last_seq then
+            -- Источник перезапустился или откатил media sequence.
+            instance.queue = {}
+            instance.queued = {}
+            instance.hls.gap_count = 0
+            instance.last_seq = nil
+            instance.hls.last_seq = nil
+        end
+    end
+
     for _, item in ipairs(media.segments) do
-        if (not instance.last_seq or item.seq > instance.last_seq)
-           and not instance.queued[item.seq]
-        then
+        if (not instance.last_seq or item.seq > instance.last_seq) and not instance.queued[item.seq] then
             table.insert(instance.queue, item)
             instance.queued[item.seq] = true
         end
     end
 
+    local max_segments = instance.hls.max_segments or HLS_INPUT_DEFAULTS.max_segments
+    while #instance.queue > max_segments do
+        local dropped = table.remove(instance.queue, 1)
+        if dropped and instance.queued then
+            instance.queued[dropped.seq] = nil
+        end
+    end
+
+    hls_mark_ok(instance)
     hls_start_next_segment(instance)
     hls_schedule_refresh(instance, math.max(1, math.floor(media.target_duration / 2)))
 end
 
 local function hls_start(instance)
     instance.running = true
+    if instance.hls then
+        hls_set_state(instance, "init")
+    end
 
     function instance.request_playlist()
         if instance.playlist_request then
@@ -1980,11 +2151,19 @@ local function hls_start(instance)
             path = conf.path,
             headers = headers,
             ssl = (conf.format == "https"),
+            connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
+            read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
+            stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
+            low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
+            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
             callback = function(self, response)
-                if response and response.code == 200 and response.content then
+                if not response then
+                    hls_schedule_backoff(instance, "playlist_no_response")
+                elseif response.code == 200 and response.content then
                     hls_handle_playlist(instance, response.content)
-                elseif response then
+                else
                     log.error("[hls] playlist http error: " .. response.code)
+                    hls_schedule_backoff(instance, "playlist_http_" .. tostring(response.code))
                 end
 
                 if instance.playlist_request then
@@ -2005,6 +2184,9 @@ end
 
 local function hls_stop(instance)
     instance.running = false
+    if instance.hls then
+        hls_set_state(instance, "offline")
+    end
     if instance.timer then
         instance.timer:close()
         instance.timer = nil
@@ -2016,6 +2198,10 @@ local function hls_stop(instance)
     if instance.segment_request then
         instance.segment_request:close()
         instance.segment_request = nil
+    end
+    if instance.segment_retry_timer then
+        instance.segment_retry_timer:close()
+        instance.segment_retry_timer = nil
     end
 end
 
@@ -2036,6 +2222,21 @@ init_input_module.hls = function(conf)
             config = conf,
             queue = {},
             queued = {},
+            net_cfg = build_net_resilience(conf),
+            net = nil,
+            hls = {
+                state = "init",
+                playlist_ok = false,
+                last_seq = nil,
+                last_reload_ts = nil,
+                last_segment_ts = nil,
+                segment_errors_total = 0,
+                stall_events_total = 0,
+                gap_count = 0,
+                max_segments = hls_cfg_number(conf, "hls_max_segments", HLS_INPUT_DEFAULTS.max_segments),
+                max_gap_segments = hls_cfg_number(conf, "hls_max_gap_segments", HLS_INPUT_DEFAULTS.max_gap_segments),
+                segment_retries = hls_cfg_number(conf, "hls_segment_retries", HLS_INPUT_DEFAULTS.segment_retries),
+            },
             transmit = transmit({ instance_id = instance_id }),
             playlist_conf = {
                 host = conf.host,
@@ -2046,6 +2247,7 @@ init_input_module.hls = function(conf)
                 format = conf.format == "https" and "https" or "http",
             },
         }
+        instance.net = net_make_state(instance.net_cfg)
 
         hls_input_instance_list[instance_id] = instance
         hls_start(instance)

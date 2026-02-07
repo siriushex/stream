@@ -235,19 +235,25 @@ function on_analyze(instance, data)
         local pes_error = ""
         local sc_error = ""
         for _,item in pairs(data.analyze) do
-            bitrate = bitrate + item.bitrate
+            if type(item) ~= "table" then
+                goto continue
+            end
+            if item.bitrate then
+                bitrate = bitrate + item.bitrate
+            end
 
-            if item.cc_error > 0 then
+            if item.cc_error and item.cc_error > 0 then
                 cc_error = cc_error .. "PID:" .. tostring(item.pid) .. "=" .. tostring(item.cc_error) .. " "
             end
 
-            if item.pes_error > 0 then
+            if item.pes_error and item.pes_error > 0 then
                 pes_error = pes_error .. tostring(item.pid) .. "=" .. tostring(item.pes_error) .. " "
             end
 
-            if item.sc_error > 0 then
+            if item.sc_error and item.sc_error > 0 then
                 sc_error = sc_error .. tostring(item.pid) .. "=" .. tostring(item.sc_error) .. " "
             end
+            ::continue::
         end
         log.info("Bitrate: " .. tostring(bitrate) .. " Kbit/s")
         if #cc_error > 0 then
@@ -258,6 +264,19 @@ function on_analyze(instance, data)
         else
             if #pes_error > 0 then
                 log.error("PES: " .. pes_error)
+            end
+        end
+        local pcr_present = data.analyze.pcr_present
+        if pcr_present == false then
+            log.error("PCR: missing")
+        else
+            local pcr_jitter_max = tonumber(data.analyze.pcr_jitter_max_ms)
+            local pcr_jitter_avg = tonumber(data.analyze.pcr_jitter_avg_ms)
+            if pcr_jitter_max then
+                if not pcr_jitter_avg then
+                    pcr_jitter_avg = 0
+                end
+                log.info(("PCRJitter: max_ms=%.3f avg_ms=%.3f"):format(pcr_jitter_max, pcr_jitter_avg))
             end
         end
         if arg_n then
