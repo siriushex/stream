@@ -1209,6 +1209,7 @@ const elements = {
   inputNetLowSpeedTime: $('#input-net-low-speed-time'),
   inputNetDnsTtl: $('#input-net-dns-ttl'),
   inputNetKeepalive: $('#input-net-keepalive'),
+  inputNetAuto: $('#input-net-auto'),
   inputNetFold: $('#input-net-fold'),
   inputJitterMs: $('#input-jitter-ms'),
   inputJitterMaxMb: $('#input-jitter-max-mb'),
@@ -10012,6 +10013,7 @@ function openInputModal(index) {
     'low_speed_time_sec',
     'dns_cache_ttl_sec',
     'keepalive',
+    'net_auto',
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
@@ -10059,6 +10061,7 @@ function openInputModal(index) {
   if (elements.inputNetLowSpeedTime) elements.inputNetLowSpeedTime.value = opts.low_speed_time_sec || '';
   if (elements.inputNetDnsTtl) elements.inputNetDnsTtl.value = opts.dns_cache_ttl_sec || '';
   if (elements.inputNetKeepalive) elements.inputNetKeepalive.checked = asBool(opts.keepalive);
+  if (elements.inputNetAuto) elements.inputNetAuto.checked = asBool(opts.net_auto);
   if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
   if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
   if (elements.inputHlsMaxSegments) elements.inputHlsMaxSegments.value = opts.hls_max_segments || '';
@@ -10145,6 +10148,7 @@ function readInputForm() {
   addNumber('low_speed_time_sec', elements.inputNetLowSpeedTime && elements.inputNetLowSpeedTime.value);
   addNumber('dns_cache_ttl_sec', elements.inputNetDnsTtl && elements.inputNetDnsTtl.value);
   if (elements.inputNetKeepalive && elements.inputNetKeepalive.checked) options.keepalive = true;
+  if (elements.inputNetAuto && elements.inputNetAuto.checked) options.net_auto = true;
   addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
   addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
   addString('net_profile', elements.inputNetProfile && elements.inputNetProfile.value);

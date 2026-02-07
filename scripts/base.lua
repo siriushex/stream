@@ -733,6 +733,142 @@ local function apply_auto_jitter_max_mb(conf, res)
     conf.jitter_max_buffer_mb = mb
 end
 
+local function net_auto_enabled(conf)
+    return net_bool(conf and conf.net_auto) == true
+end
+
+local function net_auto_init(conf, base_cfg)
+    if not net_auto_enabled(conf) or type(base_cfg) ~= "table" then
+        return nil
+    end
+    local max_level = tonumber(conf.net_auto_max_level) or 3
+    if max_level < 0 then max_level = 0 end
+    local relax_sec = tonumber(conf.net_auto_relax_sec) or 120
+    if relax_sec < 10 then relax_sec = 10 end
+    local window_sec = tonumber(conf.net_auto_window_sec) or 30
+    if window_sec < 5 then window_sec = 5 end
+    local min_interval = tonumber(conf.net_auto_min_interval_sec) or 5
+    if min_interval < 1 then min_interval = 1 end
+    return {
+        enabled = true,
+        level = 0,
+        max_level = math.floor(max_level),
+        relax_sec = math.floor(relax_sec),
+        window_sec = math.floor(window_sec),
+        min_interval_sec = math.floor(min_interval),
+        base = copy_shallow(base_cfg),
+        window_ts = nil,
+        error_burst = 0,
+        last_error_ts = nil,
+        last_ok_ts = os.time(),
+        last_change_ts = os.time(),
+        last_change_reason = nil,
+    }
+end
+
+local function net_auto_tune_cfg(base_cfg, level)
+    local base = base_cfg or NET_RESILIENCE_DEFAULTS
+    local out = copy_shallow(base)
+    local lvl = tonumber(level) or 0
+    if lvl < 0 then lvl = 0 end
+    local mult = 1 + (0.5 * lvl)
+    local mult_conn = 1 + (0.25 * lvl)
+
+    local ct = tonumber(base.connect_timeout_ms) or NET_RESILIENCE_DEFAULTS.connect_timeout_ms
+    local rt = tonumber(base.read_timeout_ms) or NET_RESILIENCE_DEFAULTS.read_timeout_ms
+    local st = tonumber(base.stall_timeout_ms) or NET_RESILIENCE_DEFAULTS.stall_timeout_ms
+    local ls_time = tonumber(base.low_speed_time_sec) or NET_RESILIENCE_DEFAULTS.low_speed_time_sec
+    local ls_limit = tonumber(base.low_speed_limit_bytes_sec) or NET_RESILIENCE_DEFAULTS.low_speed_limit_bytes_sec
+    local bo_min = tonumber(base.backoff_min_ms) or NET_RESILIENCE_DEFAULTS.backoff_min_ms
+    local bo_max = tonumber(base.backoff_max_ms) or NET_RESILIENCE_DEFAULTS.backoff_max_ms
+
+    out.connect_timeout_ms = math.floor(ct * mult_conn)
+    out.read_timeout_ms = math.floor(rt * mult)
+    out.stall_timeout_ms = math.floor(st * mult)
+    out.low_speed_time_sec = math.floor(ls_time * mult)
+    out.low_speed_limit_bytes_sec = math.max(512, math.floor(ls_limit * (0.7 ^ lvl)))
+    out.backoff_min_ms = math.floor(bo_min * (1 + (0.25 * lvl)))
+    out.backoff_max_ms = math.floor(bo_max * mult)
+
+    return out
+end
+
+local function net_auto_apply(instance)
+    if not instance or not instance.net_auto then
+        return
+    end
+    local auto = instance.net_auto
+    instance.net_cfg = net_auto_tune_cfg(auto.base, auto.level)
+    if instance.apply_net_cfg then
+        instance.apply_net_cfg()
+    end
+    if instance.net then
+        instance.net.auto_enabled = true
+        instance.net.auto_level = auto.level
+        instance.net.auto_ts = os.time()
+        instance.net.auto_last_change_ts = auto.last_change_ts
+        instance.net.auto_last_change_reason = auto.last_change_reason
+    end
+end
+
+local function net_auto_escalate(instance, reason)
+    if not instance or not instance.net_auto then
+        return
+    end
+    local auto = instance.net_auto
+    if auto.max_level <= 0 then
+        return
+    end
+    local now = os.time()
+    auto.last_error_ts = now
+    if not auto.window_ts or (now - auto.window_ts) > auto.window_sec then
+        auto.window_ts = now
+        auto.error_burst = 1
+    else
+        auto.error_burst = (auto.error_burst or 0) + 1
+    end
+    if auto.level >= auto.max_level then
+        return
+    end
+    if auto.error_burst < 2 then
+        return
+    end
+    if auto.last_change_ts and (now - auto.last_change_ts) < auto.min_interval_sec then
+        return
+    end
+    auto.level = auto.level + 1
+    auto.error_burst = 0
+    auto.last_change_ts = now
+    auto.last_change_reason = reason or "auto_escalate"
+    net_auto_apply(instance)
+end
+
+local function net_auto_relax(instance)
+    if not instance or not instance.net_auto then
+        return
+    end
+    local auto = instance.net_auto
+    local now = os.time()
+    auto.last_ok_ts = now
+    if auto.level <= 0 then
+        if instance.net then
+            instance.net.auto_enabled = true
+            instance.net.auto_level = 0
+        end
+        return
+    end
+    if auto.last_error_ts and (now - auto.last_error_ts) < auto.relax_sec then
+        return
+    end
+    if auto.last_change_ts and (now - auto.last_change_ts) < auto.relax_sec then
+        return
+    end
+    auto.level = auto.level - 1
+    auto.last_change_ts = now
+    auto.last_change_reason = "auto_relax"
+    net_auto_apply(instance)
+end
+
 local function build_net_resilience(conf, res)
     res = res or resolve_input_resilience(conf)
     local global = nil
@@ -860,6 +996,8 @@ local function net_make_state(net_cfg)
         last_recv_ts = nil,
         current_backoff_ms = 0,
         cooldown_until = nil,
+        auto_enabled = false,
+        auto_level = 0,
     }
 end
 
@@ -1697,6 +1835,12 @@ init_input_module.http = function(conf)
 
         instance.net_cfg = build_net_resilience(conf)
         instance.net = net_make_state(instance.net_cfg)
+        instance.net_auto = net_auto_init(conf, instance.net_cfg)
+        if instance.net_auto then
+            net_auto_apply(instance)
+        end
+        instance.net_auto = net_auto_init(conf, instance.net_cfg)
+        instance.net_auto = net_auto_init(conf, instance.net_cfg)
 
         local function build_headers(host, port)
             local ua = (instance.net_cfg and instance.net_cfg.user_agent) or conf.user_agent or http_user_agent
@@ -1724,6 +1868,8 @@ init_input_module.http = function(conf)
             instance.net.state = "degraded"
             instance.net.state_ts = os.time()
             instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
+            net_auto_escalate(instance, reason)
+            net_auto_escalate(instance, reason)
 
             local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)
             local max_retries = tonumber(instance.net_cfg.max_retries) or 0
@@ -1769,6 +1915,19 @@ init_input_module.http = function(conf)
             low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
             low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
         }
+        instance.apply_net_cfg = function()
+            if not instance.net_cfg or not instance.http_conf then
+                return
+            end
+            instance.http_conf.connect_timeout_ms = instance.net_cfg.connect_timeout_ms
+            instance.http_conf.read_timeout_ms = instance.net_cfg.read_timeout_ms
+            instance.http_conf.stall_timeout_ms = instance.net_cfg.stall_timeout_ms
+            instance.http_conf.low_speed_limit_bytes_sec = instance.net_cfg.low_speed_limit_bytes_sec
+            instance.http_conf.low_speed_time_sec = instance.net_cfg.low_speed_time_sec
+        end
+        if instance.net_auto then
+            net_auto_apply(instance)
+        end
 
         instance.start_request = function()
             if instance.request then
@@ -1816,6 +1975,7 @@ init_input_module.http = function(conf)
                 if response.code == 200 then
                     instance.net.last_recv_ts = os.time()
                     net_mark_ok(instance.net)
+                    net_auto_relax(instance)
                     net_emit(conf, instance.net)
                     instance.transmit:set_upstream(self:stream())
                     return
@@ -1958,6 +2118,19 @@ local function init_input_module_https_direct(conf)
             low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
             instance_id = instance_id,
         }
+        instance.apply_net_cfg = function()
+            if not instance.net_cfg or not instance.http_conf then
+                return
+            end
+            instance.http_conf.connect_timeout_ms = instance.net_cfg.connect_timeout_ms
+            instance.http_conf.read_timeout_ms = instance.net_cfg.read_timeout_ms
+            instance.http_conf.stall_timeout_ms = instance.net_cfg.stall_timeout_ms
+            instance.http_conf.low_speed_limit_bytes_sec = instance.net_cfg.low_speed_limit_bytes_sec
+            instance.http_conf.low_speed_time_sec = instance.net_cfg.low_speed_time_sec
+        end
+        if instance.net_auto then
+            net_auto_apply(instance)
+        end
 
         instance.start_request = function()
             if instance.request then
@@ -2005,6 +2178,7 @@ local function init_input_module_https_direct(conf)
                 if response.code == 200 then
                     instance.net.last_recv_ts = os.time()
                     net_mark_ok(instance.net)
+                    net_auto_relax(instance)
                     net_emit(conf, instance.net)
                     instance.transmit:set_upstream(self:stream())
                     return
@@ -2392,6 +2566,7 @@ local function hls_mark_error(instance, reason, is_segment)
         instance.net.reconnects_total = (instance.net.reconnects_total or 0) + 1
         instance.net.state = "degraded"
         instance.net.state_ts = os.time()
+        net_auto_escalate(instance, reason)
     end
     hls_emit_net(instance)
     hls_emit_stats(instance)
@@ -2406,6 +2581,7 @@ local function hls_mark_ok(instance)
     hls_set_state(instance, "running")
     if instance.net then
         net_mark_ok(instance.net)
+        net_auto_relax(instance)
         hls_emit_net(instance)
     end
     hls_emit_stats(instance)
