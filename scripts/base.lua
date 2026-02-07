@@ -678,24 +678,25 @@ function init_input(conf)
     elseif conf.cam == true then
         -- DVB-CI
     elseif conf.cam then
-        local function get_softcam()
-            if type(conf.cam) == "table" then
-                if conf.cam.cam then
-                    return conf.cam
+        local function resolve_softcam(value, label)
+            if type(value) == "table" then
+                if value.cam then
+                    return value
                 end
             else
                 if type(softcam_list) == "table" then
                     for _, i in ipairs(softcam_list) do
-                        if tostring(i.__options.id) == conf.cam then return i end
+                        if tostring(i.__options.id) == tostring(value) then return i end
                     end
                 end
-                local i = _G[tostring(conf.cam)]
+                local i = _G[tostring(value)]
                 if type(i) == "table" and i.cam then return i end
             end
-            log.error("[" .. conf.name .. "] cam is not found")
+            log.error("[" .. conf.name .. "] " .. tostring(label or "cam") .. " is not found")
             return nil
         end
-        local cam = get_softcam()
+
+        local cam = resolve_softcam(conf.cam, "cam")
         if cam then
             -- split_cam: create a dedicated CAM connection per stream to avoid head-of-line blocking
             -- when many streams share one softcam instance.
@@ -749,6 +750,62 @@ function init_input(conf)
                 end
             end
 
+            -- Optional backup CAM (dual-CAM redundancy): sends ECM to both, accepts first valid CW.
+            local cam_backup_for_decrypt = nil
+            local cam_backup = nil
+            if conf.cam_backup then
+                cam_backup = resolve_softcam(conf.cam_backup, "cam_backup")
+            end
+            if cam_backup then
+                cam_backup_for_decrypt = cam_backup
+                local opts_b = type(cam_backup) == "table" and cam_backup.__options or nil
+                local split_b = opts_b and (opts_b.split_cam == true or opts_b.split_cam == 1 or opts_b.split_cam == "1")
+
+                instance.__softcam_backup_instance = cam_backup
+                if type(conf.cam_backup) ~= "table" then
+                    instance.__softcam_backup_id = tostring(conf.cam_backup)
+                end
+
+                if split_b and not (opts_b and opts_b.is_clone) then
+                    local tag = (conf.id or conf.name or tostring(conf.pnr or "")) .. ":b"
+
+                    local pool_size = 0
+                    if opts_b then
+                        if type(opts_b.raw_cfg) == "table" and opts_b.raw_cfg.split_cam_pool_size ~= nil then
+                            pool_size = tonumber(opts_b.raw_cfg.split_cam_pool_size) or 0
+                        else
+                            pool_size = tonumber(opts_b.split_cam_pool_size) or 0
+                        end
+                    end
+
+                    if pool_size > 1 and type(cam_backup.get_pool) == "function" then
+                        local ok, cam2 = pcall(function()
+                            return cam_backup:get_pool(tag)
+                        end)
+                        if ok and cam2 then
+                            instance.__softcam_backup_clone = cam2
+                            instance.__softcam_backup_clone_pooled = true
+                            cam_backup_for_decrypt = cam2
+                        else
+                            log.error("[" .. conf.name .. "] split_cam pool failed for cam_backup, falling back to clone/shared cam")
+                        end
+                    end
+
+                    if cam_backup_for_decrypt == cam_backup and type(cam_backup.clone) == "function" then
+                        local ok, cam2 = pcall(function()
+                            return cam_backup:clone(tag)
+                        end)
+                        if ok and cam2 then
+                            instance.__softcam_backup_clone = cam2
+                            instance.__softcam_backup_clone_pooled = false
+                            cam_backup_for_decrypt = cam2
+                        else
+                            log.error("[" .. conf.name .. "] split_cam clone failed for cam_backup, using shared cam_backup")
+                        end
+                    end
+                end
+            end
+
             -- Optional global guard: reject suspicious CW updates (keeps compatibility by default).
             local key_guard = false
             if type(config) == "table" and type(config.get_setting) == "function" then
@@ -772,6 +829,7 @@ function init_input(conf)
                 upstream = instance.tail:stream(),
                 name = conf.name,
                 cam = cam_for_decrypt:cam(),
+                cam_backup = cam_backup_for_decrypt and cam_backup_for_decrypt.cam and cam_backup_for_decrypt:cam() or nil,
                 cas_data = conf.cas_data,
                 cas_pnr = cas_pnr,
                 disable_emm = conf.no_emm,
@@ -808,8 +866,19 @@ function kill_input(instance)
             pcall(function() cam:close() end)
         end
     end
+    if instance.__softcam_backup_clone then
+        local cam = instance.__softcam_backup_clone
+        local pooled = instance.__softcam_backup_clone_pooled
+        instance.__softcam_backup_clone = nil
+        instance.__softcam_backup_clone_pooled = nil
+        if not pooled and cam.close then
+            pcall(function() cam:close() end)
+        end
+    end
     instance.__softcam_instance = nil
     instance.__softcam_id = nil
+    instance.__softcam_backup_instance = nil
+    instance.__softcam_backup_id = nil
 end
 
 local function append_bridge_args(args, extra)
