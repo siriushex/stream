@@ -3126,9 +3126,7 @@ details.fold[open] > .fold-summary::after {
   display: block;
 }
 
-.is-transcode .stream-output-block {
-  display: none;
-}
+/* Keep OUTPUT LIST visible even when transcode is enabled. */
 
 .player {
   display: grid;
