@@ -130,6 +130,11 @@ struct module_data_t
     bool disable_emm;
     int ecm_pid;
     bool key_guard;
+    bool dual_cam;
+
+    /* CAM redundancy */
+    module_cam_t *cam_primary;
+    module_cam_t *cam_backup;
 
     /* dvbcsa */
     asc_list_t *el_list;
@@ -168,6 +173,45 @@ struct module_data_t
 #define SHIFT_MAX_BYTES (4 * 1024 * 1024)
 
 void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8_t *odd);
+
+static inline bool decrypt_any_cam_ready(module_data_t *mod)
+{
+    return (   (mod->cam_primary && mod->cam_primary->is_ready)
+            || (mod->cam_backup && mod->cam_backup->is_ready));
+}
+
+static inline bool decrypt_all_cams_disable_emm(module_data_t *mod)
+{
+    bool any = false;
+    bool all = true;
+    if(mod->cam_primary)
+    {
+        any = true;
+        if(!mod->cam_primary->disable_emm)
+            all = false;
+    }
+    if(mod->cam_backup)
+    {
+        any = true;
+        if(!mod->cam_backup->disable_emm)
+            all = false;
+    }
+    if(!any)
+        return true;
+    return all;
+}
+
+static inline module_cam_t * decrypt_pick_ready_cam(module_data_t *mod)
+{
+    /* Keep current active CAM if still ready (avoid unnecessary reloads). */
+    if(mod->__decrypt.cam && mod->__decrypt.cam->is_ready)
+        return mod->__decrypt.cam;
+    if(mod->cam_primary && mod->cam_primary->is_ready)
+        return mod->cam_primary;
+    if(mod->cam_backup && mod->cam_backup->is_ready)
+        return mod->cam_backup;
+    return mod->cam_primary ? mod->cam_primary : mod->__decrypt.cam;
+}
 
 ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
 {
@@ -267,23 +311,43 @@ static void ca_stream_guard_clear(ca_stream_t *ca_stream)
     ca_stream->cand_fail_count = 0;
 }
 
-static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask)
+static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial)
 {
-    if(!ca_stream->active_key_set)
-        return;
-
     if(mask == 0)
         return;
 
-    /* Build candidate from active keys + updated halves */
-    memcpy(ca_stream->cand_key, ca_stream->active_key, sizeof(ca_stream->cand_key));
-    if(mask & 0x01)
-        memcpy(&ca_stream->cand_key[0], &key16[0], 8);
-    if(mask & 0x02)
-        memcpy(&ca_stream->cand_key[8], &key16[8], 8);
+    uint8_t cand_key[16];
+    uint8_t cand_mask = mask;
+
+    if(!ca_stream->active_key_set)
+    {
+        if(!allow_initial)
+            return;
+        /* Initial validation: require both halves (we don't have an "active" base). */
+        cand_mask = 3;
+        memcpy(cand_key, key16, sizeof(cand_key));
+    }
+    else
+    {
+        /* Build candidate from active keys + updated halves */
+        memcpy(cand_key, ca_stream->active_key, sizeof(cand_key));
+        if(mask & 0x01)
+            memcpy(&cand_key[0], &key16[0], 8);
+        if(mask & 0x02)
+            memcpy(&cand_key[8], &key16[8], 8);
+    }
+
+    if(ca_stream->cand_pending && ca_stream->cand_mask == cand_mask
+       && memcmp(ca_stream->cand_key, cand_key, sizeof(cand_key)) == 0)
+    {
+        /* Same candidate already staged: keep counters. */
+        return;
+    }
+
+    memcpy(ca_stream->cand_key, cand_key, sizeof(ca_stream->cand_key));
 
     ca_stream->cand_pending = true;
-    ca_stream->cand_mask = mask;
+    ca_stream->cand_mask = cand_mask;
     ca_stream->cand_set_us = asc_utime();
     ca_stream->cand_ok_count = 0;
     ca_stream->cand_fail_count = 0;
@@ -532,7 +596,7 @@ static bool __cat_check_desc(module_data_t *mod, const uint8_t *desc)
     else
         mod->stream[pid] = mpegts_psi_init(MPEGTS_PACKET_CA, pid);
 
-    if(mod->disable_emm || mod->__decrypt.cam->disable_emm)
+    if(mod->disable_emm || decrypt_all_cams_disable_emm(mod))
         return false;
 
     if(   mod->__decrypt.cas
@@ -573,7 +637,7 @@ static void on_cat(void *arg, mpegts_psi_t *psi)
 
     psi->crc32 = crc32;
 
-    bool is_emm_selected = (mod->disable_emm || mod->__decrypt.cam->disable_emm);
+    bool is_emm_selected = (mod->disable_emm || decrypt_all_cams_disable_emm(mod));
 
     const uint8_t *desc_pointer;
     CAT_DESC_FOREACH(psi, desc_pointer)
@@ -785,7 +849,7 @@ static void on_em(void *arg, mpegts_psi_t *psi)
 {
     module_data_t *mod = arg;
 
-    if(!mod->__decrypt.cam->is_ready)
+    if(!decrypt_any_cam_ready(mod))
         return;
 
     if(psi->buffer_size > EM_MAX_SIZE)
@@ -859,7 +923,7 @@ static void on_em(void *arg, mpegts_psi_t *psi)
     }
     else if(em_type >= 0x82 && em_type <= 0x8F)
     { /* EMM */
-        if(mod->disable_emm || mod->__decrypt.cam->disable_emm)
+        if(mod->disable_emm)
             return;
 
         if(!module_cas_check_em(mod->__decrypt.cas, psi))
@@ -871,9 +935,26 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         return;
     }
 
-    mod->__decrypt.cam->send_em(  mod->__decrypt.cam->self
-                                , &mod->__decrypt, ca_stream
-                                , psi->buffer, psi->buffer_size);
+    bool sent = false;
+    if(mod->cam_primary && mod->cam_primary->is_ready)
+    {
+        if(em_type < 0x82 || em_type > 0x8F || !mod->cam_primary->disable_emm)
+        {
+            mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, ca_stream,
+                                      psi->buffer, psi->buffer_size);
+            sent = true;
+        }
+    }
+    if(mod->cam_backup && mod->cam_backup->is_ready)
+    {
+        if(em_type < 0x82 || em_type > 0x8F || !mod->cam_backup->disable_emm)
+        {
+            mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, ca_stream,
+                                     psi->buffer, psi->buffer_size);
+            sent = true;
+        }
+    }
+    __uarg(sent);
 }
 
 /*
@@ -1156,15 +1237,44 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
 
 void on_cam_ready(module_data_t *mod)
 {
-    mod->caid = mod->__decrypt.cam->caid;
+    module_cam_t *active = decrypt_pick_ready_cam(mod);
+    if(!active || !active->is_ready)
+        return;
 
-    stream_reload(mod);
+    const bool changed_cam = (mod->__decrypt.cam != active);
+    mod->__decrypt.cam = active;
+
+    if(mod->caid != active->caid || mod->__decrypt.cas == NULL || changed_cam)
+    {
+        mod->caid = active->caid;
+        stream_reload(mod);
+    }
+    else
+    {
+        mod->caid = active->caid;
+    }
 }
 
 void on_cam_error(module_data_t *mod)
 {
-    mod->caid = 0x0000;
+    module_cam_t *active = decrypt_pick_ready_cam(mod);
+    if(active && active->is_ready)
+    {
+        const bool changed_cam = (mod->__decrypt.cam != active);
+        mod->__decrypt.cam = active;
+        if(mod->caid != active->caid || mod->__decrypt.cas == NULL || changed_cam)
+        {
+            mod->caid = active->caid;
+            stream_reload(mod);
+        }
+        else
+        {
+            mod->caid = active->caid;
+        }
+        return;
+    }
 
+    mod->caid = 0x0000;
     module_decrypt_cas_destroy(mod);
 }
 
@@ -1209,20 +1319,27 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
 
     if(is_keys_ok)
     {
-        const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
+        const uint64_t now_us = asc_utime();
+        const uint64_t responsetime = (now_us - ca_stream->sendtime) / 1000;
         ca_stream->stat_ecm_ok += 1;
         ca_stream->stat_rtt_sum_ms += responsetime;
         ca_stream->stat_rtt_count += 1;
 
         ca_stream->last_ecm_ok = true;
         ca_stream->ecm_fail_count = 0;
-        ca_stream->last_ecm_ok_us = asc_utime();
+        ca_stream->last_ecm_ok_us = now_us;
 
         if(!is_cw_checksum_ok && asc_log_is_debug())
             asc_log_debug(MSG("ECM CW checksum mismatch"));
 
         uint8_t key16[16];
         memcpy(key16, &data[3], sizeof(key16));
+
+        if(ca_stream->active_key_set && memcmp(key16, ca_stream->active_key, sizeof(key16)) == 0)
+        {
+            /* Avoid staging/reapplying identical keys (common with redundant CAM responses). */
+            return;
+        }
 
         /* Try to detect which key half changed using checksum bytes (best-effort). */
         uint8_t mask = 3;
@@ -1239,10 +1356,10 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         if(!ca_stream->is_keys)
             ca_stream->is_keys = true;
 
-        if(mod->key_guard && ca_stream->active_key_set)
+        if(mod->key_guard && (mod->dual_cam || ca_stream->active_key_set))
         {
             /* Guarded switch: validate candidate keys on PES headers before applying. */
-            ca_stream_guard_set_candidate(ca_stream, key16, mask);
+            ca_stream_guard_set_candidate(ca_stream, key16, mask, mod->dual_cam);
             if(!is_cw_checksum_ok && asc_log_is_debug())
                 asc_log_debug(MSG("key_guard: candidate keys staged (checksum mismatch)"));
         }
@@ -1270,14 +1387,21 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
     }
     else
     {
-        ca_stream->last_ecm_ok = false;
-        if(ca_stream->ecm_fail_count != UINT32_MAX)
-            ++ca_stream->ecm_fail_count;
-
-        const uint64_t responsetime = (asc_utime() - ca_stream->sendtime) / 1000;
+        const uint64_t now_us = asc_utime();
+        const uint64_t responsetime = (now_us - ca_stream->sendtime) / 1000;
         ca_stream->stat_ecm_not_found += 1;
         ca_stream->stat_rtt_sum_ms += responsetime;
         ca_stream->stat_rtt_count += 1;
+
+        if(mod->dual_cam && ca_stream->last_ecm_ok_us && (now_us - ca_stream->last_ecm_ok_us) < 500000ULL)
+        {
+            /* In dual-CAM mode one CAM can reply Not Found while the other already provided keys. */
+            return;
+        }
+
+        ca_stream->last_ecm_ok = false;
+        if(ca_stream->ecm_fail_count != UINT32_MAX)
+            ++ca_stream->ecm_fail_count;
 
         if(ca_stream->ecm_fail_count <= 3 && !asc_log_is_debug())
         {
@@ -1360,6 +1484,7 @@ static void module_init(module_data_t *mod)
         asc_assert(  lua_type(lua, -1) == LUA_TLIGHTUSERDATA
                    , "option 'cam' required cam-module instance");
         mod->__decrypt.cam = lua_touserdata(lua, -1);
+        mod->cam_primary = mod->__decrypt.cam;
 
         int cas_pnr = 0;
         module_option_number("cas_pnr", &cas_pnr);
@@ -1378,6 +1503,27 @@ static void module_init(module_data_t *mod)
         module_option_number("ecm_pid", &mod->ecm_pid);
 
         module_cam_attach_decrypt(mod->__decrypt.cam, &mod->__decrypt);
+    }
+    lua_pop(lua, 1);
+
+    lua_getfield(lua, 2, "cam_backup");
+    if(!lua_isnil(lua, -1))
+    {
+        asc_assert(  lua_type(lua, -1) == LUA_TLIGHTUSERDATA
+                   , "option 'cam_backup' required cam-module instance");
+        mod->cam_backup = lua_touserdata(lua, -1);
+        if(mod->cam_backup && mod->cam_backup != mod->cam_primary)
+        {
+            mod->dual_cam = true;
+            if(!mod->key_guard)
+            {
+                /* In dual-CAM mode we always enable guarded key switch to avoid bad CW blips. */
+                mod->key_guard = true;
+            }
+            module_cam_attach_decrypt(mod->cam_backup, &mod->__decrypt);
+            if(asc_log_is_debug())
+                asc_log_debug(MSG("dual CAM enabled (primary+backup)"));
+        }
     }
     lua_pop(lua, 1);
 
@@ -1414,11 +1560,16 @@ static void module_destroy(module_data_t *mod)
 {
     module_stream_destroy(mod);
 
-    if(mod->__decrypt.cam)
-    {
-        module_cam_detach_decrypt(mod->__decrypt.cam, &mod->__decrypt);
-        mod->__decrypt.cam = NULL;
-    }
+    module_cam_t *cam_primary = mod->cam_primary;
+    module_cam_t *cam_backup = mod->cam_backup;
+    mod->cam_primary = NULL;
+    mod->cam_backup = NULL;
+    mod->__decrypt.cam = NULL;
+
+    if(cam_primary)
+        module_cam_detach_decrypt(cam_primary, &mod->__decrypt);
+    if(cam_backup && cam_backup != cam_primary)
+        module_cam_detach_decrypt(cam_backup, &mod->__decrypt);
 
     if(asc_log_is_debug())
     {
@@ -1479,8 +1630,11 @@ static int method_stats(module_data_t *mod)
     lua_pushboolean(lua, mod->key_guard);
     lua_setfield(lua, -2, "key_guard");
 
-    lua_pushboolean(lua, (mod->__decrypt.cam && mod->__decrypt.cam->is_ready));
+    lua_pushboolean(lua, decrypt_any_cam_ready(mod));
     lua_setfield(lua, -2, "cam_ready");
+
+    lua_pushboolean(lua, mod->dual_cam);
+    lua_setfield(lua, -2, "dual_cam");
 
     /* shift buffer observability */
     lua_newtable(lua);
