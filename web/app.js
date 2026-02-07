@@ -1190,6 +1190,7 @@ const elements = {
   inputHttpUa: $('#input-http-ua'),
   inputHttpTimeout: $('#input-http-timeout'),
   inputHttpBuffer: $('#input-http-buffer'),
+  inputNetProfile: $('#input-net-profile'),
   inputNetConnect: $('#input-net-connect'),
   inputNetRead: $('#input-net-read'),
   inputNetStall: $('#input-net-stall'),
@@ -1201,8 +1202,14 @@ const elements = {
   inputNetLowSpeedTime: $('#input-net-low-speed-time'),
   inputNetDnsTtl: $('#input-net-dns-ttl'),
   inputNetKeepalive: $('#input-net-keepalive'),
+  inputNetFold: $('#input-net-fold'),
   inputJitterMs: $('#input-jitter-ms'),
   inputJitterMaxMb: $('#input-jitter-max-mb'),
+  inputHlsFold: $('#input-hls-fold'),
+  inputHlsMaxSegments: $('#input-hls-max-segments'),
+  inputHlsMaxGap: $('#input-hls-max-gap'),
+  inputHlsSegRetries: $('#input-hls-seg-retries'),
+  inputHlsMaxParallel: $('#input-hls-max-parallel'),
   inputBridgeUrl: $('#input-bridge-url'),
   inputBridgePort: $('#input-bridge-port'),
   inputFileName: $('#input-file-name'),
@@ -7965,6 +7972,7 @@ function buildInputUrl(data) {
   addOpt('no_analyze', o.no_analyze);
   addOpt('cc_limit', o.cc_limit);
   addOpt('bitrate_limit', o.bitrate_limit);
+  addOpt('net_profile', o.net_profile);
   addOpt('ua', o.ua);
   addOpt('timeout', o.timeout);
   addOpt('buffer_size', o.buffer_size);
@@ -7981,6 +7989,10 @@ function buildInputUrl(data) {
   addOpt('keepalive', o.keepalive);
   addOpt('jitter_buffer_ms', o.jitter_buffer_ms);
   addOpt('jitter_max_buffer_mb', o.jitter_max_buffer_mb);
+  addOpt('hls_max_segments', o.hls_max_segments);
+  addOpt('hls_max_gap_segments', o.hls_max_gap_segments);
+  addOpt('hls_segment_retries', o.hls_segment_retries);
+  addOpt('hls_max_parallel', o.hls_max_parallel);
   addOpt('socket_size', o.socket_size);
   addOpt('loop', o.loop);
   addOpt('bridge_port', o.bridge_port);
@@ -7992,6 +8004,7 @@ function buildInputUrl(data) {
       'set_tsid',
       'biss',
       'cam',
+      'cam_backup',
       'ecm_pid',
       'shift',
       'cas',
@@ -8004,6 +8017,7 @@ function buildInputUrl(data) {
       'no_analyze',
       'cc_limit',
       'bitrate_limit',
+      'net_profile',
       'ua',
       'timeout',
       'buffer_size',
@@ -8020,6 +8034,10 @@ function buildInputUrl(data) {
       'keepalive',
       'jitter_buffer_ms',
       'jitter_max_buffer_mb',
+      'hls_max_segments',
+      'hls_max_gap_segments',
+      'hls_segment_retries',
+      'hls_max_parallel',
       'socket_size',
       'loop',
       'bridge_port',
@@ -9710,6 +9728,13 @@ function setInputGroup(group) {
   });
 }
 
+function setInputAdvancedFoldVisibility(format) {
+  const type = String(format || '').toLowerCase();
+  const isHttpLike = type === 'http' || type === 'https' || type === 'hls';
+  if (elements.inputNetFold) elements.inputNetFold.hidden = !isHttpLike;
+  if (elements.inputHlsFold) elements.inputHlsFold.hidden = type !== 'hls';
+}
+
 function openInputModal(index) {
   const url = state.inputs[index] || '';
   const parsed = parseInputUrl(url);
@@ -9719,9 +9744,10 @@ function openInputModal(index) {
   const format = parsed.format || 'udp';
   elements.inputType.value = format;
   const group = (format === 'rtp') ? 'udp'
-    : (format === 'hls' ? 'http'
+    : ((format === 'http' || format === 'https' || format === 'hls') ? 'http'
       : (format === 'srt' || format === 'rtsp' ? 'bridge' : format));
   setInputGroup(group);
+  setInputAdvancedFoldVisibility(format);
 
   const opts = parsed.options || {};
   const knownOptions = new Set([
@@ -9743,6 +9769,7 @@ function openInputModal(index) {
     'no_analyze',
     'cc_limit',
     'bitrate_limit',
+    'net_profile',
     'ua',
     'timeout',
     'buffer_size',
@@ -9763,6 +9790,10 @@ function openInputModal(index) {
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
+    'hls_max_segments',
+    'hls_max_gap_segments',
+    'hls_segment_retries',
+    'hls_max_parallel',
   ]);
   const extras = {};
   Object.keys(opts).forEach((key) => {
@@ -9788,6 +9819,10 @@ function openInputModal(index) {
   elements.inputHttpUa.value = opts.ua || '';
   elements.inputHttpTimeout.value = opts.timeout || '';
   elements.inputHttpBuffer.value = opts.buffer_size || '';
+  if (elements.inputNetProfile) {
+    const value = opts.net_profile;
+    elements.inputNetProfile.value = (value && value !== true && value !== 'true') ? String(value) : '';
+  }
   if (elements.inputNetConnect) elements.inputNetConnect.value = opts.connect_timeout_ms || '';
   if (elements.inputNetRead) elements.inputNetRead.value = opts.read_timeout_ms || '';
   if (elements.inputNetStall) elements.inputNetStall.value = opts.stall_timeout_ms || '';
@@ -9801,6 +9836,10 @@ function openInputModal(index) {
   if (elements.inputNetKeepalive) elements.inputNetKeepalive.checked = asBool(opts.keepalive);
   if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
   if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
+  if (elements.inputHlsMaxSegments) elements.inputHlsMaxSegments.value = opts.hls_max_segments || '';
+  if (elements.inputHlsMaxGap) elements.inputHlsMaxGap.value = opts.hls_max_gap_segments || '';
+  if (elements.inputHlsSegRetries) elements.inputHlsSegRetries.value = opts.hls_segment_retries || '';
+  if (elements.inputHlsMaxParallel) elements.inputHlsMaxParallel.value = opts.hls_max_parallel || '';
 
   elements.inputBridgeUrl.value = parsed.url || '';
   elements.inputBridgePort.value = opts.bridge_port || '';
@@ -9883,6 +9922,16 @@ function readInputForm() {
   if (elements.inputNetKeepalive && elements.inputNetKeepalive.checked) options.keepalive = true;
   addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
   addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
+  addString('net_profile', elements.inputNetProfile && elements.inputNetProfile.value);
+  if (format === 'hls') {
+    addNumber('hls_max_segments', elements.inputHlsMaxSegments && elements.inputHlsMaxSegments.value);
+    addNumber('hls_max_gap_segments', elements.inputHlsMaxGap && elements.inputHlsMaxGap.value);
+    addNumber('hls_segment_retries', elements.inputHlsSegRetries && elements.inputHlsSegRetries.value);
+    const parallel = toNumber(elements.inputHlsMaxParallel && elements.inputHlsMaxParallel.value);
+    if (parallel !== undefined) {
+      options.hls_max_parallel = Math.max(1, Math.min(2, Math.floor(parallel)));
+    }
+  }
 
   if (elements.inputCam.checked) {
     const camId = elements.inputCamId.value.trim();
@@ -9912,7 +9961,7 @@ function readInputForm() {
     data.port = elements.inputUdpPort.value.trim();
     addNumber('socket_size', elements.inputUdpSocket.value);
     if (!data.addr) throw new Error('UDP address is required');
-  } else if (format === 'http' || format === 'hls') {
+  } else if (format === 'http' || format === 'https' || format === 'hls') {
     data.login = elements.inputHttpLogin.value.trim();
     data.password = elements.inputHttpPass.value;
     data.host = elements.inputHttpHost.value.trim();
@@ -19048,27 +19097,85 @@ function buildInputStatusRow(input, index, activeIndex) {
   row.appendChild(head);
   row.appendChild(meta);
 
-  const extraItems = [];
-  const health = input.health_state || 'online';
-  const healthReason = input.health_reason ? ` (${input.health_reason})` : '';
-  extraItems.push(`Health: ${health}${healthReason}`);
+  const formatHealthState = (value) => {
+    const stateText = String(value || '').toLowerCase();
+    if (!stateText || stateText === 'online') return 'OK';
+    if (stateText === 'degraded') return 'DEGRADED';
+    if (stateText === 'offline' || stateText === 'down') return 'OFFLINE';
+    return stateText.toUpperCase();
+  };
+
+  const translateReason = (reason) => {
+    if (!reason) return '';
+    const text = String(reason);
+    const exact = {
+      hls_gap_limit: 'Слишком много пропусков HLS сегментов',
+      stall_timeout: 'Нет данных (stall timeout)',
+      low_bitrate: 'Низкий битрейт',
+    };
+    if (exact[text]) return exact[text];
+
+    const mapSuffix = (suffix) => {
+      const s = String(suffix || '');
+      const known = {
+        connection_timeout: 'таймаут подключения',
+        response_timeout: 'таймаут чтения',
+        low_speed: 'низкая скорость',
+        connection_refused: 'соединение отклонено',
+        no_route_to_host: 'нет маршрута до хоста',
+        host_not_found: 'хост не найден',
+      };
+      if (known[s]) return known[s];
+      return s.replace(/_/g, ' ');
+    };
+
+    if (text.startsWith('http_err_')) return `HTTP: ${mapSuffix(text.slice('http_err_'.length))}`;
+    if (text.startsWith('playlist_err_')) return `HLS playlist: ${mapSuffix(text.slice('playlist_err_'.length))}`;
+    if (text.startsWith('segment_err_')) return `HLS segment: ${mapSuffix(text.slice('segment_err_'.length))}`;
+    if (text.startsWith('http_')) return `HTTP ${text.slice('http_'.length)}`;
+    if (text.startsWith('playlist_http_')) return `HLS playlist HTTP ${text.slice('playlist_http_'.length)}`;
+    if (text.startsWith('segment_http_')) return `HLS segment HTTP ${text.slice('segment_http_'.length)}`;
+    return text;
+  };
+
+  const extra = document.createElement('div');
+  extra.className = 'input-status-extra';
+  const addLine = (text) => {
+    if (!text) return;
+    const line = document.createElement('div');
+    line.textContent = text;
+    extra.appendChild(line);
+  };
+
+  const healthState = formatHealthState(input.health_state);
+  const reasonRu = translateReason(input.health_reason);
+  const reasonRaw = input.health_reason ? String(input.health_reason) : '';
+  const reasonText = reasonRu
+    ? `${reasonRu}${reasonRaw && reasonRu !== reasonRaw ? ` (${reasonRaw})` : ''}`
+    : (reasonRaw ? reasonRaw : '');
+  addLine(`Health: ${healthState}${reasonText ? ` — ${reasonText}` : ''}`);
+
+  const profileEffective = input.net_profile_effective || (input.net_profile_configured ? input.net_profile_configured : null);
+  const profileConfigured = input.net_profile_configured || '';
+  const profileLabel = profileEffective ? String(profileEffective) : 'default';
+  const resilience = input.resilience_enabled === true ? 'ON' : 'OFF';
+  const profBits = [`Profile: ${profileLabel}`, `Resilience: ${resilience}`];
+  if (profileConfigured && profileConfigured !== profileLabel) {
+    profBits.push(`Configured: ${profileConfigured}`);
+  }
+  addLine(profBits.join(' | '));
 
   if (input.net) {
     const net = input.net;
     const netState = net.state || 'n/a';
     const backoff = Number.isFinite(net.current_backoff_ms) ? `${Math.round(net.current_backoff_ms)}ms` : 'n/a';
     const reconnects = Number(net.reconnects_total) || 0;
-    const lastRecv = formatTimestamp(net.last_recv_ts);
+    const lastRecvTs = Number(net.last_recv_ts) || 0;
+    const now = Math.floor(Date.now() / 1000);
+    const age = lastRecvTs ? Math.max(0, now - lastRecvTs) : 0;
+    const recvAgo = lastRecvTs ? `${formatShortDuration(age)} ago` : 'n/a';
     const netErr = net.last_error || 'n/a';
-    extraItems.push(`Net: ${netState} backoff=${backoff} reconnects=${reconnects} last=${netErr} recv=${lastRecv}`);
-  }
-  if (input.hls) {
-    const hls = input.hls;
-    const hlsState = hls.state || 'n/a';
-    const hlsSeq = (hls.last_seq !== undefined && hls.last_seq !== null) ? hls.last_seq : 'n/a';
-    const hlsErrs = Number(hls.segment_errors_total) || 0;
-    const hlsGap = Number(hls.gap_count) || 0;
-    extraItems.push(`HLS: ${hlsState} seq=${hlsSeq} errs=${hlsErrs} gap=${hlsGap}`);
+    addLine(`Net: ${netState} | Reconnects: ${reconnects} | Backoff: ${backoff} | Last data: ${recvAgo} | Last error: ${netErr}`);
   }
   if (input.jitter) {
     const jitter = input.jitter;
@@ -19076,14 +19183,20 @@ function buildInputStatusRow(input, index, activeIndex) {
     const target = Number(jitter.buffer_target_ms) || 0;
     const underruns = Number(jitter.buffer_underruns_total) || 0;
     if (target > 0 || fill > 0 || underruns > 0) {
-      extraItems.push(`Jitter: ${Math.round(fill)} / ${Math.round(target)} ms underruns=${underruns}`);
+      const pct = target > 0 ? Math.max(0, Math.min(100, Math.round((fill / target) * 100))) : 0;
+      addLine(`Jitter: ${Math.round(fill)} / ${Math.round(target)} ms (${pct}%) | Underruns: ${underruns}`);
     }
   }
+  if (input.hls) {
+    const hls = input.hls;
+    const hlsState = hls.state || 'n/a';
+    const hlsSeq = (hls.last_seq !== undefined && hls.last_seq !== null) ? hls.last_seq : 'n/a';
+    const hlsErrs = Number(hls.segment_errors_total) || 0;
+    const hlsGap = Number(hls.gap_count) || 0;
+    addLine(`HLS: ${hlsState} | Seq: ${hlsSeq} | Errors: ${hlsErrs} | Gap: ${hlsGap}`);
+  }
 
-  if (extraItems.length) {
-    const extra = document.createElement('div');
-    extra.className = 'input-status-extra';
-    extra.textContent = extraItems.join(' | ');
+  if (extra.childNodes.length) {
     row.appendChild(extra);
   }
 
@@ -22759,9 +22872,10 @@ function bindEvents() {
     elements.inputType.addEventListener('change', () => {
       const type = elements.inputType.value;
       const group = (type === 'rtp') ? 'udp'
-        : (type === 'hls' ? 'http'
+        : ((type === 'http' || type === 'https' || type === 'hls') ? 'http'
           : (type === 'srt' || type === 'rtsp' ? 'bridge' : type));
       setInputGroup(group);
+      setInputAdvancedFoldVisibility(type);
     });
   }
   if (elements.inputPresetApply && elements.inputPreset) {
