@@ -185,6 +185,8 @@ const state = {
   transcodeOutputs: [],
   transcodeOutputEditingIndex: null,
   transcodeOutputMonitorIndex: null,
+  transcodePublishTargets: [],
+  transcodePublishTargetEditingIndex: null,
   transcodeProfiles: [],
   transcodeProfileEditingIndex: null,
   transcodeWatchdogDefaults: null,
@@ -856,18 +858,19 @@ const elements = {
   streamTranscodePublishHttpTsEnabled: $('#stream-transcode-publish-http-ts-enabled'),
   streamTranscodePublishHttpTsVariants: $('#stream-transcode-publish-http-ts-variants'),
   streamTranscodePublishEmbedEnabled: $('#stream-transcode-publish-embed-enabled'),
-  streamTranscodePublishUdpEnabled: $('#stream-transcode-publish-udp-enabled'),
-  streamTranscodePublishUdpProfile: $('#stream-transcode-publish-udp-profile'),
-  streamTranscodePublishUdpUrl: $('#stream-transcode-publish-udp-url'),
-  streamTranscodePublishRtpEnabled: $('#stream-transcode-publish-rtp-enabled'),
-  streamTranscodePublishRtpProfile: $('#stream-transcode-publish-rtp-profile'),
-  streamTranscodePublishRtpUrl: $('#stream-transcode-publish-rtp-url'),
-  streamTranscodePublishRtmpEnabled: $('#stream-transcode-publish-rtmp-enabled'),
-  streamTranscodePublishRtmpProfile: $('#stream-transcode-publish-rtmp-profile'),
-  streamTranscodePublishRtmpUrl: $('#stream-transcode-publish-rtmp-url'),
-  streamTranscodePublishRtspEnabled: $('#stream-transcode-publish-rtsp-enabled'),
-  streamTranscodePublishRtspProfile: $('#stream-transcode-publish-rtsp-profile'),
-  streamTranscodePublishRtspUrl: $('#stream-transcode-publish-rtsp-url'),
+  transcodePublishTargetList: $('#transcode-publish-target-list'),
+  btnAddTranscodePublishTarget: $('#btn-add-transcode-publish-target'),
+  transcodePublishTargetOverlay: $('#transcode-publish-target-overlay'),
+  transcodePublishTargetForm: $('#transcode-publish-target-form'),
+  transcodePublishTargetTitle: $('#transcode-publish-target-title'),
+  transcodePublishTargetClose: $('#transcode-publish-target-close'),
+  transcodePublishTargetCancel: $('#transcode-publish-target-cancel'),
+  transcodePublishTargetSave: $('#transcode-publish-target-save'),
+  transcodePublishTargetType: $('#transcode-publish-target-type'),
+  transcodePublishTargetProfile: $('#transcode-publish-target-profile'),
+  transcodePublishTargetUrl: $('#transcode-publish-target-url'),
+  transcodePublishTargetEnabled: $('#transcode-publish-target-enabled'),
+  transcodePublishTargetError: $('#transcode-publish-target-error'),
   streamTranscodePublishJson: $('#stream-transcode-publish-json'),
   streamTranscodeLadderLinksFold: $('#stream-transcode-ladder-links-fold'),
   streamTranscodeLadderLinks: $('#stream-transcode-ladder-links'),
@@ -5784,16 +5787,124 @@ function pickPublishEntry(publish, type) {
   return null;
 }
 
+function normalizePublishTargetList(publish) {
+  if (!Array.isArray(publish)) return [];
+  return publish
+    .filter((entry) => entry && typeof entry === 'object')
+    .filter((entry) => ['udp', 'rtp', 'rtmp', 'rtsp'].includes(String(entry.type || '').toLowerCase()))
+    .map((entry) => ({
+      type: String(entry.type || '').toLowerCase(),
+      enabled: entry.enabled !== false,
+      profile: entry.profile || '',
+      url: entry.url || '',
+    }));
+}
+
+function renderTranscodePublishTargetList() {
+  if (!elements.transcodePublishTargetList) return;
+  elements.transcodePublishTargetList.innerHTML = '';
+  if (!state.transcodePublishTargets || state.transcodePublishTargets.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No publish targets configured.';
+    elements.transcodePublishTargetList.appendChild(empty);
+    return;
+  }
+
+  state.transcodePublishTargets.forEach((target, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row transcode-publish-target-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const label = document.createElement('div');
+    label.className = 'list-input';
+    const type = (target.type || '').toUpperCase();
+    const profile = target.profile || 'profile?';
+    const url = target.url || 'url?';
+    label.textContent = `${type} · ${profile} · ${url}`;
+
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn';
+    edit.type = 'button';
+    edit.dataset.action = 'transcode-publish-target-edit';
+    edit.textContent = '...';
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'transcode-publish-target-remove';
+    remove.textContent = 'x';
+
+    row.appendChild(idx);
+    row.appendChild(label);
+    row.appendChild(edit);
+    row.appendChild(remove);
+
+    elements.transcodePublishTargetList.appendChild(row);
+  });
+}
+
+function closeTranscodePublishTargetModal() {
+  setOverlay(elements.transcodePublishTargetOverlay, false);
+  state.transcodePublishTargetEditingIndex = null;
+  if (elements.transcodePublishTargetError) {
+    elements.transcodePublishTargetError.textContent = '';
+  }
+}
+
+function openTranscodePublishTargetModal(target, index) {
+  if (!elements.transcodePublishTargetOverlay) return;
+  state.transcodePublishTargetEditingIndex = index;
+  if (elements.transcodePublishTargetTitle) {
+    elements.transcodePublishTargetTitle.textContent = target && target.type
+      ? `Publish ${String(target.type).toUpperCase()}`
+      : 'Publish target';
+  }
+  elements.transcodePublishTargetType.value = (target && target.type) || 'udp';
+  elements.transcodePublishTargetProfile.value = (target && target.profile) || '';
+  elements.transcodePublishTargetUrl.value = (target && target.url) || '';
+  elements.transcodePublishTargetEnabled.checked = !(target && target.enabled === false);
+  if (elements.transcodePublishTargetError) {
+    elements.transcodePublishTargetError.textContent = '';
+  }
+  setOverlay(elements.transcodePublishTargetOverlay, true);
+}
+
+function readTranscodePublishTargetForm() {
+  const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
+  const profile = String(elements.transcodePublishTargetProfile.value || '').trim();
+  const url = String(elements.transcodePublishTargetUrl.value || '').trim();
+  if (!['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
+    throw new Error('Publish type is invalid');
+  }
+  if (!profile) {
+    throw new Error('Profile is required');
+  }
+  if (!isValidProfileId(profile)) {
+    throw new Error('Profile id must be URL-safe (letters, numbers, _, -)');
+  }
+  if (!url) {
+    throw new Error('URL is required');
+  }
+  return {
+    type,
+    enabled: elements.transcodePublishTargetEnabled.checked,
+    profile,
+    url,
+  };
+}
+
 function syncTranscodeLadderPublishCommonUiFromJson() {
   if (!elements.streamTranscodePublishJson) return;
   if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
   if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
   if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
   if (!elements.streamTranscodePublishEmbedEnabled) return;
-  if (!elements.streamTranscodePublishUdpEnabled || !elements.streamTranscodePublishUdpProfile || !elements.streamTranscodePublishUdpUrl) return;
-  if (!elements.streamTranscodePublishRtpEnabled || !elements.streamTranscodePublishRtpProfile || !elements.streamTranscodePublishRtpUrl) return;
-  if (!elements.streamTranscodePublishRtmpEnabled || !elements.streamTranscodePublishRtmpProfile || !elements.streamTranscodePublishRtmpUrl) return;
-  if (!elements.streamTranscodePublishRtspEnabled || !elements.streamTranscodePublishRtspProfile || !elements.streamTranscodePublishRtspUrl) return;
+  if (!elements.transcodePublishTargetList) return;
 
   let publish = null;
   try {
@@ -5824,26 +5935,8 @@ function syncTranscodeLadderPublishCommonUiFromJson() {
 
   const embed = pickPublishEntry(publish, 'embed');
   elements.streamTranscodePublishEmbedEnabled.checked = Boolean(embed && embed.enabled !== false);
-
-  const udp = pickPublishEntry(publish, 'udp');
-  elements.streamTranscodePublishUdpEnabled.checked = Boolean(udp && udp.enabled !== false);
-  elements.streamTranscodePublishUdpProfile.value = udp && udp.profile ? udp.profile : '';
-  elements.streamTranscodePublishUdpUrl.value = udp && udp.url ? udp.url : '';
-
-  const rtp = pickPublishEntry(publish, 'rtp');
-  elements.streamTranscodePublishRtpEnabled.checked = Boolean(rtp && rtp.enabled !== false);
-  elements.streamTranscodePublishRtpProfile.value = rtp && rtp.profile ? rtp.profile : '';
-  elements.streamTranscodePublishRtpUrl.value = rtp && rtp.url ? rtp.url : '';
-
-  const rtmp = pickPublishEntry(publish, 'rtmp');
-  elements.streamTranscodePublishRtmpEnabled.checked = Boolean(rtmp && rtmp.enabled !== false);
-  elements.streamTranscodePublishRtmpProfile.value = rtmp && rtmp.profile ? rtmp.profile : '';
-  elements.streamTranscodePublishRtmpUrl.value = rtmp && rtmp.url ? rtmp.url : '';
-
-  const rtsp = pickPublishEntry(publish, 'rtsp');
-  elements.streamTranscodePublishRtspEnabled.checked = Boolean(rtsp && rtsp.enabled !== false);
-  elements.streamTranscodePublishRtspProfile.value = rtsp && rtsp.profile ? rtsp.profile : '';
-  elements.streamTranscodePublishRtspUrl.value = rtsp && rtsp.url ? rtsp.url : '';
+  state.transcodePublishTargets = normalizePublishTargetList(publish);
+  renderTranscodePublishTargetList();
 }
 
 function syncTranscodeLadderPublishJsonFromCommonUi() {
@@ -5853,10 +5946,7 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
   if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
   if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
   if (!elements.streamTranscodePublishEmbedEnabled) return;
-  if (!elements.streamTranscodePublishUdpEnabled || !elements.streamTranscodePublishUdpProfile || !elements.streamTranscodePublishUdpUrl) return;
-  if (!elements.streamTranscodePublishRtpEnabled || !elements.streamTranscodePublishRtpProfile || !elements.streamTranscodePublishRtpUrl) return;
-  if (!elements.streamTranscodePublishRtmpEnabled || !elements.streamTranscodePublishRtmpProfile || !elements.streamTranscodePublishRtmpUrl) return;
-  if (!elements.streamTranscodePublishRtspEnabled || !elements.streamTranscodePublishRtspProfile || !elements.streamTranscodePublishRtspUrl) return;
+  if (!elements.transcodePublishTargetList) return;
 
   let current = null;
   try {
@@ -5934,28 +6024,16 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
     next.push({ type: 'embed', enabled: true });
   }
 
-  const updatePushTarget = (type, enabledEl, profileEl, urlEl) => {
-    const enabled = enabledEl.checked;
-    const profile = String(profileEl.value || '').trim();
-    const url = String(urlEl.value || '').trim();
-    const entry = pickPublishEntry(next, type);
-    if (entry) {
-      entry.enabled = enabled;
-      entry.profile = profile || undefined;
-      entry.url = url || undefined;
-    } else if (enabled) {
-      next.push({ type, enabled: true, profile, url });
-    }
-  };
-
-  updatePushTarget('udp', elements.streamTranscodePublishUdpEnabled,
-    elements.streamTranscodePublishUdpProfile, elements.streamTranscodePublishUdpUrl);
-  updatePushTarget('rtp', elements.streamTranscodePublishRtpEnabled,
-    elements.streamTranscodePublishRtpProfile, elements.streamTranscodePublishRtpUrl);
-  updatePushTarget('rtmp', elements.streamTranscodePublishRtmpEnabled,
-    elements.streamTranscodePublishRtmpProfile, elements.streamTranscodePublishRtmpUrl);
-  updatePushTarget('rtsp', elements.streamTranscodePublishRtspEnabled,
-    elements.streamTranscodePublishRtspProfile, elements.streamTranscodePublishRtspUrl);
+  const pushTargets = Array.isArray(state.transcodePublishTargets) ? state.transcodePublishTargets : [];
+  pushTargets.forEach((target) => {
+    if (!target || !target.type) return;
+    next.push({
+      type: target.type,
+      enabled: target.enabled !== false,
+      profile: target.profile,
+      url: target.url,
+    });
+  });
 
   elements.streamTranscodePublishJson.value = next.length ? formatJson(next) : '';
 }
@@ -5990,8 +6068,13 @@ function updateTranscodeLadderToggle() {
       elements.transcodeProfileList.innerHTML = '';
     }
     state.transcodeProfiles = [];
+    if (elements.transcodePublishTargetList) {
+      elements.transcodePublishTargetList.innerHTML = '';
+    }
+    state.transcodePublishTargets = [];
   } else {
     renderTranscodeProfileList();
+    renderTranscodePublishTargetList();
   }
 }
 
@@ -12392,6 +12475,8 @@ function openEditor(stream, isNew) {
       }
       state.transcodeProfiles = ladderEnabled ? (tc.profiles || []) : [];
       renderTranscodeProfileList();
+      state.transcodePublishTargets = ladderEnabled ? normalizePublishTargetList(tc.publish || []) : [];
+      renderTranscodePublishTargetList();
       syncTranscodeLadderPublishCommonUiFromJson();
     }
     updateInputProbeRestartToggle();
@@ -13027,23 +13112,6 @@ function readStreamForm() {
       });
       return ids;
     };
-    const validatePush = (label, enabledEl, profileEl, urlEl) => {
-      if (!enabledEl || !enabledEl.checked) return;
-      const profile = String(profileEl && profileEl.value || '').trim();
-      const url = String(urlEl && urlEl.value || '').trim();
-      if (!profile) {
-        throw new Error(`${label}: profile is required (Transcode tab)`);
-      }
-      if (!isValidProfileId(profile)) {
-        throw new Error(`${label}: invalid profile id "${profile}" (Transcode tab)`);
-      }
-      if (!profileIds.has(profile)) {
-        throw new Error(`${label}: unknown profile id "${profile}" (Transcode tab)`);
-      }
-      if (!url) {
-        throw new Error(`${label}: url is required (Transcode tab)`);
-      }
-    };
     if (elements.streamTranscodePublishHlsEnabled && elements.streamTranscodePublishHlsVariants) {
       if (elements.streamTranscodePublishHlsEnabled.checked) {
         validateVariants('HLS variants', elements.streamTranscodePublishHlsVariants.value);
@@ -13059,14 +13127,25 @@ function readStreamForm() {
         validateVariants('HTTP-TS variants', elements.streamTranscodePublishHttpTsVariants.value);
       }
     }
-    validatePush('UDP publish', elements.streamTranscodePublishUdpEnabled,
-      elements.streamTranscodePublishUdpProfile, elements.streamTranscodePublishUdpUrl);
-    validatePush('RTP publish', elements.streamTranscodePublishRtpEnabled,
-      elements.streamTranscodePublishRtpProfile, elements.streamTranscodePublishRtpUrl);
-    validatePush('RTMP publish', elements.streamTranscodePublishRtmpEnabled,
-      elements.streamTranscodePublishRtmpProfile, elements.streamTranscodePublishRtmpUrl);
-    validatePush('RTSP publish', elements.streamTranscodePublishRtspEnabled,
-      elements.streamTranscodePublishRtspProfile, elements.streamTranscodePublishRtspUrl);
+    const pushTargets = Array.isArray(state.transcodePublishTargets) ? state.transcodePublishTargets : [];
+    pushTargets.forEach((target, index) => {
+      if (!target) return;
+      const label = `${String(target.type || '').toUpperCase() || 'PUBLISH'} target #${index + 1}`;
+      const profile = String(target.profile || '').trim();
+      const url = String(target.url || '').trim();
+      if (!profile) {
+        throw new Error(`${label}: profile is required (Transcode tab)`);
+      }
+      if (!isValidProfileId(profile)) {
+        throw new Error(`${label}: invalid profile id "${profile}" (Transcode tab)`);
+      }
+      if (!profileIds.has(profile)) {
+        throw new Error(`${label}: unknown profile id "${profile}" (Transcode tab)`);
+      }
+      if (!url) {
+        throw new Error(`${label}: url is required (Transcode tab)`);
+      }
+    });
 
     const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
       'Publish targets (Transcode tab)');
@@ -21255,64 +21334,55 @@ function bindEvents() {
       syncTranscodeLadderPublishJsonFromCommonUi();
     });
   }
-  if (elements.streamTranscodePublishUdpEnabled) {
-    elements.streamTranscodePublishUdpEnabled.addEventListener('change', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
+  if (elements.btnAddTranscodePublishTarget) {
+    elements.btnAddTranscodePublishTarget.addEventListener('click', () => {
+      openTranscodePublishTargetModal({ type: 'udp', enabled: true }, null);
     });
   }
-  if (elements.streamTranscodePublishUdpProfile) {
-    elements.streamTranscodePublishUdpProfile.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
+  if (elements.transcodePublishTargetList) {
+    elements.transcodePublishTargetList.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-action]');
+      if (!btn) return;
+      const row = btn.closest('.transcode-publish-target-row');
+      if (!row) return;
+      const idx = Number(row.dataset.index);
+      if (Number.isNaN(idx)) return;
+      const target = state.transcodePublishTargets[idx];
+      const action = btn.dataset.action;
+      if (action === 'transcode-publish-target-edit') {
+        openTranscodePublishTargetModal(target, idx);
+      } else if (action === 'transcode-publish-target-remove') {
+        state.transcodePublishTargets.splice(idx, 1);
+        renderTranscodePublishTargetList();
+        syncTranscodeLadderPublishJsonFromCommonUi();
+      }
     });
   }
-  if (elements.streamTranscodePublishUdpUrl) {
-    elements.streamTranscodePublishUdpUrl.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
+  if (elements.transcodePublishTargetClose) {
+    elements.transcodePublishTargetClose.addEventListener('click', closeTranscodePublishTargetModal);
   }
-  if (elements.streamTranscodePublishRtpEnabled) {
-    elements.streamTranscodePublishRtpEnabled.addEventListener('change', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
+  if (elements.transcodePublishTargetCancel) {
+    elements.transcodePublishTargetCancel.addEventListener('click', closeTranscodePublishTargetModal);
   }
-  if (elements.streamTranscodePublishRtpProfile) {
-    elements.streamTranscodePublishRtpProfile.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtpUrl) {
-    elements.streamTranscodePublishRtpUrl.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtmpEnabled) {
-    elements.streamTranscodePublishRtmpEnabled.addEventListener('change', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtmpProfile) {
-    elements.streamTranscodePublishRtmpProfile.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtmpUrl) {
-    elements.streamTranscodePublishRtmpUrl.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtspEnabled) {
-    elements.streamTranscodePublishRtspEnabled.addEventListener('change', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtspProfile) {
-    elements.streamTranscodePublishRtspProfile.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
-    });
-  }
-  if (elements.streamTranscodePublishRtspUrl) {
-    elements.streamTranscodePublishRtspUrl.addEventListener('input', () => {
-      syncTranscodeLadderPublishJsonFromCommonUi();
+  if (elements.transcodePublishTargetForm) {
+    elements.transcodePublishTargetForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      try {
+        const target = readTranscodePublishTargetForm();
+        const idx = state.transcodePublishTargetEditingIndex;
+        if (idx === null || idx === undefined) {
+          state.transcodePublishTargets.push(target);
+        } else {
+          state.transcodePublishTargets[idx] = target;
+        }
+        renderTranscodePublishTargetList();
+        syncTranscodeLadderPublishJsonFromCommonUi();
+        closeTranscodePublishTargetModal();
+      } catch (err) {
+        if (elements.transcodePublishTargetError) {
+          elements.transcodePublishTargetError.textContent = err.message || String(err);
+        }
+      }
     });
   }
   if (elements.streamTranscodePublishJson) {

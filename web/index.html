@@ -2248,58 +2248,12 @@
 	            <details class="fold">
 	              <summary class="fold-summary">Push targets</summary>
 	              <div class="fold-body">
-	                <div class="form-grid">
-	                  <label class="checkline span-3">
-	                    <input type="checkbox" id="stream-transcode-publish-udp-enabled" />
-	                    <span>UDP</span>
-	                  </label>
-	                  <label class="field span-3">
-	                    <span>Profile</span>
-	                    <input type="text" id="stream-transcode-publish-udp-profile" placeholder="HDHigh" />
-	                  </label>
-	                  <label class="field span-6">
-	                    <span>URL</span>
-	                    <input type="text" id="stream-transcode-publish-udp-url" placeholder="udp://239.0.0.1:1234" />
-	                  </label>
-
-	                  <label class="checkline span-3">
-	                    <input type="checkbox" id="stream-transcode-publish-rtp-enabled" />
-	                    <span>RTP</span>
-	                  </label>
-	                  <label class="field span-3">
-	                    <span>Profile</span>
-	                    <input type="text" id="stream-transcode-publish-rtp-profile" placeholder="HDHigh" />
-	                  </label>
-	                  <label class="field span-6">
-	                    <span>URL</span>
-	                    <input type="text" id="stream-transcode-publish-rtp-url" placeholder="rtp://239.0.0.1:1234" />
-	                  </label>
-
-	                  <label class="checkline span-3">
-	                    <input type="checkbox" id="stream-transcode-publish-rtmp-enabled" />
-	                    <span>RTMP</span>
-	                  </label>
-	                  <label class="field span-3">
-	                    <span>Profile</span>
-	                    <input type="text" id="stream-transcode-publish-rtmp-profile" placeholder="HDHigh" />
-	                  </label>
-	                  <label class="field span-6">
-	                    <span>URL</span>
-	                    <input type="text" id="stream-transcode-publish-rtmp-url" placeholder="rtmp://example/app/stream" />
-	                  </label>
-
-	                  <label class="checkline span-3">
-	                    <input type="checkbox" id="stream-transcode-publish-rtsp-enabled" />
-	                    <span>RTSP</span>
-	                  </label>
-	                  <label class="field span-3">
-	                    <span>Profile</span>
-	                    <input type="text" id="stream-transcode-publish-rtsp-profile" placeholder="HDHigh" />
-	                  </label>
-	                  <label class="field span-6">
-	                    <span>URL</span>
-	                    <input type="text" id="stream-transcode-publish-rtsp-url" placeholder="rtsp://example/live/stream" />
-	                  </label>
+	                <div class="list-block" id="stream-transcode-publish-targets-block">
+	                  <div class="list-header">
+	                    <span>PUBLISH TARGETS</span>
+	                    <button class="text-link" type="button" id="btn-add-transcode-publish-target">ADD TARGET</button>
+	                  </div>
+	                  <div class="list" id="transcode-publish-target-list"></div>
 	                </div>
 	              </div>
 	            </details>
@@ -3080,6 +3034,48 @@
         <div class="modal-footer">
           <button class="btn" type="submit" id="transcode-monitor-save">OK</button>
           <button class="btn ghost" type="button" id="transcode-monitor-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="transcode-publish-target-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="transcode-publish-target-title">Publish target</div>
+        <button class="icon-btn" id="transcode-publish-target-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="transcode-publish-target-form">
+        <div class="modal-body-scroll">
+          <label class="field">
+            <span>Type</span>
+            <select id="transcode-publish-target-type">
+              <option value="udp">UDP</option>
+              <option value="rtp">RTP</option>
+              <option value="rtmp">RTMP</option>
+              <option value="rtsp">RTSP</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Profile</span>
+            <input type="text" id="transcode-publish-target-profile" placeholder="HDHigh" />
+          </label>
+          <label class="field">
+            <span>URL</span>
+            <input type="text" id="transcode-publish-target-url" placeholder="udp://239.0.0.1:1234" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="transcode-publish-target-enabled" />
+            <span>Enabled</span>
+          </label>
+        </div>
+
+        <div class="form-note" id="transcode-publish-target-error"></div>
+        <div class="modal-footer">
+          <button class="btn" type="submit" id="transcode-publish-target-save">OK</button>
+          <button class="btn ghost" type="button" id="transcode-publish-target-cancel">Cancel</button>
         </div>
       </form>
     </div>
