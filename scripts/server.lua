@@ -1160,7 +1160,9 @@ function main()
     local http_play_playlist_name = setting_string("http_play_playlist_name", "playlist.m3u8")
     local http_play_arrange = setting_string("http_play_arrange", "tv")
     local http_play_buffer_kb = setting_number("http_play_buffer_kb", 4000)
-    local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 128)
+    -- Smaller fill reduces "bursty" /play delivery and prevents long idle gaps that can cause
+    -- downstream HTTP clients (ffmpeg/Astra http input) to time out.
+    local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 32)
     local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 512)
     local http_play_m3u_header = setting_string("http_play_m3u_header", "")
     local http_play_xspf_title = setting_string("http_play_xspf_title", "Playlist")
