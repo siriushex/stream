@@ -190,8 +190,11 @@ assert isinstance(cam, dict), "cam stats missing (newcamd:stats() not available?
 required=["ready","status","host","port","timeout_ms","caid","ua","queue_len","in_flight","reconnects","timeouts"]
 missing=[k for k in required if k not in cam]
 assert not missing, f"missing cam fields: {missing}"
+
+# Pool metadata should be present when split_cam_pool_size > 1.
+assert "pool_index" in cam and "pool_size" in cam, "missing pool_index/pool_size"
+assert int(cam.get("pool_size") or 0) == int(${POOL_SIZE}), f"pool_size mismatch: {cam.get('pool_size')}"
 print("OK")
 PY
 
 echo "OK: CAM stats smoke passed (port=${PORT})." >&2
-
