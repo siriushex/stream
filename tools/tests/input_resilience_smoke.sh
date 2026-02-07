@@ -84,17 +84,27 @@ EOF
   ASTRA_PID=$!
 
   for _ in $(seq 1 50); do
-    if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/api/v1/stream-status/res_http_default" >/dev/null 2>&1; then
+    if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/index.html" >/dev/null 2>&1; then
       break
     fi
     sleep 0.2
   done
 
+  TOKEN="$(
+    curl -fsS -X POST "http://127.0.0.1:${ASTRA_PORT}/api/v1/auth/login" \
+      -H 'Content-Type: application/json' \
+      --data-binary '{"username":"admin","password":"admin"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'
+  )"
+
   echo "Checking stream-status fields..."
   curl -fsS "http://127.0.0.1:${ASTRA_PORT}/api/v1/stream-status/res_http_default" \
+    -H "Authorization: Bearer ${TOKEN}" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); i=(d.get("inputs") or [{}])[0]; assert i.get("resilience_enabled") in (False,None); print("res_http_default: OK")'
   curl -fsS "http://127.0.0.1:${ASTRA_PORT}/api/v1/stream-status/res_http_bad" \
+    -H "Authorization: Bearer ${TOKEN}" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); i=(d.get("inputs") or [{}])[0]; assert i.get("resilience_enabled") is True; assert i.get("net_profile_effective") == "bad"; print("res_http_bad: OK")'
   curl -fsS "http://127.0.0.1:${ASTRA_PORT}/api/v1/stream-status/res_hls_wan" \
+    -H "Authorization: Bearer ${TOKEN}" \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); i=(d.get("inputs") or [{}])[0]; assert i.get("resilience_enabled") is True; assert i.get("net_profile_effective") == "wan"; print("res_hls_wan: OK")'
 fi

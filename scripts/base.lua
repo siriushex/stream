@@ -2347,6 +2347,11 @@ local function hls_mark_ok(instance)
     hls_emit_stats(instance)
 end
 
+-- Forward-declared because it's used inside hls_start_next_segment() callback.
+-- Lua "local function ..." is not hoisted, so declaring this later would make the callback
+-- call a global (nil) symbol and crash at runtime.
+local hls_schedule_segment_retry
+
 local function hls_start_next_segment(instance)
     if instance.segment_request or #instance.queue == 0 then
         return
@@ -2497,7 +2502,7 @@ local function hls_schedule_backoff(instance, reason)
     hls_schedule_refresh(instance, math.max(1, math.floor(delay_ms / 1000)))
 end
 
-local function hls_schedule_segment_retry(instance, delay_ms)
+hls_schedule_segment_retry = function(instance, delay_ms)
     if instance.segment_retry_timer then
         instance.segment_retry_timer:close()
         instance.segment_retry_timer = nil
