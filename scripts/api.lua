@@ -2207,12 +2207,13 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     -- This avoids SSRF/allowlist problems for remote inputs and works for stream:// sources.
     local entry = runtime and runtime.streams and runtime.streams[tostring(stream_id)] or nil
     local channel_data = entry and entry.channel or nil
-    local can_tail = channel_data and channel_data.tail or nil
     local active_id = channel_data and tonumber(channel_data.active_input_id or 0) or 0
     -- stream.lua экспортирует удержание канала как _G.channel_retain/_G.channel_release
     -- (локальные channel_retain/channel_release не видны отсюда).
     -- Если retain недоступен, но канал уже активен (active_input_id!=0) - можем анализировать без удержания.
-    local can_attach_live = can_tail and ((_G.channel_retain and _G.channel_release) or active_id ~= 0)
+    local can_retain = (channel_data and _G.channel_retain and _G.channel_release) and true or false
+    local can_tail = channel_data and channel_data.tail or nil
+    local can_attach_live = can_tail and (can_retain or active_id ~= 0)
 
     if not can_attach_live and not input_url then
         return error_response(server, client, 400, input_err or "input url not found")
@@ -2244,9 +2245,23 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     local analyze_name = "stream-analyze-" .. tostring(stream_id)
     local upstream = nil
 
+    -- If the stream exists in runtime but is idle, channel_data.tail can be nil until we activate inputs.
+    -- Try to retain first (when available) to bring the pipeline up, then re-check tail.
+    if channel_data and can_retain and not can_tail then
+        job.channel_data = channel_data
+        local ok, retained = pcall(_G.channel_retain, channel_data, "analyze")
+        if ok and retained then
+            job.retained = true
+        end
+        can_tail = channel_data.tail
+        if can_tail then
+            can_attach_live = true
+        end
+    end
+
     if can_attach_live then
         job.channel_data = channel_data
-        if _G.channel_retain then
+        if can_retain and not job.retained then
             local ok, retained = pcall(_G.channel_retain, channel_data, "analyze")
             if ok and retained then
                 job.retained = true
