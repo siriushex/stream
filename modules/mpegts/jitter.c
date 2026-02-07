@@ -150,15 +150,15 @@ static void module_init(module_data_t *mod)
 {
     module_stream_init(mod, on_ts);
 
-    double value = 0;
+    int value = 0;
     if(module_option_number("jitter_buffer_ms", &value) && value > 0)
         mod->config.jitter_ms = (uint32_t)value;
     else
         mod->config.jitter_ms = 0;
 
-    double max_mb = 0;
+    int max_mb = 0;
     if(module_option_number("max_buffer_mb", &max_mb) && max_mb > 0)
-        mod->config.max_buffer_bytes = (size_t)(max_mb * 1024.0 * 1024.0);
+        mod->config.max_buffer_bytes = (size_t)max_mb * (size_t)1024 * (size_t)1024;
     else
         mod->config.max_buffer_bytes = (size_t)(4 * 1024 * 1024);
 

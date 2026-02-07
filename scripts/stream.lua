@@ -291,6 +291,9 @@ end
 local warned_disk_hls_storage = false
 
 local function ensure_auto_hls_output(channel_config)
+    if channel_config and channel_config.__disable_auto_hls then
+        return
+    end
     if not setting_bool("http_play_hls", false) then
         return
     end

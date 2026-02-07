@@ -3746,6 +3746,12 @@ details.fold[open] > .fold-summary::after {
   color: var(--muted);
 }
 
+.input-status-extra {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 .code-block {
   background: #22262c;
   border-radius: 4px;
