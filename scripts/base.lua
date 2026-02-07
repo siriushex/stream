@@ -702,16 +702,50 @@ function init_input(conf)
             local cam_for_decrypt = cam
             local opts = type(cam) == "table" and cam.__options or nil
             local split_cam = opts and (opts.split_cam == true or opts.split_cam == 1 or opts.split_cam == "1")
-            if split_cam and type(cam.clone) == "function" and not (opts and opts.is_clone) then
+
+            -- Save for API diagnostics.
+            instance.__softcam_instance = cam
+            if type(conf.cam) ~= "table" then
+                instance.__softcam_id = tostring(conf.cam)
+            end
+
+            if split_cam and not (opts and opts.is_clone) then
                 local tag = conf.id or conf.name or tostring(conf.pnr or "")
-                local ok, cam2 = pcall(function()
-                    return cam:clone(tag)
-                end)
-                if ok and cam2 then
-                    instance.__softcam_clone = cam2
-                    cam_for_decrypt = cam2
-                else
-                    log.error("[" .. conf.name .. "] split_cam clone failed, using shared cam")
+
+                -- Optional pool mode: limit number of newcamd connections while still reducing HOL blocking.
+                local pool_size = 0
+                if opts then
+                    if type(opts.raw_cfg) == "table" and opts.raw_cfg.split_cam_pool_size ~= nil then
+                        pool_size = tonumber(opts.raw_cfg.split_cam_pool_size) or 0
+                    else
+                        pool_size = tonumber(opts.split_cam_pool_size) or 0
+                    end
+                end
+
+                if pool_size > 1 and type(cam.get_pool) == "function" then
+                    local ok, cam2 = pcall(function()
+                        return cam:get_pool(tag)
+                    end)
+                    if ok and cam2 then
+                        instance.__softcam_clone = cam2
+                        instance.__softcam_clone_pooled = true
+                        cam_for_decrypt = cam2
+                    else
+                        log.error("[" .. conf.name .. "] split_cam pool failed, falling back to clone/shared cam")
+                    end
+                end
+
+                if cam_for_decrypt == cam and type(cam.clone) == "function" then
+                    local ok, cam2 = pcall(function()
+                        return cam:clone(tag)
+                    end)
+                    if ok and cam2 then
+                        instance.__softcam_clone = cam2
+                        instance.__softcam_clone_pooled = false
+                        cam_for_decrypt = cam2
+                    else
+                        log.error("[" .. conf.name .. "] split_cam clone failed, using shared cam")
+                    end
                 end
             end
 
@@ -766,11 +800,16 @@ function kill_input(instance)
 
     if instance.__softcam_clone then
         local cam = instance.__softcam_clone
+        local pooled = instance.__softcam_clone_pooled
         instance.__softcam_clone = nil
-        if cam.close then
+        instance.__softcam_clone_pooled = nil
+        -- Pooled split_cam clones are shared; they must be closed on softcam reload, not per-stream stop.
+        if not pooled and cam.close then
             pcall(function() cam:close() end)
         end
     end
+    instance.__softcam_instance = nil
+    instance.__softcam_id = nil
 end
 
 local function append_bridge_args(args, extra)

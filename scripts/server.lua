@@ -258,6 +258,15 @@ local function close_softcam_list(list)
     for _, cam in ipairs(list) do
         if type(cam) == "table" then
             local opts = cam.__options or {}
+            -- Close pooled split_cam clones (they are not in softcam_list).
+            if type(opts.pool_clones) == "table" then
+                for _, clone in pairs(opts.pool_clones) do
+                    if type(clone) == "table" and clone.close then
+                        pcall(function() clone:close() end)
+                    end
+                end
+                opts.pool_clones = nil
+            end
             if opts.id then
                 _G[tostring(opts.id)] = nil
             end
@@ -302,6 +311,7 @@ local function softcam_clone(self, tag)
 
     -- Prevent accidental recursive splitting if a clone is re-used as a base cam.
     cfg.split_cam = false
+    cfg.split_cam_pool_size = 0
 
     local base_name = cfg.name or (opts and opts.id) or raw.id or "softcam"
     cfg.name = tostring(base_name) .. "@" .. tostring(tag or "clone")
@@ -321,9 +331,56 @@ local function softcam_clone(self, tag)
     instance.__options.raw_cfg = cfg
     instance.__options.type = cam_type
     instance.__options.split_cam = false
+    instance.__options.split_cam_pool_size = 0
     instance.__options.is_clone = true
     instance.clone = softcam_clone
     return instance
+end
+
+local function softcam_hash(text)
+    -- Deterministic, stable hash without bitops (Lua numbers).
+    local s = tostring(text or "")
+    local h = 5381
+    for i = 1, #s do
+        h = (h * 33 + string.byte(s, i)) % 2147483647
+    end
+    return h
+end
+
+local function softcam_get_pool(self, tag)
+    local opts = type(self) == "table" and self.__options or nil
+    local raw = opts and opts.raw_cfg or nil
+    if type(raw) ~= "table" then
+        return nil, "missing raw_cfg"
+    end
+
+    local size = tonumber(raw.split_cam_pool_size or (opts and opts.split_cam_pool_size) or 0) or 0
+    if size <= 1 then
+        return nil, "pool disabled"
+    end
+    -- Safety cap: avoid accidental huge pools on misconfig.
+    if size > 64 then
+        size = 64
+    end
+
+    opts.split_cam_pool_size = size
+    opts.pool_clones = opts.pool_clones or {}
+
+    local idx = (softcam_hash(tag or "") % size) + 1
+    local existing = opts.pool_clones[idx]
+    if type(existing) == "table" and existing.cam then
+        return existing
+    end
+
+    local clone, err = softcam_clone(self, "pool" .. tostring(idx))
+    if not clone then
+        return nil, err
+    end
+    clone.__options = clone.__options or {}
+    clone.__options.is_pool_clone = true
+    clone.__options.pool_index = idx
+    opts.pool_clones[idx] = clone
+    return clone
 end
 
 function apply_softcam_settings()
@@ -353,8 +410,10 @@ function apply_softcam_settings()
                             instance.__options.id = instance.__options.id or id
                             instance.__options.type = entry.type
                             instance.__options.split_cam = softcam_is_truthy(entry.split_cam)
+                            instance.__options.split_cam_pool_size = tonumber(entry.split_cam_pool_size) or 0
                             instance.__options.raw_cfg = softcam_shallow_copy(entry)
                             instance.clone = softcam_clone
+                            instance.get_pool = softcam_get_pool
                             _G[tostring(id)] = instance
                         end
                     else
