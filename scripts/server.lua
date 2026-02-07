@@ -1978,21 +1978,20 @@ function main()
             end
 
             local entry = runtime.streams[stream_id]
-            if not entry then
-                server:abort(client, 404)
-                return nil
+            local channel = entry and entry.channel or nil
+            local job = entry and entry.job or nil
+            if not job and transcode and transcode.jobs then
+                job = transcode.jobs[stream_id]
             end
-
-            local channel = entry.channel
-            if not channel and entry.job then
+            if not channel and job then
                 local n = loop_input_id or 1
                 if transcode and transcode.ensure_loop_channel then
-                    pcall(transcode.ensure_loop_channel, entry.job, n)
+                    pcall(transcode.ensure_loop_channel, job, n)
                 end
-                if entry.job.loop_channels and entry.job.loop_channels[n] then
-                    channel = entry.job.loop_channels[n]
-                elseif entry.job.loop_channel then
-                    channel = entry.job.loop_channel
+                if job.loop_channels and job.loop_channels[n] then
+                    channel = job.loop_channels[n]
+                elseif job.loop_channel then
+                    channel = job.loop_channel
                 end
             end
             if not channel then
