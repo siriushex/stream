@@ -25,6 +25,7 @@ local STDERR_TAIL_MAX = 200
 local WARMUP_STDERR_MAX = 30
 local WARMUP_TIMEOUT_EXTRA = 2
 local TRANSCODE_PLAY_BUFFER_KB_DEFAULT = 512
+local TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT = 16
 
 local function normalize_stream_type(cfg)
     local t = cfg and cfg.type
@@ -150,6 +151,21 @@ local function append_play_buffer(url, buffer_kb)
         return url
     end
     local suffix = "buf_kb=" .. tostring(math.floor(value))
+    if tostring(url):find("?", 1, true) then
+        return tostring(url) .. "&" .. suffix
+    end
+    return tostring(url) .. "?" .. suffix
+end
+
+local function append_play_buffer_fill(url, fill_kb)
+    if not url or url == "" then
+        return url
+    end
+    local value = tonumber(fill_kb)
+    if not value or value <= 0 then
+        return url
+    end
+    local suffix = "buf_fill_kb=" .. tostring(math.floor(value))
     if tostring(url):find("?", 1, true) then
         return tostring(url) .. "&" .. suffix
     end
@@ -323,6 +339,18 @@ local function extract_play_id_from_input(entry)
     if id and id ~= "" then
         return id
     end
+    -- Accept explicit /play/<id> URLs as stream references (normalize to loopback /play later).
+    -- This avoids accidentally pulling from an external host when a user pasted the public /play URL.
+    local play_id = text:match("^https?://[^/]+/play/([^?#/]+)") or text:match("^https?://[^/]+/stream/([^?#/]+)")
+    if not play_id then
+        play_id = text:match("^/play/([^?#/]+)") or text:match("^/stream/([^?#/]+)")
+    end
+    if play_id == "playlist.m3u8" or play_id == "playlist.xspf" then
+        play_id = nil
+    end
+    if play_id and play_id ~= "" then
+        return play_id
+    end
     if not text:find("://", 1, true) then
         return text
     end
@@ -341,12 +369,20 @@ local function resolve_job_input_url(job)
     local tc = job.config.transcode or {}
     local use_play = normalize_bool(tc.input_use_play, true)
     local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
+    local has_play_buffer_fill = tc.input_play_buffer_fill_kb ~= nil or tc.play_buffer_fill_kb ~= nil
     local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
     if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
         play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
     end
+    local play_buffer_fill_kb = resolve_play_buffer_kb(tc.input_play_buffer_fill_kb)
+    if play_buffer_fill_kb == nil and tc.input_play_buffer_fill_kb == nil then
+        play_buffer_fill_kb = resolve_play_buffer_kb(tc.play_buffer_fill_kb)
+    end
     if not has_play_buffer then
         play_buffer_kb = TRANSCODE_PLAY_BUFFER_KB_DEFAULT
+    end
+    if not has_play_buffer_fill then
+        play_buffer_fill_kb = TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT
     end
     local play_url = nil
     if use_play then
@@ -356,6 +392,7 @@ local function resolve_job_input_url(job)
         end
         if play_url then
             play_url = append_play_buffer(play_url, play_buffer_kb)
+            play_url = append_play_buffer_fill(play_url, play_buffer_fill_kb)
             return play_url
         end
         log.warning("[transcode " .. tostring(job.id) .. "] play input unavailable; using configured input")
@@ -1266,17 +1303,29 @@ local function build_failover_inputs(cfg, label)
         -- Failover probes must be able to read stream refs ("stream://id") because ladder mode uses /play fanout.
         -- Convert stream refs to an internal /play URL so init_input_module + warmup/compat probes keep working.
         local probe_url = source_url
+        local probe_is_play = false
         do
             local play_id = extract_play_id_from_input(entry)
             if play_id then
                 local play_url = build_transcode_play_url(play_id)
                 if play_url and play_url ~= "" then
                     probe_url = play_url
+                    probe_is_play = true
                 end
             end
         end
 
         local parsed = probe_url and parse_url(probe_url) or nil
+        if parsed and probe_is_play then
+            -- Failover probes use /play fanout (burst delivery). http input defaults /play to sync=1,
+            -- which is good for stability, but the default sync buffer (1MB) adds a long startup delay
+            -- on low-bitrate streams (buffer must fill before PCR-paced output starts).
+            -- Keep sync enabled, but shrink buffer_size so probes become "on_air" quickly and don't
+            -- trigger no_data_timeout during normal startup.
+            if parsed.buffer_size == nil then
+                parsed.buffer_size = 64 -- KB
+            end
+        end
         if not parsed or not parsed.format or not init_input_module or not init_input_module[parsed.format] then
             invalid = true
         end
@@ -4762,6 +4811,52 @@ local function ensure_ladder_publish(job)
     end
 end
 
+local function mark_publish_hls_discontinuity(job, profile_ids)
+    if not job or type(job.publish_hls_outputs) ~= "table" then
+        return
+    end
+
+    local function mark(pid)
+        if not pid or pid == "" then
+            return
+        end
+        local out = job.publish_hls_outputs[pid]
+        if out and type(out.discontinuity) == "function" then
+            pcall(out.discontinuity, out)
+        end
+    end
+
+    if profile_ids == nil then
+        for pid, out in pairs(job.publish_hls_outputs) do
+            if out and type(out.discontinuity) == "function" then
+                pcall(out.discontinuity, out)
+            elseif pid and pid ~= "" then
+                mark(pid)
+            end
+        end
+        return
+    end
+
+    if type(profile_ids) == "string" then
+        mark(profile_ids)
+        return
+    end
+
+    if type(profile_ids) ~= "table" then
+        return
+    end
+
+    if #profile_ids > 0 then
+        for _, pid in ipairs(profile_ids) do
+            mark(pid)
+        end
+    else
+        for pid in pairs(profile_ids) do
+            mark(pid)
+        end
+    end
+end
+
 local function reset_publish_runtime(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
@@ -5815,6 +5910,9 @@ tick_worker = function(job, worker, now)
                         worker.last_cutover.sender = sender
                     end
 
+                    -- HLS playlists need a discontinuity marker when we switch encoders/senders.
+                    mark_publish_hls_discontinuity(job, worker.profile_id)
+
                     if worker.proc then
                         worker.retire = {
                             proc = worker.proc,
@@ -6113,6 +6211,9 @@ tick_ladder_encoder = function(job, now)
                         switched_at = now,
                         profiles = senders_by_profile,
                     }
+
+                    -- HLS playlists need a discontinuity marker when we switch encoders/senders.
+                    mark_publish_hls_discontinuity(job, senders_by_profile)
 
                     if worker.proc then
                         worker.retire = {
@@ -6884,10 +6985,26 @@ function transcode.get_status(id)
                         state = "ERROR"
                     end
                     local variant_urls = {}
+                    local variant_stats = {}
+                    local segments_total = 0
+                    local active_variants = 0
                     for _, pid in ipairs(variants) do
                         local u = build_public_hls_variant_path(job.id, pid)
                         if u then
                             variant_urls[pid] = u
+                        end
+                        local out = job.publish_hls_outputs and job.publish_hls_outputs[pid] or nil
+                        if out and type(out.stats) == "function" then
+                            local ok_stats, stats = pcall(out.stats, out)
+                            if ok_stats and type(stats) == "table" then
+                                variant_stats[pid] = stats
+                                if type(stats.current_segments) == "number" then
+                                    segments_total = segments_total + stats.current_segments
+                                end
+                                if stats.active == true then
+                                    active_variants = active_variants + 1
+                                end
+                            end
                         end
                     end
                     push({
@@ -6897,6 +7014,9 @@ function transcode.get_status(id)
                         url = build_public_hls_master_path(job.id),
                         variants = variants,
                         variant_urls = variant_urls,
+                        variant_stats = next(variant_stats) and variant_stats or nil,
+                        segments_total = segments_total > 0 and segments_total or nil,
+                        active_variants = active_variants > 0 and active_variants or nil,
                         state = state,
                     })
                 elseif t == "http-ts" then
@@ -6913,11 +7033,17 @@ function transcode.get_status(id)
                         end
                     end
                     for _, pid in ipairs(ids) do
+                        local stats = job.publish_live_stats and job.publish_live_stats[pid] or nil
                         push({
                             type = "http-ts",
                             enabled = enabled,
                             profile_id = pid,
                             url = build_public_live_path(job.id, pid),
+                            clients = stats and stats.clients or nil,
+                            internal_clients = stats and stats.internal_clients or nil,
+                            requests_total = stats and stats.requests_total or nil,
+                            last_request_ts = stats and stats.last_request_ts or nil,
+                            last_disconnect_ts = stats and stats.last_disconnect_ts or nil,
                             state = enabled and "AVAILABLE" or "STOPPED",
                         })
                     end

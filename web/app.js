@@ -185,6 +185,10 @@ const state = {
   transcodeOutputs: [],
   transcodeOutputEditingIndex: null,
   transcodeOutputMonitorIndex: null,
+  transcodePublishTargets: [],
+  transcodePublishTargetEditingIndex: null,
+  transcodeProfiles: [],
+  transcodeProfileEditingIndex: null,
   transcodeWatchdogDefaults: null,
   inputs: [],
   mptsServices: [],
@@ -863,7 +867,29 @@ const elements = {
   streamTranscodeLadderPreset2: $('#stream-transcode-ladder-preset-2'),
   streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
   streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
+  streamTranscodePublishHlsEnabled: $('#stream-transcode-publish-hls-enabled'),
+  streamTranscodePublishHlsVariants: $('#stream-transcode-publish-hls-variants'),
+  streamTranscodePublishDashEnabled: $('#stream-transcode-publish-dash-enabled'),
+  streamTranscodePublishDashVariants: $('#stream-transcode-publish-dash-variants'),
+  streamTranscodePublishHttpTsEnabled: $('#stream-transcode-publish-http-ts-enabled'),
+  streamTranscodePublishHttpTsVariants: $('#stream-transcode-publish-http-ts-variants'),
+  streamTranscodePublishEmbedEnabled: $('#stream-transcode-publish-embed-enabled'),
+  transcodePublishTargetList: $('#transcode-publish-target-list'),
+  btnAddTranscodePublishTarget: $('#btn-add-transcode-publish-target'),
+  transcodePublishTargetOverlay: $('#transcode-publish-target-overlay'),
+  transcodePublishTargetForm: $('#transcode-publish-target-form'),
+  transcodePublishTargetTitle: $('#transcode-publish-target-title'),
+  transcodePublishTargetClose: $('#transcode-publish-target-close'),
+  transcodePublishTargetCancel: $('#transcode-publish-target-cancel'),
+  transcodePublishTargetSave: $('#transcode-publish-target-save'),
+  transcodePublishTargetType: $('#transcode-publish-target-type'),
+  transcodePublishTargetProfile: $('#transcode-publish-target-profile'),
+  transcodePublishTargetUrl: $('#transcode-publish-target-url'),
+  transcodePublishTargetEnabled: $('#transcode-publish-target-enabled'),
+  transcodePublishTargetError: $('#transcode-publish-target-error'),
   streamTranscodePublishJson: $('#stream-transcode-publish-json'),
+  streamTranscodeLadderLinksFold: $('#stream-transcode-ladder-links-fold'),
+  streamTranscodeLadderLinks: $('#stream-transcode-ladder-links'),
   streamTranscodePreset: $('#stream-transcode-preset'),
   streamTranscodePresetApply: $('#stream-transcode-preset-apply'),
   streamTranscodeInputUrl: $('#stream-transcode-input-url'),
@@ -895,6 +921,27 @@ const elements = {
   transcodeOutputFormatArgs: $('#transcode-output-format-args'),
   transcodeOutputMetadata: $('#transcode-output-metadata'),
   transcodeOutputError: $('#transcode-output-error'),
+  transcodeProfileList: $('#transcode-profile-list'),
+  btnAddTranscodeProfile: $('#btn-add-transcode-profile'),
+  transcodeProfileOverlay: $('#transcode-profile-overlay'),
+  transcodeProfileForm: $('#transcode-profile-form'),
+  transcodeProfileTitle: $('#transcode-profile-title'),
+  transcodeProfileClose: $('#transcode-profile-close'),
+  transcodeProfileCancel: $('#transcode-profile-cancel'),
+  transcodeProfileSave: $('#transcode-profile-save'),
+  transcodeProfileId: $('#transcode-profile-id'),
+  transcodeProfileName: $('#transcode-profile-name'),
+  transcodeProfileFps: $('#transcode-profile-fps'),
+  transcodeProfileWidth: $('#transcode-profile-width'),
+  transcodeProfileHeight: $('#transcode-profile-height'),
+  transcodeProfileBitrate: $('#transcode-profile-bitrate'),
+  transcodeProfileMaxrate: $('#transcode-profile-maxrate'),
+  transcodeProfileAudioMode: $('#transcode-profile-audio-mode'),
+  transcodeProfileAudioBitrate: $('#transcode-profile-audio-bitrate'),
+  transcodeProfileAudioSr: $('#transcode-profile-audio-sr'),
+  transcodeProfileAudioChannels: $('#transcode-profile-audio-channels'),
+  transcodeProfileDeinterlace: $('#transcode-profile-deinterlace'),
+  transcodeProfileError: $('#transcode-profile-error'),
   transcodeMonitorOverlay: $('#transcode-monitor-overlay'),
   transcodeMonitorForm: $('#transcode-monitor-form'),
   transcodeMonitorTitle: $('#transcode-monitor-title'),
@@ -5866,16 +5913,296 @@ function getLadderPresetPublish(mode) {
   ];
 }
 
+function parseCsvIds(text) {
+  return String(text || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizePublishVariants(variants, profiles) {
+  if (variants.length) return variants;
+  return profiles.map((p) => String(p && p.id || '').trim()).filter(Boolean);
+}
+
+function isValidProfileId(value) {
+  if (!value) return false;
+  return /^[A-Za-z0-9_-]+$/.test(value);
+}
+
+function pickPublishEntry(publish, type) {
+  if (!Array.isArray(publish)) return null;
+  for (const entry of publish) {
+    if (entry && typeof entry === 'object' && entry.type === type) return entry;
+  }
+  return null;
+}
+
+function normalizePublishTargetList(publish) {
+  if (!Array.isArray(publish)) return [];
+  return publish
+    .filter((entry) => entry && typeof entry === 'object')
+    .filter((entry) => ['udp', 'rtp', 'rtmp', 'rtsp'].includes(String(entry.type || '').toLowerCase()))
+    .map((entry) => ({
+      type: String(entry.type || '').toLowerCase(),
+      enabled: entry.enabled !== false,
+      profile: entry.profile || '',
+      url: entry.url || '',
+    }));
+}
+
+function renderTranscodePublishTargetList() {
+  if (!elements.transcodePublishTargetList) return;
+  elements.transcodePublishTargetList.innerHTML = '';
+  if (!state.transcodePublishTargets || state.transcodePublishTargets.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No publish targets configured.';
+    elements.transcodePublishTargetList.appendChild(empty);
+    return;
+  }
+
+  state.transcodePublishTargets.forEach((target, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row transcode-publish-target-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const label = document.createElement('div');
+    label.className = 'list-input';
+    const type = (target.type || '').toUpperCase();
+    const profile = target.profile || 'profile?';
+    const url = target.url || 'url?';
+    label.textContent = `${type} · ${profile} · ${url}`;
+
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn';
+    edit.type = 'button';
+    edit.dataset.action = 'transcode-publish-target-edit';
+    edit.textContent = '...';
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'transcode-publish-target-remove';
+    remove.textContent = 'x';
+
+    row.appendChild(idx);
+    row.appendChild(label);
+    row.appendChild(edit);
+    row.appendChild(remove);
+
+    elements.transcodePublishTargetList.appendChild(row);
+  });
+}
+
+function closeTranscodePublishTargetModal() {
+  setOverlay(elements.transcodePublishTargetOverlay, false);
+  state.transcodePublishTargetEditingIndex = null;
+  if (elements.transcodePublishTargetError) {
+    elements.transcodePublishTargetError.textContent = '';
+  }
+}
+
+function openTranscodePublishTargetModal(target, index) {
+  if (!elements.transcodePublishTargetOverlay) return;
+  state.transcodePublishTargetEditingIndex = index;
+  if (elements.transcodePublishTargetTitle) {
+    elements.transcodePublishTargetTitle.textContent = target && target.type
+      ? `Publish ${String(target.type).toUpperCase()}`
+      : 'Publish target';
+  }
+  elements.transcodePublishTargetType.value = (target && target.type) || 'udp';
+  elements.transcodePublishTargetProfile.value = (target && target.profile) || '';
+  elements.transcodePublishTargetUrl.value = (target && target.url) || '';
+  elements.transcodePublishTargetEnabled.checked = !(target && target.enabled === false);
+  if (elements.transcodePublishTargetError) {
+    elements.transcodePublishTargetError.textContent = '';
+  }
+  setOverlay(elements.transcodePublishTargetOverlay, true);
+}
+
+function readTranscodePublishTargetForm() {
+  const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
+  const profile = String(elements.transcodePublishTargetProfile.value || '').trim();
+  const url = String(elements.transcodePublishTargetUrl.value || '').trim();
+  if (!['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
+    throw new Error('Publish type is invalid');
+  }
+  if (!profile) {
+    throw new Error('Profile is required');
+  }
+  if (!isValidProfileId(profile)) {
+    throw new Error('Profile id must be URL-safe (letters, numbers, _, -)');
+  }
+  if (!url) {
+    throw new Error('URL is required');
+  }
+  return {
+    type,
+    enabled: elements.transcodePublishTargetEnabled.checked,
+    profile,
+    url,
+  };
+}
+
+function syncTranscodeLadderPublishCommonUiFromJson() {
+  if (!elements.streamTranscodePublishJson) return;
+  if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
+  if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+  if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
+  if (!elements.streamTranscodePublishEmbedEnabled) return;
+  if (!elements.transcodePublishTargetList) return;
+
+  let publish = null;
+  try {
+    publish = parseJsonValue(elements.streamTranscodePublishJson.value, 'Publish targets (Transcode tab)');
+  } catch (_err) {
+    // Keep the UI state as-is when JSON is invalid.
+    return;
+  }
+  if (!Array.isArray(publish)) publish = [];
+
+  const hls = pickPublishEntry(publish, 'hls');
+  elements.streamTranscodePublishHlsEnabled.checked = Boolean(hls && hls.enabled !== false);
+  elements.streamTranscodePublishHlsVariants.value = (hls && Array.isArray(hls.variants)) ? hls.variants.join(',') : '';
+
+  const dash = pickPublishEntry(publish, 'dash');
+  elements.streamTranscodePublishDashEnabled.checked = Boolean(dash && dash.enabled !== false);
+  elements.streamTranscodePublishDashVariants.value = (dash && Array.isArray(dash.variants)) ? dash.variants.join(',') : '';
+
+  const httpTs = pickPublishEntry(publish, 'http-ts');
+  elements.streamTranscodePublishHttpTsEnabled.checked = Boolean(httpTs && httpTs.enabled !== false);
+  if (httpTs) {
+    const variants = Array.isArray(httpTs.variants) ? httpTs.variants
+      : (httpTs.profile ? [httpTs.profile] : []);
+    elements.streamTranscodePublishHttpTsVariants.value = variants.join(',');
+  } else {
+    elements.streamTranscodePublishHttpTsVariants.value = '';
+  }
+
+  const embed = pickPublishEntry(publish, 'embed');
+  elements.streamTranscodePublishEmbedEnabled.checked = Boolean(embed && embed.enabled !== false);
+  state.transcodePublishTargets = normalizePublishTargetList(publish);
+  renderTranscodePublishTargetList();
+}
+
+function syncTranscodeLadderPublishJsonFromCommonUi() {
+  if (!elements.streamTranscodePublishJson) return;
+  if (!elements.streamTranscodeProfilesJson) return;
+  if (!elements.streamTranscodePublishHlsEnabled || !elements.streamTranscodePublishHlsVariants) return;
+  if (!elements.streamTranscodePublishDashEnabled || !elements.streamTranscodePublishDashVariants) return;
+  if (!elements.streamTranscodePublishHttpTsEnabled || !elements.streamTranscodePublishHttpTsVariants) return;
+  if (!elements.streamTranscodePublishEmbedEnabled) return;
+  if (!elements.transcodePublishTargetList) return;
+
+  let current = null;
+  try {
+    current = parseJsonValue(elements.streamTranscodePublishJson.value, 'Publish targets (Transcode tab)');
+  } catch (_err) {
+    current = null;
+  }
+  if (!Array.isArray(current)) current = [];
+  const next = current.filter((entry) => entry && typeof entry === 'object');
+
+  let profiles = [];
+  try {
+    const parsed = parseJsonValue(elements.streamTranscodeProfilesJson.value, 'Profiles (Transcode tab)');
+    if (Array.isArray(parsed)) profiles = parsed;
+  } catch (_err) {}
+  const allProfileIds = profiles
+    .map((p) => String(p && p.id || '').trim())
+    .filter(Boolean);
+
+  const maybeVariants = (variantsText) => {
+    const ids = parseCsvIds(variantsText);
+    return normalizePublishVariants(ids, profiles);
+  };
+
+  const hlsVariants = maybeVariants(elements.streamTranscodePublishHlsVariants.value);
+  const hlsEnabled = elements.streamTranscodePublishHlsEnabled.checked;
+  const hls = pickPublishEntry(next, 'hls');
+  if (hls) {
+    hls.enabled = hlsEnabled;
+    hls.variants = hlsVariants;
+  } else if (hlsEnabled) {
+    next.push({ type: 'hls', enabled: true, variants: hlsVariants });
+  }
+
+  const dashVariants = maybeVariants(elements.streamTranscodePublishDashVariants.value);
+  const dashEnabled = elements.streamTranscodePublishDashEnabled.checked;
+  const dash = pickPublishEntry(next, 'dash');
+  if (dash) {
+    dash.enabled = dashEnabled;
+    dash.variants = dashVariants;
+  } else if (dashEnabled) {
+    next.push({ type: 'dash', enabled: true, variants: dashVariants });
+  }
+
+  const httpTsEnabled = elements.streamTranscodePublishHttpTsEnabled.checked;
+  const httpTs = pickPublishEntry(next, 'http-ts');
+  const httpTsVariants = parseCsvIds(elements.streamTranscodePublishHttpTsVariants.value);
+  if (httpTs) {
+    httpTs.enabled = httpTsEnabled;
+    if (httpTsVariants.length === 1) {
+      httpTs.profile = httpTsVariants[0];
+      delete httpTs.variants;
+    } else if (httpTsVariants.length > 1) {
+      httpTs.variants = httpTsVariants;
+      delete httpTs.profile;
+    } else {
+      delete httpTs.profile;
+      delete httpTs.variants;
+    }
+  } else if (httpTsEnabled) {
+    const entry = { type: 'http-ts', enabled: true };
+    if (httpTsVariants.length === 1) {
+      entry.profile = httpTsVariants[0];
+    } else if (httpTsVariants.length > 1) {
+      entry.variants = httpTsVariants;
+    }
+    next.push(entry);
+  }
+
+  const embedEnabled = elements.streamTranscodePublishEmbedEnabled.checked;
+  const embed = pickPublishEntry(next, 'embed');
+  if (embed) {
+    embed.enabled = embedEnabled;
+  } else if (embedEnabled) {
+    next.push({ type: 'embed', enabled: true });
+  }
+
+  const pushTargets = Array.isArray(state.transcodePublishTargets) ? state.transcodePublishTargets : [];
+  pushTargets.forEach((target) => {
+    if (!target || !target.type) return;
+    next.push({
+      type: target.type,
+      enabled: target.enabled !== false,
+      profile: target.profile,
+      url: target.url,
+    });
+  });
+
+  elements.streamTranscodePublishJson.value = next.length ? formatJson(next) : '';
+}
+
 function applyTranscodeLadderPreset(mode) {
   if (!elements.streamTranscodeLadderEnabled) return;
   elements.streamTranscodeLadderEnabled.checked = true;
   updateTranscodeLadderToggle();
+  const presetProfiles = getLadderPresetProfiles(mode);
   if (elements.streamTranscodeProfilesJson) {
-    elements.streamTranscodeProfilesJson.value = formatJson(getLadderPresetProfiles(mode));
+    elements.streamTranscodeProfilesJson.value = formatJson(presetProfiles);
   }
+  state.transcodeProfiles = presetProfiles;
+  renderTranscodeProfileList();
   if (elements.streamTranscodePublishJson) {
     elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
   }
+  syncTranscodeLadderPublishCommonUiFromJson();
 }
 
 function updateTranscodeLadderToggle() {
@@ -5887,6 +6214,80 @@ function updateTranscodeLadderToggle() {
   if (elements.streamTranscodeOutputsBlock) {
     elements.streamTranscodeOutputsBlock.hidden = enabled;
   }
+  if (!enabled) {
+    if (elements.transcodeProfileList) {
+      elements.transcodeProfileList.innerHTML = '';
+    }
+    state.transcodeProfiles = [];
+    if (elements.transcodePublishTargetList) {
+      elements.transcodePublishTargetList.innerHTML = '';
+    }
+    state.transcodePublishTargets = [];
+  } else {
+    renderTranscodeProfileList();
+    renderTranscodePublishTargetList();
+  }
+}
+
+function closeTranscodeProfileModal() {
+  setOverlay(elements.transcodeProfileOverlay, false);
+  state.transcodeProfileEditingIndex = null;
+  if (elements.transcodeProfileError) {
+    elements.transcodeProfileError.textContent = '';
+  }
+}
+
+function openTranscodeProfileModal(profile, index) {
+  if (!elements.transcodeProfileOverlay) return;
+  state.transcodeProfileEditingIndex = index;
+  if (elements.transcodeProfileTitle) {
+    elements.transcodeProfileTitle.textContent = profile && profile.id ? `Profile ${profile.id}` : 'Profile';
+  }
+  elements.transcodeProfileId.value = (profile && profile.id) || '';
+  elements.transcodeProfileName.value = (profile && profile.name) || '';
+  elements.transcodeProfileFps.value = (profile && profile.fps) || '';
+  elements.transcodeProfileWidth.value = (profile && profile.width) || '';
+  elements.transcodeProfileHeight.value = (profile && profile.height) || '';
+  elements.transcodeProfileBitrate.value = (profile && profile.bitrate_kbps) || '';
+  elements.transcodeProfileMaxrate.value = (profile && profile.maxrate_kbps) || '';
+  elements.transcodeProfileAudioMode.value = (profile && profile.audio_mode) || 'aac';
+  elements.transcodeProfileAudioBitrate.value = (profile && profile.audio_bitrate_kbps) || '';
+  elements.transcodeProfileAudioSr.value = (profile && profile.audio_sr) || '';
+  elements.transcodeProfileAudioChannels.value = (profile && profile.audio_channels) || '';
+  elements.transcodeProfileDeinterlace.value = (profile && profile.deinterlace) || 'auto';
+  if (elements.transcodeProfileError) {
+    elements.transcodeProfileError.textContent = '';
+  }
+  setOverlay(elements.transcodeProfileOverlay, true);
+}
+
+function readTranscodeProfileForm() {
+  const id = String(elements.transcodeProfileId.value || '').trim();
+  if (!id) throw new Error('Profile id is required');
+  if (!isValidProfileId(id)) throw new Error('Profile id must be URL-safe (letters, numbers, _, -)');
+  const width = toNumber(elements.transcodeProfileWidth.value);
+  const height = toNumber(elements.transcodeProfileHeight.value);
+  const bitrate = toNumber(elements.transcodeProfileBitrate.value);
+  if (width === undefined || width <= 0) throw new Error('Width must be > 0');
+  if (height === undefined || height <= 0) throw new Error('Height must be > 0');
+  if (bitrate === undefined || bitrate <= 0) throw new Error('Bitrate must be > 0');
+
+  const profile = {
+    id,
+    name: String(elements.transcodeProfileName.value || '').trim() || undefined,
+    fps: toNumber(elements.transcodeProfileFps.value),
+    width,
+    height,
+    bitrate_kbps: bitrate,
+    maxrate_kbps: toNumber(elements.transcodeProfileMaxrate.value),
+    audio_mode: String(elements.transcodeProfileAudioMode.value || 'aac'),
+    audio_bitrate_kbps: toNumber(elements.transcodeProfileAudioBitrate.value),
+    audio_sr: toNumber(elements.transcodeProfileAudioSr.value),
+    audio_channels: toNumber(elements.transcodeProfileAudioChannels.value),
+    deinterlace: String(elements.transcodeProfileDeinterlace.value || 'auto'),
+  };
+
+  return profile;
 }
 
 const TRANSCODE_OUTPUT_PRESETS = {
@@ -7449,6 +7850,60 @@ function renderTranscodeOutputList() {
     row.appendChild(remove);
 
     elements.transcodeOutputList.appendChild(row);
+  });
+}
+
+function summarizeProfile(profile) {
+  if (!profile) return 'Profile';
+  const id = profile.id || 'profile';
+  const size = (profile.width && profile.height) ? `${profile.width}x${profile.height}` : 'size?';
+  const bitrate = profile.bitrate_kbps ? `${profile.bitrate_kbps}k` : 'bitrate?';
+  const fps = profile.fps ? `${profile.fps}fps` : '';
+  return `${id} · ${size} · ${bitrate}${fps ? ' · ' + fps : ''}`;
+}
+
+function renderTranscodeProfileList() {
+  if (!elements.transcodeProfileList) return;
+  elements.transcodeProfileList.innerHTML = '';
+  if (!state.transcodeProfiles || state.transcodeProfiles.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No profiles configured.';
+    elements.transcodeProfileList.appendChild(empty);
+    return;
+  }
+
+  state.transcodeProfiles.forEach((profile, index) => {
+    const row = document.createElement('div');
+    row.className = 'list-row transcode-profile-row';
+    row.dataset.index = String(index);
+
+    const idx = document.createElement('div');
+    idx.className = 'list-index';
+    idx.textContent = `#${index + 1}`;
+
+    const label = document.createElement('div');
+    label.className = 'list-input transcode-profile-label';
+    label.textContent = summarizeProfile(profile);
+
+    const edit = document.createElement('button');
+    edit.className = 'icon-btn';
+    edit.type = 'button';
+    edit.dataset.action = 'transcode-profile-edit';
+    edit.textContent = '...';
+
+    const remove = document.createElement('button');
+    remove.className = 'icon-btn';
+    remove.type = 'button';
+    remove.dataset.action = 'transcode-profile-remove';
+    remove.textContent = 'x';
+
+    row.appendChild(idx);
+    row.appendChild(label);
+    row.appendChild(edit);
+    row.appendChild(remove);
+
+    elements.transcodeProfileList.appendChild(row);
   });
 }
 
@@ -12180,6 +12635,11 @@ function openEditor(stream, isNew) {
         const publish = Array.isArray(tc.publish) ? tc.publish : [];
         elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
       }
+      state.transcodeProfiles = ladderEnabled ? (tc.profiles || []) : [];
+      renderTranscodeProfileList();
+      state.transcodePublishTargets = ladderEnabled ? normalizePublishTargetList(tc.publish || []) : [];
+      renderTranscodePublishTargetList();
+      syncTranscodeLadderPublishCommonUiFromJson();
     }
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
@@ -12759,13 +13219,17 @@ function readStreamForm() {
     const commonArgs = linesToArgs(elements.streamTranscodeCommonArgs && elements.streamTranscodeCommonArgs.value);
     if (commonArgs.length) transcode.common_output_args = commonArgs;
 
-    const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
-    if (ladderEnabled) {
-      const profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+  const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
+  if (ladderEnabled) {
+    syncTranscodeLadderPublishJsonFromCommonUi();
+    let profiles = state.transcodeProfiles;
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      profiles = parseJsonValue(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
         'Profiles (Transcode tab)');
-      if (!Array.isArray(profiles) || profiles.length === 0) {
-        throw new Error('Transcode ladder profiles are required (Transcode tab)');
-      }
+    }
+    if (!Array.isArray(profiles) || profiles.length === 0) {
+      throw new Error('Transcode ladder profiles are required (Transcode tab)');
+    }
       const seen = new Set();
       profiles.forEach((profile, index) => {
         if (!profile || typeof profile !== 'object') {
@@ -12793,15 +13257,63 @@ function readStreamForm() {
         }
         if (bitrate === undefined || bitrate <= 0) {
           throw new Error(`Profile #${index + 1}: bitrate_kbps must be > 0 (Transcode tab)`);
+      }
+    });
+    transcode.profiles = profiles;
+
+    const profileIds = new Set(profiles.map((profile) => String(profile.id || '').trim()).filter(Boolean));
+    const validateVariants = (label, text) => {
+      const ids = parseCsvIds(text);
+      ids.forEach((id) => {
+        if (!isValidProfileId(id)) {
+          throw new Error(`${label}: invalid profile id "${id}" (Transcode tab)`);
+        }
+        if (!profileIds.has(id)) {
+          throw new Error(`${label}: unknown profile id "${id}" (Transcode tab)`);
         }
       });
-      transcode.profiles = profiles;
+      return ids;
+    };
+    if (elements.streamTranscodePublishHlsEnabled && elements.streamTranscodePublishHlsVariants) {
+      if (elements.streamTranscodePublishHlsEnabled.checked) {
+        validateVariants('HLS variants', elements.streamTranscodePublishHlsVariants.value);
+      }
+    }
+    if (elements.streamTranscodePublishDashEnabled && elements.streamTranscodePublishDashVariants) {
+      if (elements.streamTranscodePublishDashEnabled.checked) {
+        validateVariants('DASH variants', elements.streamTranscodePublishDashVariants.value);
+      }
+    }
+    if (elements.streamTranscodePublishHttpTsEnabled && elements.streamTranscodePublishHttpTsVariants) {
+      if (elements.streamTranscodePublishHttpTsEnabled.checked) {
+        validateVariants('HTTP-TS variants', elements.streamTranscodePublishHttpTsVariants.value);
+      }
+    }
+    const pushTargets = Array.isArray(state.transcodePublishTargets) ? state.transcodePublishTargets : [];
+    pushTargets.forEach((target, index) => {
+      if (!target) return;
+      const label = `${String(target.type || '').toUpperCase() || 'PUBLISH'} target #${index + 1}`;
+      const profile = String(target.profile || '').trim();
+      const url = String(target.url || '').trim();
+      if (!profile) {
+        throw new Error(`${label}: profile is required (Transcode tab)`);
+      }
+      if (!isValidProfileId(profile)) {
+        throw new Error(`${label}: invalid profile id "${profile}" (Transcode tab)`);
+      }
+      if (!profileIds.has(profile)) {
+        throw new Error(`${label}: unknown profile id "${profile}" (Transcode tab)`);
+      }
+      if (!url) {
+        throw new Error(`${label}: url is required (Transcode tab)`);
+      }
+    });
 
-      const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
-        'Publish targets (Transcode tab)');
-      if (publish !== null) {
-        if (!Array.isArray(publish)) {
-          throw new Error('Publish targets must be a JSON array (Transcode tab)');
+    const publish = parseJsonValue(elements.streamTranscodePublishJson && elements.streamTranscodePublishJson.value,
+      'Publish targets (Transcode tab)');
+    if (publish !== null) {
+      if (!Array.isArray(publish)) {
+        throw new Error('Publish targets must be a JSON array (Transcode tab)');
         }
         if (publish.length) {
           transcode.publish = publish;
@@ -13271,6 +13783,12 @@ function updateEditorTranscodeStatus() {
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
   }
+  if (elements.streamTranscodeLadderLinks) {
+    elements.streamTranscodeLadderLinks.innerHTML = '';
+  }
+  if (elements.streamTranscodeLadderLinksFold) {
+    elements.streamTranscodeLadderLinksFold.hidden = true;
+  }
   if (elements.streamTranscodeWarmup) {
     elements.streamTranscodeWarmup.textContent = '';
     elements.streamTranscodeWarmup.classList.remove('is-error');
@@ -13296,6 +13814,102 @@ function updateEditorTranscodeStatus() {
   const stats = state.stats[stream.id] || {};
   const transcode = stats.transcode || {};
   const transcodeState = stats.transcode_state || transcode.state;
+
+  const renderLadderLinks = () => {
+    if (!elements.streamTranscodeLadderLinks || !elements.streamTranscodeLadderLinksFold) return;
+    const profiles = Array.isArray(transcode.profiles_status) ? transcode.profiles_status : [];
+    if (!profiles.length) return;
+
+    const rows = [];
+    const publish = Array.isArray(transcode.publish_status) ? transcode.publish_status : [];
+
+    const addRow = (label, url, opts = {}) => {
+      if (!url) return;
+      const row = document.createElement('div');
+      row.className = 'publish-links-row';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'publish-links-label';
+      labelEl.textContent = label;
+
+      const abs = resolveAbsoluteUrl(url, window.location.origin);
+      const link = document.createElement('a');
+      link.className = 'publish-links-url';
+      link.href = abs || '#';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = String(url);
+
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn tiny ghost';
+      copy.textContent = 'Copy';
+      copy.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyText(opts.copyText || abs || url, 'Copied URL');
+      });
+
+      row.appendChild(labelEl);
+      row.appendChild(link);
+      row.appendChild(copy);
+      rows.push(row);
+    };
+
+    // Always show embed for ladder streams (page is rendered even if HLS publish is disabled).
+    addRow('Embed', `/embed/${stream.id}`);
+
+    // HTTP-TS pull (always available for ladder). Prefer server-provided publish_status urls if present.
+    const liveByProfile = {};
+    publish.forEach((entry) => {
+      if (!entry) return;
+      if (String(entry.type || '').toLowerCase() !== 'http-ts') return;
+      if (!entry.profile_id || !entry.url) return;
+      liveByProfile[String(entry.profile_id)] = String(entry.url);
+    });
+    profiles.forEach((p) => {
+      const pid = p && p.profile_id ? String(p.profile_id) : '';
+      if (!pid) return;
+      const url = liveByProfile[pid] || `/live/${stream.id}~${pid}.ts`;
+      addRow(`LIVE ${pid}`, url);
+    });
+
+    // HLS (master + variants).
+    const hls = publish.find((entry) => entry && String(entry.type || '').toLowerCase() === 'hls' && entry.url);
+    if (hls && hls.url) {
+      addRow('HLS', hls.url);
+      if (hls.variant_urls && typeof hls.variant_urls === 'object') {
+        Object.keys(hls.variant_urls).sort().forEach((pid) => {
+          const u = hls.variant_urls[pid];
+          if (u) addRow(`HLS ${pid}`, u);
+        });
+      }
+    }
+
+    // DASH (manifest).
+    const dash = publish.find((entry) => entry && String(entry.type || '').toLowerCase() === 'dash' && entry.url);
+    if (dash && dash.url) {
+      addRow('DASH', dash.url);
+    }
+
+    // Push formats (show destination URL).
+    publish.forEach((entry) => {
+      if (!entry) return;
+      const t = String(entry.type || '').toLowerCase();
+      if (t !== 'udp' && t !== 'rtp' && t !== 'rtmp' && t !== 'rtsp') return;
+      if (!entry.url) return;
+      const pid = entry.profile_id ? String(entry.profile_id) : '';
+      addRow(`${t.toUpperCase()}${pid ? ' ' + pid : ''}`, String(entry.url), { copyText: String(entry.url) });
+    });
+
+    if (!rows.length) return;
+    elements.streamTranscodeLadderLinksFold.hidden = false;
+    elements.streamTranscodeLadderLinks.innerHTML = '';
+    rows.forEach((row) => elements.streamTranscodeLadderLinks.appendChild(row));
+  };
+
+  renderLadderLinks();
+
   if (elements.streamTranscodeInputUrl) {
     const inputUrl = transcode.ffmpeg_input_url || transcode.active_input_url || '';
     elements.streamTranscodeInputUrl.textContent = inputUrl
@@ -13397,6 +14011,14 @@ function updateEditorTranscodeStatus() {
         const parts = [`${type}:${pid} ${state}`];
         if (worker.pid) parts.push(`pid ${worker.pid}`);
         if (worker.restart_reason_code) parts.push(`restart ${worker.restart_reason_code}`);
+        if (worker.reason) parts.push(String(worker.reason));
+        if (Number.isFinite(worker.clients)) {
+          const internal = Number.isFinite(worker.internal_clients) ? ` (internal ${worker.internal_clients})` : '';
+          parts.push(`clients ${worker.clients}${internal}`);
+        }
+        if (Number.isFinite(worker.requests_total)) parts.push(`requests ${worker.requests_total}`);
+        if (Number.isFinite(worker.segments_total)) parts.push(`segments ${worker.segments_total}`);
+        if (Number.isFinite(worker.active_variants)) parts.push(`active ${worker.active_variants}`);
         if (worker.url) parts.push(worker.url);
         lines.push(parts.join(' | '));
       });
@@ -21142,6 +21764,156 @@ function bindEvents() {
   if (elements.streamTranscodeLadderPreset3) {
     elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
       applyTranscodeLadderPreset('3');
+    });
+  }
+  if (elements.btnAddTranscodeProfile) {
+    elements.btnAddTranscodeProfile.addEventListener('click', () => {
+      openTranscodeProfileModal({ audio_mode: 'aac', deinterlace: 'auto' }, null);
+    });
+  }
+  if (elements.transcodeProfileList) {
+    elements.transcodeProfileList.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-action]');
+      if (!btn) return;
+      const row = btn.closest('.transcode-profile-row');
+      if (!row) return;
+      const idx = Number(row.dataset.index);
+      if (Number.isNaN(idx)) return;
+      const profile = state.transcodeProfiles[idx];
+      const action = btn.dataset.action;
+      if (action === 'transcode-profile-edit') {
+        openTranscodeProfileModal(profile, idx);
+      } else if (action === 'transcode-profile-remove') {
+        state.transcodeProfiles.splice(idx, 1);
+        renderTranscodeProfileList();
+        if (elements.streamTranscodeProfilesJson) {
+          elements.streamTranscodeProfilesJson.value = state.transcodeProfiles.length
+            ? formatJson(state.transcodeProfiles)
+            : '';
+        }
+        syncTranscodeLadderPublishJsonFromCommonUi();
+      }
+    });
+  }
+  if (elements.transcodeProfileClose) {
+    elements.transcodeProfileClose.addEventListener('click', closeTranscodeProfileModal);
+  }
+  if (elements.transcodeProfileCancel) {
+    elements.transcodeProfileCancel.addEventListener('click', closeTranscodeProfileModal);
+  }
+  if (elements.transcodeProfileForm) {
+    elements.transcodeProfileForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      try {
+        const profile = readTranscodeProfileForm();
+        const idx = state.transcodeProfileEditingIndex;
+        if (idx === null || idx === undefined) {
+          state.transcodeProfiles.push(profile);
+        } else {
+          state.transcodeProfiles[idx] = profile;
+        }
+        renderTranscodeProfileList();
+        if (elements.streamTranscodeProfilesJson) {
+          elements.streamTranscodeProfilesJson.value = formatJson(state.transcodeProfiles);
+        }
+        syncTranscodeLadderPublishJsonFromCommonUi();
+        closeTranscodeProfileModal();
+      } catch (err) {
+        if (elements.transcodeProfileError) {
+          elements.transcodeProfileError.textContent = err.message || String(err);
+        }
+      }
+    });
+  }
+  if (elements.streamTranscodePublishHlsEnabled) {
+    elements.streamTranscodePublishHlsEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHlsVariants) {
+    elements.streamTranscodePublishHlsVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishDashEnabled) {
+    elements.streamTranscodePublishDashEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishDashVariants) {
+    elements.streamTranscodePublishDashVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHttpTsEnabled) {
+    elements.streamTranscodePublishHttpTsEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishHttpTsVariants) {
+    elements.streamTranscodePublishHttpTsVariants.addEventListener('input', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.streamTranscodePublishEmbedEnabled) {
+    elements.streamTranscodePublishEmbedEnabled.addEventListener('change', () => {
+      syncTranscodeLadderPublishJsonFromCommonUi();
+    });
+  }
+  if (elements.btnAddTranscodePublishTarget) {
+    elements.btnAddTranscodePublishTarget.addEventListener('click', () => {
+      openTranscodePublishTargetModal({ type: 'udp', enabled: true }, null);
+    });
+  }
+  if (elements.transcodePublishTargetList) {
+    elements.transcodePublishTargetList.addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-action]');
+      if (!btn) return;
+      const row = btn.closest('.transcode-publish-target-row');
+      if (!row) return;
+      const idx = Number(row.dataset.index);
+      if (Number.isNaN(idx)) return;
+      const target = state.transcodePublishTargets[idx];
+      const action = btn.dataset.action;
+      if (action === 'transcode-publish-target-edit') {
+        openTranscodePublishTargetModal(target, idx);
+      } else if (action === 'transcode-publish-target-remove') {
+        state.transcodePublishTargets.splice(idx, 1);
+        renderTranscodePublishTargetList();
+        syncTranscodeLadderPublishJsonFromCommonUi();
+      }
+    });
+  }
+  if (elements.transcodePublishTargetClose) {
+    elements.transcodePublishTargetClose.addEventListener('click', closeTranscodePublishTargetModal);
+  }
+  if (elements.transcodePublishTargetCancel) {
+    elements.transcodePublishTargetCancel.addEventListener('click', closeTranscodePublishTargetModal);
+  }
+  if (elements.transcodePublishTargetForm) {
+    elements.transcodePublishTargetForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      try {
+        const target = readTranscodePublishTargetForm();
+        const idx = state.transcodePublishTargetEditingIndex;
+        if (idx === null || idx === undefined) {
+          state.transcodePublishTargets.push(target);
+        } else {
+          state.transcodePublishTargets[idx] = target;
+        }
+        renderTranscodePublishTargetList();
+        syncTranscodeLadderPublishJsonFromCommonUi();
+        closeTranscodePublishTargetModal();
+      } catch (err) {
+        if (elements.transcodePublishTargetError) {
+          elements.transcodePublishTargetError.textContent = err.message || String(err);
+        }
+      }
+    });
+  }
+  if (elements.streamTranscodePublishJson) {
+    elements.streamTranscodePublishJson.addEventListener('input', () => {
+      syncTranscodeLadderPublishCommonUiFromJson();
     });
   }
 

@@ -3092,6 +3092,32 @@ details.fold[open] > .fold-summary::after {
   color: var(--warning);
 }
 
+.publish-links-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.publish-links-label {
+  min-width: 90px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.publish-links-url {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  font-size: 12px;
+  color: var(--accent-strong);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.publish-links-url:hover {
+  text-decoration: underline;
+}
+
 .stream-transcode-note {
   display: none;
 }

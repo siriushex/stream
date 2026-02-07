@@ -101,3 +101,7 @@ fi
 if [[ "${TRANSCODE_LADDER_UDP_SMOKE:-0}" == "1" ]]; then
   PORT="${TRANSCODE_LADDER_UDP_PORT:-9088}" contrib/ci/smoke_transcode_ladder_udp_publish.sh
 fi
+
+if [[ "${TRANSCODE_LADDER_EMBED_SMOKE:-0}" == "1" ]]; then
+  PORT="${TRANSCODE_LADDER_EMBED_PORT:-9089}" contrib/ci/smoke_transcode_ladder_embed.sh
+fi

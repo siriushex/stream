@@ -399,6 +399,16 @@ function parse_url(url)
         end
     end
 
+    -- Local TS fanout endpoints (/play, /stream, /live) are frequently used as Astra HTTP inputs.
+    -- Default to sync=1 for these paths to reduce interruptions from bursty delivery or long gaps
+    -- when users didn't explicitly set #sync=1 in the URL options.
+    if (data.format == "http" or data.format == "https") and data.path and data.sync == nil then
+        local path_only = data.path:match("^(.-)%?") or data.path
+        if path_only:sub(1, 6) == "/play/" or path_only:sub(1, 8) == "/stream/" or path_only:sub(1, 6) == "/live/" then
+            data.sync = 1
+        end
+    end
+
     return data
 end
 
