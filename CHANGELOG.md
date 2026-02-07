@@ -12,6 +12,17 @@
 ## Entries
 ### 2026-02-07
 - Changes:
+  - Inputs: add network resilience defaults (connect/read/stall/backoff/low-speed) and per-input overrides for HTTP-TS/HLS.
+  - Inputs: add jitter buffer module + per-input jitter controls and input health metrics (net/hls/jitter) in status/Analyze.
+  - UI: expose Network resilience defaults in Settings -> General and input advanced controls for resilience/jitter.
+  - Transcode: add an internal loop channel fallback for `/play/<id>` when `input_use_play` is enabled but the play URL cannot be resolved.
+  - Docs/Tools: add `docs/input_resilience.md` and mock HTTP/HLS servers with a smoke helper.
+- Tests:
+  - `./configure.sh && make`
+  - `python3 -m py_compile tools/tests/mock_http_ts.py tools/tests/mock_hls_server.py`
+  - `bash -n tools/tests/input_resilience_smoke.sh`
+### 2026-02-07
+- Changes:
   - Softcam: validate cam/cam_backup references in stream inputs (missing/disabled/incomplete softcams return clear errors).
   - UI: validate softcam references on stream save and show test results even when softcam test returns errors with stats.
   - Softcam: ignore empty key/caid in settings and require non-empty host/user/pass to avoid newcamd aborts.

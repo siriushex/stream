@@ -379,6 +379,46 @@ local function resolve_transcode_play_id(cfg, active_id, failover_enabled)
     return extract_play_id_from_input(entry)
 end
 
+local function ensure_loop_channel(job)
+    if not job or job.loop_channel then
+        return job and job.loop_channel ~= nil
+    end
+    if type(make_channel) ~= "function" then
+        return false
+    end
+    local cfg = job.config
+    if not cfg or type(cfg.input) ~= "table" or #cfg.input == 0 then
+        return false
+    end
+    local loop_cfg = {}
+    for k, v in pairs(cfg) do
+        loop_cfg[k] = v
+    end
+    loop_cfg.type = nil
+    loop_cfg.transcode = nil
+    loop_cfg.output = {}
+    loop_cfg.__disable_auto_hls = true
+    loop_cfg.name = tostring(loop_cfg.name or ("Stream " .. tostring(job.id))) .. " (loop)"
+    loop_cfg.enable = true
+    local channel = make_channel(loop_cfg)
+    if not channel then
+        log.error("[transcode " .. tostring(job.id) .. "] failed to create loop channel")
+        return false
+    end
+    job.loop_channel = channel
+    return true
+end
+
+local function stop_loop_channel(job)
+    if not job or not job.loop_channel then
+        return
+    end
+    if type(kill_channel) == "function" then
+        kill_channel(job.loop_channel)
+    end
+    job.loop_channel = nil
+end
+
 local function resolve_job_input_url(job)
     if not job or not job.config then
         return nil
@@ -406,6 +446,9 @@ local function resolve_job_input_url(job)
         local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
         if play_id then
             play_url = build_transcode_play_url(play_id)
+        end
+        if not play_url and ensure_loop_channel(job) then
+            play_url = build_transcode_play_url(job.id)
         end
         if play_url then
             play_url = append_play_buffer(play_url, play_buffer_kb)
@@ -6620,6 +6663,12 @@ function transcode.start(job, opts)
         return false
     end
     local tc = job.config.transcode or {}
+    if normalize_bool(tc.input_use_play, true) then
+        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
+        if not play_id then
+            ensure_loop_channel(job)
+        end
+    end
     local engine = normalize_engine(tc)
     if engine ~= "nvidia" then
         job.gpu_metrics = nil
@@ -6945,6 +6994,7 @@ function transcode.stop(job)
     job.state = "STOPPED"
     job.ffmpeg_input_url = nil
     close_log_file(job)
+    stop_loop_channel(job)
 end
 
 function transcode.restart(job, reason)

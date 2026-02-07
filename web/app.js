@@ -319,6 +319,20 @@ const POLL_SPLITTER_MS = 10000;
 const POLL_BUFFER_MS = 10000;
 const POLL_SERVER_STATUS_MS = 60000;
 const POLL_OBSERVABILITY_MS = 60000;
+const NET_RESILIENCE_DEFAULTS = {
+  connect_timeout_ms: 3000,
+  read_timeout_ms: 8000,
+  stall_timeout_ms: 5000,
+  max_retries: 10,
+  backoff_min_ms: 500,
+  backoff_max_ms: 10000,
+  backoff_jitter_pct: 20,
+  low_speed_limit_bytes_sec: 1024,
+  low_speed_time_sec: 5,
+  dns_cache_ttl_sec: 0,
+  keepalive: false,
+  user_agent: '',
+};
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -1113,6 +1127,19 @@ const elements = {
   inputHttpUa: $('#input-http-ua'),
   inputHttpTimeout: $('#input-http-timeout'),
   inputHttpBuffer: $('#input-http-buffer'),
+  inputNetConnect: $('#input-net-connect'),
+  inputNetRead: $('#input-net-read'),
+  inputNetStall: $('#input-net-stall'),
+  inputNetMaxRetries: $('#input-net-max-retries'),
+  inputNetBackoffMin: $('#input-net-backoff-min'),
+  inputNetBackoffMax: $('#input-net-backoff-max'),
+  inputNetBackoffJitter: $('#input-net-backoff-jitter'),
+  inputNetLowSpeed: $('#input-net-low-speed'),
+  inputNetLowSpeedTime: $('#input-net-low-speed-time'),
+  inputNetDnsTtl: $('#input-net-dns-ttl'),
+  inputNetKeepalive: $('#input-net-keepalive'),
+  inputJitterMs: $('#input-jitter-ms'),
+  inputJitterMaxMb: $('#input-jitter-max-mb'),
   inputBridgeUrl: $('#input-bridge-url'),
   inputBridgePort: $('#input-bridge-port'),
   inputFileName: $('#input-file-name'),
@@ -1489,6 +1516,139 @@ const SETTINGS_GENERAL_SECTIONS = [
           const idle = readNumberValue('settings-preview-idle-timeout', 45);
           const ttl = readNumberValue('settings-preview-token-ttl', 180);
           return `Max: ${max} · Idle: ${formatSeconds(idle)} · TTL: ${formatSeconds(ttl)}`;
+        },
+      },
+    ],
+  },
+  {
+    id: 'inputs',
+    title: 'Inputs',
+    description: 'Сетевые таймауты и устойчивость HTTP/HLS.',
+    cards: [
+      {
+        id: 'net-resilience',
+        title: 'Network resilience',
+        description: 'Глобальные дефолты для HTTP-TS и HLS входов.',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-net-connect',
+            label: 'Connect timeout (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.connect_timeout_ms',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.connect_timeout_ms),
+          },
+          {
+            id: 'settings-net-read',
+            label: 'Read timeout (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.read_timeout_ms',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.read_timeout_ms),
+          },
+          {
+            id: 'settings-net-stall',
+            label: 'Stall timeout (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.stall_timeout_ms',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.stall_timeout_ms),
+          },
+          {
+            id: 'settings-net-max-retries',
+            label: 'Max retries (0 = infinite)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.max_retries',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.max_retries),
+          },
+          {
+            id: 'settings-net-backoff-min',
+            label: 'Backoff min (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.backoff_min_ms',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.backoff_min_ms),
+          },
+          {
+            id: 'settings-net-backoff-max',
+            label: 'Backoff max (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.backoff_max_ms',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.backoff_max_ms),
+          },
+          {
+            id: 'settings-net-backoff-jitter',
+            label: 'Backoff jitter (%)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.backoff_jitter_pct',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.backoff_jitter_pct),
+          },
+          {
+            id: 'settings-net-low-speed',
+            label: 'Low speed limit (B/s)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.low_speed_limit_bytes_sec',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.low_speed_limit_bytes_sec),
+          },
+          {
+            id: 'settings-net-low-speed-time',
+            label: 'Low speed window (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.low_speed_time_sec',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.low_speed_time_sec),
+          },
+          {
+            id: 'settings-net-dns-ttl',
+            label: 'DNS cache TTL (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'net_resilience.dns_cache_ttl_sec',
+            level: 'advanced',
+            placeholder: String(NET_RESILIENCE_DEFAULTS.dns_cache_ttl_sec),
+          },
+          {
+            id: 'settings-net-user-agent',
+            label: 'User-Agent override',
+            type: 'input',
+            inputType: 'text',
+            key: 'net_resilience.user_agent',
+            level: 'advanced',
+            placeholder: 'Astra/Resilience',
+          },
+          {
+            id: 'settings-net-keepalive',
+            label: 'HTTP keepalive',
+            type: 'switch',
+            key: 'net_resilience.keepalive',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const connect = readNumberValue('settings-net-connect', NET_RESILIENCE_DEFAULTS.connect_timeout_ms);
+          const read = readNumberValue('settings-net-read', NET_RESILIENCE_DEFAULTS.read_timeout_ms);
+          const stall = readNumberValue('settings-net-stall', NET_RESILIENCE_DEFAULTS.stall_timeout_ms);
+          const retries = readNumberValue('settings-net-max-retries', NET_RESILIENCE_DEFAULTS.max_retries);
+          const backoffMin = readNumberValue('settings-net-backoff-min', NET_RESILIENCE_DEFAULTS.backoff_min_ms);
+          const backoffMax = readNumberValue('settings-net-backoff-max', NET_RESILIENCE_DEFAULTS.backoff_max_ms);
+          const jitter = readNumberValue('settings-net-backoff-jitter', NET_RESILIENCE_DEFAULTS.backoff_jitter_pct);
+          const keepalive = readBoolValue('settings-net-keepalive', false);
+          return `Connect ${connect}ms · Read ${read}ms · Stall ${stall}ms · Retries ${retries} · Backoff ${backoffMin}-${backoffMax}ms (+${jitter}%) · Keepalive ${formatOnOff(keepalive)}`;
         },
       },
     ],
@@ -2870,6 +3030,18 @@ function bindGeneralElements() {
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
     settingsUiPollingInterval: 'settings-ui-polling-interval',
+    settingsNetConnect: 'settings-net-connect',
+    settingsNetRead: 'settings-net-read',
+    settingsNetStall: 'settings-net-stall',
+    settingsNetMaxRetries: 'settings-net-max-retries',
+    settingsNetBackoffMin: 'settings-net-backoff-min',
+    settingsNetBackoffMax: 'settings-net-backoff-max',
+    settingsNetBackoffJitter: 'settings-net-backoff-jitter',
+    settingsNetLowSpeed: 'settings-net-low-speed',
+    settingsNetLowSpeedTime: 'settings-net-low-speed-time',
+    settingsNetDnsTtl: 'settings-net-dns-ttl',
+    settingsNetUserAgent: 'settings-net-user-agent',
+    settingsNetKeepalive: 'settings-net-keepalive',
     settingsEventRequest: 'settings-event-request',
     settingsMonitorAnalyzeMax: 'settings-monitor-analyze-max',
     settingsPreviewMaxSessions: 'settings-preview-max-sessions',
@@ -3819,6 +3991,13 @@ function getSettingBool(key, fallback) {
     return fallback;
   }
   return value === true || value === 1 || value === '1';
+}
+
+function getSettingObject(key, fallback) {
+  if (!state.settings) return fallback;
+  const value = state.settings[key];
+  if (value && typeof value === 'object') return value;
+  return fallback;
 }
 
 function hasSettingValue(key) {
@@ -7578,6 +7757,19 @@ function buildInputUrl(data) {
   addOpt('ua', o.ua);
   addOpt('timeout', o.timeout);
   addOpt('buffer_size', o.buffer_size);
+  addOpt('connect_timeout_ms', o.connect_timeout_ms);
+  addOpt('read_timeout_ms', o.read_timeout_ms);
+  addOpt('stall_timeout_ms', o.stall_timeout_ms);
+  addOpt('max_retries', o.max_retries);
+  addOpt('backoff_min_ms', o.backoff_min_ms);
+  addOpt('backoff_max_ms', o.backoff_max_ms);
+  addOpt('backoff_jitter_pct', o.backoff_jitter_pct);
+  addOpt('low_speed_limit_bytes_sec', o.low_speed_limit_bytes_sec);
+  addOpt('low_speed_time_sec', o.low_speed_time_sec);
+  addOpt('dns_cache_ttl_sec', o.dns_cache_ttl_sec);
+  addOpt('keepalive', o.keepalive);
+  addOpt('jitter_buffer_ms', o.jitter_buffer_ms);
+  addOpt('jitter_max_buffer_mb', o.jitter_max_buffer_mb);
   addOpt('socket_size', o.socket_size);
   addOpt('loop', o.loop);
   addOpt('bridge_port', o.bridge_port);
@@ -7604,6 +7796,19 @@ function buildInputUrl(data) {
       'ua',
       'timeout',
       'buffer_size',
+      'connect_timeout_ms',
+      'read_timeout_ms',
+      'stall_timeout_ms',
+      'max_retries',
+      'backoff_min_ms',
+      'backoff_max_ms',
+      'backoff_jitter_pct',
+      'low_speed_limit_bytes_sec',
+      'low_speed_time_sec',
+      'dns_cache_ttl_sec',
+      'keepalive',
+      'jitter_buffer_ms',
+      'jitter_max_buffer_mb',
       'socket_size',
       'loop',
       'bridge_port',
@@ -9333,6 +9538,20 @@ function openInputModal(index) {
     'socket_size',
     'loop',
     'bridge_port',
+    'connect_timeout_ms',
+    'read_timeout_ms',
+    'stall_timeout_ms',
+    'max_retries',
+    'backoff_min_ms',
+    'backoff_max_ms',
+    'backoff_jitter_pct',
+    'low_speed_limit_bytes_sec',
+    'low_speed_time_sec',
+    'dns_cache_ttl_sec',
+    'keepalive',
+    'jitter_buffer_ms',
+    'jitter_max_buffer_mb',
+    'jitter_ms',
   ]);
   const extras = {};
   Object.keys(opts).forEach((key) => {
@@ -9358,6 +9577,19 @@ function openInputModal(index) {
   elements.inputHttpUa.value = opts.ua || '';
   elements.inputHttpTimeout.value = opts.timeout || '';
   elements.inputHttpBuffer.value = opts.buffer_size || '';
+  if (elements.inputNetConnect) elements.inputNetConnect.value = opts.connect_timeout_ms || '';
+  if (elements.inputNetRead) elements.inputNetRead.value = opts.read_timeout_ms || '';
+  if (elements.inputNetStall) elements.inputNetStall.value = opts.stall_timeout_ms || '';
+  if (elements.inputNetMaxRetries) elements.inputNetMaxRetries.value = opts.max_retries || '';
+  if (elements.inputNetBackoffMin) elements.inputNetBackoffMin.value = opts.backoff_min_ms || '';
+  if (elements.inputNetBackoffMax) elements.inputNetBackoffMax.value = opts.backoff_max_ms || '';
+  if (elements.inputNetBackoffJitter) elements.inputNetBackoffJitter.value = opts.backoff_jitter_pct || '';
+  if (elements.inputNetLowSpeed) elements.inputNetLowSpeed.value = opts.low_speed_limit_bytes_sec || '';
+  if (elements.inputNetLowSpeedTime) elements.inputNetLowSpeedTime.value = opts.low_speed_time_sec || '';
+  if (elements.inputNetDnsTtl) elements.inputNetDnsTtl.value = opts.dns_cache_ttl_sec || '';
+  if (elements.inputNetKeepalive) elements.inputNetKeepalive.checked = asBool(opts.keepalive);
+  if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
+  if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
 
   elements.inputBridgeUrl.value = parsed.url || '';
   elements.inputBridgePort.value = opts.bridge_port || '';
@@ -9427,6 +9659,19 @@ function readInputForm() {
   addString('filter~', elements.inputFilterNot.value);
   addNumber('cc_limit', elements.inputCcLimit.value);
   addNumber('bitrate_limit', elements.inputBitrateLimit.value);
+  addNumber('connect_timeout_ms', elements.inputNetConnect && elements.inputNetConnect.value);
+  addNumber('read_timeout_ms', elements.inputNetRead && elements.inputNetRead.value);
+  addNumber('stall_timeout_ms', elements.inputNetStall && elements.inputNetStall.value);
+  addNumber('max_retries', elements.inputNetMaxRetries && elements.inputNetMaxRetries.value);
+  addNumber('backoff_min_ms', elements.inputNetBackoffMin && elements.inputNetBackoffMin.value);
+  addNumber('backoff_max_ms', elements.inputNetBackoffMax && elements.inputNetBackoffMax.value);
+  addNumber('backoff_jitter_pct', elements.inputNetBackoffJitter && elements.inputNetBackoffJitter.value);
+  addNumber('low_speed_limit_bytes_sec', elements.inputNetLowSpeed && elements.inputNetLowSpeed.value);
+  addNumber('low_speed_time_sec', elements.inputNetLowSpeedTime && elements.inputNetLowSpeedTime.value);
+  addNumber('dns_cache_ttl_sec', elements.inputNetDnsTtl && elements.inputNetDnsTtl.value);
+  if (elements.inputNetKeepalive && elements.inputNetKeepalive.checked) options.keepalive = true;
+  addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
+  addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
 
   if (elements.inputCam.checked) {
     const camId = elements.inputCamId.value.trim();
@@ -16215,6 +16460,63 @@ function applySettingsToUI() {
   if (elements.settingsUiPollingInterval) {
     setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
   }
+  const netRes = getSettingObject('net_resilience', {});
+  if (elements.settingsNetConnect) {
+    elements.settingsNetConnect.value = Number.isFinite(Number(netRes.connect_timeout_ms))
+      ? Number(netRes.connect_timeout_ms)
+      : NET_RESILIENCE_DEFAULTS.connect_timeout_ms;
+  }
+  if (elements.settingsNetRead) {
+    elements.settingsNetRead.value = Number.isFinite(Number(netRes.read_timeout_ms))
+      ? Number(netRes.read_timeout_ms)
+      : NET_RESILIENCE_DEFAULTS.read_timeout_ms;
+  }
+  if (elements.settingsNetStall) {
+    elements.settingsNetStall.value = Number.isFinite(Number(netRes.stall_timeout_ms))
+      ? Number(netRes.stall_timeout_ms)
+      : NET_RESILIENCE_DEFAULTS.stall_timeout_ms;
+  }
+  if (elements.settingsNetMaxRetries) {
+    elements.settingsNetMaxRetries.value = Number.isFinite(Number(netRes.max_retries))
+      ? Number(netRes.max_retries)
+      : NET_RESILIENCE_DEFAULTS.max_retries;
+  }
+  if (elements.settingsNetBackoffMin) {
+    elements.settingsNetBackoffMin.value = Number.isFinite(Number(netRes.backoff_min_ms))
+      ? Number(netRes.backoff_min_ms)
+      : NET_RESILIENCE_DEFAULTS.backoff_min_ms;
+  }
+  if (elements.settingsNetBackoffMax) {
+    elements.settingsNetBackoffMax.value = Number.isFinite(Number(netRes.backoff_max_ms))
+      ? Number(netRes.backoff_max_ms)
+      : NET_RESILIENCE_DEFAULTS.backoff_max_ms;
+  }
+  if (elements.settingsNetBackoffJitter) {
+    elements.settingsNetBackoffJitter.value = Number.isFinite(Number(netRes.backoff_jitter_pct))
+      ? Number(netRes.backoff_jitter_pct)
+      : NET_RESILIENCE_DEFAULTS.backoff_jitter_pct;
+  }
+  if (elements.settingsNetLowSpeed) {
+    elements.settingsNetLowSpeed.value = Number.isFinite(Number(netRes.low_speed_limit_bytes_sec))
+      ? Number(netRes.low_speed_limit_bytes_sec)
+      : NET_RESILIENCE_DEFAULTS.low_speed_limit_bytes_sec;
+  }
+  if (elements.settingsNetLowSpeedTime) {
+    elements.settingsNetLowSpeedTime.value = Number.isFinite(Number(netRes.low_speed_time_sec))
+      ? Number(netRes.low_speed_time_sec)
+      : NET_RESILIENCE_DEFAULTS.low_speed_time_sec;
+  }
+  if (elements.settingsNetDnsTtl) {
+    elements.settingsNetDnsTtl.value = Number.isFinite(Number(netRes.dns_cache_ttl_sec))
+      ? Number(netRes.dns_cache_ttl_sec)
+      : NET_RESILIENCE_DEFAULTS.dns_cache_ttl_sec;
+  }
+  if (elements.settingsNetUserAgent) {
+    elements.settingsNetUserAgent.value = netRes.user_agent || '';
+  }
+  if (elements.settingsNetKeepalive) {
+    elements.settingsNetKeepalive.checked = netRes.keepalive === true;
+  }
   if (elements.settingsEventRequest) {
     elements.settingsEventRequest.value = getSettingString('event_request', '');
   }
@@ -16748,6 +17050,50 @@ function collectGeneralSettings() {
   if (previewTtl !== undefined && (previewTtl < 60 || previewTtl > 600)) {
     throw new Error('Preview token TTL must be between 60 and 600 sec');
   }
+  const netConnect = toNumber(elements.settingsNetConnect && elements.settingsNetConnect.value);
+  if (netConnect !== undefined && netConnect < 0) {
+    throw new Error('Connect timeout must be >= 0');
+  }
+  const netRead = toNumber(elements.settingsNetRead && elements.settingsNetRead.value);
+  if (netRead !== undefined && netRead < 0) {
+    throw new Error('Read timeout must be >= 0');
+  }
+  const netStall = toNumber(elements.settingsNetStall && elements.settingsNetStall.value);
+  if (netStall !== undefined && netStall < 0) {
+    throw new Error('Stall timeout must be >= 0');
+  }
+  const netMaxRetries = toNumber(elements.settingsNetMaxRetries && elements.settingsNetMaxRetries.value);
+  if (netMaxRetries !== undefined && netMaxRetries < 0) {
+    throw new Error('Max retries must be >= 0');
+  }
+  const netBackoffMin = toNumber(elements.settingsNetBackoffMin && elements.settingsNetBackoffMin.value);
+  if (netBackoffMin !== undefined && netBackoffMin < 0) {
+    throw new Error('Backoff min must be >= 0');
+  }
+  const netBackoffMax = toNumber(elements.settingsNetBackoffMax && elements.settingsNetBackoffMax.value);
+  if (netBackoffMax !== undefined && netBackoffMax < 0) {
+    throw new Error('Backoff max must be >= 0');
+  }
+  const netBackoffJitter = toNumber(elements.settingsNetBackoffJitter && elements.settingsNetBackoffJitter.value);
+  if (netBackoffJitter !== undefined && netBackoffJitter < 0) {
+    throw new Error('Backoff jitter must be >= 0');
+  }
+  const netLowSpeed = toNumber(elements.settingsNetLowSpeed && elements.settingsNetLowSpeed.value);
+  if (netLowSpeed !== undefined && netLowSpeed < 0) {
+    throw new Error('Low speed limit must be >= 0');
+  }
+  const netLowSpeedTime = toNumber(elements.settingsNetLowSpeedTime && elements.settingsNetLowSpeedTime.value);
+  if (netLowSpeedTime !== undefined && netLowSpeedTime < 0) {
+    throw new Error('Low speed time must be >= 0');
+  }
+  const netDnsTtl = toNumber(elements.settingsNetDnsTtl && elements.settingsNetDnsTtl.value);
+  if (netDnsTtl !== undefined && netDnsTtl < 0) {
+    throw new Error('DNS cache TTL must be >= 0');
+  }
+  const netUserAgent = elements.settingsNetUserAgent
+    ? elements.settingsNetUserAgent.value.trim()
+    : '';
+  const netKeepalive = elements.settingsNetKeepalive && elements.settingsNetKeepalive.checked;
   const logMax = toNumber(elements.settingsLogMaxEntries && elements.settingsLogMaxEntries.value);
   if (logMax !== undefined && logMax < 0) {
     throw new Error('Log max entries must be >= 0');
@@ -16976,6 +17322,24 @@ function collectGeneralSettings() {
     epg_export_interval_sec: epgInterval || 0,
     ui_polling_interval_sec: uiPolling || 4,
   };
+  payload.net_resilience = {
+    connect_timeout_ms: netConnect !== undefined ? netConnect : NET_RESILIENCE_DEFAULTS.connect_timeout_ms,
+    read_timeout_ms: netRead !== undefined ? netRead : NET_RESILIENCE_DEFAULTS.read_timeout_ms,
+    stall_timeout_ms: netStall !== undefined ? netStall : NET_RESILIENCE_DEFAULTS.stall_timeout_ms,
+    max_retries: netMaxRetries !== undefined ? netMaxRetries : NET_RESILIENCE_DEFAULTS.max_retries,
+    backoff_min_ms: netBackoffMin !== undefined ? netBackoffMin : NET_RESILIENCE_DEFAULTS.backoff_min_ms,
+    backoff_max_ms: netBackoffMax !== undefined ? netBackoffMax : NET_RESILIENCE_DEFAULTS.backoff_max_ms,
+    backoff_jitter_pct: netBackoffJitter !== undefined ? netBackoffJitter : NET_RESILIENCE_DEFAULTS.backoff_jitter_pct,
+    low_speed_limit_bytes_sec: netLowSpeed !== undefined ? netLowSpeed : NET_RESILIENCE_DEFAULTS.low_speed_limit_bytes_sec,
+    low_speed_time_sec: netLowSpeedTime !== undefined ? netLowSpeedTime : NET_RESILIENCE_DEFAULTS.low_speed_time_sec,
+    dns_cache_ttl_sec: netDnsTtl !== undefined ? netDnsTtl : NET_RESILIENCE_DEFAULTS.dns_cache_ttl_sec,
+    keepalive: !!netKeepalive,
+  };
+  if (netUserAgent) {
+    payload.net_resilience.user_agent = netUserAgent;
+  } else {
+    payload.net_resilience.user_agent = '';
+  }
   if (elements.settingsEventRequest) {
     payload.event_request = elements.settingsEventRequest.value.trim();
   }
@@ -18333,6 +18697,46 @@ function buildInputStatusRow(input, index, activeIndex) {
 
   row.appendChild(head);
   row.appendChild(meta);
+
+  const extraItems = [];
+  const health = input.health_state || 'online';
+  const healthReason = input.health_reason ? ` (${input.health_reason})` : '';
+  extraItems.push(`Health: ${health}${healthReason}`);
+
+  if (input.net) {
+    const net = input.net;
+    const netState = net.state || 'n/a';
+    const backoff = Number.isFinite(net.current_backoff_ms) ? `${Math.round(net.current_backoff_ms)}ms` : 'n/a';
+    const reconnects = Number(net.reconnects_total) || 0;
+    const lastRecv = formatTimestamp(net.last_recv_ts);
+    const netErr = net.last_error || 'n/a';
+    extraItems.push(`Net: ${netState} backoff=${backoff} reconnects=${reconnects} last=${netErr} recv=${lastRecv}`);
+  }
+  if (input.hls) {
+    const hls = input.hls;
+    const hlsState = hls.state || 'n/a';
+    const hlsSeq = (hls.last_seq !== undefined && hls.last_seq !== null) ? hls.last_seq : 'n/a';
+    const hlsErrs = Number(hls.segment_errors_total) || 0;
+    const hlsGap = Number(hls.gap_count) || 0;
+    extraItems.push(`HLS: ${hlsState} seq=${hlsSeq} errs=${hlsErrs} gap=${hlsGap}`);
+  }
+  if (input.jitter) {
+    const jitter = input.jitter;
+    const fill = Number(jitter.buffer_fill_ms) || 0;
+    const target = Number(jitter.buffer_target_ms) || 0;
+    const underruns = Number(jitter.buffer_underruns_total) || 0;
+    if (target > 0 || fill > 0 || underruns > 0) {
+      extraItems.push(`Jitter: ${Math.round(fill)} / ${Math.round(target)} ms underruns=${underruns}`);
+    }
+  }
+
+  if (extraItems.length) {
+    const extra = document.createElement('div');
+    extra.className = 'input-status-extra';
+    extra.textContent = extraItems.join(' | ');
+    row.appendChild(extra);
+  }
+
   return row;
 }
 

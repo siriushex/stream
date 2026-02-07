@@ -1716,13 +1716,21 @@ function main()
         end
 
         local entry = runtime.streams[stream_id]
-        if not entry or not entry.channel then
+        if not entry then
+            server:abort(client, 404)
+            return nil
+        end
+        local channel = entry.channel
+        if not channel and internal and entry.job and entry.job.loop_channel then
+            channel = entry.job.loop_channel
+        end
+        if not channel then
             server:abort(client, 404)
             return nil
         end
 
-	        local function allow_stream(session)
-            client_data.output_data = { channel_data = entry.channel }
+        local function allow_stream(session)
+            client_data.output_data = { channel_data = channel }
             http_output_client(server, client, request, client_data.output_data)
 
             if session and session.session_id and auth and auth.register_client then
@@ -1730,7 +1738,7 @@ function main()
                 client_data.auth_session_id = session.session_id
             end
 
-            local channel_data = entry.channel
+            local channel_data = channel
             if channel_data.keep_timer then
                 channel_data.keep_timer:close()
                 channel_data.keep_timer = nil
