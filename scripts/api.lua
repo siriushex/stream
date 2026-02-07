@@ -3468,6 +3468,14 @@ local function set_settings(server, client, request)
     if not body then
         return error_response(server, client, 400, "invalid json")
     end
+    local query = request and request.query or {}
+    local softcam_apply = true
+    if query.softcam_apply ~= nil then
+        local v = tostring(query.softcam_apply or ""):lower()
+        if v == "0" or v == "false" or v == "no" or v == "off" then
+            softcam_apply = false
+        end
+    end
     if body.telegram_bot_token ~= nil then
         local token = tostring(body.telegram_bot_token or "")
         if token == "" then
@@ -3490,7 +3498,7 @@ local function set_settings(server, client, request)
             for k, v in pairs(body) do
                 config.set_setting(k, v)
             end
-            if type(apply_softcam_settings) == "function" and body.softcam ~= nil then
+            if softcam_apply and type(apply_softcam_settings) == "function" and body.softcam ~= nil then
                 apply_softcam_settings()
             end
             apply_log_settings_patch(body)
