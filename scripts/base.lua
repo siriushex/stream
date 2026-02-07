@@ -502,6 +502,14 @@ local INPUT_RESILIENCE_DEFAULTS = {
         wan = 400,
         bad = 800,
     },
+    -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
+    jitter_assumed_mbps = {
+        dc = 20,
+        wan = 12,
+        bad = 8,
+    },
+    -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
+    jitter_max_auto_mb = 32,
     max_active_resilient_inputs = 50,
 }
 
@@ -546,6 +554,8 @@ local function get_input_resilience_settings()
         },
         hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
         jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
+        jitter_assumed_mbps = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_assumed_mbps),
+        jitter_max_auto_mb = INPUT_RESILIENCE_DEFAULTS.jitter_max_auto_mb,
         max_active_resilient_inputs = INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs,
     }
 
@@ -592,6 +602,19 @@ local function get_input_resilience_settings()
         end
     end
 
+    if type(raw.jitter_assumed_mbps) == "table" then
+        for k, v in pairs(raw.jitter_assumed_mbps) do
+            out.jitter_assumed_mbps[k] = v
+        end
+    end
+
+    if raw.jitter_max_auto_mb ~= nil then
+        local n = tonumber(raw.jitter_max_auto_mb)
+        if n ~= nil and n > 0 then
+            out.jitter_max_auto_mb = math.floor(n)
+        end
+    end
+
     return out
 end
 
@@ -631,6 +654,8 @@ local function resolve_input_resilience(conf)
         profile_effective = effective,
         net_defaults = base,
         jitter_default_ms = jitter_ms,
+        jitter_assumed_mbps = settings.jitter_assumed_mbps,
+        jitter_max_auto_mb = settings.jitter_max_auto_mb,
         hls_defaults = hls_defaults,
     }
 end
@@ -669,6 +694,43 @@ local function net_has_values(tbl)
         end
     end
     return false
+end
+
+local function apply_auto_jitter_max_mb(conf, res)
+    if not res or res.enabled ~= true then
+        return
+    end
+    if conf.jitter_max_buffer_mb ~= nil or conf.max_buffer_mb ~= nil then
+        return
+    end
+    local jitter_ms = tonumber(conf.jitter_buffer_ms or conf.jitter_ms)
+    if not jitter_ms or jitter_ms <= 0 then
+        return
+    end
+
+    local assumed_mbps = nil
+    if type(res.jitter_assumed_mbps) == "table" then
+        assumed_mbps = tonumber(res.jitter_assumed_mbps[res.profile_effective])
+    end
+    if not assumed_mbps or assumed_mbps <= 0 then
+        assumed_mbps = 10
+    end
+
+    local bytes = (jitter_ms / 1000) * (assumed_mbps * 1000 * 1000 / 8)
+    local mb = math.ceil(bytes / (1024 * 1024))
+    if mb < 4 then
+        mb = 4
+    end
+
+    local max_auto = tonumber(res.jitter_max_auto_mb) or 32
+    if max_auto < 4 then
+        max_auto = 4
+    end
+    if mb > max_auto then
+        mb = max_auto
+    end
+
+    conf.jitter_max_buffer_mb = mb
 end
 
 local function build_net_resilience(conf, res)
@@ -743,6 +805,8 @@ local function build_net_resilience(conf, res)
             conf.jitter_buffer_ms = math.floor(res.jitter_default_ms)
         end
     end
+
+    apply_auto_jitter_max_mb(conf, res)
 
     return out
 end
