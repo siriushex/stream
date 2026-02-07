@@ -1452,9 +1452,117 @@ static void module_destroy(module_data_t *mod)
     mpegts_psi_destroy(mod->pmt);
 }
 
+static int method_stats(module_data_t *mod)
+{
+    lua_newtable(lua);
+
+    lua_pushstring(lua, mod->name ? mod->name : "");
+    lua_setfield(lua, -2, "name");
+
+    lua_pushboolean(lua, mod->key_guard);
+    lua_setfield(lua, -2, "key_guard");
+
+    lua_pushboolean(lua, (mod->__decrypt.cam && mod->__decrypt.cam->is_ready));
+    lua_setfield(lua, -2, "cam_ready");
+
+    /* shift buffer observability */
+    lua_newtable(lua);
+    lua_pushinteger(lua, (lua_Integer)mod->shift.size);
+    lua_setfield(lua, -2, "size_bytes");
+    lua_pushinteger(lua, (lua_Integer)mod->shift.count);
+    lua_setfield(lua, -2, "fill_bytes");
+    if(mod->shift.size > 0)
+    {
+        const lua_Number pct = (lua_Number)mod->shift.count / (lua_Number)mod->shift.size;
+        lua_pushnumber(lua, pct);
+        lua_setfield(lua, -2, "fill_pct");
+    }
+    lua_setfield(lua, -2, "shift");
+
+    /* per-ECM PID stats */
+    const uint64_t now_us = asc_utime();
+    lua_newtable(lua);
+    int idx = 1;
+    asc_list_for(mod->ca_list)
+    {
+        ca_stream_t *ca_stream = asc_list_data(mod->ca_list);
+
+        lua_newtable(lua);
+
+        lua_pushinteger(lua, (lua_Integer)ca_stream->ecm_pid);
+        lua_setfield(lua, -2, "ecm_pid");
+
+        lua_pushinteger(lua, (lua_Integer)ca_stream->ecm_type);
+        lua_setfield(lua, -2, "ecm_type");
+
+        lua_pushboolean(lua, ca_stream->is_keys);
+        lua_setfield(lua, -2, "is_keys");
+
+        lua_pushboolean(lua, ca_stream->last_ecm_ok);
+        lua_setfield(lua, -2, "last_ecm_ok");
+
+        lua_pushinteger(lua, (lua_Integer)ca_stream->ecm_fail_count);
+        lua_setfield(lua, -2, "ecm_fail_count");
+
+        if(ca_stream->last_ecm_send_us)
+        {
+            lua_pushinteger(lua, (lua_Integer)((now_us - ca_stream->last_ecm_send_us) / 1000ULL));
+            lua_setfield(lua, -2, "last_ecm_send_ago_ms");
+        }
+
+        if(ca_stream->last_ecm_ok_us)
+        {
+            lua_pushinteger(lua, (lua_Integer)((now_us - ca_stream->last_ecm_ok_us) / 1000ULL));
+            lua_setfield(lua, -2, "last_ecm_ok_ago_ms");
+        }
+
+        lua_newtable(lua);
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_sent);
+        lua_setfield(lua, -2, "sent");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_retry);
+        lua_setfield(lua, -2, "retry");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_ok);
+        lua_setfield(lua, -2, "ok");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_not_found);
+        lua_setfield(lua, -2, "not_found");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_count);
+        lua_setfield(lua, -2, "rtt_count");
+        if(ca_stream->stat_rtt_count)
+        {
+            lua_pushinteger(lua, (lua_Integer)(ca_stream->stat_rtt_sum_ms / ca_stream->stat_rtt_count));
+            lua_setfield(lua, -2, "rtt_avg_ms");
+        }
+        lua_setfield(lua, -2, "ecm");
+
+        lua_newtable(lua);
+        lua_pushboolean(lua, ca_stream->cand_pending);
+        lua_setfield(lua, -2, "pending");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_mask);
+        lua_setfield(lua, -2, "mask");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_ok_count);
+        lua_setfield(lua, -2, "ok_count");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_fail_count);
+        lua_setfield(lua, -2, "fail_count");
+        if(ca_stream->cand_set_us)
+        {
+            lua_pushinteger(lua, (lua_Integer)((now_us - ca_stream->cand_set_us) / 1000ULL));
+            lua_setfield(lua, -2, "age_ms");
+        }
+        lua_setfield(lua, -2, "candidate");
+
+        lua_rawseti(lua, -2, idx);
+        idx += 1;
+    }
+    lua_setfield(lua, -2, "ca_streams");
+
+    return 1;
+}
+
 MODULE_STREAM_METHODS()
 MODULE_LUA_METHODS()
 {
-    MODULE_STREAM_METHODS_REF()
+    MODULE_STREAM_METHODS_REF(),
+    { "stats", method_stats },
+    { NULL, NULL },
 };
 MODULE_LUA_REGISTER(decrypt)
