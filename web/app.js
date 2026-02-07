@@ -3694,6 +3694,48 @@ function normalizeSoftcams(value) {
   return out;
 }
 
+function findSoftcamById(id) {
+  if (!id) return null;
+  const target = String(id);
+  return (state.softcams || []).find((entry) => entry && String(entry.id) === target) || null;
+}
+
+function softcamEntryComplete(entry) {
+  if (!entry) return false;
+  const host = String(entry.host || '').trim();
+  const port = Number(entry.port);
+  const user = String(entry.user || '').trim();
+  const pass = entry.pass !== undefined ? String(entry.pass || '') : String(entry.password || '');
+  if (!host || !Number.isFinite(port) || port <= 0 || !user || !pass) return false;
+  return true;
+}
+
+function validateSoftcamInputs(inputs) {
+  if (!Array.isArray(inputs) || inputs.length === 0) return;
+  inputs.forEach((input, index) => {
+    if (!input || typeof input !== 'string') return;
+    const parsed = parseInputUrl(input);
+    if (!parsed || !parsed.options) return;
+    const checkCam = (value, label) => {
+      if (value === undefined || value === null || value === '' || value === false) return;
+      if (value === true || value === 'true' || value === '1' || value === 1) return;
+      const camId = String(value);
+      const entry = findSoftcamById(camId);
+      if (!entry) {
+        throw new Error(`Input #${index + 1}: ${label} "${camId}" not found (Softcam settings)`);
+      }
+      if (entry.enable === false) {
+        throw new Error(`Input #${index + 1}: ${label} "${camId}" is disabled`);
+      }
+      if (!softcamEntryComplete(entry)) {
+        throw new Error(`Input #${index + 1}: ${label} "${camId}" is incomplete (host/port/user/pass)`);
+      }
+    };
+    checkCam(parsed.options.cam, 'cam');
+    checkCam(parsed.options.cam_backup, 'cam_backup');
+  });
+}
+
 function formatSoftcamOptionLabel(softcam) {
   if (!softcam) return '';
   const id = String(softcam.id || '');
@@ -4585,7 +4627,7 @@ async function testSoftcam() {
 
   if (elements.softcamError) elements.softcamError.textContent = '';
   setStatus('Softcam test...', 'sticky');
-  const result = await apiJson('/api/v1/softcam/test', {
+  const response = await apiFetch('/api/v1/softcam/test', {
     method: 'POST',
     body: JSON.stringify({
       host,
@@ -4598,9 +4640,33 @@ async function testSoftcam() {
       max_wait_sec: 3,
     }),
   });
-  const message = (result && result.message) ? String(result.message) : 'OK';
+  const text = await response.text();
+  let payload = {};
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch (err) {
+      payload = {};
+    }
+  }
+  if (!response.ok) {
+    const message = payload.error || response.statusText || 'Softcam test failed';
+    setStatus(`Softcam test: ${message}`);
+    if (elements.softcamError) {
+      elements.softcamError.textContent = message;
+    }
+    if (payload && payload.cam) {
+      openSoftcamTestModal(payload);
+      return;
+    }
+    const error = new Error(`HTTP ${response.status}: ${message}`);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  const message = (payload && payload.message) ? String(payload.message) : 'OK';
   setStatus(`Softcam test: ${message}`);
-  openSoftcamTestModal(result);
+  openSoftcamTestModal(payload);
 }
 
 async function testServer(id, payload) {
@@ -12790,6 +12856,8 @@ function readStreamForm() {
   } else if (!inputs.length) {
     throw new Error('At least one input URL is required (General tab)');
   }
+
+  validateSoftcamInputs(inputs);
 
   let outputs = [];
   if (!isTranscode) {

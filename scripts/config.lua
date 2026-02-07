@@ -585,6 +585,11 @@ function config.init(opts)
     config.db = db
     config.db_path = db_path
 
+    -- Reduce "database is locked" aborts under concurrent access.
+    -- If the backend doesn't support these pragmas, ignore errors silently.
+    db_exec_safe(db, "PRAGMA journal_mode=WAL;")
+    db_exec_safe(db, "PRAGMA busy_timeout=3000;")
+
     config.migrate()
     config.supports_upsert = db_supports_upsert(db)
     if not config.supports_upsert then

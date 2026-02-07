@@ -34,6 +34,11 @@
  *      sync        - boolean or number, enable stream synchronization
  *      sctp        - boolean, use sctp instead of tcp
  *      timeout     - number, request timeout
+ *      connect_timeout_ms - number, connection timeout (ms)
+ *      read_timeout_ms    - number, response timeout (ms)
+ *      stall_timeout_ms   - number, stream stall timeout (ms)
+ *      low_speed_limit_bytes_sec - number, minimum read speed (bytes/sec)
+ *      low_speed_time_sec        - number, low-speed window (sec)
  *      callback    - function,
  *      upstream    - object, stream instance returned by module_instance:stream()
  */
@@ -64,6 +69,14 @@ struct module_data_t
     } config;
 
     int timeout_ms;
+    int connect_timeout_ms;
+    int response_timeout_ms;
+    int stall_timeout_ms;
+    int low_speed_limit;
+    int low_speed_time_sec;
+    uint64_t last_io_ts;
+    uint64_t low_speed_start_ts;
+    size_t low_speed_bytes;
     bool is_stream;
 
     int idx_self;
@@ -182,6 +195,35 @@ static void call_error(module_data_t *mod, const char *msg)
     lua_pushstring(lua, msg);
     lua_setfield(lua, -2, __message);
     callback(mod);
+}
+
+static bool note_io(module_data_t *mod, size_t bytes)
+{
+    mod->last_io_ts = asc_utime();
+    if(mod->low_speed_limit <= 0 || mod->low_speed_time_sec <= 0 || bytes == 0)
+        return true;
+
+    if(mod->low_speed_start_ts == 0)
+        mod->low_speed_start_ts = mod->last_io_ts;
+
+    mod->low_speed_bytes += bytes;
+    const uint64_t elapsed_us = mod->last_io_ts - mod->low_speed_start_ts;
+    if(elapsed_us < (uint64_t)mod->low_speed_time_sec * 1000000ULL)
+        return true;
+
+    const double elapsed_sec = (double)elapsed_us / 1000000.0;
+    const double rate = (elapsed_sec > 0.0) ? ((double)mod->low_speed_bytes / elapsed_sec) : 0.0;
+    if(rate < (double)mod->low_speed_limit)
+    {
+        asc_log_error(MSG("low speed %.0f B/s"), rate);
+        call_error(mod, "low speed");
+        on_close(mod);
+        return false;
+    }
+
+    mod->low_speed_start_ts = mod->last_io_ts;
+    mod->low_speed_bytes = 0;
+    return true;
 }
 
 static void on_read(void *arg);
@@ -629,12 +671,14 @@ static void thread_loop(void *arg)
                                                  , mod->sync.buffer_size - mod->sync.buffer_write);
             if(size > 0)
             {
+                if(!note_io(mod, (size_t)size))
+                    return;
                 system_time_check = system_time;
                 mod->sync.buffer_write += size;
             }
             else
             {
-                if(system_time - system_time_check >= (uint32_t)mod->timeout_ms * 1000)
+                if(system_time - system_time_check >= (uint32_t)mod->stall_timeout_ms * 1000)
                 {
                     asc_log_error(MSG("receiving timeout"));
                     return;
@@ -807,6 +851,9 @@ static void on_ts_read(void *arg)
         return;
     }
 
+    if(!note_io(mod, (size_t)size))
+        return;
+
     mod->is_active = true;
     mod->sync.buffer_write += size;
     mod->sync.buffer_read = 0;
@@ -861,6 +908,8 @@ static void on_read(void *arg)
         on_close(mod);
         return;
     }
+    if(!note_io(mod, (size_t)size))
+        return;
     if(mod->timeout)
     {
         asc_timer_destroy(mod->timeout);
@@ -1052,7 +1101,7 @@ static void on_read(void *arg)
 
             if(!mod->config.sync)
             {
-                mod->timeout = asc_timer_init(mod->timeout_ms, check_is_active, mod);
+                mod->timeout = asc_timer_init(mod->stall_timeout_ms, check_is_active, mod);
 
                 asc_socket_set_on_read(mod->sock, on_ts_read);
                 asc_socket_set_on_ready(mod->sock, NULL);
@@ -1363,7 +1412,7 @@ static void on_connected(module_data_t *mod)
     mod->request.status = 1;
 
     asc_timer_destroy(mod->timeout);
-    mod->timeout = asc_timer_init(mod->timeout_ms, timeout_callback, mod);
+    mod->timeout = asc_timer_init(mod->response_timeout_ms, timeout_callback, mod);
 
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_self);
     lua_getfield(lua, -1, "__options");
@@ -1535,7 +1584,7 @@ static int method_send(module_data_t *mod)
 
     if(mod->timeout)
         asc_timer_destroy(mod->timeout);
-    mod->timeout = asc_timer_init(mod->timeout_ms, timeout_callback, mod);
+    mod->timeout = asc_timer_init(mod->response_timeout_ms, timeout_callback, mod);
 
     asc_assert(lua_istable(lua, 2), MSG(":send() table required"));
     lua_pushvalue(lua, 2);
@@ -1628,10 +1677,32 @@ static void module_init(module_data_t *mod)
     }
 #endif
 
-    mod->timeout_ms = 10;
-    module_option_number("timeout", &mod->timeout_ms);
-    mod->timeout_ms *= 1000;
-    mod->timeout = asc_timer_init(mod->timeout_ms, timeout_callback, mod);
+    int timeout_sec = 10;
+    module_option_number("timeout", &timeout_sec);
+    if(timeout_sec <= 0)
+        timeout_sec = 10;
+
+    mod->connect_timeout_ms = timeout_sec * 1000;
+    mod->response_timeout_ms = timeout_sec * 1000;
+    mod->stall_timeout_ms = timeout_sec * 1000;
+
+    int value_ms = 0;
+    if(module_option_number("connect_timeout_ms", &value_ms) && value_ms > 0)
+        mod->connect_timeout_ms = value_ms;
+    if(module_option_number("read_timeout_ms", &value_ms) && value_ms > 0)
+        mod->response_timeout_ms = value_ms;
+    if(module_option_number("response_timeout_ms", &value_ms) && value_ms > 0)
+        mod->response_timeout_ms = value_ms;
+    if(module_option_number("stall_timeout_ms", &value_ms) && value_ms > 0)
+        mod->stall_timeout_ms = value_ms;
+
+    mod->timeout_ms = mod->response_timeout_ms;
+    mod->timeout = asc_timer_init(mod->connect_timeout_ms, timeout_callback, mod);
+
+    mod->low_speed_limit = 0;
+    mod->low_speed_time_sec = 0;
+    module_option_number("low_speed_limit_bytes_sec", &mod->low_speed_limit);
+    module_option_number("low_speed_time_sec", &mod->low_speed_time_sec);
 
     bool sctp = false;
     module_option_boolean("sctp", &sctp);

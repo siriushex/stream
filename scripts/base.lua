@@ -412,6 +412,176 @@ function parse_url(url)
     return data
 end
 
+local NET_RESILIENCE_DEFAULTS = {
+    connect_timeout_ms = 3000,
+    read_timeout_ms = 8000,
+    stall_timeout_ms = 5000,
+    max_retries = 10,
+    backoff_min_ms = 500,
+    backoff_max_ms = 10000,
+    backoff_jitter_pct = 20,
+    low_speed_limit_bytes_sec = 1024,
+    low_speed_time_sec = 5,
+    keepalive = false,
+}
+
+local NET_RESILIENCE_KEYS = {
+    "connect_timeout_ms",
+    "read_timeout_ms",
+    "stall_timeout_ms",
+    "max_retries",
+    "backoff_min_ms",
+    "backoff_max_ms",
+    "backoff_jitter_pct",
+    "low_speed_limit_bytes_sec",
+    "low_speed_time_sec",
+    "user_agent",
+    "keepalive",
+    "dns_cache_ttl_sec",
+}
+
+local function net_bool(value)
+    if value == nil then
+        return nil
+    end
+    if value == true or value == 1 or value == "1" or value == "true" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" then
+        return false
+    end
+    return nil
+end
+
+local function net_number(value)
+    if value == nil then
+        return nil
+    end
+    local num = tonumber(value)
+    if num == nil or num < 0 then
+        return nil
+    end
+    return num
+end
+
+local function net_has_values(tbl)
+    if type(tbl) ~= "table" then
+        return false
+    end
+    for _, key in ipairs(NET_RESILIENCE_KEYS) do
+        if tbl[key] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local function build_net_resilience(conf)
+    local global = nil
+    if config and config.get_setting then
+        local value = config.get_setting("net_resilience")
+        if type(value) == "table" then
+            global = value
+        end
+    end
+    local local_cfg = type(conf.net_resilience) == "table" and conf.net_resilience or nil
+    if not net_has_values(global) and not net_has_values(local_cfg) then
+        local has_local = false
+        for _, key in ipairs(NET_RESILIENCE_KEYS) do
+            if conf[key] ~= nil then
+                has_local = true
+                break
+            end
+        end
+        if not has_local then
+            return nil
+        end
+    end
+
+    local function pick(key)
+        if local_cfg and local_cfg[key] ~= nil then
+            return local_cfg[key]
+        end
+        if conf[key] ~= nil then
+            return conf[key]
+        end
+        if global and global[key] ~= nil then
+            return global[key]
+        end
+        return nil
+    end
+
+    local out = {}
+    for _, key in ipairs({
+        "connect_timeout_ms",
+        "read_timeout_ms",
+        "stall_timeout_ms",
+        "max_retries",
+        "backoff_min_ms",
+        "backoff_max_ms",
+        "backoff_jitter_pct",
+        "low_speed_limit_bytes_sec",
+        "low_speed_time_sec",
+        "dns_cache_ttl_sec",
+    }) do
+        local value = net_number(pick(key))
+        if value == nil then
+            value = NET_RESILIENCE_DEFAULTS[key]
+        end
+        out[key] = value
+    end
+
+    local ua = pick("user_agent")
+    if ua ~= nil and ua ~= "" then
+        out.user_agent = tostring(ua)
+    end
+
+    local keepalive = net_bool(pick("keepalive"))
+    if keepalive == nil then
+        keepalive = NET_RESILIENCE_DEFAULTS.keepalive
+    end
+    out.keepalive = keepalive
+
+    return out
+end
+
+local net_rand_seeded = false
+local function net_rand()
+    if not net_rand_seeded then
+        net_rand_seeded = true
+        math.randomseed(os.time())
+    end
+    return math.random()
+end
+
+local function calc_backoff_ms(net, attempt)
+    if not net then
+        return 5000
+    end
+    local base = tonumber(net.backoff_min_ms) or 500
+    local max_ms = tonumber(net.backoff_max_ms) or 10000
+    local jitter_pct = tonumber(net.backoff_jitter_pct) or 0
+    local factor = 1
+    if attempt and attempt > 1 then
+        factor = 2 ^ math.min(attempt - 1, 6)
+    end
+    local delay = base * factor
+    if delay > max_ms then
+        delay = max_ms
+    end
+    if jitter_pct > 0 then
+        local jitter = delay * (jitter_pct / 100)
+        delay = delay + ((net_rand() * 2) - 1) * jitter
+        if delay < base then
+            delay = base
+        end
+    end
+    if delay < 1 then
+        delay = 1
+    end
+    return math.floor(delay)
+end
+
 local function http_auth_bool(value, fallback)
     if value == nil then
         return fallback

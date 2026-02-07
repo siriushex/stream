@@ -2370,6 +2370,144 @@ local function check_http_output_port(output_config, opts)
     return true
 end
 
+local function softcam_is_truthy(value)
+    return value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on"
+end
+
+local function normalize_hex_string(value)
+    if value == nil then
+        return nil
+    end
+    local v = tostring(value or ""):gsub("%s+", "")
+    if v == "" then
+        return nil
+    end
+    if v:sub(1, 2):lower() == "0x" then
+        v = v:sub(3)
+    end
+    return v
+end
+
+local function validate_softcam_entry(entry)
+    if type(entry) ~= "table" then
+        return false, "softcam entry is not an object"
+    end
+    if entry.enable == false or entry.enabled == false then
+        return false, "softcam disabled"
+    end
+    local stype = tostring(entry.type or "newcamd"):lower()
+    if stype ~= "newcamd" then
+        return false, "unsupported type: " .. tostring(entry.type or "")
+    end
+    local host = tostring(entry.host or "")
+    if host == "" then
+        return false, "host is required"
+    end
+    local port = tonumber(entry.port or 0) or 0
+    if port <= 0 then
+        return false, "port is required"
+    end
+    local user = tostring(entry.user or "")
+    if user == "" then
+        return false, "user is required"
+    end
+    local pass = entry.pass
+    if pass == nil then
+        pass = entry.password
+    end
+    if pass == nil or tostring(pass) == "" then
+        return false, "pass is required"
+    end
+    local key = normalize_hex_string(entry.key)
+    if key and (not key:match("^[0-9a-fA-F]+$") or #key ~= 28) then
+        return false, "key must be 28 hex chars"
+    end
+    local caid = normalize_hex_string(entry.caid)
+    if caid and (not caid:match("^[0-9a-fA-F]+$") or #caid ~= 4) then
+        return false, "caid must be 4 hex chars"
+    end
+    return true
+end
+
+local function build_softcam_index()
+    if not config or not config.get_setting then
+        return {}
+    end
+    local list = config.get_setting("softcam")
+    if type(list) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for _, entry in ipairs(list) do
+        if type(entry) == "table" then
+            local id = entry.id
+            if id ~= nil and tostring(id) ~= "" then
+                out[tostring(id)] = entry
+            end
+        end
+    end
+    return out
+end
+
+local function extract_cam_value(item, key)
+    if type(item) == "string" then
+        local parsed = parse_url(item)
+        if parsed then
+            return parsed[key]
+        end
+        return nil
+    end
+    if type(item) == "table" then
+        if item[key] ~= nil then
+            return item[key]
+        end
+        if type(item.url) == "string" then
+            local parsed = parse_url(item.url)
+            if parsed then
+                return parsed[key]
+            end
+        end
+    end
+    return nil
+end
+
+local function validate_input_softcam(items)
+    if type(items) ~= "table" then
+        return true
+    end
+    local index = build_softcam_index()
+    if next(index) == nil then
+        return true
+    end
+    for idx, entry in ipairs(items) do
+        local cam = extract_cam_value(entry, "cam")
+        if cam ~= nil and not softcam_is_truthy(cam) then
+            local cam_id = tostring(cam)
+            local softcam_entry = index[cam_id]
+            if not softcam_entry then
+                return nil, "cam \"" .. cam_id .. "\" not found (input #" .. tostring(idx) .. ")"
+            end
+            local ok, err = validate_softcam_entry(softcam_entry)
+            if not ok then
+                return nil, "cam \"" .. cam_id .. "\" invalid: " .. tostring(err)
+            end
+        end
+        local cam_backup = extract_cam_value(entry, "cam_backup")
+        if cam_backup ~= nil and not softcam_is_truthy(cam_backup) then
+            local cam_id = tostring(cam_backup)
+            local softcam_entry = index[cam_id]
+            if not softcam_entry then
+                return nil, "cam_backup \"" .. cam_id .. "\" not found (input #" .. tostring(idx) .. ")"
+            end
+            local ok, err = validate_softcam_entry(softcam_entry)
+            if not ok then
+                return nil, "cam_backup \"" .. cam_id .. "\" invalid: " .. tostring(err)
+            end
+        end
+    end
+    return true
+end
+
 function validate_stream_config(cfg, opts)
     if type(cfg) ~= "table" then
         return nil, "stream config is required"
@@ -2378,6 +2516,10 @@ function validate_stream_config(cfg, opts)
     local is_transcode = is_transcode_stream(cfg)
     local is_mpts = cfg.mpts == true
     local inputs = normalize_stream_list(cfg.input)
+    local ok_cam, cam_err = validate_input_softcam(inputs)
+    if not ok_cam then
+        return nil, cam_err or "invalid cam reference"
+    end
 
     if is_mpts then
         local services = normalize_mpts_services(cfg.mpts_services)
