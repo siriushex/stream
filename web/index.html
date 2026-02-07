@@ -3238,6 +3238,65 @@
           <div class="form-hint">Uses another stream as input: <code>stream://&lt;id&gt;</code></div>
         </div>
 
+        <details class="fold" id="input-net-fold">
+          <summary class="fold-summary">Network resilience (advanced)</summary>
+          <div class="fold-body form-grid">
+            <label class="field">
+              <span>Connect timeout (ms)</span>
+              <input type="number" id="input-net-connect" placeholder="3000" />
+            </label>
+            <label class="field">
+              <span>Read timeout (ms)</span>
+              <input type="number" id="input-net-read" placeholder="8000" />
+            </label>
+            <label class="field">
+              <span>Stall timeout (ms)</span>
+              <input type="number" id="input-net-stall" placeholder="5000" />
+            </label>
+            <label class="field">
+              <span>Max retries</span>
+              <input type="number" id="input-net-max-retries" placeholder="10" />
+            </label>
+            <label class="field">
+              <span>Backoff min (ms)</span>
+              <input type="number" id="input-net-backoff-min" placeholder="500" />
+            </label>
+            <label class="field">
+              <span>Backoff max (ms)</span>
+              <input type="number" id="input-net-backoff-max" placeholder="10000" />
+            </label>
+            <label class="field">
+              <span>Backoff jitter (%)</span>
+              <input type="number" id="input-net-backoff-jitter" placeholder="20" />
+            </label>
+            <label class="field">
+              <span>Low speed (B/s)</span>
+              <input type="number" id="input-net-low-speed" placeholder="1024" />
+            </label>
+            <label class="field">
+              <span>Low speed window (sec)</span>
+              <input type="number" id="input-net-low-speed-time" placeholder="5" />
+            </label>
+            <label class="field">
+              <span>DNS cache TTL (sec)</span>
+              <input type="number" id="input-net-dns-ttl" placeholder="0" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="input-net-keepalive" />
+              <span>HTTP keepalive</span>
+            </label>
+            <label class="field">
+              <span>Jitter buffer (ms)</span>
+              <input type="number" id="input-jitter-ms" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Jitter max (MB)</span>
+              <input type="number" id="input-jitter-max-mb" placeholder="4" />
+            </label>
+          </div>
+          <div class="form-hint">Overrides global defaults for this input only.</div>
+        </details>
+
         <div class="divider"></div>
 
         <div class="form-grid">
