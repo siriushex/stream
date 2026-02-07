@@ -18720,6 +18720,28 @@ function buildUpdateChannelNamesNode() {
   return node;
 }
 
+function buildMakeMptsNode() {
+  const node = createEl('div');
+  node.appendChild(createEl('div', '', 'MPTS (Multi Program Transport Stream)'));
+  node.appendChild(createEl(
+    'div',
+    'form-note',
+    'MPTS is a transport stream that contains multiple TV services (programs) in one output. Astral can build MPTS in the Stream editor (MPTS tab).'
+  ));
+  const steps = createEl('div', 'ai-help-lines');
+  steps.appendChild(createEl('div', '', '1) Open a stream, enable “Create Multi Program Stream” on General (or press “Enable MPTS” on the MPTS tab).'));
+  steps.appendChild(createEl('div', '', '2) Add services (inputs) in the MPTS tab. Each service can be UDP or `stream://stream_id`.'));
+  steps.appendChild(createEl('div', '', '3) Set PNR/LCN/provider/service name (optional) and advanced PSI/NIT options as needed.'));
+  steps.appendChild(createEl('div', '', '4) Configure outputs on General and click Apply/Save.'));
+  node.appendChild(steps);
+  node.appendChild(createEl(
+    'div',
+    'form-note',
+    'If you want AstralAI to draft the config plan, reply with details: source stream id or input URL, required PNR list, output URL, and whether to enable.'
+  ));
+  return node;
+}
+
 function clearAiChatPolling() {
   if (state.aiChatPoll) {
     clearTimeout(state.aiChatPoll);
@@ -19011,6 +19033,17 @@ async function sendAiChatMessage() {
     elements.aiChatInput.value = '';
     appendAiChatMessage('user', prompt);
     appendAiChatMessage('assistant', buildAiHelpNode());
+    setAiChatStatus('');
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    return;
+  }
+  if (normalized === 'make mpts' || normalized === 'mpts') {
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', prompt);
+    appendAiChatMessage('assistant', buildMakeMptsNode());
     setAiChatStatus('');
     if (elements.aiChatFiles) {
       elements.aiChatFiles.value = '';
