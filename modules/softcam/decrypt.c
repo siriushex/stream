@@ -104,6 +104,7 @@ struct module_data_t
     int caid;
     bool disable_emm;
     int ecm_pid;
+    bool key_guard;
 
     /* dvbcsa */
     asc_list_t *el_list;
@@ -969,6 +970,13 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         const uint8_t ck2 = (data[7] + data[8] + data[9]) & 0xFF;
         is_cw_checksum_ok = (ck1 == data[6] && ck2 == data[10]);
 
+        if(mod->key_guard && !is_cw_checksum_ok)
+        {
+            if(asc_log_is_debug())
+                asc_log_debug(MSG("ECM CW checksum mismatch (key_guard: rejecting keys)"));
+            break;
+        }
+
         is_keys_ok = true;
     } while(0);
 
@@ -1050,6 +1058,8 @@ static void module_init(module_data_t *mod)
 
     module_option_string("name", &mod->name, NULL);
     asc_assert(mod->name != NULL, "[decrypt] option 'name' is required");
+
+    module_option_boolean("key_guard", &mod->key_guard);
 
     mod->stream[0] = mpegts_psi_init(MPEGTS_PACKET_PAT, 0);
     mod->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, MAX_PID);
