@@ -848,6 +848,8 @@ const elements = {
   streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
   streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
   streamTranscodePublishJson: $('#stream-transcode-publish-json'),
+  streamTranscodeLadderLinksFold: $('#stream-transcode-ladder-links-fold'),
+  streamTranscodeLadderLinks: $('#stream-transcode-ladder-links'),
   streamTranscodePreset: $('#stream-transcode-preset'),
   streamTranscodePresetApply: $('#stream-transcode-preset-apply'),
   streamTranscodeInputUrl: $('#stream-transcode-input-url'),
@@ -13109,6 +13111,12 @@ function updateEditorTranscodeStatus() {
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
   }
+  if (elements.streamTranscodeLadderLinks) {
+    elements.streamTranscodeLadderLinks.innerHTML = '';
+  }
+  if (elements.streamTranscodeLadderLinksFold) {
+    elements.streamTranscodeLadderLinksFold.hidden = true;
+  }
   if (elements.streamTranscodeWarmup) {
     elements.streamTranscodeWarmup.textContent = '';
     elements.streamTranscodeWarmup.classList.remove('is-error');
@@ -13134,6 +13142,102 @@ function updateEditorTranscodeStatus() {
   const stats = state.stats[stream.id] || {};
   const transcode = stats.transcode || {};
   const transcodeState = stats.transcode_state || transcode.state;
+
+  const renderLadderLinks = () => {
+    if (!elements.streamTranscodeLadderLinks || !elements.streamTranscodeLadderLinksFold) return;
+    const profiles = Array.isArray(transcode.profiles_status) ? transcode.profiles_status : [];
+    if (!profiles.length) return;
+
+    const rows = [];
+    const publish = Array.isArray(transcode.publish_status) ? transcode.publish_status : [];
+
+    const addRow = (label, url, opts = {}) => {
+      if (!url) return;
+      const row = document.createElement('div');
+      row.className = 'publish-links-row';
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'publish-links-label';
+      labelEl.textContent = label;
+
+      const abs = resolveAbsoluteUrl(url, window.location.origin);
+      const link = document.createElement('a');
+      link.className = 'publish-links-url';
+      link.href = abs || '#';
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      link.textContent = String(url);
+
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn tiny ghost';
+      copy.textContent = 'Copy';
+      copy.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        copyText(opts.copyText || abs || url, 'Copied URL');
+      });
+
+      row.appendChild(labelEl);
+      row.appendChild(link);
+      row.appendChild(copy);
+      rows.push(row);
+    };
+
+    // Always show embed for ladder streams (page is rendered even if HLS publish is disabled).
+    addRow('Embed', `/embed/${stream.id}`);
+
+    // HTTP-TS pull (always available for ladder). Prefer server-provided publish_status urls if present.
+    const liveByProfile = {};
+    publish.forEach((entry) => {
+      if (!entry) return;
+      if (String(entry.type || '').toLowerCase() !== 'http-ts') return;
+      if (!entry.profile_id || !entry.url) return;
+      liveByProfile[String(entry.profile_id)] = String(entry.url);
+    });
+    profiles.forEach((p) => {
+      const pid = p && p.profile_id ? String(p.profile_id) : '';
+      if (!pid) return;
+      const url = liveByProfile[pid] || `/live/${stream.id}~${pid}.ts`;
+      addRow(`LIVE ${pid}`, url);
+    });
+
+    // HLS (master + variants).
+    const hls = publish.find((entry) => entry && String(entry.type || '').toLowerCase() === 'hls' && entry.url);
+    if (hls && hls.url) {
+      addRow('HLS', hls.url);
+      if (hls.variant_urls && typeof hls.variant_urls === 'object') {
+        Object.keys(hls.variant_urls).sort().forEach((pid) => {
+          const u = hls.variant_urls[pid];
+          if (u) addRow(`HLS ${pid}`, u);
+        });
+      }
+    }
+
+    // DASH (manifest).
+    const dash = publish.find((entry) => entry && String(entry.type || '').toLowerCase() === 'dash' && entry.url);
+    if (dash && dash.url) {
+      addRow('DASH', dash.url);
+    }
+
+    // Push formats (show destination URL).
+    publish.forEach((entry) => {
+      if (!entry) return;
+      const t = String(entry.type || '').toLowerCase();
+      if (t !== 'udp' && t !== 'rtp' && t !== 'rtmp' && t !== 'rtsp') return;
+      if (!entry.url) return;
+      const pid = entry.profile_id ? String(entry.profile_id) : '';
+      addRow(`${t.toUpperCase()}${pid ? ' ' + pid : ''}`, String(entry.url), { copyText: String(entry.url) });
+    });
+
+    if (!rows.length) return;
+    elements.streamTranscodeLadderLinksFold.hidden = false;
+    elements.streamTranscodeLadderLinks.innerHTML = '';
+    rows.forEach((row) => elements.streamTranscodeLadderLinks.appendChild(row));
+  };
+
+  renderLadderLinks();
+
   if (elements.streamTranscodeInputUrl) {
     const inputUrl = transcode.ffmpeg_input_url || transcode.active_input_url || '';
     elements.streamTranscodeInputUrl.textContent = inputUrl
