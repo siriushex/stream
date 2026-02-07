@@ -3359,6 +3359,8 @@ local function stop_audio_fix_process(channel_data, output_id, output_data, enab
         audio_fix.proc:close()
         audio_fix.proc = nil
     end
+    audio_fix.proc_input_url = nil
+    audio_fix.proc_output_url = nil
     -- Audio-fix may use a local UDP proxy (udp_switch + udp_output) to keep output pacing
     -- consistent with udp_output settings (sync/cbr/socket_size/etc).
     audio_fix.proxy_output = nil
@@ -3581,6 +3583,8 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     local now = os.time()
     audio_fix.proc = proc
     audio_fix.proc_args = args
+    audio_fix.proc_input_url = input_url
+    audio_fix.proc_output_url = output_url
     audio_fix.state = "RUNNING"
     audio_fix.cooldown_active = false
     audio_fix.last_error = nil
@@ -4303,7 +4307,18 @@ channel_audio_fix_on_input_switch = function(channel_data, prev_id, input_id, re
             stop_audio_fix_input_probe(output_data)
 
             local force_run = is_audio_fix_force_run(audio_fix.config)
-            if audio_fix.proc or force_run then
+            local needs_restart = false
+            if audio_fix.proc then
+                -- When audio-fix reads the loopback /play URL, input switching happens inside the same
+                -- HTTP stream and ffmpeg does not need a restart. Restarting causes visible "jerks".
+                local base_play = build_audio_fix_play_url(channel_data)
+                local cur_input = audio_fix.proc_input_url
+                local using_play = base_play and cur_input and cur_input:sub(1, #base_play) == base_play
+                needs_restart = not using_play
+            elseif force_run then
+                needs_restart = true
+            end
+            if needs_restart then
                 log.info("[stream " .. get_stream_label(channel_data) .. "] audio-fix: restart output #" ..
                     tostring(output_id) .. " due to input switch (" .. tostring(reason) .. ")")
                 restart_audio_fix_process(channel_data, output_id, output_data, "input_switch", {
