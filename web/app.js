@@ -14131,11 +14131,8 @@ function readStreamForm() {
 
       return cleaned;
     }).filter((output) => output && output.url);
-    if (!ladderEnabled) {
+    if (!ladderEnabled && tcOutputs.length) {
       tcOutputs.forEach(validateTranscodeOutput);
-      if (!tcOutputs.length) {
-        throw new Error('Transcode outputs are required (Transcode tab)');
-      }
     }
     if (tcOutputs.length) {
       transcode.outputs = tcOutputs;
