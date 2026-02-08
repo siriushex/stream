@@ -473,36 +473,19 @@ local function resolve_job_input_url(job)
 	    if allow_direct == false then
 	        use_play = true
 	    end
-	    local has_play_buffer = tc.input_play_buffer_kb ~= nil or tc.play_buffer_kb ~= nil
-	    local has_play_buffer_fill = tc.input_play_buffer_fill_kb ~= nil or tc.play_buffer_fill_kb ~= nil
-	    local play_buffer_kb = resolve_play_buffer_kb(tc.input_play_buffer_kb)
-	    if play_buffer_kb == nil and tc.input_play_buffer_kb == nil then
-	        play_buffer_kb = resolve_play_buffer_kb(tc.play_buffer_kb)
-	    end
-    local play_buffer_fill_kb = resolve_play_buffer_kb(tc.input_play_buffer_fill_kb)
-    if play_buffer_fill_kb == nil and tc.input_play_buffer_fill_kb == nil then
-        play_buffer_fill_kb = resolve_play_buffer_kb(tc.play_buffer_fill_kb)
-    end
-    if not has_play_buffer then
-        play_buffer_kb = TRANSCODE_PLAY_BUFFER_KB_DEFAULT
-    end
-    if not has_play_buffer_fill then
-        play_buffer_fill_kb = TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT
-    end
-	    local play_url = nil
-	    if use_play then
-	        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
-	        if play_id then
-	            play_url = build_transcode_play_url(play_id)
-	        end
-	        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
-	            play_url = build_transcode_play_url(job.id, job.active_input_id, { path = "/input/" })
-	        end
-	        if play_url then
-	            play_url = append_play_buffer(play_url, play_buffer_kb)
-	            play_url = append_play_buffer_fill(play_url, play_buffer_fill_kb)
-	            return play_url
-	        end
+    -- Loopback input buffer sizing is enforced server-side for /input. Do not append buf_* params to the URL.
+    local play_url = nil
+    if use_play then
+        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
+        if play_id then
+            play_url = build_transcode_play_url(play_id)
+        end
+        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
+            play_url = build_transcode_play_url(job.id, job.active_input_id, { path = "/input/" })
+        end
+        if play_url then
+            return play_url
+        end
 	        if allow_direct == false then
 	            log.error("[transcode " .. tostring(job.id) .. "] loopback input unavailable; direct inputs are disabled")
 	            return nil
