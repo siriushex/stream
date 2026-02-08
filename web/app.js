@@ -16800,6 +16800,19 @@ function getHlsUrl(stream) {
   return `${base}/hls/${encodeURIComponent(stream.id)}/index.m3u8`;
 }
 
+function isStreamTranscodedForPlayer(stream) {
+  if (!stream || !stream.id) return false;
+  const stats = state && state.stats && state.stats[stream.id] ? state.stats[stream.id] : null;
+  if (stats) {
+    const tc = stats.transcode_state || (stats.transcode && stats.transcode.state);
+    if (tc) return true;
+  }
+  const cfg = stream.config || {};
+  if (cfg.type === 'transcode' || cfg.type === 'ffmpeg') return true;
+  const tcCfg = cfg.transcode;
+  return !!(tcCfg && typeof tcCfg === 'object' && Object.keys(tcCfg).length > 0);
+}
+
 function canPlayMpegTs() {
   if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
   const result = elements.playerVideo.canPlayType('video/mp2t');
@@ -19005,6 +19018,7 @@ function schedulePlayerNoVideoFallback(attempt) {
   if (state.playerTriedH264) return;
   const stream = getPlayerStream();
   if (!stream || !state.playerStreamId) return;
+  if (isStreamTranscodedForPlayer(stream)) return;
   if (!elements.playerVideo) return;
   const visible = elements.playerOverlay && elements.playerOverlay.getAttribute('aria-hidden') === 'false';
   if (!visible) return;
@@ -19130,6 +19144,13 @@ async function attachPlayerSource(url, opts = {}) {
       return;
     }
 
+    // If the stream is already transcoded, compatibility fallbacks (AAC/H.264/video-only)
+    // should not be attempted from the player: they won't help and only confuse users.
+    if (isStreamTranscodedForPlayer(stream)) {
+      setPlayerError('Не удалось запустить предпросмотр. Проверьте что транскодинг запущен и поток ONLINE.');
+      return;
+    }
+
     // Фолбэки: сначала пробуем перекодировать аудио в AAC (video copy), затем без аудио.
     if (!state.playerTriedAudioAac) {
       state.playerTriedAudioAac = true;
@@ -19250,10 +19271,16 @@ async function startPlayer(stream, opts = {}) {
   let url = null;
   let mode = 'direct';
   let token = null;
-  const forceVideoOnly = opts.forceVideoOnly === true;
-  const forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
+  let forceVideoOnly = opts.forceVideoOnly === true;
+  let forceAudioAac = (!forceVideoOnly) && (opts.forceAudioAac === true);
   let forceH264 = (!forceVideoOnly) && (!forceAudioAac) && (opts.forceH264 === true);
-  if (!forceVideoOnly && !forceAudioAac && !forceH264 && state.playerPlaybackMode === 'h264') {
+  const transcoded = isStreamTranscodedForPlayer(stream);
+  if (transcoded) {
+    // Stream output is already transcoded, so preview must not request extra transcodes.
+    forceVideoOnly = false;
+    forceAudioAac = false;
+    forceH264 = false;
+  } else if (!forceVideoOnly && !forceAudioAac && !forceH264 && state.playerPlaybackMode === 'h264') {
     forceH264 = true;
   }
 
