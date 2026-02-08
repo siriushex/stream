@@ -52,9 +52,31 @@ local function normalize_stream_type(cfg)
     return tostring(t):lower()
 end
 
+local function normalize_truthy(value)
+    if value == nil then
+        return false
+    end
+    if value == true then
+        return true
+    end
+    if value == false then
+        return false
+    end
+    local text = tostring(value):lower()
+    return text == "1" or text == "true" or text == "yes" or text == "on"
+end
+
 function transcode.is_transcode_config(cfg)
     local t = normalize_stream_type(cfg)
-    return t == "transcode" or t == "ffmpeg"
+    if t == "transcode" or t == "ffmpeg" then
+        return true
+    end
+    -- Backward-compatible: allow enabling transcoding on regular streams via config.transcode.enabled.
+    local tc = cfg and cfg.transcode or nil
+    if type(tc) == "table" then
+        return normalize_truthy(tc.enabled)
+    end
+    return false
 end
 
 local function ensure_list(value)
@@ -5106,15 +5128,28 @@ local function ensure_ladder_publish(job)
             local t = tostring(pub.type or ""):lower()
             if t == "hls" then
                 storage = pub.storage or storage
-                if type(pub.variants) == "table" then
-                    for _, pid in ipairs(pub.variants) do
+                local list = (type(pub.variants) == "table" and #pub.variants > 0) and pub.variants or nil
+                if not list then
+                    -- Empty/missing variants means "all profiles" (Flussonic-like UX).
+                    for _, p in ipairs(job.profiles or {}) do
+                        if p and p.id then
+                            variants[p.id] = true
+                        end
+                    end
+                else
+                    for _, pid in ipairs(list) do
                         if pid and pid ~= "" then
                             variants[pid] = true
                         end
                     end
                 end
             elseif t == "udp" or t == "rtp" then
-                local pid = pub.profile
+                local pid = nil
+                if type(pub.variants) == "table" and #pub.variants > 0 then
+                    pid = pub.variants[1]
+                else
+                    pid = pub.profile
+                end
                 local url = pub.url
                 if pid and pid ~= "" and url and url ~= "" then
                     udp_targets[pid] = url
@@ -5664,15 +5699,28 @@ ensure_publish_workers = function(job)
         if pub and pub.enabled == true then
             local t = tostring(pub.type or ""):lower()
             if t == "rtmp" or t == "rtsp" then
-                local pid = pub.profile
+                local pid = nil
+                if type(pub.variants) == "table" and #pub.variants > 0 then
+                    pid = pub.variants[1]
+                else
+                    pid = pub.profile
+                end
                 local url = pub.url
                 if pid and pid ~= "" and url and url ~= "" then
                     local key = t .. ":" .. pid
                     desired[key] = { type = t, profile_id = pid, url = url, retry = pub.retry }
                 end
             elseif t == "dash" then
-                local variants = type(pub.variants) == "table" and pub.variants or nil
-                if variants and #variants > 0 then
+                local variants = (type(pub.variants) == "table") and pub.variants or nil
+                if not variants or #variants == 0 then
+                    variants = {}
+                    for _, p in ipairs(job.profiles or {}) do
+                        if p and p.id then
+                            table.insert(variants, p.id)
+                        end
+                    end
+                end
+                if #variants > 0 then
                     local key = t .. ":" .. table.concat(variants, "+")
                     desired[key] = { type = t, variants = variants, path = pub.path, retry = pub.retry }
                 end
@@ -7444,7 +7492,12 @@ function transcode.get_status(id)
                 local enabled = pub.enabled == true
 
                 if t == "udp" or t == "rtp" then
-                    local pid = pub.profile
+                    local pid = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        pid = pub.variants[1]
+                    else
+                        pid = pub.profile
+                    end
                     local state = "STOPPED"
                     if enabled then
                         state = (type(job.publish_udp_outputs) == "table" and pid and job.publish_udp_outputs[pid]) and "RUNNING" or "STOPPED"
@@ -7457,7 +7510,17 @@ function transcode.get_status(id)
                         state = state,
                     })
                 elseif t == "hls" then
-                    local variants = type(pub.variants) == "table" and pub.variants or {}
+                    local variants = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        variants = pub.variants
+                    else
+                        variants = {}
+                        for _, p in ipairs(job.profiles or {}) do
+                            if p and p.id then
+                                table.insert(variants, p.id)
+                            end
+                        end
+                    end
                     local state = enabled and "RUNNING" or "STOPPED"
                     if enabled and not hls_output then
                         state = "ERROR"
@@ -7499,10 +7562,10 @@ function transcode.get_status(id)
                     })
                 elseif t == "http-ts" then
                     local ids = {}
-                    if pub.profile and pub.profile ~= "" then
-                        ids = { pub.profile }
-                    elseif type(pub.variants) == "table" and #pub.variants > 0 then
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
                         ids = pub.variants
+                    elseif pub.profile and pub.profile ~= "" then
+                        ids = { pub.profile }
                     else
                         for _, p in ipairs(job.profiles or {}) do
                             if p and p.id then
@@ -7526,7 +7589,17 @@ function transcode.get_status(id)
                         })
                     end
                 elseif t == "dash" then
-                    local variants = type(pub.variants) == "table" and pub.variants or {}
+                    local variants = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        variants = pub.variants
+                    else
+                        variants = {}
+                        for _, p in ipairs(job.profiles or {}) do
+                            if p and p.id then
+                                table.insert(variants, p.id)
+                            end
+                        end
+                    end
                     local key = "dash:" .. table.concat(variants, "+")
                     local worker = workers_by_key[key]
                     local entry = {
@@ -7553,7 +7626,12 @@ function transcode.get_status(id)
                     end
                     push(entry)
                 elseif t == "rtmp" or t == "rtsp" then
-                    local pid = pub.profile
+                    local pid = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        pid = pub.variants[1]
+                    else
+                        pid = pub.profile
+                    end
                     local key = t .. ":" .. tostring(pid or "")
                     local worker = workers_by_key[key]
                     local entry = {
@@ -7576,19 +7654,31 @@ function transcode.get_status(id)
                         state = enabled and "AVAILABLE" or "STOPPED",
                     })
                 elseif t == "llhls" or t == "mss" or t == "m4f" then
+                    local pid = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        pid = pub.variants[1]
+                    else
+                        pid = pub.profile
+                    end
                     push({
                         type = t,
                         enabled = enabled,
-                        profile_id = pub.profile,
+                        profile_id = pid,
                         url = nil,
                         state = enabled and "EXPERIMENTAL_DISABLED" or "STOPPED",
                         reason = "not_implemented",
                     })
                 else
+                    local pid = nil
+                    if type(pub.variants) == "table" and #pub.variants > 0 then
+                        pid = pub.variants[1]
+                    else
+                        pid = pub.profile
+                    end
                     push({
                         type = t,
                         enabled = enabled,
-                        profile_id = pub.profile,
+                        profile_id = pid,
                         url = pub.url,
                         state = enabled and "UNSUPPORTED" or "STOPPED",
                     })
