@@ -2181,13 +2181,13 @@
 	            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
 	          </div>
 
-	          <label class="checkline">
-	            <input type="checkbox" id="stream-transcode-ladder-enabled" />
-	            <span>Multi-bitrate ladder (profiles + publish)</span>
-	          </label>
-			          <div class="form-hint">
-			            When enabled, the Transcode outputs list is ignored and the ladder pipeline is used instead. Configure publish outputs in OUTPUT LIST.
-			          </div>
+		          <label class="checkline" hidden>
+		            <input type="checkbox" id="stream-transcode-ladder-enabled" />
+		            <span>Multi-bitrate ladder (profiles + publish)</span>
+		          </label>
+				          <div class="form-hint">
+				            Transcoding runs in ladder mode. Configure publish outputs in the OUTPUT LIST (General tab).
+				          </div>
 			          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
 	            <div class="form-grid">
 	              <div class="field span-12">
