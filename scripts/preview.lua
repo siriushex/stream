@@ -166,6 +166,27 @@ local function build_direct_hls_url(stream_id, out)
     return join_path(join_path(hls_base, stream_id), playlist)
 end
 
+local function resolve_transcode_output_upstream(job)
+    if not job then
+        return nil
+    end
+    if job.ladder_enabled == true then
+        local first = job.profiles and job.profiles[1] or nil
+        local pid = first and first.id or nil
+        local bus = pid and job.profile_buses and job.profile_buses[pid] or nil
+        if bus and bus.switch then
+            return bus.switch:stream()
+        end
+    end
+    if job.process_per_output == true then
+        local worker = job.workers and job.workers[1] or nil
+        if worker and worker.proxy_enabled == true and worker.proxy_switch then
+            return worker.proxy_switch:stream()
+        end
+    end
+    return nil
+end
+
 local function channel_on_air(channel)
     if not channel or type(channel) ~= "table" then
         return false
@@ -701,6 +722,113 @@ function preview.start(stream_id, opts)
     if not stream then
         return nil, "stream not found", 404
     end
+
+    -- Transcode streams already have an encoded output. For preview we must not launch
+    -- another ffmpeg transcoder. Use published HLS when available, otherwise create a
+    -- lightweight (remux-only) HLS preview from the transcode output bus.
+    if stream.kind == "transcode" and stream.job then
+        local job = stream.job
+
+        -- Never spawn preview ffmpeg for transcode streams, even if UI requested a fallback profile.
+        video_only = false
+        audio_aac = false
+        video_h264 = false
+
+        -- Prefer the existing transcode publish (HLS master) when present.
+        if job.ladder_enabled == true
+            and type(job.publish_hls_outputs) == "table"
+            and next(job.publish_hls_outputs) ~= nil then
+            local url = build_direct_hls_url(stream_id, { playlist = "index.m3u8" })
+            if url and url ~= "" then
+                return { mode = "hls", url = url }
+            end
+        end
+
+        local existing = by_stream[stream_id]
+        if existing and sessions[existing] then
+            local s = sessions[existing]
+            preview.touch(existing)
+            return {
+                mode = "preview",
+                url = s.url,
+                token = s.token,
+                expires_in_sec = tonumber(s.expires_in_sec) or nil,
+                reused = true,
+            }
+        end
+
+        local upstream = resolve_transcode_output_upstream(job)
+        if not upstream then
+            return nil, "preview not supported", 409
+        end
+
+        local max_sessions, _, ttl = preview_limits()
+        local active = 0
+        for _ in pairs(sessions) do
+            active = active + 1
+        end
+        if active >= max_sessions then
+            return nil, "preview limit reached", 429
+        end
+
+        local token = new_token()
+        if not token then
+            return nil, "failed to generate token", 500
+        end
+
+        local ts_ext = setting_string("hls_ts_extension", "ts")
+        if ts_ext == "" then
+            ts_ext = "ts"
+        end
+
+        local output = hls_output({
+            upstream = upstream,
+            playlist = "index.m3u8",
+            prefix = "seg",
+            ts_extension = ts_ext,
+            pass_data = true,
+            use_wall = true,
+            naming = "sequence",
+            round_duration = false,
+            storage = "memfd",
+            stream_id = token,
+            on_demand = true,
+            idle_timeout_sec = setting_number("preview_idle_timeout_sec", 45),
+            target_duration = 2,
+            window = 4,
+            cleanup = 8,
+            max_bytes = 32 * 1024 * 1024,
+            max_segments = 32,
+        })
+
+        local now = os.time()
+        sessions[token] = {
+            token = token,
+            stream_id = stream_id,
+            created_at = now,
+            last_access_at = now,
+            expires_at = now + ttl,
+            expires_in_sec = ttl,
+            url = "/preview/" .. token .. "/index.m3u8",
+            output = output,
+            proc = nil,
+            base_path = nil,
+            channel_data = nil,
+        }
+        by_stream[stream_id] = token
+
+        log.info("[preview] start token=" .. token .. " stream=" .. stream_id .. " (transcode)")
+        ensure_sweep_timer()
+
+        return {
+            mode = "preview",
+            url = sessions[token].url,
+            token = token,
+            expires_in_sec = ttl,
+            reused = false,
+        }
+    end
+
     if stream.kind ~= "stream" or not stream.channel then
         return nil, "preview not supported", 409
     end
