@@ -2157,6 +2157,9 @@
         </div>
         <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
           <div class="form-hint">Enable transcoding and apply presets on the General tab. Advanced options are below.</div>
+          <details class="fold">
+            <summary class="fold-summary">Advanced</summary>
+            <div class="fold-body">
           <div class="form-grid">
             <label class="field">
               <span>Engine</span>
@@ -2258,8 +2261,10 @@
               <div class="form-hint">
                 Outputs and args map directly to ffmpeg argv items. Use one argument per line in the arg fields.
               </div>
-	            </div>
-	          </details>
+            </div>
+          </details>
+            </div>
+          </details>
           <div class="form-hint" id="stream-transcode-input-url"></div>
           <div class="form-hint" id="stream-transcode-status"></div>
           <div class="form-hint" id="stream-transcode-warmup"></div>

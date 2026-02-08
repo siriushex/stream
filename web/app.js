@@ -6418,13 +6418,13 @@ function getLadderPresetProfiles(mode) {
 }
 
 function getLadderPresetPublish(mode) {
-  const variants = mode === '3'
-    ? ['HDHigh', 'HDMedium', 'SDHigh']
-    : ['HDHigh', 'HDMedium'];
-
+  // variants=[] means "ALL profiles" (server-side default), so presets stay stable even if
+  // profile ids are edited later.
   return [
-    { type: 'hls', enabled: true, variants },
-    { type: 'dash', enabled: false, variants },
+    { type: 'hls', enabled: true, variants: [] },
+    { type: 'http-ts', enabled: true, variants: [] },
+    { type: 'dash', enabled: false, variants: [] },
+    { type: 'embed', enabled: false },
   ];
 }
 
@@ -8248,29 +8248,59 @@ function getEditingProfileIds() {
   return profiles.map((p) => String(p && p.id || '').trim()).filter(Boolean);
 }
 
-function formatPublishOutputLabel(entry) {
+function getPublishOutputPublicUrl(entry, streamId) {
+  const type = String(entry && entry.type || '').toLowerCase();
+  if (!streamId) streamId = '';
+  const base = getPlayBaseUrl();
+  const id = encodeURIComponent(streamId);
+  if (type === 'hls') {
+    return `${base}/hls/${id}/index.m3u8`;
+  }
+  if (type === 'dash') {
+    return `${base}/dash/${id}/manifest.mpd`;
+  }
+  if (type === 'embed') {
+    return `${base}/embed/${id}`;
+  }
+  if (type === 'http-ts') {
+    const variants = Array.isArray(entry.variants)
+      ? entry.variants
+      : (entry.profile ? [entry.profile] : []);
+    if (variants.length === 1) {
+      return `${base}/live/${id}~${encodeURIComponent(variants[0])}.ts`;
+    }
+    // Template-like preview for "all" or multiple variants.
+    return `${base}/live/${id}~<profile>.ts`;
+  }
+  if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
+    return entry && entry.url ? String(entry.url) : '';
+  }
+  return '';
+}
+
+function formatPublishOutputLabel(entry, streamId) {
   const type = String(entry && entry.type || '').toLowerCase();
   const enabled = entry && entry.enabled === false ? 'OFF' : 'ON';
+  const url = getPublishOutputPublicUrl(entry, streamId);
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
     const profile = (Array.isArray(entry.variants) && entry.variants.length)
       ? entry.variants[0]
       : (entry.profile || 'profile?');
-    const url = entry.url || 'url?';
-    return `${type.toUpperCase()} (${enabled}) · ${profile} · ${url}`;
+    return `${type.toUpperCase()} (${enabled}) · ${profile} · ${url || 'url?'}`;
   }
   if (type === 'http-ts') {
     const variants = Array.isArray(entry.variants) ? entry.variants
       : (entry.profile ? [entry.profile] : []);
     const v = variants.length ? variants.join(',') : 'all';
-    return `HTTP-TS (${enabled}) · ${v}`;
+    return `HTTP-TS (${enabled}) · ${v} · ${url}`;
   }
   if (type === 'hls' || type === 'dash') {
     const variants = Array.isArray(entry.variants) ? entry.variants : [];
     const v = variants.length ? variants.join(',') : 'all';
-    return `${type.toUpperCase()} (${enabled}) · ${v}`;
+    return `${type.toUpperCase()} (${enabled}) · ${v} · ${url}`;
   }
   if (type === 'embed') {
-    return `EMBED (${enabled}) · uses HLS`;
+    return `EMBED (${enabled}) · uses HLS · ${url}`;
   }
   return `${type.toUpperCase() || 'PUBLISH'} (${enabled})`;
 }
@@ -8278,6 +8308,9 @@ function formatPublishOutputLabel(entry) {
 function renderPublishOutputList() {
   elements.outputList.innerHTML = '';
   const publish = parseEditingTranscodePublishJsonSafe();
+  const streamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value)
+    : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
   const supported = publish
     .map((entry, index) => ({ entry, index }))
     .filter((x) => x.entry && typeof x.entry === 'object')
@@ -8305,7 +8338,14 @@ function renderPublishOutputList() {
 
     const label = document.createElement('div');
     label.className = 'list-input';
-    label.textContent = formatPublishOutputLabel(entry);
+    label.textContent = formatPublishOutputLabel(entry, streamId);
+
+    const copy = document.createElement('button');
+    copy.className = 'icon-btn';
+    copy.type = 'button';
+    copy.dataset.action = 'publish-output-copy';
+    copy.title = 'Copy URL';
+    copy.textContent = 'Copy';
 
     const options = document.createElement('button');
     options.className = 'icon-btn';
@@ -8324,6 +8364,7 @@ function renderPublishOutputList() {
     const spacer = document.createElement('div');
     spacer.className = 'output-action-spacer';
     row.appendChild(spacer);
+    row.appendChild(copy);
     row.appendChild(options);
     row.appendChild(remove);
     elements.outputList.appendChild(row);
@@ -22691,11 +22732,7 @@ function bindEvents() {
         if (elements.streamTranscodePublishJson) {
           const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
           if (!rawPublish) {
-            const variants = getEditingProfileIds();
-            const publish = [
-              { type: 'hls', enabled: true, variants },
-              { type: 'dash', enabled: false, variants },
-            ];
+            const publish = getLadderPresetPublish('3');
             elements.streamTranscodePublishJson.value = formatJson(publish);
           }
         }
@@ -22948,6 +22985,15 @@ function bindEvents() {
     const index = Number(row.dataset.index);
 
     if (isEditingLadderTranscodeStream()) {
+      if (action.dataset.action === 'publish-output-copy') {
+        const publish = parseEditingTranscodePublishJsonSafe();
+        const entry = publish[index];
+        const streamId = (elements.streamId && elements.streamId.value)
+          ? String(elements.streamId.value)
+          : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+        const url = entry ? getPublishOutputPublicUrl(entry, streamId) : '';
+        if (url) copyText(url);
+      }
       if (action.dataset.action === 'publish-output-options') {
         const publish = parseEditingTranscodePublishJsonSafe();
         const entry = publish[index];
