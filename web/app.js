@@ -13498,6 +13498,30 @@ function openEditor(stream, isNew) {
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
     updateTranscodeLadderToggle();
+
+    // Make "Enable Transcode" behave like a one-click action:
+    // if the stream has transcode enabled but no ladder profiles (and no legacy outputs),
+    // auto-generate a default ladder so the pipeline actually produces output.
+    if (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked) {
+      const hasProfiles = Array.isArray(tc.profiles) && tc.profiles.length > 0;
+      const hasLegacyOutputs = Array.isArray(tc.outputs) && tc.outputs.length > 0;
+      if (!hasProfiles && !hasLegacyOutputs) {
+        applyTranscodeLadderPreset('3');
+      } else if (hasProfiles && elements.streamTranscodePublishJson) {
+        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
+        if (!rawPublish) {
+          const variants = Array.isArray(tc.profiles)
+            ? tc.profiles.map((p) => String(p && p.id || '').trim()).filter(Boolean)
+            : [];
+          const publish = [
+            { type: 'hls', enabled: true, variants },
+            { type: 'dash', enabled: false, variants },
+          ];
+          elements.streamTranscodePublishJson.value = formatJson(publish);
+          renderOutputList();
+        }
+      }
+    }
   }
 
   state.inputs = normalizeInputs(config.input || []);
