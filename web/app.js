@@ -22550,7 +22550,34 @@ function bindEvents() {
       const enabled = elements.streamTranscodeEnabled.checked;
       setTranscodeMode(enabled);
       if (enabled) {
+        // Ladder is the default/expected mode for transcoding.
+        // Auto-enable it and apply sane defaults so "Enable Transcode" actually starts producing output.
+        if (elements.streamTranscodeLadderEnabled) {
+          elements.streamTranscodeLadderEnabled.checked = true;
+        }
         updateTranscodeLadderToggle();
+
+        const rawProfiles = String(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value || '').trim();
+        if (!rawProfiles) {
+          applyTranscodeLadderPreset('3');
+          return;
+        }
+
+        // If profiles exist but publish is empty, default to HLS ON + DASH OFF for all variants.
+        if (elements.streamTranscodePublishJson) {
+          const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
+          if (!rawPublish) {
+            const variants = getEditingProfileIds();
+            const publish = [
+              { type: 'hls', enabled: true, variants },
+              { type: 'dash', enabled: false, variants },
+            ];
+            elements.streamTranscodePublishJson.value = formatJson(publish);
+          }
+        }
+        renderOutputList();
+      } else {
+        renderOutputList();
       }
     });
   }
