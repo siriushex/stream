@@ -2792,26 +2792,30 @@ function main()
 	        end)
 	    end
 
-    local function build_http_play_routes(include_redirect, include_hls_route, include_web)
-        local routes = {}
-        if not http_play_enabled then
-            return routes
-        end
-        table.insert(routes, { http_play_playlist_name, http_play_playlist })
-        table.insert(routes, { xspf_path, http_play_xspf })
-        table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
-        table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
-        table.insert(routes, { "/favicon.ico", http_favicon })
-        if http_play_allow then
-            local upstream = http_upstream({ callback = http_play_stream })
-            table.insert(routes, { "/stream/*", upstream })
-            table.insert(routes, { "/play/*", upstream })
-        end
-        if include_hls_route and http_play_hls then
-            table.insert(routes, { opt.hls_route .. "/*", hls_route_handler })
-        end
-        if include_redirect then
-            table.insert(routes, { "/", http_redirect({ location = http_play_playlist_name }) })
+	    local function build_http_play_routes(include_redirect, include_hls_route, include_web)
+	        local routes = {}
+	        if not http_play_enabled then
+	            return routes
+	        end
+	        -- /input is internal-only (loopback + ?internal=1 + no forwarded headers) but it must be reachable
+	        -- on the http_play server too, because many deployments expose only http_play_port to ffmpeg.
+	        local input_upstream = http_upstream({ callback = http_input_stream })
+	        table.insert(routes, { http_play_playlist_name, http_play_playlist })
+	        table.insert(routes, { xspf_path, http_play_xspf })
+	        table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
+	        table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
+	        table.insert(routes, { "/favicon.ico", http_favicon })
+	        if http_play_allow then
+	            local upstream = http_upstream({ callback = http_play_stream })
+	            table.insert(routes, { "/stream/*", upstream })
+	            table.insert(routes, { "/play/*", upstream })
+	        end
+	        table.insert(routes, { "/input/*", input_upstream })
+	        if include_hls_route and http_play_hls then
+	            table.insert(routes, { opt.hls_route .. "/*", hls_route_handler })
+	        end
+	        if include_redirect then
+	            table.insert(routes, { "/", http_redirect({ location = http_play_playlist_name }) })
         end
         if include_web then
             table.insert(routes, { "/index.html", web_static })
