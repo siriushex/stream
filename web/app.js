@@ -946,6 +946,7 @@ const elements = {
   streamOnPlay: $('#stream-on-play'),
   streamOnPublish: $('#stream-on-publish'),
   streamSessionKeys: $('#stream-session-keys'),
+  streamTranscodeStatusPill: $('#stream-transcode-status-pill'),
   streamTranscodeEngine: $('#stream-transcode-engine'),
   streamTranscodeGpuDevice: $('#stream-transcode-gpu-device'),
   streamTranscodeFfmpegPath: $('#stream-transcode-ffmpeg-path'),
@@ -978,9 +979,8 @@ const elements = {
   transcodePublishTargetPresetApply: $('#transcode-publish-target-preset-apply'),
   transcodePublishTargetType: $('#transcode-publish-target-type'),
   transcodePublishTargetVariantsField: $('#transcode-publish-target-variants-field'),
+  transcodePublishTargetVariantsLabel: $('#transcode-publish-target-variants-label'),
   transcodePublishTargetVariants: $('#transcode-publish-target-variants'),
-  transcodePublishTargetProfileField: $('#transcode-publish-target-profile-field'),
-  transcodePublishTargetProfile: $('#transcode-publish-target-profile'),
   transcodePublishTargetUrlField: $('#transcode-publish-target-url-field'),
   transcodePublishTargetUrl: $('#transcode-publish-target-url'),
   transcodePublishTargetEnabled: $('#transcode-publish-target-enabled'),
@@ -5650,6 +5650,16 @@ function setTranscodeMode(enabled) {
   elements.streamForm.classList.toggle('is-transcode', enabled);
 }
 
+function updateTranscodeGeneralControls() {
+  const enabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+  if (elements.streamTranscodePreset) {
+    elements.streamTranscodePreset.disabled = !enabled;
+  }
+  if (elements.streamTranscodePresetApply) {
+    elements.streamTranscodePresetApply.disabled = !enabled;
+  }
+}
+
 function updateStreamBackupFields() {
   if (!elements.streamBackupType) return;
   const value = elements.streamBackupType.value.trim();
@@ -6451,7 +6461,9 @@ function normalizePublishTargetList(publish) {
     .map((entry) => ({
       type: String(entry.type || '').toLowerCase(),
       enabled: entry.enabled !== false,
-      profile: entry.profile || '',
+      variants: Array.isArray(entry.variants) && entry.variants.length
+        ? [String(entry.variants[0] || '').trim()].filter(Boolean)
+        : (entry.profile ? [String(entry.profile || '').trim()].filter(Boolean) : []),
       url: entry.url || '',
     }));
 }
@@ -6479,7 +6491,9 @@ function renderTranscodePublishTargetList() {
     const label = document.createElement('div');
     label.className = 'list-input';
     const type = (target.type || '').toUpperCase();
-    const profile = target.profile || 'profile?';
+    const profile = (Array.isArray(target.variants) && target.variants.length)
+      ? target.variants[0]
+      : (target.profile || 'profile?');
     const url = target.url || 'url?';
     label.textContent = `${type} · ${profile} · ${url}`;
 
@@ -6520,13 +6534,19 @@ function updateTranscodePublishTargetModalVisibility() {
   const isPush = ['udp', 'rtp', 'rtmp', 'rtsp'].includes(type);
 
   if (elements.transcodePublishTargetVariantsField) {
-    elements.transcodePublishTargetVariantsField.hidden = !(isPull);
-  }
-  if (elements.transcodePublishTargetProfileField) {
-    elements.transcodePublishTargetProfileField.hidden = !(isPush);
+    elements.transcodePublishTargetVariantsField.hidden = !(isPull || isPush);
   }
   if (elements.transcodePublishTargetUrlField) {
     elements.transcodePublishTargetUrlField.hidden = !(isPush);
+  }
+
+  if (elements.transcodePublishTargetVariantsLabel) {
+    elements.transcodePublishTargetVariantsLabel.textContent = isPush
+      ? 'Variant (single profile id)'
+      : 'Variants (comma-separated profile ids, empty = all)';
+  }
+  if (elements.transcodePublishTargetVariants) {
+    elements.transcodePublishTargetVariants.placeholder = isPush ? 'HDHigh' : 'HDHigh,HDMedium';
   }
 
   if (elements.transcodePublishTargetHint) {
@@ -6535,7 +6555,7 @@ function updateTranscodePublishTargetModalVisibility() {
     } else if (isPull) {
       elements.transcodePublishTargetHint.textContent = 'Pull output. Variants control which ladder profiles are published.';
     } else if (isPush) {
-      elements.transcodePublishTargetHint.textContent = 'Push output. Profile selects a ladder profile to publish.';
+      elements.transcodePublishTargetHint.textContent = 'Push output. Select one ladder profile id and a destination URL.';
     } else {
       elements.transcodePublishTargetHint.textContent = '';
     }
@@ -6553,12 +6573,15 @@ function applyTranscodePublishTargetPreset(preset) {
   if (elements.transcodePublishTargetEnabled) {
     elements.transcodePublishTargetEnabled.checked = true;
   }
+  const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
+  const isPush = ['udp', 'rtp', 'rtmp', 'rtsp'].includes(type);
   if (elements.transcodePublishTargetVariants) {
-    elements.transcodePublishTargetVariants.value = '';
-  }
-  if (elements.transcodePublishTargetProfile) {
-    const first = getEditingProfileIds()[0] || '';
-    elements.transcodePublishTargetProfile.value = first;
+    if (isPush) {
+      const first = getEditingProfileIds()[0] || '';
+      elements.transcodePublishTargetVariants.value = first;
+    } else {
+      elements.transcodePublishTargetVariants.value = '';
+    }
   }
   if (elements.transcodePublishTargetUrl) {
     elements.transcodePublishTargetUrl.value = '';
@@ -6579,17 +6602,14 @@ function openTranscodePublishTargetModal(target, index) {
   }
   elements.transcodePublishTargetType.value = (target && target.type) || 'hls';
   const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
+  const legacyProfile = (target && target.profile) ? String(target.profile).trim() : '';
+  const rawVariants = Array.isArray(target && target.variants) ? target.variants : (legacyProfile ? [legacyProfile] : []);
+  const variants = rawVariants.map((v) => String(v || '').trim()).filter(Boolean);
+  const isPush = ['udp', 'rtp', 'rtmp', 'rtsp'].includes(type);
   if (elements.transcodePublishTargetVariants) {
-    if (type === 'http-ts') {
-      const variants = Array.isArray(target && target.variants) ? target.variants
-        : (target && target.profile ? [target.profile] : []);
-      elements.transcodePublishTargetVariants.value = variants.join(',');
-    } else {
-      elements.transcodePublishTargetVariants.value = (target && Array.isArray(target.variants)) ? target.variants.join(',') : '';
-    }
-  }
-  if (elements.transcodePublishTargetProfile) {
-    elements.transcodePublishTargetProfile.value = (target && target.profile) || '';
+    elements.transcodePublishTargetVariants.value = isPush
+      ? (variants[0] || '')
+      : (variants.length ? variants.join(',') : '');
   }
   if (elements.transcodePublishTargetUrl) {
     elements.transcodePublishTargetUrl.value = (target && target.url) || '';
@@ -6607,46 +6627,43 @@ function readTranscodePublishTargetForm() {
   const enabled = elements.transcodePublishTargetEnabled.checked;
 
   if (type === 'hls' || type === 'dash') {
-    const ids = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
-    const all = getEditingProfileIds();
-    const variants = ids.length ? ids : all;
+    const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
     variants.forEach((id) => {
       if (!isValidProfileId(id)) {
         throw new Error('Variant id must be URL-safe (letters, numbers, _, -)');
       }
     });
-    return { type, enabled, variants };
+    return variants.length ? { type, enabled, variants } : { type, enabled };
   }
   if (type === 'http-ts') {
-    const ids = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
-    const all = getEditingProfileIds();
-    const variants = ids.length ? ids : all;
+    const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
     variants.forEach((id) => {
       if (!isValidProfileId(id)) {
         throw new Error('Variant id must be URL-safe (letters, numbers, _, -)');
       }
     });
-    if (variants.length === 1) {
-      return { type, enabled, profile: variants[0] };
-    }
-    return { type, enabled, variants };
+    return variants.length ? { type, enabled, variants } : { type, enabled };
   }
   if (type === 'embed') {
     return { type, enabled };
   }
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
-    const profile = String(elements.transcodePublishTargetProfile && elements.transcodePublishTargetProfile.value || '').trim();
+    const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
     const url = String(elements.transcodePublishTargetUrl && elements.transcodePublishTargetUrl.value || '').trim();
-    if (!profile) {
-      throw new Error('Profile is required');
+    if (variants.length !== 1) {
+      throw new Error('Variant is required (exactly one profile id)');
     }
-    if (!isValidProfileId(profile)) {
-      throw new Error('Profile id must be URL-safe (letters, numbers, _, -)');
+    const profileId = String(variants[0] || '').trim();
+    if (!profileId) {
+      throw new Error('Variant is required');
+    }
+    if (!isValidProfileId(profileId)) {
+      throw new Error('Variant id must be URL-safe (letters, numbers, _, -)');
     }
     if (!url) {
       throw new Error('URL is required');
     }
-    return { type, enabled, profile, url };
+    return { type, enabled, variants: [profileId], url };
   }
   throw new Error('Output type is invalid');
 }
@@ -8198,9 +8215,11 @@ function buildInputUrl(data) {
 }
 
 function isEditingLadderTranscodeStream() {
-  if (!elements.streamTranscodeEnabled || !elements.streamTranscodeLadderEnabled) return false;
-  return Boolean(elements.streamTranscodeEnabled.checked)
-    && Boolean(elements.streamTranscodeLadderEnabled.checked);
+  // Ladder/publish is the default mode for transcoding in Astral.
+  // Treat any enabled transcoding stream as "ladder mode" from the UI perspective,
+  // so OUTPUT LIST always configures publish targets (no legacy transcode outputs UI).
+  if (!elements.streamTranscodeEnabled) return false;
+  return Boolean(elements.streamTranscodeEnabled.checked);
 }
 
 function parseEditingTranscodePublishJsonSafe() {
@@ -8233,7 +8252,9 @@ function formatPublishOutputLabel(entry) {
   const type = String(entry && entry.type || '').toLowerCase();
   const enabled = entry && entry.enabled === false ? 'OFF' : 'ON';
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
-    const profile = entry.profile || 'profile?';
+    const profile = (Array.isArray(entry.variants) && entry.variants.length)
+      ? entry.variants[0]
+      : (entry.profile || 'profile?');
     const url = entry.url || 'url?';
     return `${type.toUpperCase()} (${enabled}) · ${profile} · ${url}`;
   }
@@ -13164,6 +13185,7 @@ function openEditor(stream, isNew) {
       || (config.transcode && typeof config.transcode === 'object' && Object.keys(config.transcode).length > 0);
     elements.streamTranscodeEnabled.checked = Boolean(hasTranscode);
     setTranscodeMode(Boolean(hasTranscode));
+    updateTranscodeGeneralControls();
   }
   elements.streamMpts.checked = config.mpts === true;
   updateMptsFields();
@@ -13709,9 +13731,6 @@ function readStreamForm() {
   if (outputs.length) {
     config.output = outputs;
   }
-  if (isTranscode) {
-    config.type = 'transcode';
-  }
 
   const timeout = toNumber(elements.streamTimeout && elements.streamTimeout.value);
   if (timeout !== undefined) config.timeout = timeout;
@@ -14063,6 +14082,9 @@ function readStreamForm() {
 
   if (isTranscode) {
     const transcode = {};
+    // Enable transcoding without changing the stream type. This keeps /play/<id> semantics stable:
+    // /play is always the stream output, /input is internal-only raw stage for ffmpeg loopback.
+    transcode.enabled = true;
     if (elements.streamTranscodeEngine) {
       const engine = elements.streamTranscodeEngine.value.trim();
       if (engine) transcode.engine = engine;
@@ -14158,28 +14180,55 @@ function readStreamForm() {
 	      if (!Array.isArray(publish)) {
 	        throw new Error('Publish outputs must be a JSON array (Output settings)');
 	      }
-	      publish.forEach((entry, index) => {
-	        if (!entry || typeof entry !== 'object') return;
-	        const t = String(entry.type || '').toLowerCase();
+	      const cleaned = [];
+	      publish.forEach((raw, index) => {
+	        if (!raw || typeof raw !== 'object') return;
+	        const t = String(raw.type || '').toLowerCase();
 	        const label = `${t.toUpperCase() || 'PUBLISH'} #${index + 1}`;
-	        if (t === 'hls' || t === 'dash') {
-	          const variants = Array.isArray(entry.variants) ? entry.variants : [];
+
+	        const enabled = raw.enabled !== false;
+	        const entry = { ...raw, type: t, enabled };
+	        delete entry.profile;
+
+	        const rawVariants = Array.isArray(raw.variants)
+	          ? raw.variants
+	          : (raw.profile ? [raw.profile] : []);
+	        const variants = rawVariants.map((v) => String(v || '').trim()).filter(Boolean);
+
+	        if (t === 'hls' || t === 'dash' || t === 'http-ts') {
 	          if (variants.length) validateProfileIds(`${label}: variants`, variants);
-	        } else if (t === 'http-ts') {
-	          const variants = Array.isArray(entry.variants) ? entry.variants
-	            : (entry.profile ? [entry.profile] : []);
-	          if (variants.length) validateProfileIds(`${label}: variants`, variants);
-	        } else if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(t)) {
-	          const profile = String(entry.profile || '').trim();
-	          const url = String(entry.url || '').trim();
-	          if (!profile) throw new Error(`${label}: profile is required (Output settings)`);
-	          if (!isValidProfileId(profile)) throw new Error(`${label}: invalid profile id "${profile}" (Output settings)`);
-	          if (!profileIds.has(profile)) throw new Error(`${label}: unknown profile id "${profile}" (Output settings)`);
-	          if (!url) throw new Error(`${label}: url is required (Output settings)`);
+	          if (variants.length) {
+	            entry.variants = variants;
+	          } else {
+	            delete entry.variants;
+	          }
+	          cleaned.push(entry);
+	          return;
 	        }
+	        if (t === 'embed') {
+	          delete entry.variants;
+	          cleaned.push(entry);
+	          return;
+	        }
+	        if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(t)) {
+	          if (variants.length !== 1) {
+	            throw new Error(`${label}: variant is required (exactly one profile id) (Output settings)`);
+	          }
+	          validateProfileIds(`${label}: variant`, variants);
+	          const url = String(raw.url || '').trim();
+	          if (!url) throw new Error(`${label}: url is required (Output settings)`);
+	          entry.variants = [variants[0]];
+	          entry.url = url;
+	          cleaned.push(entry);
+	          return;
+	        }
+
+	        // Unknown/experimental publish targets: keep them, but do not persist legacy "profile".
+	        if (variants.length) entry.variants = variants;
+	        cleaned.push(entry);
 	      });
-	      if (publish.length) {
-	        transcode.publish = publish;
+	      if (cleaned.length) {
+	        transcode.publish = cleaned;
 	      }
 	    }
 
@@ -14641,6 +14690,14 @@ function formatWorkerCutoverHint(cutover) {
 
 function updateEditorTranscodeStatus() {
   if (!elements.streamTranscodeStatus) return;
+  if (elements.streamTranscodeStatusPill) {
+    elements.streamTranscodeStatusPill.textContent = (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked)
+      ? 'ON'
+      : 'OFF';
+    elements.streamTranscodeStatusPill.classList.toggle('is-ok', false);
+    elements.streamTranscodeStatusPill.classList.toggle('is-warn', false);
+    elements.streamTranscodeStatusPill.classList.toggle('is-error', false);
+  }
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
   }
@@ -14675,6 +14732,15 @@ function updateEditorTranscodeStatus() {
   const stats = state.stats[stream.id] || {};
   const transcode = stats.transcode || {};
   const transcodeState = stats.transcode_state || transcode.state;
+
+  if (elements.streamTranscodeStatusPill) {
+    const pill = elements.streamTranscodeStatusPill;
+    const stateText = transcodeState ? String(transcodeState).toUpperCase() : (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked ? 'ON' : 'OFF');
+    pill.textContent = stateText;
+    pill.classList.toggle('is-ok', stateText === 'RUNNING');
+    pill.classList.toggle('is-warn', stateText === 'RESTARTING' || stateText === 'STARTING');
+    pill.classList.toggle('is-error', stateText === 'ERROR');
+  }
 
   const renderLadderLinks = () => {
     if (!elements.streamTranscodeLadderLinks || !elements.streamTranscodeLadderLinksFold) return;
@@ -19286,7 +19352,13 @@ async function startPlayer(stream, opts = {}) {
 
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
-  url = (forceVideoOnly || forceAudioAac || forceH264) ? null : getPlaylistUrl(stream);
+  if (!(forceVideoOnly || forceAudioAac || forceH264)) {
+    // For transcoded streams, prefer the existing transcoded output (/hls or configured HLS),
+    // and never request an extra preview transcode.
+    url = transcoded ? getHlsUrl(stream) : getPlaylistUrl(stream);
+  } else {
+    url = null;
+  }
 
   if (!url) {
     try {
@@ -22600,6 +22672,7 @@ function bindEvents() {
     elements.streamTranscodeEnabled.addEventListener('change', () => {
       const enabled = elements.streamTranscodeEnabled.checked;
       setTranscodeMode(enabled);
+      updateTranscodeGeneralControls();
       if (enabled) {
         // Ladder is the default/expected mode for transcoding.
         // Auto-enable it and apply sane defaults so "Enable Transcode" actually starts producing output.
