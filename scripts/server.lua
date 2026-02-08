@@ -1415,6 +1415,11 @@ function main()
     -- downstream HTTP clients (ffmpeg/Astra http input) to time out.
     local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 32)
     local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 512)
+    -- Buffer defaults for internal /input loopback (ffmpeg/transcode).
+    -- Keep it small to reduce bursty delivery and avoid timeouts in HTTP consumers.
+    local transcode_loopback_buf_kb = setting_number("transcode_loopback_buf_kb", 512)
+    local transcode_loopback_buf_fill_kb = setting_number("transcode_loopback_buf_fill_kb", 16)
+    local transcode_loopback_buf_cap_kb = setting_number("transcode_loopback_buf_cap_kb", 512)
     local http_play_m3u_header = setting_string("http_play_m3u_header", "")
     local http_play_xspf_title = setting_string("http_play_xspf_title", "Playlist")
     local http_play_no_tls = setting_bool("http_play_no_tls", false)
@@ -2013,31 +2018,31 @@ function main()
                 if not channel_data.input[1].input then
                     channel_init_input(channel_data, 1)
                 end
+                -- Internal loop channels are created with no outputs, so their active input is not started
+                -- until a client connects. For /input we must explicitly activate the upstream to avoid
+                -- returning 200 with an empty body (NO_PROGRESS in ffmpeg).
+                if (channel_data.active_input_id or 0) == 0
+                    and channel_data.transmit
+                    and channel_data.input
+                    and channel_data.input[1]
+                    and channel_data.input[1].input
+                    and channel_data.input[1].input.tail
+                    and type(channel_data.transmit.set_upstream) == "function" then
+                    channel_data.transmit:set_upstream(channel_data.input[1].input.tail:stream())
+                    channel_data.active_input_id = 1
+                end
+                if (channel_data.active_input_id or 0) == 0 then
+                    log.warning("[http input] stream " .. tostring(stream_id) .. " has no active input")
+                    server:abort(client, 503)
+                    return nil
+                end
 
-                local buffer_size = math.max(128, http_play_buffer_kb)
-                if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
-                    buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                -- /input buffering is server-side; ignore query overrides so ffmpeg input URL stays stable.
+                local buffer_size = math.max(128, transcode_loopback_buf_kb)
+                if transcode_loopback_buf_cap_kb and transcode_loopback_buf_cap_kb > 0 then
+                    buffer_size = math.min(buffer_size, math.floor(transcode_loopback_buf_cap_kb))
                 end
-                local buffer_fill = math.floor(buffer_size / 4)
-                if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
-                    buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
-                end
-
-                local query = request and request.query or nil
-                if query then
-                    local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
-                    if qbuf and qbuf > 0 then
-                        buffer_size = math.max(128, math.floor(qbuf))
-                        buffer_fill = math.floor(buffer_size / 4)
-                        if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
-                            buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
-                        end
-                    end
-                    local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
-                    if qfill and qfill > 0 then
-                        buffer_fill = math.min(buffer_size, math.floor(qfill))
-                    end
-                end
+                local buffer_fill = math.min(buffer_size, math.max(1, math.floor(transcode_loopback_buf_fill_kb)))
                 server:send(client, {
                     upstream = channel_data.tail:stream(),
                     buffer_size = buffer_size,
