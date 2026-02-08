@@ -10,6 +10,11 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-08
+- Changes:
+  - Inputs: when an HTTP input follows a redirect (301/302) and later gets a 4xx, reset back to the origin URL to refresh expiring tokenized redirects (avoids long 406/409 retry storms on IPTV panels).
+- Tests:
+  - Not run (Lua change only).
 ### 2026-02-07
 - Changes:
   - Inputs: fix HLS segment retry scheduling scope (avoid nil `hls_schedule_segment_retry` crash on segment HTTP errors).
