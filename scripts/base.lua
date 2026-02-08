@@ -1823,25 +1823,35 @@ init_input_module.http = function(conf)
     local instance_id = conf.host .. ":" .. conf.port .. conf.path
     local instance = http_input_instance_list[instance_id]
 
-    if not instance then
-        instance = {
-            clients = 0,
-            running = true,
-        }
-        http_input_instance_list[instance_id] = instance
+	    if not instance then
+	        instance = {
+	            clients = 0,
+	            running = true,
+	        }
+	        http_input_instance_list[instance_id] = instance
 
         instance.on_error = function(message)
             log.error("[" .. conf.name .. "] " .. message)
             if conf.on_error then conf.on_error(message) end
         end
 
-        if conf.ua and not conf.user_agent then
-            conf.user_agent = conf.ua
-        end
+	        if conf.ua and not conf.user_agent then
+	            conf.user_agent = conf.ua
+	        end
 
-        local sync = conf.sync
-        if sync == nil and type(conf.path) == "string"
-            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
+	        -- Некоторые IPTV-панели отдают одноразовые URL через 302/301 (например, `token=...`).
+	        -- Если дальше мы ловим 4xx на уже редиректнутом URL, имеет смысл вернуться на origin
+	        -- и получить свежий redirect, иначе мы можем бесконечно ретраить протухший URL.
+	        instance.origin = {
+	            host = conf.host,
+	            port = conf.port,
+	            path = conf.path,
+	        }
+	        instance.last_origin_reset_ts = nil
+
+	        local sync = conf.sync
+	        if sync == nil and type(conf.path) == "string"
+	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
             -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
             -- makes consumption stable for downstream pipelines.
             sync = 1
@@ -1917,10 +1927,10 @@ init_input_module.http = function(conf)
             })
         end
 
-        instance.http_conf = {
-            host = conf.host,
-            port = conf.port,
-            path = conf.path,
+	        instance.http_conf = {
+	            host = conf.host,
+	            port = conf.port,
+	            path = conf.path,
             stream = true,
             sync = sync,
             buffer_size = conf.buffer_size,
@@ -1931,12 +1941,38 @@ init_input_module.http = function(conf)
             read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
             stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
             low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
-            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
-        }
-        instance.apply_net_cfg = function()
-            if not instance.net_cfg or not instance.http_conf then
-                return
-            end
+	            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
+	        }
+
+	        local function maybe_reset_to_origin(code)
+	            if not instance.origin or not instance.http_conf then
+	                return
+	            end
+	            local origin = instance.origin
+	            if instance.http_conf.host == origin.host
+	                and instance.http_conf.port == origin.port
+	                and instance.http_conf.path == origin.path then
+	                return
+	            end
+	            local c = tonumber(code) or 0
+	            -- 4xx на редиректнутом URL часто означает "протух токен/сессия" на панелях.
+	            -- Исключаем 429, там лучше уважать backoff.
+	            if c >= 400 and c < 500 and c ~= 429 then
+	                instance.http_conf.host = origin.host
+	                instance.http_conf.port = origin.port
+	                instance.http_conf.path = origin.path
+	                local now = os.time()
+	                if (not instance.last_origin_reset_ts) or (now - instance.last_origin_reset_ts) > 10 then
+	                    instance.last_origin_reset_ts = now
+	                    log.info("[" .. conf.name .. "] Redirect URL may be expired (HTTP " .. tostring(c) ..
+	                        "), refreshing via origin")
+	                end
+	            end
+	        end
+	        instance.apply_net_cfg = function()
+	            if not instance.net_cfg or not instance.http_conf then
+	                return
+	            end
             instance.http_conf.connect_timeout_ms = instance.net_cfg.connect_timeout_ms
             instance.http_conf.read_timeout_ms = instance.net_cfg.read_timeout_ms
             instance.http_conf.stall_timeout_ms = instance.net_cfg.stall_timeout_ms
@@ -2014,13 +2050,14 @@ init_input_module.http = function(conf)
                     return
                 end
 
-                local code = tonumber(response.code) or 0
-                local message = response.message or "error"
-                instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
-                schedule_retry(http_reason(response))
-            end
-            instance.request = http_request(instance.http_conf)
-        end
+	                local code = tonumber(response.code) or 0
+	                local message = response.message or "error"
+	                instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
+	                maybe_reset_to_origin(code)
+	                schedule_retry(http_reason(response))
+	            end
+	            instance.request = http_request(instance.http_conf)
+	        end
 
         instance.transmit = transmit({ instance_id = instance_id })
         instance.start_request()
