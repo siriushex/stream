@@ -26,6 +26,7 @@
  *      upstream           - object, stream instance returned by module_instance:stream()
  *      jitter_buffer_ms   - number, target delay in milliseconds
  *      max_buffer_mb      - number, memory limit for buffer (MB)
+ *      assumed_mbps       - number, initial bitrate estimate (Mbps) for output pacing
  */
 
 #include <astra.h>
@@ -39,6 +40,7 @@ struct module_data_t
     {
         uint32_t jitter_ms;
         size_t max_buffer_bytes;
+        uint64_t assumed_bitrate_bps;
     } config;
 
     uint8_t *buffer;
@@ -53,6 +55,16 @@ struct module_data_t
     bool in_underrun;
     uint64_t last_send_ts;
     uint32_t underruns_total;
+    uint32_t drops_total;
+
+    /* Оценка входного битрейта (EMA), чтобы пейсить выход и не отдавать burst'ами.
+     * Это критично для IPTV-панелей, которые отдают TS рывками: фиксированная задержка
+     * без пейсинга даёт длинные паузы и клиенты воспринимают поток как "пропал". */
+    double bitrate_bps_ema;
+    uint64_t rate_window_start_ts;
+    size_t rate_window_bytes;
+
+    uint64_t last_sched_ts;
 };
 
 #define MSG(_msg) "[jitter] " _msg
@@ -63,12 +75,11 @@ static void jitter_flush(module_data_t *mod)
         return;
 
     const uint64_t now = asc_utime();
-    const uint64_t target_us = (uint64_t)mod->config.jitter_ms * 1000ULL;
 
     while(mod->count > 0)
     {
         const uint64_t ts = mod->timestamps[mod->head];
-        if(now < ts || (now - ts) < target_us)
+        if(now < ts)
             break;
 
         const uint8_t *pkt = mod->buffer + (mod->head * TS_PACKET_SIZE);
@@ -81,6 +92,8 @@ static void jitter_flush(module_data_t *mod)
 
     if(mod->count == 0)
     {
+        /* Буфер пуст: следующий пакет должен начать новый таймлайн. */
+        mod->last_sched_ts = 0;
         if(!mod->in_underrun && mod->last_send_ts > 0)
         {
             mod->underruns_total++;
@@ -99,6 +112,54 @@ static void jitter_timer(void *arg)
     jitter_flush(mod);
 }
 
+static inline void jitter_update_bitrate(module_data_t *mod, uint64_t now)
+{
+    /* Накапливаем байты минимум за 1 секунду "реального" времени,
+     * чтобы burst delivery не давал ложный огромный bitrate. */
+    const uint64_t window_us = 1000000ULL;
+    if(mod->rate_window_start_ts == 0)
+    {
+        mod->rate_window_start_ts = now;
+        mod->rate_window_bytes = TS_PACKET_SIZE;
+        return;
+    }
+
+    mod->rate_window_bytes += TS_PACKET_SIZE;
+    const uint64_t delta = now - mod->rate_window_start_ts;
+    if(delta < window_us)
+        return;
+
+    const double inst_bps = ((double)mod->rate_window_bytes * 8.0 * 1000000.0) / (double)delta;
+    if(inst_bps > 1000.0)
+    {
+        if(mod->bitrate_bps_ema <= 0.0)
+            mod->bitrate_bps_ema = inst_bps;
+        else
+            mod->bitrate_bps_ema = (mod->bitrate_bps_ema * 0.8) + (inst_bps * 0.2);
+    }
+
+    mod->rate_window_start_ts = now;
+    mod->rate_window_bytes = 0;
+}
+
+static inline uint64_t jitter_packet_interval_us(module_data_t *mod)
+{
+    double bps = mod->bitrate_bps_ema;
+    if(bps <= 0.0)
+        bps = (double)mod->config.assumed_bitrate_bps;
+    if(bps < 100000.0)
+        bps = 100000.0;
+
+    const double bits_per_pkt = (double)(TS_PACKET_SIZE * 8);
+    double interval = (bits_per_pkt * 1000000.0) / bps;
+    if(interval < 50.0)
+        interval = 50.0;
+    /* Не даём слишком большой шаг, иначе при низком bitrate будет "ступенчатая" отдача. */
+    if(interval > 20000.0)
+        interval = 20000.0;
+    return (uint64_t)interval;
+}
+
 static void on_ts(module_data_t *mod, const uint8_t *ts)
 {
     if(mod->capacity == 0 || mod->config.jitter_ms == 0)
@@ -107,16 +168,28 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
         return;
     }
 
+    const uint64_t now = asc_utime();
+    jitter_update_bitrate(mod, now);
+
     if(mod->count >= mod->capacity)
     {
         // Буфер переполнен: сбрасываем самый старый пакет, чтобы не расти в памяти.
         mod->head = (mod->head + 1) % mod->capacity;
         mod->count--;
-        mod->underruns_total++;
+        mod->drops_total++;
     }
 
     memcpy(mod->buffer + (mod->tail * TS_PACKET_SIZE), ts, TS_PACKET_SIZE);
-    mod->timestamps[mod->tail] = asc_utime();
+    const uint64_t jitter_us = (uint64_t)mod->config.jitter_ms * 1000ULL;
+    uint64_t sched = now + jitter_us;
+    if(mod->last_sched_ts > 0)
+    {
+        const uint64_t next = mod->last_sched_ts + jitter_packet_interval_us(mod);
+        if(next > sched)
+            sched = next;
+    }
+    mod->timestamps[mod->tail] = sched;
+    mod->last_sched_ts = sched;
     mod->tail = (mod->tail + 1) % mod->capacity;
     mod->count++;
 
@@ -128,13 +201,11 @@ static int method_stats(module_data_t *mod)
     lua_newtable(lua);
 
     const uint64_t now = asc_utime();
+    /* Текущий "запас" по времени: сколько данных ещё есть до опустошения буфера
+     * при текущем пейсинге (в миллисекундах). */
     uint64_t fill_ms = 0;
-    if(mod->count > 0 && mod->capacity > 0)
-    {
-        const uint64_t ts = mod->timestamps[mod->head];
-        if(now > ts)
-            fill_ms = (now - ts) / 1000ULL;
-    }
+    if(mod->count > 0 && mod->last_sched_ts > now)
+        fill_ms = (mod->last_sched_ts - now) / 1000ULL;
 
     lua_pushnumber(lua, (lua_Number)fill_ms);
     lua_setfield(lua, -2, "buffer_fill_ms");
@@ -142,6 +213,8 @@ static int method_stats(module_data_t *mod)
     lua_setfield(lua, -2, "buffer_target_ms");
     lua_pushnumber(lua, (lua_Number)mod->underruns_total);
     lua_setfield(lua, -2, "buffer_underruns_total");
+    lua_pushnumber(lua, (lua_Number)mod->drops_total);
+    lua_setfield(lua, -2, "buffer_drops_total");
 
     return 1;
 }
@@ -161,6 +234,12 @@ static void module_init(module_data_t *mod)
         mod->config.max_buffer_bytes = (size_t)max_mb * (size_t)1024 * (size_t)1024;
     else
         mod->config.max_buffer_bytes = (size_t)(4 * 1024 * 1024);
+
+    int assumed_mbps = 0;
+    if(module_option_number("assumed_mbps", &assumed_mbps) && assumed_mbps > 0)
+        mod->config.assumed_bitrate_bps = (uint64_t)assumed_mbps * 1000ULL * 1000ULL;
+    else
+        mod->config.assumed_bitrate_bps = 6ULL * 1000ULL * 1000ULL;
 
     if(mod->config.jitter_ms > 0 && mod->config.max_buffer_bytes >= TS_PACKET_SIZE)
     {
