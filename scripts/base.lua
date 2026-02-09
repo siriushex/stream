@@ -444,13 +444,35 @@ local NET_RESILIENCE_KEYS = {
 
 -- Профили устойчивости сети для HTTP/HLS входов. Важно: по умолчанию выключено,
 -- чтобы не менять поведение старых конфигов без явного включения.
-local INPUT_RESILIENCE_DEFAULTS = {
-    enabled = false,
-    default_profile = "wan",
-    profiles = {
-        dc = {
-            connect_timeout_ms = 2500,
-            read_timeout_ms = 8000,
+	local INPUT_RESILIENCE_DEFAULTS = {
+	    enabled = false,
+	    default_profile = "wan",
+	    -- Дефолты для auto-тюнинга (net_auto_*). Применяются только в profile-mode.
+	    -- Если input уже содержит net_auto / net_auto_* опции, они имеют приоритет.
+	    net_auto_defaults = {
+	        dc = { enabled = false },
+	        wan = { enabled = false },
+	        bad = {
+	            enabled = true,
+	            max_level = 4,
+	            relax_sec = 180,
+	            window_sec = 25,
+	            min_interval_sec = 5,
+	            burst_threshold = 3,
+	        },
+	        max = {
+	            enabled = true,
+	            max_level = 6,
+	            relax_sec = 600,
+	            window_sec = 60,
+	            min_interval_sec = 10,
+	            burst_threshold = 1,
+	        },
+	    },
+	    profiles = {
+	        dc = {
+	            connect_timeout_ms = 2500,
+	            read_timeout_ms = 8000,
             stall_timeout_ms = 4000,
             max_retries = 0,
             backoff_min_ms = 300,
@@ -476,58 +498,60 @@ local INPUT_RESILIENCE_DEFAULTS = {
             keepalive = true,
             user_agent = "Astral/1.0",
         },
-        bad = {
-            connect_timeout_ms = 8000,
-            read_timeout_ms = 25000,
-            stall_timeout_ms = 10000,
-            max_retries = 0,
+	        bad = {
+	            connect_timeout_ms = 8000,
+	            read_timeout_ms = 25000,
+	            stall_timeout_ms = 10000,
+	            max_retries = 0,
             backoff_min_ms = 1000,
             backoff_max_ms = 20000,
             backoff_jitter_pct = 30,
             cooldown_sec = 45,
-            low_speed_limit_bytes_sec = 8192,
-            low_speed_time_sec = 10,
-            keepalive = true,
-            user_agent = "Astral/1.0",
-        },
-        max = {
-            connect_timeout_ms = 12000,
-            read_timeout_ms = 40000,
+	            low_speed_limit_bytes_sec = 8192,
+	            low_speed_time_sec = 10,
+	            keepalive = true,
+	            user_agent = "VLC/3.0.20",
+	        },
+	        max = {
+	            connect_timeout_ms = 12000,
+	            read_timeout_ms = 40000,
             stall_timeout_ms = 20000,
             max_retries = 0,
             backoff_min_ms = 1500,
             backoff_max_ms = 30000,
             backoff_jitter_pct = 35,
             cooldown_sec = 60,
-            low_speed_limit_bytes_sec = 4096,
-            low_speed_time_sec = 15,
-            keepalive = true,
-            user_agent = "Astral/1.0",
-        },
-    },
-    hls_defaults = {
-        max_segments = 10,
+	            low_speed_limit_bytes_sec = 4096,
+	            low_speed_time_sec = 15,
+	            keepalive = true,
+	            user_agent = "VLC/3.0.20",
+	        },
+	    },
+	    hls_defaults = {
+	        max_segments = 10,
         max_gap_segments = 3,
         segment_retries = 3,
         max_parallel = 1,
     },
-    jitter_defaults_ms = {
-        dc = 200,
-        wan = 400,
-        bad = 800,
-        max = 1200,
-    },
-    -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
-    jitter_assumed_mbps = {
-        dc = 20,
-        wan = 12,
-        bad = 8,
-        max = 6,
-    },
-    -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
-    jitter_max_auto_mb = 32,
-    max_active_resilient_inputs = 50,
-}
+	    jitter_defaults_ms = {
+	        dc = 200,
+	        wan = 400,
+	        -- Для нестабильных HTTP-TS/HLS источников лучше иметь ощутимый запас буфера,
+	        -- иначе клиент видит частые паузы на коротких сетевых дырах.
+	        bad = 2000,
+	        max = 3000,
+	    },
+	    -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
+	    jitter_assumed_mbps = {
+	        dc = 20,
+	        wan = 12,
+	        bad = 16,
+	        max = 20,
+	    },
+	    -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
+	    jitter_max_auto_mb = 32,
+	    max_active_resilient_inputs = 50,
+	}
 
 local function copy_shallow(tbl)
     if type(tbl) ~= "table" then
@@ -563,16 +587,22 @@ local function get_input_resilience_settings()
     local out = {
         enabled = INPUT_RESILIENCE_DEFAULTS.enabled == true,
         default_profile = INPUT_RESILIENCE_DEFAULTS.default_profile,
-        profiles = {
-            dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.dc),
-            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.wan),
-            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.bad),
-            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.max),
-        },
-        hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
-        jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
-        jitter_assumed_mbps = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_assumed_mbps),
-        jitter_max_auto_mb = INPUT_RESILIENCE_DEFAULTS.jitter_max_auto_mb,
+	        profiles = {
+	            dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.dc),
+	            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.wan),
+	            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.bad),
+	            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.max),
+	        },
+	        net_auto_defaults = {
+	            dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.dc),
+	            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.wan),
+	            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.bad),
+	            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.max),
+	        },
+	        hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
+	        jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
+	        jitter_assumed_mbps = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_assumed_mbps),
+	        jitter_max_auto_mb = INPUT_RESILIENCE_DEFAULTS.jitter_max_auto_mb,
         max_active_resilient_inputs = INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs,
     }
 
@@ -596,20 +626,31 @@ local function get_input_resilience_settings()
         end
     end
 
-    if type(raw.profiles) == "table" then
-        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
-            local p = raw.profiles[name]
-            if type(p) == "table" then
-                for k, v in pairs(p) do
-                    out.profiles[name][k] = v
-                end
-            end
-        end
-    end
+	    if type(raw.profiles) == "table" then
+	        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
+	            local p = raw.profiles[name]
+	            if type(p) == "table" then
+	                for k, v in pairs(p) do
+	                    out.profiles[name][k] = v
+	                end
+	            end
+	        end
+	    end
+	
+	    if type(raw.net_auto_defaults) == "table" then
+	        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
+	            local p = raw.net_auto_defaults[name]
+	            if type(p) == "table" then
+	                for k, v in pairs(p) do
+	                    out.net_auto_defaults[name][k] = v
+	                end
+	            end
+	        end
+	    end
 
-    if type(raw.hls_defaults) == "table" then
-        for k, v in pairs(raw.hls_defaults) do
-            out.hls_defaults[k] = v
+	    if type(raw.hls_defaults) == "table" then
+	        for k, v in pairs(raw.hls_defaults) do
+	            out.hls_defaults[k] = v
         end
     end
 
@@ -665,17 +706,18 @@ local function resolve_input_resilience(conf)
         hls_defaults = settings.hls_defaults
     end
 
-    return {
-        enabled = enabled,
-        profile_configured = configured,
-        profile_effective = effective,
-        net_defaults = base,
-        jitter_default_ms = jitter_ms,
-        jitter_assumed_mbps = settings.jitter_assumed_mbps,
-        jitter_max_auto_mb = settings.jitter_max_auto_mb,
-        hls_defaults = hls_defaults,
-    }
-end
+	    return {
+	        enabled = enabled,
+	        profile_configured = configured,
+	        profile_effective = effective,
+	        net_defaults = base,
+	        jitter_default_ms = jitter_ms,
+	        jitter_assumed_mbps = settings.jitter_assumed_mbps,
+	        jitter_max_auto_mb = settings.jitter_max_auto_mb,
+	        net_auto_defaults = type(settings.net_auto_defaults) == "table" and settings.net_auto_defaults[effective] or nil,
+	        hls_defaults = hls_defaults,
+	    }
+	end
 
 local function net_bool(value)
     if value == nil then
@@ -713,7 +755,7 @@ local function net_has_values(tbl)
     return false
 end
 
-local function apply_auto_jitter_max_mb(conf, res)
+	local function apply_auto_jitter_max_mb(conf, res)
     if not res or res.enabled ~= true then
         return
     end
@@ -733,11 +775,14 @@ local function apply_auto_jitter_max_mb(conf, res)
         assumed_mbps = 10
     end
 
-    local bytes = (jitter_ms / 1000) * (assumed_mbps * 1000 * 1000 / 8)
-    local mb = math.ceil(bytes / (1024 * 1024))
-    if mb < 4 then
-        mb = 4
-    end
+	    -- Небольшой запас по памяти помогает переживать burst delivery и колебания битрейта.
+	    -- Это только верхний лимит; фактический расход ~= bitrate * jitter_ms.
+	    local safety = 4
+	    local bytes = (jitter_ms / 1000) * (assumed_mbps * 1000 * 1000 / 8) * safety
+	    local mb = math.ceil(bytes / (1024 * 1024))
+	    if mb < 8 then
+	        mb = 8
+	    end
 
     local max_auto = tonumber(res.jitter_max_auto_mb) or 32
     if max_auto < 4 then
@@ -747,8 +792,38 @@ local function apply_auto_jitter_max_mb(conf, res)
         mb = max_auto
     end
 
-    conf.jitter_max_buffer_mb = mb
-end
+	    conf.jitter_max_buffer_mb = mb
+	end
+
+	local function apply_profile_net_auto_defaults(conf, res)
+	    if not conf or not res or res.enabled ~= true then
+	        return
+	    end
+	    -- Если net_auto задан явно (включен или отключен) — не трогаем.
+	    if conf.net_auto ~= nil then
+	        return
+	    end
+	    local d = res.net_auto_defaults
+	    if type(d) ~= "table" or d.enabled ~= true then
+	        return
+	    end
+	    conf.net_auto = true
+	    if conf.net_auto_max_level == nil and d.max_level ~= nil then
+	        conf.net_auto_max_level = d.max_level
+	    end
+	    if conf.net_auto_relax_sec == nil and d.relax_sec ~= nil then
+	        conf.net_auto_relax_sec = d.relax_sec
+	    end
+	    if conf.net_auto_window_sec == nil and d.window_sec ~= nil then
+	        conf.net_auto_window_sec = d.window_sec
+	    end
+	    if conf.net_auto_min_interval_sec == nil and d.min_interval_sec ~= nil then
+	        conf.net_auto_min_interval_sec = d.min_interval_sec
+	    end
+	    if conf.net_auto_burst == nil and conf.net_auto_burst_threshold == nil and d.burst_threshold ~= nil then
+	        conf.net_auto_burst = d.burst_threshold
+	    end
+	end
 
 local function net_auto_enabled(conf)
     return net_bool(conf and conf.net_auto) == true
@@ -890,7 +965,7 @@ local function net_auto_relax(instance)
     net_auto_apply(instance)
 end
 
-local function build_net_resilience(conf, res)
+	local function build_net_resilience(conf, res)
     res = res or resolve_input_resilience(conf)
     local global = nil
     if config and config.get_setting then
@@ -963,10 +1038,11 @@ local function build_net_resilience(conf, res)
         end
     end
 
-    apply_auto_jitter_max_mb(conf, res)
+	    apply_auto_jitter_max_mb(conf, res)
+	    apply_profile_net_auto_defaults(conf, res)
 
-    return out
-end
+	    return out
+	end
 
 local net_rand_seeded = false
 local function net_rand()
