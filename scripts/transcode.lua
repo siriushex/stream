@@ -262,10 +262,10 @@ local function build_transcode_play_url(stream_id, input_id, opts)
 	    local port = http_port
 	    -- Only use the separate http_play port when /play is actually exposed there.
 	    -- When http_play_allow is disabled, /play is served internal-only from the main server.
-	    if not force_http_port and http_play_enabled and http_play_allow and play_port then
+	    if not force_http_port and http_play_enabled and http_play_allow and play_port and play_port > 0 then
 	        port = play_port
 	    end
-	    if not port then
+	    if not port or port <= 0 then
 	        return nil
 	    end
 	    -- Pass internal=1 so localhost consumers can bypass http auth (see http_auth_check()).
