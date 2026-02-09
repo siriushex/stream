@@ -2730,7 +2730,7 @@ function main()
 	            local hls_url = has_hls and (opt.hls_route .. "/" .. tostring(stream_id) .. "/index.m3u8") or ""
 	            local dash_url = dash_route .. "/" .. tostring(stream_id) .. "/manifest.mpd"
 	            local first_profile = job and job.profiles and job.profiles[1] and job.profiles[1].id or nil
-	            local live_url = (first_profile and ("/live/" .. tostring(stream_id) .. "~" .. tostring(first_profile) .. ".ts")) or ""
+		            local live_url = (first_profile and ("/live/" .. tostring(stream_id) .. "~" .. tostring(first_profile))) or ""
 	
 	            local title = escape_html(job.name or stream_id)
 	            local payload = [[<!doctype html>
