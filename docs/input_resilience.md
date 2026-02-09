@@ -12,6 +12,7 @@ Nothing changes for existing configs unless you explicitly enable it:
 - Uses backoff + jitter to avoid request storms.
 - Tracks input health (online/degraded/offline).
 - Optional jitter buffer to smooth short gaps.
+- Optional paced playout (NULL stuffing) to keep `/play` continuous on bursty/stalling inputs.
 
 ## Profiles (dc/wan/bad/max/superbad)
 You can select a network profile per input:
@@ -43,8 +44,13 @@ Example run (4 minutes per stream, sequential, minimal load):
 python3 tools/net_autotune.py --api http://127.0.0.1:9060 --username admin --password admin --duration-sec 240
 ```
 
-The script tries `bad,max,superbad` and chooses the lowest error score based on `/api/v1/stream-status`.
+The script tries candidates you pass via `--candidates` and chooses the lowest error score based on `/api/v1/stream-status`.
 It only touches inputs explicitly marked with `#net_tune=1`.
+
+If you want the optimizer to also test paced playout (NULL stuffing), include `*_playout` candidates:
+```
+python3 tools/net_autotune.py --api http://127.0.0.1:9060 --candidates bad,max,bad_playout,max_playout,superbad
+```
 
 Systemd timer (per instance, recommended):
 ```
@@ -67,6 +73,46 @@ You can tune auto thresholds and relax timing:
 ```
 http://host:port/stream.ts#net_profile=max&net_auto=1&net_auto_max_level=4&net_auto_burst=3&net_auto_relax_sec=180&net_auto_window_sec=25&net_auto_min_interval_sec=5
 ```
+
+## Paced playout (NULL stuffing) (optional)
+Some HTTP-TS sources (IPTV panels, poor WAN) deliver data in bursts:
+data arrives quickly, then the connection stays silent for seconds.
+
+Even with jitter buffering, if the upstream stays silent longer than the buffer,
+`/play/<id>` can stall (no bytes for a while). For playout/QAM this is often worse than
+keeping a continuous TS carrier with NULL padding.
+
+Paced playout adds an **opt-in** layer that:
+- outputs TS at a steady rate,
+- and if the upstream buffer is empty, inserts NULL TS packets (PID=0x1FFF),
+  so clients keep receiving data and do not hit read stalls.
+
+Enable per input:
+```
+http://host:port/stream.ts#playout=1&playout_mode=auto&playout_target_kbps=auto&playout_tick_ms=10&playout_null_stuffing=1
+```
+
+Notes:
+- Playout is **off by default**. It enables automatically only when you explicitly set
+  `#net_profile=superbad` (configured per-input profile), unless you override with `#playout=0`.
+- This can increase bandwidth usage: when the upstream is missing, Astral continues sending NULL
+  at the target bitrate.
+- `on_air` stays a content signal (analyze runs **before** playout), so you can distinguish:
+  content missing vs. carrier kept alive.
+
+Useful playout options:
+- `playout_mode=auto|cbr`
+- `playout_target_kbps=auto|<number>`
+- `playout_min_fill_ms=<number>`: prebuffer (output NULL until buffer reaches min fill)
+- `playout_target_fill_ms=<number>`: target fill shown in status (used by presets/autotune)
+- `playout_max_buffer_mb=<number>`: playout ring buffer cap
+- `playout_null_stuffing=0|1`
+
+Status metrics:
+- `inputs[].playout.null_packets_total`
+- `inputs[].playout.underruns_total`
+- `inputs[].playout.underrun_ms_total`
+- `inputs[].playout.target_kbps` / `inputs[].playout.current_kbps`
 
 ## Global defaults (Settings -> General -> Inputs)
 There are two layers:

@@ -1455,8 +1455,11 @@ local function channel_prepare_input(channel_data, input_id, opts)
     input_data.fail_count = 0
 
     if input_data.config.no_analyze ~= true then
+        -- Важно: если на входе включен carrier/playout (NULL stuffing), анализатор должен смотреть
+        -- ДО него, иначе поток будет выглядеть "on_air" даже при полном отсутствии контента.
+        local analyze_tail = input_data.input and (input_data.input.analyze_tail or input_data.input.tail) or nil
         input_data.analyze = analyze({
-            upstream = input_data.input.tail:stream(),
+            upstream = analyze_tail and analyze_tail:stream() or input_data.input.tail:stream(),
             name = input_data.config.name,
             cc_limit = input_data.config.cc_limit,
             bitrate_limit = input_data.config.bitrate_limit,

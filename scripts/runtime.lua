@@ -507,6 +507,17 @@ local function collect_input_stats(channel)
             end
         end
 
+        if input_data and input_data.input and input_data.input.playout
+            and input_data.input.playout.stats
+        then
+            local ok, stats = pcall(function()
+                return input_data.input.playout:stats()
+            end)
+            if ok and type(stats) == "table" then
+                entry.playout = stats
+            end
+        end
+
         if input_data and input_data.stats and input_data.stats.bitrate then
             entry.bitrate_kbps = tonumber(input_data.stats.bitrate)
         else

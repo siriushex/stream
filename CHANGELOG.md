@@ -12,6 +12,16 @@
 ## Entries
 ### 2026-02-09
 - Changes:
+  - Inputs: add opt-in playout pacer (NULL stuffing + pacing) to keep `/play` continuous on bursty/stalling HTTP-TS/HLS sources (enabled via `#playout=1` or per-input `net_profile=superbad`).
+  - UI: add per-input “Paced playout (anti-jitter)” checkbox with advanced playout options, plus a profile preset overwrite button for `bad/max/superbad`.
+  - Tools: extend `tools/net_autotune.py` scoring with playout underruns/nulls and add `*_playout` presets; extend mock HTTP-TS server with burst mode; add playout smoke script.
+  - Docs: document paced playout / NULL stuffing and how to tune it.
+- Tests:
+  - `./configure.sh && make`
+  - `python3 -m py_compile tools/net_autotune.py tools/tests/mock_http_ts.py`
+  - `bash -n tools/tests/playout_smoke.sh`
+### 2026-02-09
+- Changes:
   - Inputs/Jitter: fix jitter buffer scheduling so burst-delivered HTTP-TS does not turn receive gaps into output gaps while buffered data is available (prevents recurring `no_data` while `buffer_fill_ms` is high).
 - Tests:
   - `./configure.sh && make`
