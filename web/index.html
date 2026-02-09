@@ -2498,100 +2498,93 @@
         </div>
 
         <div id="output-advanced-block" hidden>
-        <div class="output-group" data-group="http">
-          <label class="field">
-            <span>Mode</span>
-            <select id="output-http-mode">
-              <option value="http">HTTP MPEG-TS</option>
-              <option value="hls">HLS</option>
-            </select>
-          </label>
-          <div class="output-subgroup" data-mode="http">
-            <label class="field">
-              <span>Host</span>
-              <input type="text" id="output-http-host" placeholder="0.0.0.0" />
-            </label>
-            <label class="field">
-              <span>Port</span>
-              <input type="number" id="output-http-port" placeholder="8000" />
-            </label>
-            <label class="field">
-              <span>Path</span>
-              <input type="text" id="output-http-path" placeholder="/stream" />
-            </label>
-            <label class="field">
-              <span>Buffer size (KB)</span>
-              <input type="number" id="output-http-buffer" placeholder="1024" />
-            </label>
-            <label class="field">
-              <span>Buffer fill (KB)</span>
-              <input type="number" id="output-http-buffer-fill" placeholder="256" />
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="output-http-keep" />
-              <span>Keep active</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="output-http-sctp" />
-              <span>Use SCTP</span>
-            </label>
+          <div class="output-group" data-group="http">
+            <div class="output-subgroup" data-mode="http">
+              <label class="field">
+                <span>Host</span>
+                <input type="text" id="output-http-host" placeholder="0.0.0.0" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="number" id="output-http-port" placeholder="8000" />
+              </label>
+              <label class="field">
+                <span>Path</span>
+                <input type="text" id="output-http-path" placeholder="/stream" />
+              </label>
+              <label class="field">
+                <span>Buffer size (KB)</span>
+                <input type="number" id="output-http-buffer" placeholder="1024" />
+              </label>
+              <label class="field">
+                <span>Buffer fill (KB)</span>
+                <input type="number" id="output-http-buffer-fill" placeholder="256" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="output-http-keep" />
+                <span>Keep active</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="output-http-sctp" />
+                <span>Use SCTP</span>
+              </label>
+            </div>
+            <div class="output-subgroup" data-mode="hls">
+              <label class="field" hidden>
+                <span>Output directory</span>
+                <input type="text" id="output-hls-path" />
+              </label>
+              <label class="field" hidden>
+                <span>Base URL</span>
+                <input type="text" id="output-hls-base" />
+              </label>
+              <label class="field">
+                <span>Playlist</span>
+                <input type="text" id="output-hls-playlist" placeholder="index.m3u8" />
+              </label>
+              <label class="field">
+                <span>Prefix</span>
+                <input type="text" id="output-hls-prefix" placeholder="segment" />
+              </label>
+              <label class="field">
+                <span>Target duration (sec)</span>
+                <input type="number" id="output-hls-target" placeholder="6" />
+              </label>
+              <label class="field">
+                <span>Window</span>
+                <input type="number" id="output-hls-window" placeholder="5" />
+              </label>
+              <label class="field">
+                <span>Cleanup</span>
+                <input type="number" id="output-hls-cleanup" placeholder="10" />
+              </label>
+              <label class="field">
+                <span>Segments naming</span>
+                <select id="output-hls-naming">
+                  <option value="sequence">Sequence</option>
+                  <option value="pcr">PCR hash</option>
+                </select>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="output-hls-round" />
+                <span>Round duration</span>
+              </label>
+              <label class="field">
+                <span>TS extension</span>
+                <input type="text" id="output-hls-ts-extension" placeholder="ts" />
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="output-hls-wall" />
+                <span>Use wall clock</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="output-hls-pass-data" />
+                <span>Pass all data PIDs</span>
+              </label>
+            </div>
           </div>
-          <div class="output-subgroup" data-mode="hls">
-            <label class="field">
-              <span>Output directory</span>
-              <input type="text" id="output-hls-path" />
-            </label>
-            <label class="field">
-              <span>Base URL</span>
-              <input type="text" id="output-hls-base" />
-            </label>
-            <label class="field">
-              <span>Playlist</span>
-              <input type="text" id="output-hls-playlist" placeholder="index.m3u8" />
-            </label>
-            <label class="field">
-              <span>Prefix</span>
-              <input type="text" id="output-hls-prefix" placeholder="segment" />
-            </label>
-            <label class="field">
-              <span>Target duration (sec)</span>
-              <input type="number" id="output-hls-target" placeholder="6" />
-            </label>
-            <label class="field">
-              <span>Window</span>
-              <input type="number" id="output-hls-window" placeholder="5" />
-            </label>
-            <label class="field">
-              <span>Cleanup</span>
-              <input type="number" id="output-hls-cleanup" placeholder="10" />
-            </label>
-            <label class="field">
-              <span>Segments naming</span>
-              <select id="output-hls-naming">
-                <option value="sequence">Sequence</option>
-                <option value="pcr">PCR hash</option>
-              </select>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="output-hls-round" />
-              <span>Round duration</span>
-            </label>
-            <label class="field">
-              <span>TS extension</span>
-              <input type="text" id="output-hls-ts-extension" placeholder="ts" />
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="output-hls-wall" />
-              <span>Use wall clock</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="output-hls-pass-data" />
-              <span>Pass all data PIDs</span>
-            </label>
-          </div>
-        </div>
 
-        <div class="output-group" data-group="udp">
+          <div class="output-group" data-group="udp">
           <label class="field">
             <span>Address</span>
             <input type="text" id="output-udp-addr" placeholder="239.0.0.1" />
