@@ -181,12 +181,19 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
 
     memcpy(mod->buffer + (mod->tail * TS_PACKET_SIZE), ts, TS_PACKET_SIZE);
     const uint64_t jitter_us = (uint64_t)mod->config.jitter_ms * 1000ULL;
-    uint64_t sched = now + jitter_us;
-    if(mod->last_sched_ts > 0)
+    /* Важно: это "настоящий" jitter buffer, который сглаживает рывки доставки.
+     * Поэтому после стартового прогона (prebuffer) мы НЕ привязываем график выдачи к `now`,
+     * иначе любые паузы в приёме будут полностью переноситься в выдачу (и анализатор видит `no_data`).
+     * Вместо этого строим непрерывный таймлайн выдачи: пока в буфере есть данные, выдаём с пейсингом. */
+    uint64_t sched = 0;
+    if(mod->last_sched_ts == 0)
     {
-        const uint64_t next = mod->last_sched_ts + jitter_packet_interval_us(mod);
-        if(next > sched)
-            sched = next;
+        /* Первый пакет после старта/полного опустошения: даём набрать target buffer. */
+        sched = now + jitter_us;
+    }
+    else
+    {
+        sched = mod->last_sched_ts + jitter_packet_interval_us(mod);
     }
     mod->timestamps[mod->tail] = sched;
     mod->last_sched_ts = sched;

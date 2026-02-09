@@ -12,6 +12,11 @@
 ## Entries
 ### 2026-02-09
 - Changes:
+  - Inputs/Jitter: fix jitter buffer scheduling so burst-delivered HTTP-TS does not turn receive gaps into output gaps while buffered data is available (prevents recurring `no_data` while `buffer_fill_ms` is high).
+- Tests:
+  - `./configure.sh && make`
+### 2026-02-09
+- Changes:
   - Jitter: pace TS output using EMA bitrate to avoid long pauses on bursty HTTP-TS sources; expose `buffer_drops_total` and make `buffer_fill_ms` reflect remaining buffered time.
   - Tools/Systemd: improve `tools/net_autotune.py` (lock file, jitter variants, scoring uses on_air/underruns/drops) and add `astral-net-autotune@` systemd timer/service templates for scheduled per-instance tuning.
   - Docs: document systemd autotune timer and the new jitter drops metric.
