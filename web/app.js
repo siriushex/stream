@@ -19688,9 +19688,10 @@ async function startPlayer(stream, opts = {}) {
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
   if (!(forceVideoOnly || forceAudioAac || forceH264)) {
-    // For transcoded streams, prefer the existing transcoded output (/hls or configured HLS),
-    // and never request an extra preview transcode.
-    url = transcoded ? getHlsUrl(stream) : getPlaylistUrl(stream);
+    // For transcoded streams always go through /preview/start:
+    // - if HLS publish is enabled, it returns the master playlist URL;
+    // - otherwise it creates a lightweight (remux-only) HLS preview from the transcode output bus.
+    url = transcoded ? null : getPlaylistUrl(stream);
   } else {
     url = null;
   }
