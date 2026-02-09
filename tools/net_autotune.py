@@ -45,6 +45,27 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "jitter_buffer_ms": 2000,
         "jitter_max_buffer_mb": 16,
     },
+    "bad_playout": {
+        # Как bad, но дополнительно включаем paced playout (NULL stuffing),
+        # чтобы /play не "залипал" на паузах входа.
+        "net_profile": "bad",
+        "ua": "vlc",
+        "net_auto": 1,
+        "net_auto_max_level": 4,
+        "net_auto_burst": 3,
+        "net_auto_relax_sec": 180,
+        "net_auto_window_sec": 25,
+        "net_auto_min_interval_sec": 5,
+        "jitter_buffer_ms": 2000,
+        "jitter_max_buffer_mb": 16,
+        "playout": 1,
+        "playout_mode": "auto",
+        "playout_target_kbps": "auto",
+        "playout_tick_ms": 10,
+        "playout_null_stuffing": 1,
+        "playout_target_fill_ms": 2000,
+        "playout_max_buffer_mb": 16,
+    },
     "max": {
         "net_profile": "max",
         "ua": "vlc",
@@ -56,6 +77,25 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "net_auto_min_interval_sec": 10,
         "jitter_buffer_ms": 3000,
         "jitter_max_buffer_mb": 32,
+    },
+    "max_playout": {
+        "net_profile": "max",
+        "ua": "vlc",
+        "net_auto": 1,
+        "net_auto_max_level": 6,
+        "net_auto_burst": 1,
+        "net_auto_relax_sec": 600,
+        "net_auto_window_sec": 60,
+        "net_auto_min_interval_sec": 10,
+        "jitter_buffer_ms": 3000,
+        "jitter_max_buffer_mb": 32,
+        "playout": 1,
+        "playout_mode": "auto",
+        "playout_target_kbps": "auto",
+        "playout_tick_ms": 10,
+        "playout_null_stuffing": 1,
+        "playout_target_fill_ms": 3000,
+        "playout_max_buffer_mb": 32,
     },
     "superbad": {
         "net_profile": "superbad",
@@ -70,6 +110,27 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         # Цена: задержка.
         "jitter_buffer_ms": 20000,
         "jitter_max_buffer_mb": 64,
+    },
+    "superbad_playout": {
+        # Для superbad playout обычно и так включается по профилю, но добавим явный кандидат
+        # для случаев, когда нужно зафиксировать поведение строго через URL.
+        "net_profile": "superbad",
+        "ua": "vlc",
+        "net_auto": 1,
+        "net_auto_max_level": 8,
+        "net_auto_burst": 1,
+        "net_auto_relax_sec": 900,
+        "net_auto_window_sec": 120,
+        "net_auto_min_interval_sec": 10,
+        "jitter_buffer_ms": 20000,
+        "jitter_max_buffer_mb": 64,
+        "playout": 1,
+        "playout_mode": "auto",
+        "playout_target_kbps": "auto",
+        "playout_tick_ms": 10,
+        "playout_null_stuffing": 1,
+        "playout_target_fill_ms": 20000,
+        "playout_max_buffer_mb": 64,
     },
 }
 
@@ -278,6 +339,10 @@ class InputMetrics:
     auto_level: int
     jitter_underruns: int
     jitter_drops: int
+    playout_enabled: bool
+    playout_null_packets: int
+    playout_underrun_ms: int
+    playout_drops: int
 
 
 def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optional[InputMetrics]:
@@ -303,6 +368,11 @@ def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optio
     jitter = entry.get("jitter") if isinstance(entry.get("jitter"), dict) else {}
     jitter_underruns = int(jitter.get("buffer_underruns_total") or 0)
     jitter_drops = int(jitter.get("buffer_drops_total") or 0)
+    playout = entry.get("playout") if isinstance(entry.get("playout"), dict) else {}
+    playout_enabled = bool(playout.get("playout_enabled") is True)
+    playout_null_packets = int(playout.get("null_packets_total") or 0)
+    playout_underrun_ms = int(playout.get("underrun_ms_total") or 0)
+    playout_drops = int(playout.get("drops_total") or 0)
 
     ok = health in ("ok", "online", "running")
     return InputMetrics(
@@ -317,6 +387,10 @@ def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optio
         auto_level=auto_level,
         jitter_underruns=jitter_underruns,
         jitter_drops=jitter_drops,
+        playout_enabled=playout_enabled,
+        playout_null_packets=playout_null_packets,
+        playout_underrun_ms=playout_underrun_ms,
+        playout_drops=playout_drops,
     )
 
 
@@ -329,6 +403,9 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
     delta_fail = max(0, last.fail_count - first.fail_count)
     delta_underruns = max(0, last.jitter_underruns - first.jitter_underruns)
     delta_drops = max(0, last.jitter_drops - first.jitter_drops)
+    delta_playout_null = max(0, last.playout_null_packets - first.playout_null_packets)
+    delta_playout_underrun_ms = max(0, last.playout_underrun_ms - first.playout_underrun_ms)
+    delta_playout_drops = max(0, last.playout_drops - first.playout_drops)
     offline = sum(1 for s in samples if s.health == "offline")
     degraded = sum(1 for s in samples if s.health == "degraded")
     onair_bad = sum(1 for s in samples if not s.on_air)
@@ -339,6 +416,11 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
     score += delta_fail * 10
     score += delta_underruns * 200
     score += delta_drops * 10
+    # Если включён playout, минимизируем время underflow (когда выдаём NULL вместо контента).
+    # 1 балл за секунду underrun + небольшой штраф за количество NULL/дропов.
+    score += int(delta_playout_underrun_ms / 1000) * 10
+    score += int(delta_playout_null / 1000) * 2
+    score += delta_playout_drops * 10
     score += degraded * 20
     score += offline * 200
     # Для вещания важнее всего непрерывность; on_air провалы считаем сильно.
@@ -349,6 +431,9 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
         "delta_fail": delta_fail,
         "delta_jitter_underruns": delta_underruns,
         "delta_jitter_drops": delta_drops,
+        "delta_playout_null_packets": delta_playout_null,
+        "delta_playout_underrun_ms": delta_playout_underrun_ms,
+        "delta_playout_drops": delta_playout_drops,
         "degraded_samples": degraded,
         "offline_samples": offline,
         "onair_bad_samples": onair_bad,
@@ -377,14 +462,20 @@ def expand_candidates(base_candidates: List[str], jitter_variants_ms: List[int])
         preset = PRESETS.get(name)
         if not preset:
             continue
+        base_prof = str(preset.get("net_profile") or name).strip().lower()
+        assumed_map = {"bad": 16, "max": 20, "superbad": 20}
+
         # Для bad/max пробуем разные jitter варианты. superbad оставляем как есть (у него уже большой jitter).
-        if name in ("bad", "max") and jitter_variants_ms:
+        if base_prof in ("bad", "max") and jitter_variants_ms:
             for ms in jitter_variants_ms:
                 p = copy.deepcopy(preset)
                 p["jitter_buffer_ms"] = int(ms)
                 # Расчёт лимита по "профильному" assumed Mbps.
-                assumed = 16 if name == "bad" else 20
+                assumed = assumed_map.get(base_prof, 16)
                 p["jitter_max_buffer_mb"] = calc_jitter_max_mb(int(ms), assumed_mbps=assumed, max_auto_mb=64)
+                if as_bool(p.get("playout")):
+                    p["playout_target_fill_ms"] = int(ms)
+                    p["playout_max_buffer_mb"] = int(p["jitter_max_buffer_mb"])
                 out.append((f"{name}-j{ms}", p))
         else:
             out.append((name, preset))

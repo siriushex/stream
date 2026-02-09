@@ -1681,6 +1681,67 @@ function init_input(conf)
         end
     end
 
+    -- Опциональный слой playout (anti-jitter / carrier): пейсит выдачу TS ровно по времени
+    -- и при пустом буфере вставляет NULL (PID=0x1FFF), чтобы /play не "залипал" на паузах входа.
+    --
+    -- Важно для совместимости:
+    -- - включается только явно (`#playout=1`) или через opt-in профиль `#net_profile=superbad`
+    -- - анализатор должен смотреть ДО playout, иначе NULL stuffing будет делать `on_air=true` "вечно"
+    local fmt = tostring(conf.format or ""):lower()
+    local is_http_like = (fmt == "http" or fmt == "https" or fmt == "hls")
+    if is_http_like then
+        local playout_enabled = net_bool(conf.playout)
+        if playout_enabled == nil then
+            -- Авто-дефолт только для configured profile=superbad (не для effective profile по глобальным settings).
+            playout_enabled = (normalize_net_profile(conf.net_profile) == "superbad")
+        end
+
+        if playout_enabled == true then
+            -- Статус/health/analyze должны работать на контенте, а не на carrier (NULL stuffing).
+            instance.analyze_tail = instance.tail
+
+            local res = resolve_input_resilience(conf)
+            local assumed_mbps = nil
+            if res and type(res.jitter_assumed_mbps) == "table" and res.profile_effective then
+                assumed_mbps = tonumber(res.jitter_assumed_mbps[res.profile_effective])
+            end
+
+            local jitter_ms = tonumber(conf.jitter_buffer_ms or conf.jitter_ms)
+            local target_fill_ms = tonumber(conf.playout_target_fill_ms)
+            if (not target_fill_ms or target_fill_ms <= 0) and jitter_ms and jitter_ms > 0 then
+                target_fill_ms = jitter_ms
+            end
+
+            local playout_max_mb = tonumber(conf.playout_max_buffer_mb)
+            if not playout_max_mb or playout_max_mb <= 0 then
+                playout_max_mb = tonumber(conf.jitter_max_buffer_mb) or tonumber(conf.max_buffer_mb) or 16
+            end
+            if playout_max_mb < 4 then
+                playout_max_mb = 4
+            end
+
+            local null_stuffing = conf.playout_null_stuffing
+            if null_stuffing == nil then
+                null_stuffing = true
+            end
+
+            instance.playout = playout({
+                upstream = instance.tail:stream(),
+                name = conf.name,
+                playout_mode = conf.playout_mode,
+                playout_target_kbps = conf.playout_target_kbps,
+                playout_tick_ms = conf.playout_tick_ms,
+                playout_null_stuffing = null_stuffing,
+                playout_min_fill_ms = conf.playout_min_fill_ms,
+                playout_target_fill_ms = target_fill_ms,
+                playout_max_fill_ms = conf.playout_max_fill_ms,
+                playout_max_buffer_mb = playout_max_mb,
+                assumed_mbps = assumed_mbps,
+            })
+            instance.tail = instance.playout
+        end
+    end
+
     return instance
 end
 

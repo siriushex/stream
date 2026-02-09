@@ -1270,6 +1270,16 @@ const elements = {
   inputHttpTimeout: $('#input-http-timeout'),
   inputHttpBuffer: $('#input-http-buffer'),
   inputNetProfile: $('#input-net-profile'),
+  inputNetProfileApply: $('#input-net-profile-apply'),
+  inputPlayoutEnabled: $('#input-playout-enabled'),
+  inputPlayoutFold: $('#input-playout-fold'),
+  inputPlayoutMode: $('#input-playout-mode'),
+  inputPlayoutTargetKbps: $('#input-playout-target-kbps'),
+  inputPlayoutTickMs: $('#input-playout-tick-ms'),
+  inputPlayoutNull: $('#input-playout-null'),
+  inputPlayoutMinFillMs: $('#input-playout-min-fill-ms'),
+  inputPlayoutTargetFillMs: $('#input-playout-target-fill-ms'),
+  inputPlayoutMaxMb: $('#input-playout-max-mb'),
   inputNetConnect: $('#input-net-connect'),
   inputNetRead: $('#input-net-read'),
   inputNetStall: $('#input-net-stall'),
@@ -10243,6 +10253,7 @@ function setInputAdvancedFoldVisibility(format) {
   const isHttpLike = type === 'http' || type === 'https' || type === 'hls';
   if (elements.inputNetFold) elements.inputNetFold.hidden = !isHttpLike;
   if (elements.inputHlsFold) elements.inputHlsFold.hidden = type !== 'hls';
+  if (elements.inputPlayoutFold) elements.inputPlayoutFold.hidden = !isHttpLike;
 }
 
 function getInputResiliencePrefill(profile) {
@@ -10319,6 +10330,66 @@ function applyInputResiliencePrefill(profile) {
   setIfEmpty(elements.inputNetAutoWindowSec, auto.window_sec);
   setIfEmpty(elements.inputNetAutoMinInterval, auto.min_interval_sec);
   setIfEmpty(elements.inputNetAutoBurst, auto.burst_threshold);
+
+  // SUPERBAD профилю по умолчанию добавляем paced playout (anti-jitter) как "страховку":
+  // когда upstream молчит дольше jitter, playout продолжает выдавать carrier (NULL PID=0x1FFF),
+  // чтобы клиенты не ловили stall/обрыв /play.
+  if (prefill.profile === 'superbad') {
+    if (elements.inputPlayoutEnabled && !elements.inputPlayoutEnabled.checked) {
+      elements.inputPlayoutEnabled.checked = true;
+    }
+    if (elements.inputPlayoutNull && !elements.inputPlayoutNull.checked) {
+      elements.inputPlayoutNull.checked = true;
+    }
+    setIfEmpty(elements.inputPlayoutMode, 'auto');
+    setIfEmpty(elements.inputPlayoutTargetKbps, 'auto');
+    setIfEmpty(elements.inputPlayoutTickMs, 10);
+    if (Number.isFinite(effectiveJitterMs) && effectiveJitterMs > 0) {
+      setIfEmpty(elements.inputPlayoutTargetFillMs, Math.floor(effectiveJitterMs));
+    }
+    if (jitterMaxMb !== null) {
+      setIfEmpty(elements.inputPlayoutMaxMb, jitterMaxMb);
+    }
+  }
+}
+
+function applyInputResiliencePresetOverwrite(profile) {
+  const prefill = getInputResiliencePrefill(profile);
+  if (!prefill) {
+    setStatus('Select profile bad/max/superbad to apply preset');
+    return;
+  }
+
+  const setValue = (el, value) => {
+    if (!el) return;
+    el.value = value === undefined || value === null ? '' : String(value);
+  };
+
+  if (elements.inputHttpUa) {
+    elements.inputHttpUa.value = 'vlc';
+  }
+
+  setValue(elements.inputJitterMs, prefill.jitterMs);
+  const jitterMaxMb = calcJitterMaxMb(prefill.jitterMs, prefill.assumedMbps, prefill.jitterMaxAutoMb);
+  if (jitterMaxMb !== null) setValue(elements.inputJitterMaxMb, jitterMaxMb);
+
+  const auto = prefill.auto || {};
+  if (elements.inputNetAuto) elements.inputNetAuto.checked = auto.enabled === true;
+  setValue(elements.inputNetAutoMaxLevel, auto.max_level);
+  setValue(elements.inputNetAutoRelaxSec, auto.relax_sec);
+  setValue(elements.inputNetAutoWindowSec, auto.window_sec);
+  setValue(elements.inputNetAutoMinInterval, auto.min_interval_sec);
+  setValue(elements.inputNetAutoBurst, auto.burst_threshold);
+
+  const enablePlayout = prefill.profile === 'superbad';
+  if (elements.inputPlayoutEnabled) elements.inputPlayoutEnabled.checked = enablePlayout;
+  if (elements.inputPlayoutNull) elements.inputPlayoutNull.checked = enablePlayout;
+  setValue(elements.inputPlayoutMode, 'auto');
+  setValue(elements.inputPlayoutTargetKbps, enablePlayout ? 'auto' : '');
+  setValue(elements.inputPlayoutTickMs, enablePlayout ? 10 : '');
+  setValue(elements.inputPlayoutMinFillMs, '');
+  setValue(elements.inputPlayoutTargetFillMs, enablePlayout ? prefill.jitterMs : '');
+  setValue(elements.inputPlayoutMaxMb, enablePlayout ? (jitterMaxMb !== null ? jitterMaxMb : 16) : '');
 }
 
 function openInputModal(index) {
@@ -10384,6 +10455,15 @@ function openInputModal(index) {
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
+    'playout',
+    'playout_mode',
+    'playout_target_kbps',
+    'playout_tick_ms',
+    'playout_null_stuffing',
+    'playout_min_fill_ms',
+    'playout_target_fill_ms',
+    'playout_max_fill_ms',
+    'playout_max_buffer_mb',
     'hls_max_segments',
     'hls_max_gap_segments',
     'hls_segment_retries',
@@ -10440,6 +10520,21 @@ function openInputModal(index) {
   if (elements.inputNetTune) elements.inputNetTune.checked = asBool(opts.net_tune);
   if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
   if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
+  if (elements.inputPlayoutEnabled) elements.inputPlayoutEnabled.checked = asBool(opts.playout);
+  if (elements.inputPlayoutMode) elements.inputPlayoutMode.value = opts.playout_mode || 'auto';
+  if (elements.inputPlayoutTargetKbps) elements.inputPlayoutTargetKbps.value = opts.playout_target_kbps || '';
+  if (elements.inputPlayoutTickMs) elements.inputPlayoutTickMs.value = opts.playout_tick_ms || '';
+  if (elements.inputPlayoutNull) {
+    if (opts.playout_null_stuffing !== undefined) {
+      elements.inputPlayoutNull.checked = asBool(opts.playout_null_stuffing);
+    } else {
+      // По умолчанию playout должен держать carrier (NULL stuffing).
+      elements.inputPlayoutNull.checked = true;
+    }
+  }
+  if (elements.inputPlayoutMinFillMs) elements.inputPlayoutMinFillMs.value = opts.playout_min_fill_ms || '';
+  if (elements.inputPlayoutTargetFillMs) elements.inputPlayoutTargetFillMs.value = opts.playout_target_fill_ms || '';
+  if (elements.inputPlayoutMaxMb) elements.inputPlayoutMaxMb.value = opts.playout_max_buffer_mb || '';
   if (elements.inputHlsMaxSegments) elements.inputHlsMaxSegments.value = opts.hls_max_segments || '';
   if (elements.inputHlsMaxGap) elements.inputHlsMaxGap.value = opts.hls_max_gap_segments || '';
   if (elements.inputHlsSegRetries) elements.inputHlsSegRetries.value = opts.hls_segment_retries || '';
@@ -10537,6 +10632,18 @@ function readInputForm() {
   if (elements.inputNetTune && elements.inputNetTune.checked) options.net_tune = true;
   addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
   addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
+  if (elements.inputPlayoutEnabled && elements.inputPlayoutEnabled.checked) {
+    options.playout = true;
+    addString('playout_mode', elements.inputPlayoutMode && elements.inputPlayoutMode.value);
+    addString('playout_target_kbps', elements.inputPlayoutTargetKbps && elements.inputPlayoutTargetKbps.value);
+    addNumber('playout_tick_ms', elements.inputPlayoutTickMs && elements.inputPlayoutTickMs.value);
+    if (elements.inputPlayoutNull) {
+      options.playout_null_stuffing = elements.inputPlayoutNull.checked ? 1 : 0;
+    }
+    addNumber('playout_min_fill_ms', elements.inputPlayoutMinFillMs && elements.inputPlayoutMinFillMs.value);
+    addNumber('playout_target_fill_ms', elements.inputPlayoutTargetFillMs && elements.inputPlayoutTargetFillMs.value);
+    addNumber('playout_max_buffer_mb', elements.inputPlayoutMaxMb && elements.inputPlayoutMaxMb.value);
+  }
   addString('net_profile', elements.inputNetProfile && elements.inputNetProfile.value);
   if (format === 'hls') {
     addNumber('hls_max_segments', elements.inputHlsMaxSegments && elements.inputHlsMaxSegments.value);
@@ -20005,6 +20112,19 @@ function buildInputStatusRow(input, index, activeIndex) {
       addLine(`Jitter: ${Math.round(fill)} / ${Math.round(target)} ms (${pct}%) | Underruns: ${underruns}`);
     }
   }
+  if (input.playout) {
+    const playout = input.playout;
+    const enabled = playout.playout_enabled === true;
+    const target = Number(playout.target_kbps) || 0;
+    const current = Number(playout.current_kbps) || 0;
+    const fill = Number(playout.buffer_fill_ms) || 0;
+    const bufTarget = Number(playout.buffer_target_ms) || 0;
+    const nulls = Number(playout.null_packets_total) || 0;
+    const underrunMs = Number(playout.underrun_ms_total) || 0;
+    const drops = Number(playout.drops_total) || 0;
+    const fillText = bufTarget > 0 ? `${Math.round(fill)} / ${Math.round(bufTarget)} ms` : `${Math.round(fill)} ms`;
+    addLine(`Playout: ${enabled ? 'ON' : 'OFF'} | Target: ${Math.round(target)} kbps | Now: ${Math.round(current)} kbps | Fill: ${fillText} | NULL: ${nulls} | Underrun: ${Math.round(underrunMs)} ms | Drops: ${drops}`);
+  }
   if (input.hls) {
     const hls = input.hls;
     const hlsState = hls.state || 'n/a';
@@ -23806,6 +23926,45 @@ function bindEvents() {
   if (elements.inputNetProfile) {
     elements.inputNetProfile.addEventListener('change', () => {
       applyInputResiliencePrefill(elements.inputNetProfile.value);
+    });
+  }
+  if (elements.inputNetProfileApply && elements.inputNetProfile) {
+    elements.inputNetProfileApply.addEventListener('click', () => {
+      applyInputResiliencePresetOverwrite(elements.inputNetProfile.value);
+    });
+  }
+  if (elements.inputPlayoutEnabled) {
+    elements.inputPlayoutEnabled.addEventListener('change', () => {
+      if (!elements.inputPlayoutEnabled.checked) return;
+      // При включении playout даём безопасные дефолты, чтобы не сохранить "пустой" carrier.
+      if (elements.inputPlayoutNull && !elements.inputPlayoutNull.checked) {
+        elements.inputPlayoutNull.checked = true;
+      }
+      if (elements.inputPlayoutMode && !elements.inputPlayoutMode.value) {
+        elements.inputPlayoutMode.value = 'auto';
+      }
+      if (elements.inputPlayoutTargetKbps) {
+        const cur = String(elements.inputPlayoutTargetKbps.value || '').trim();
+        if (!cur) elements.inputPlayoutTargetKbps.value = 'auto';
+      }
+      if (elements.inputPlayoutTickMs) {
+        const cur = String(elements.inputPlayoutTickMs.value || '').trim();
+        if (!cur) elements.inputPlayoutTickMs.value = '10';
+      }
+      if (elements.inputPlayoutTargetFillMs) {
+        const cur = String(elements.inputPlayoutTargetFillMs.value || '').trim();
+        if (!cur && elements.inputJitterMs) {
+          const jitter = String(elements.inputJitterMs.value || '').trim();
+          if (jitter) elements.inputPlayoutTargetFillMs.value = jitter;
+        }
+      }
+      if (elements.inputPlayoutMaxMb) {
+        const cur = String(elements.inputPlayoutMaxMb.value || '').trim();
+        if (!cur && elements.inputJitterMaxMb) {
+          const mb = String(elements.inputJitterMaxMb.value || '').trim();
+          if (mb) elements.inputPlayoutMaxMb.value = mb;
+        }
+      }
     });
   }
   if (elements.inputPresetApply && elements.inputPreset) {

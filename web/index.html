@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260207e" />
-  <script defer src="/app.js?v=20260207e"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260209a" />
+  <script defer src="/app.js?v=20260209a"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260207e</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260209a</div>
       </div>
     </header>
 
@@ -3240,9 +3240,17 @@
               <option value="superbad">superbad (extreme)</option>
             </select>
           </label>
+          <div class="field">
+            <span>Profile preset</span>
+            <button class="btn ghost" type="button" id="input-net-profile-apply">Apply preset</button>
+          </div>
           <label class="field">
             <span>Jitter buffer (ms)</span>
             <input type="number" id="input-jitter-ms" placeholder="0" />
+          </label>
+          <label class="checkline">
+            <input type="checkbox" id="input-playout-enabled" />
+            <span>Paced playout (anti-jitter)</span>
           </label>
         </div>
 
@@ -3383,6 +3391,44 @@
             </label>
           </div>
           <div class="form-hint">Applies only to HLS inputs. Blank fields use defaults.</div>
+        </details>
+
+        <details class="fold" id="input-playout-fold" hidden>
+          <summary class="fold-summary">Playout pacer (advanced)</summary>
+          <div class="fold-body form-grid">
+            <label class="field">
+              <span>Mode</span>
+              <select id="input-playout-mode">
+                <option value="auto">auto</option>
+                <option value="cbr">cbr</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Target bitrate (kbps)</span>
+              <input type="text" id="input-playout-target-kbps" placeholder="auto" />
+            </label>
+            <label class="field">
+              <span>Tick (ms)</span>
+              <input type="number" id="input-playout-tick-ms" placeholder="10" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="input-playout-null" />
+              <span>NULL stuffing</span>
+            </label>
+            <label class="field">
+              <span>Min fill (ms)</span>
+              <input type="number" id="input-playout-min-fill-ms" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Target fill (ms)</span>
+              <input type="number" id="input-playout-target-fill-ms" placeholder="0" />
+            </label>
+            <label class="field">
+              <span>Max buffer (MB)</span>
+              <input type="number" id="input-playout-max-mb" placeholder="16" />
+            </label>
+          </div>
+          <div class="form-hint">Applies only when playout is enabled. Blank fields use defaults.</div>
         </details>
 
         <div class="divider"></div>
