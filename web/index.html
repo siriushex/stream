@@ -39,16 +39,17 @@
       </div>
     </header>
 
-    <div class="settings-menu" id="settings-menu" aria-hidden="true">
-      <button class="settings-item active" data-section="general">General</button>
-      <button class="settings-item" data-section="users">Users</button>
-      <button class="settings-item" data-section="hls">HLS</button>
-      <button class="settings-item" data-section="http-play">HTTP Play</button>
-      <button class="settings-item" data-section="buffer">Buffer</button>
-      <button class="settings-item" data-section="http-auth">HTTP Authentication</button>
-      <button class="settings-item" data-section="softcam">Softcam</button>
-      <button class="settings-item" data-section="cas">CAS</button>
-      <button class="settings-item" data-section="servers">Servers</button>
+	    <div class="settings-menu" id="settings-menu" aria-hidden="true">
+	      <button class="settings-item active" data-section="general">General</button>
+	      <button class="settings-item" data-section="users">Users</button>
+	      <button class="settings-item" data-section="hls">HLS</button>
+	      <button class="settings-item" data-section="http-play">HTTP Play</button>
+	      <button class="settings-item" data-section="public-urls">Public URLs</button>
+	      <button class="settings-item" data-section="buffer">Buffer</button>
+	      <button class="settings-item" data-section="http-auth">HTTP Authentication</button>
+	      <button class="settings-item" data-section="softcam">Softcam</button>
+	      <button class="settings-item" data-section="cas">CAS</button>
+	      <button class="settings-item" data-section="servers">Servers</button>
       <button class="settings-item" data-section="groups">Groups</button>
       <button class="settings-item" data-section="import">Import</button>
       <button class="settings-item" data-section="edit-config">Edit Config</button>
@@ -1118,18 +1119,55 @@
                 <span>XSPF playlist title</span>
                 <input type="text" id="http-play-xspf-title" placeholder="Playlist" />
               </label>
-              <div class="apply-row">
-                <button class="btn ghost" type="button" id="btn-save-http-play">Save</button>
-                <button class="btn" type="button" id="btn-apply-http-play">Save &amp; Restart</button>
-              </div>
-            </div>
-          </div>
+	              <div class="apply-row">
+	                <button class="btn ghost" type="button" id="btn-save-http-play">Save</button>
+	                <button class="btn" type="button" id="btn-apply-http-play">Save &amp; Restart</button>
+	              </div>
+	            </div>
+	          </div>
 
-          <div class="settings-section" data-section="buffer">
-            <div class="form-stack">
-              <label class="checkline">
-                <input type="checkbox" id="buffer-setting-enabled" />
-                <span>Enable HTTP TS buffer server</span>
+	          <div class="settings-section" data-section="public-urls">
+	            <div class="form-stack">
+	              <div class="panel-title">Public URLs</div>
+	              <div class="form-hint">
+	                Used to generate full links in the UI (Output list, Publish links, Copy buttons).
+	                If empty, Astra falls back to the current browser origin.
+	              </div>
+	              <label class="field">
+	                <span>HTTP base URL</span>
+	                <input type="text" id="public-http-base-url" placeholder="http://example.com:9060" />
+	              </label>
+	              <label class="field">
+	                <span>HTTPS base URL (optional)</span>
+	                <input type="text" id="public-https-base-url" placeholder="https://example.com" />
+	              </label>
+	              <label class="field">
+	                <span>HLS base URL (optional)</span>
+	                <input type="text" id="public-hls-base-url" placeholder="https://example.com" />
+	              </label>
+	              <label class="field">
+	                <span>DASH base URL (optional)</span>
+	                <input type="text" id="public-dash-base-url" placeholder="https://example.com" />
+	              </label>
+	              <label class="field">
+	                <span>RTMP base URL (optional)</span>
+	                <input type="text" id="public-rtmp-base-url" placeholder="rtmp://example.com:1935" />
+	              </label>
+	              <label class="field">
+	                <span>RTSP base URL (optional)</span>
+	                <input type="text" id="public-rtsp-base-url" placeholder="rtsp://example.com:554" />
+	              </label>
+	              <div class="apply-row">
+	                <button class="btn" type="button" id="btn-save-public-urls">Save</button>
+	              </div>
+	            </div>
+	          </div>
+
+	          <div class="settings-section" data-section="buffer">
+	            <div class="form-stack">
+	              <label class="checkline">
+	                <input type="checkbox" id="buffer-setting-enabled" />
+	                <span>Enable HTTP TS buffer server</span>
               </label>
               <div class="form-grid">
                 <label class="field">
@@ -3049,14 +3087,25 @@
               <option value="m4f" disabled>M4F/CMAF (experimental)</option>
             </select>
           </label>
-          <label class="field" id="transcode-publish-target-variants-field">
-            <span id="transcode-publish-target-variants-label">Variants (comma-separated profile ids, empty = all)</span>
-            <input type="text" id="transcode-publish-target-variants" placeholder="HDHigh,HDMedium" />
-          </label>
-          <label class="field" id="transcode-publish-target-url-field">
-            <span>URL</span>
-            <input type="text" id="transcode-publish-target-url" placeholder="udp://239.0.0.1:1234" />
-          </label>
+	          <label class="field" id="transcode-publish-target-variants-field">
+	            <span id="transcode-publish-target-variants-label">Variants (comma-separated profile ids, empty = all)</span>
+	            <input type="text" id="transcode-publish-target-variants" placeholder="HDHigh,HDMedium" />
+	          </label>
+	          <label class="checkline" id="transcode-publish-target-public-auto-field">
+	            <input type="checkbox" id="transcode-publish-target-public-auto" />
+	            <span>Auto public URL</span>
+	          </label>
+	          <label class="field" id="transcode-publish-target-public-url-field">
+	            <span>Public URL</span>
+	            <input type="text" id="transcode-publish-target-public-url" placeholder="(auto)" />
+	          </label>
+	          <div class="apply-row" id="transcode-publish-target-public-reset-row">
+	            <button class="btn ghost" type="button" id="transcode-publish-target-public-reset">Reset to Auto</button>
+	          </div>
+	          <label class="field" id="transcode-publish-target-url-field">
+	            <span>URL</span>
+	            <input type="text" id="transcode-publish-target-url" placeholder="udp://239.0.0.1:1234" />
+	          </label>
           <label class="checkline">
             <input type="checkbox" id="transcode-publish-target-enabled" />
             <span>Enabled</span>
