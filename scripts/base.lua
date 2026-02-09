@@ -1273,6 +1273,11 @@ local function is_loopback_ip(ip)
     if ip:match("^127%.") then
         return true
     end
+    -- Some servers can report IPv4 loopback as IPv6-mapped (::ffff:127.x.x.x).
+    local lower = ip:lower()
+    if lower:match("^::ffff:127%.") then
+        return true
+    end
     return false
 end
 

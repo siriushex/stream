@@ -1691,7 +1691,8 @@ function main()
 	                return false
 	            end
 	            local ip = tostring(req.addr or "")
-	            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+	            local lower = ip:lower()
+	            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.") then
 	                local headers = req.headers or {}
 	                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
 	                    or headers["forwarded"] or headers["Forwarded"]
@@ -1945,7 +1946,8 @@ function main()
                     return false
                 end
                 local ip = tostring(req.addr or "")
-                if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") then
+                local lower = ip:lower()
+                if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.") then
                     local headers = req.headers or {}
                     if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
                         or headers["forwarded"] or headers["Forwarded"]
