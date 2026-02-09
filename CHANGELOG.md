@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-09
 - Changes:
+  - Inputs: avoid enabling HTTP input `sync=1`/timeout=60 defaults for external sources that happen to use `/play/*` or `/stream/*` paths (sync defaults now apply only for localhost inputs).
+  - Inputs: keep `stall_timeout_ms` stable in `net_auto` mode (don’t scale with auto level) to prevent long hangs.
+  - Inputs/UI: compute jitter max memory prefill from `jitter_buffer_ms` (assumed bitrate + safety factor, clamped) and apply profile prefill on Input modal open.
+  - Inputs/UI: adjust `superbad` defaults to keep a large jitter reserve while avoiding unnecessary reconnect thrash.
+- Tests:
+  - `python3 -m py_compile tools/net_autotune.py`
+### 2026-02-09
+- Changes:
   - Inputs: add `superbad` net_profile (extreme timeouts/jitter) and raise jitter auto cap for profile-mode.
   - UI: allow selecting `superbad` + add per-input `net_tune` checkbox to mark inputs for scheduled optimization.
   - Tools: add `tools/net_autotune.py` to test marked inputs (3-5 min) and apply the best preset automatically.

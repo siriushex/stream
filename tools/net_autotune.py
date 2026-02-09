@@ -65,7 +65,9 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         "net_auto_relax_sec": 900,
         "net_auto_window_sec": 120,
         "net_auto_min_interval_sec": 10,
-        "jitter_buffer_ms": 5000,
+        # Для "супер-bad" даём большой запас буфера, чтобы переживать длинные дыры.
+        # Цена: задержка.
+        "jitter_buffer_ms": 20000,
         "jitter_max_buffer_mb": 64,
     },
 }
@@ -530,4 +532,3 @@ def main(argv: List[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

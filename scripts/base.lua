@@ -535,9 +535,12 @@ local NET_RESILIENCE_KEYS = {
 	            user_agent = "VLC/3.0.20",
 	        },
 	        superbad = {
+	            -- Крайне нестабильные источники: делаем запас по таймаутам + низкий low-speed,
+	            -- а "запас" по стабильности достигается в основном jitter буфером.
 	            connect_timeout_ms = 20000,
 	            read_timeout_ms = 60000,
-	            stall_timeout_ms = 30000,
+	            -- Желательно не ждать дольше, чем target jitter buffer.
+	            stall_timeout_ms = 20000,
 	            max_retries = 0,
 	            backoff_min_ms = 2000,
 	            backoff_max_ms = 60000,
@@ -562,7 +565,9 @@ local NET_RESILIENCE_KEYS = {
 	        -- иначе клиент видит частые паузы на коротких сетевых дырах.
 	        bad = 2000,
 	        max = 3000,
-	        superbad = 5000,
+	        -- "С запасом" для источников, которые могут подвисать на десятки секунд.
+	        -- Даёт стабильное вещание ценой увеличения задержки.
+	        superbad = 20000,
 	    },
 	    -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
 	    jitter_assumed_mbps = {
@@ -905,7 +910,9 @@ local function net_auto_tune_cfg(base_cfg, level)
 
     out.connect_timeout_ms = math.floor(ct * mult_conn)
     out.read_timeout_ms = math.floor(rt * mult)
-    out.stall_timeout_ms = math.floor(st * mult)
+    -- stall_timeout_ms не увеличиваем: при росте уровня auto мы хотим быстрее отлипать
+    -- от подвисших соединений, а не ждать 60-120 секунд без данных.
+    out.stall_timeout_ms = math.floor(st)
     out.low_speed_time_sec = math.floor(ls_time * mult)
     out.low_speed_limit_bytes_sec = math.max(512, math.floor(ls_limit * (0.7 ^ lvl)))
     out.backoff_min_ms = math.floor(bo_min * (1 + (0.25 * lvl)))
@@ -1893,7 +1900,7 @@ local function hash_string(text)
     return h
 end
 
-local function ensure_https_bridge_port(conf)
+	local function ensure_https_bridge_port(conf)
     local port = tonumber(conf.bridge_port)
     if port then
         return port
@@ -1923,12 +1930,26 @@ local function ensure_https_bridge_port(conf)
             return candidate
         end
     end
-    return nil
-end
+	    return nil
+	end
 
-init_input_module.http = function(conf)
-    local instance_id = conf.host .. ":" .. conf.port .. conf.path
-    local instance = http_input_instance_list[instance_id]
+	local function is_local_http_host(host)
+	    if host == nil then
+	        return false
+	    end
+	    local h = tostring(host):lower()
+	    if h == "localhost" or h == "::1" or h == "127.0.0.1" then
+	        return true
+	    end
+	    if h:match("^127%.") then
+	        return true
+	    end
+	    return false
+	end
+
+	init_input_module.http = function(conf)
+	    local instance_id = conf.host .. ":" .. conf.port .. conf.path
+	    local instance = http_input_instance_list[instance_id]
 
 	    if not instance then
 	        instance = {
@@ -1956,20 +1977,20 @@ init_input_module.http = function(conf)
 	        }
 	        instance.last_origin_reset_ts = nil
 
-	        local sync = conf.sync
-	        if sync == nil and type(conf.path) == "string"
+		        local sync = conf.sync
+		        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
+		            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
+	            -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
+	            -- makes consumption stable for downstream pipelines.
+	            sync = 1
+	        end
+	        local timeout = conf.timeout
+	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
 	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
-            -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
-            -- makes consumption stable for downstream pipelines.
-            sync = 1
-        end
-        local timeout = conf.timeout
-        if timeout == nil and type(conf.path) == "string"
-            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
-            -- /play and /stream can be bursty on low-bitrate streams; keep a higher receive timeout by default
-            -- so we don't reconnect on normal gaps.
-            timeout = 60
-        end
+	            -- /play and /stream can be bursty on low-bitrate streams; keep a higher receive timeout by default
+	            -- so we don't reconnect on normal gaps.
+	            timeout = 60
+	        end
 
         instance.net_cfg = build_net_resilience(conf)
         instance.net = net_make_state(instance.net_cfg)
@@ -2127,11 +2148,18 @@ init_input_module.http = function(conf)
             end
 
             instance.http_conf.headers = build_headers(instance.http_conf.host, instance.http_conf.port)
-            instance.http_conf.callback = function(self, response)
-                if not response then
-                    schedule_retry("no_response")
-                    return
-                end
+	            instance.http_conf.callback = function(self, response)
+	                if not response then
+	                    -- http_request в stream-mode вызывает callback(nil) на on_close.
+	                    -- Если до этого уже был error callback, не затираем причину на "no_response".
+	                    local now = os.time()
+	                    local ts = instance.net and instance.net.last_error_ts or nil
+	                    if ts and (now - ts) <= 1 then
+	                        return
+	                    end
+	                    schedule_retry((instance.net and instance.net.last_error) or "http_stream_closed")
+	                    return
+	                end
 
                 if response.code == 200 then
                     instance.net.last_recv_ts = os.time()
@@ -2174,7 +2202,7 @@ init_input_module.http = function(conf)
     return instance.transmit
 end
 
-local function init_input_module_https_direct(conf)
+	local function init_input_module_https_direct(conf)
     local instance_id = "https://" .. conf.host .. ":" .. conf.port .. conf.path
     local instance = https_direct_instance_list[instance_id]
 
@@ -2194,14 +2222,14 @@ local function init_input_module_https_direct(conf)
             conf.user_agent = conf.ua
         end
 
-        local sync = conf.sync
-        if sync == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
-            sync = 1
-        end
-        local timeout = conf.timeout
-        if timeout == nil and type(conf.path) == "string" and conf.path:match("^/play/") then
-            timeout = 60
-        end
+	        local sync = conf.sync
+	        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
+	            sync = 1
+	        end
+	        local timeout = conf.timeout
+	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
+	            timeout = 60
+	        end
 
         instance.net_cfg = build_net_resilience(conf)
         instance.net = net_make_state(instance.net_cfg)
@@ -2331,11 +2359,16 @@ local function init_input_module_https_direct(conf)
             end
 
             instance.http_conf.headers = build_headers(instance.http_conf.host, instance.http_conf.port)
-            instance.http_conf.callback = function(self, response)
-                if not response then
-                    schedule_retry("no_response")
-                    return
-                end
+	            instance.http_conf.callback = function(self, response)
+	                if not response then
+	                    local now = os.time()
+	                    local ts = instance.net and instance.net.last_error_ts or nil
+	                    if ts and (now - ts) <= 1 then
+	                        return
+	                    end
+	                    schedule_retry((instance.net and instance.net.last_error) or "http_stream_closed")
+	                    return
+	                end
 
                 if response.code == 200 then
                     instance.net.last_recv_ts = os.time()
