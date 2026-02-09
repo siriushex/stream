@@ -12,6 +12,13 @@
 ## Entries
 ### 2026-02-09
 - Changes:
+  - Transcode: fix internal `/input/<id>` loopback for `stream://<id>` inputs by normalizing stream refs to `http://127.0.0.1:<http_port>/play/<id>?internal=1` when creating loop channels.
+  - Server: make `/input/<id>` prefer the transcode loop channel (raw input) when a transcode/audio-fix job exists for the stream.
+- Tests:
+  - `./astra scripts/server.lua --config fixtures/transcode_ladder_hls_publish.json -p 9100 --data-dir /tmp/astra_test_data --web-dir ./web`
+  - `curl -sS -D - -o /dev/null --max-time 2 "http://127.0.0.1:9100/input/transcode_ladder_hls_publish?internal=1"`
+### 2026-02-09
+- Changes:
   - Inputs: add opt-in playout pacer (NULL stuffing + pacing) to keep `/play` continuous on bursty/stalling HTTP-TS/HLS sources (enabled via `#playout=1` or per-input `net_profile=superbad`).
   - UI: add per-input “Paced playout (anti-jitter)” checkbox with advanced playout options, plus a profile preset overwrite button for `bad/max/superbad`.
   - Tools: extend `tools/net_autotune.py` scoring with playout underruns/nulls and add `*_playout` presets; extend mock HTTP-TS server with burst mode; add playout smoke script.
