@@ -2391,22 +2391,30 @@ function main()
             if is_playlist and is_master_index and not (can_rewrite or needs_cookie) then
                 local payload = nil
                 local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
-                if job and job.ladder_enabled == true and type(job.publish) == "table" then
-                    local variant_set = {}
-                    for _, pub in ipairs(job.publish) do
-                        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
-                            and type(pub.variants) == "table" then
-                            for _, pid in ipairs(pub.variants) do
-                                if pid and pid ~= "" then
-                                    variant_set[tostring(pid)] = true
-                                end
-                            end
-                        end
-                    end
-                    local variants = {}
-                    for pid, _ in pairs(variant_set) do
-                        variants[#variants + 1] = pid
-                    end
+	                if job and job.ladder_enabled == true and type(job.publish) == "table" then
+	                    local variant_set = {}
+	                    for _, pub in ipairs(job.publish) do
+	                        if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls" then
+	                            -- Empty/missing variants means "all profiles" (Flussonic-like UX).
+	                            if type(pub.variants) == "table" and #pub.variants > 0 then
+	                                for _, pid in ipairs(pub.variants) do
+	                                    if pid and pid ~= "" then
+	                                        variant_set[tostring(pid)] = true
+	                                    end
+	                                end
+	                            else
+	                                for _, p in ipairs(job.profiles or {}) do
+	                                    if p and p.id then
+	                                        variant_set[tostring(p.id)] = true
+	                                    end
+	                                end
+	                            end
+	                        end
+	                    end
+	                    local variants = {}
+	                    for pid, _ in pairs(variant_set) do
+	                        variants[#variants + 1] = pid
+	                    end
                     if #variants > 0 then
                         local profiles_by_id = {}
                         for _, p in ipairs(job.profiles or {}) do
@@ -2476,22 +2484,30 @@ function main()
                 local payload = nil
                 if is_master_index then
                     local job = transcode and transcode.jobs and transcode.jobs[base_id] or nil
-                    if job and job.ladder_enabled == true and type(job.publish) == "table" then
-                        local variant_set = {}
-                        for _, pub in ipairs(job.publish) do
-                            if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
-                                and type(pub.variants) == "table" then
-                                for _, pid in ipairs(pub.variants) do
-                                    if pid and pid ~= "" then
-                                        variant_set[tostring(pid)] = true
-                                    end
-                                end
-                            end
-                        end
-                        local variants = {}
-                        for pid, _ in pairs(variant_set) do
-                            variants[#variants + 1] = pid
-                        end
+	                    if job and job.ladder_enabled == true and type(job.publish) == "table" then
+	                        local variant_set = {}
+	                        for _, pub in ipairs(job.publish) do
+	                            if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls" then
+	                                -- Empty/missing variants means "all profiles" (Flussonic-like UX).
+	                                if type(pub.variants) == "table" and #pub.variants > 0 then
+	                                    for _, pid in ipairs(pub.variants) do
+	                                        if pid and pid ~= "" then
+	                                            variant_set[tostring(pid)] = true
+	                                        end
+	                                    end
+	                                else
+	                                    for _, p in ipairs(job.profiles or {}) do
+	                                        if p and p.id then
+	                                            variant_set[tostring(p.id)] = true
+	                                        end
+	                                    end
+	                                end
+	                            end
+	                        end
+	                        local variants = {}
+	                        for pid, _ in pairs(variant_set) do
+	                            variants[#variants + 1] = pid
+	                        end
                         if #variants > 0 then
                             local profiles_by_id = {}
                             for _, p in ipairs(job.profiles or {}) do
@@ -2690,16 +2706,16 @@ function main()
 	            proto = "embed",
 	            token = token,
 	        }, function(_session)
-	            local has_hls = false
-	            if job and job.ladder_enabled == true and type(job.publish) == "table" then
-	                for _, pub in ipairs(job.publish) do
-	                    if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls"
-	                        and type(pub.variants) == "table" and #pub.variants > 0 then
-	                        has_hls = true
-	                        break
-	                    end
-	                end
-	            end
+		            local has_hls = false
+		            if job and job.ladder_enabled == true and type(job.publish) == "table" then
+		                for _, pub in ipairs(job.publish) do
+		                    if pub and pub.enabled == true and tostring(pub.type or ""):lower() == "hls" then
+		                        -- Empty/missing variants means "all profiles" (Flussonic-like UX).
+		                        has_hls = true
+		                        break
+		                    end
+		                end
+		            end
 	
 	            local hls_url = has_hls and (opt.hls_route .. "/" .. tostring(stream_id) .. "/index.m3u8") or ""
 	            local dash_url = dash_route .. "/" .. tostring(stream_id) .. "/manifest.mpd"
