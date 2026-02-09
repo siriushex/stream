@@ -942,6 +942,9 @@ local function http_play_stream_id(path)
     if not path then
         return nil
     end
+    -- Some http_server builds include the query string in request.path. Be tolerant:
+    -- route/id parsing must only see the path portion.
+    path = path:match("^([^?]+)") or path
     local prefix = nil
     if path:sub(1, 8) == "/stream/" then
         prefix = "/stream/"
@@ -964,6 +967,7 @@ local function http_live_stream_ids(path)
     if not path then
         return nil
     end
+    path = path:match("^([^?]+)") or path
     if path:sub(1, 6) ~= "/live/" then
         return nil
     end
@@ -1934,29 +1938,35 @@ function main()
             end
 
             local function is_internal_input_request(req)
-                if not req or not req.query then
-                    return false
-                end
-                local flag = req.query.internal or req.query._internal
-                if flag == nil then
-                    return false
-                end
-                local text = tostring(flag):lower()
-                if not (text == "1" or text == "true" or text == "yes" or text == "on") then
-                    return false
-                end
                 local ip = tostring(req.addr or "")
                 local lower = ip:lower()
-                if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.") then
-                    local headers = req.headers or {}
-                    if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
-                        or headers["forwarded"] or headers["Forwarded"]
-                        or headers["x-real-ip"] or headers["X-Real-IP"] then
-                        return false
-                    end
+                if not (ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.")) then
+                    return false
+                end
+                local headers = req.headers or {}
+                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                    or headers["forwarded"] or headers["Forwarded"]
+                    or headers["x-real-ip"] or headers["X-Real-IP"] then
+                    return false
+                end
+
+                -- Prefer query parsing. Fallback to raw path parsing if needed.
+                local flag = nil
+                local query = req.query
+                if query then
+                    flag = query.internal or query._internal
+                end
+                if flag == nil then
+                    local raw = tostring(req.path or "")
+                    flag = raw:match("[?&]internal=([^&]+)") or raw:match("[?&]_internal=([^&]+)")
+                end
+
+                -- Allow loopback consumers even without ?internal=1 (still blocked from non-loopback).
+                if flag == nil then
                     return true
                 end
-                return false
+                local text = tostring(flag):lower()
+                return (text == "1" or text == "true" or text == "yes" or text == "on")
             end
 
             local internal = is_internal_input_request(request)
