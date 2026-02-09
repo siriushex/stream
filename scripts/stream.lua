@@ -3427,10 +3427,12 @@ end
 	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
 	    local http_play_enabled = http_play_allow or http_play_hls
 	    local port = http_port
-	    if http_play_enabled and play_port then
+	    -- Only use the separate http_play_port when /play is actually exposed there.
+	    -- When http_play_allow is disabled, /play is served internal-only from the main server.
+	    if http_play_enabled and http_play_allow and play_port and play_port > 0 then
 	        port = play_port
 	    end
-	    if not port then
+	    if not port or port <= 0 then
 	        return nil
 	    end
 	    local stream_id = tostring(channel_data.config.id)
@@ -3444,10 +3446,7 @@ end
 local function resolve_audio_fix_input_url(channel_data, audio_fix)
     local play_url = build_audio_fix_play_url(channel_data)
     if play_url then
-        local play_buffer_kb = audio_fix and audio_fix.config and audio_fix.config.play_buffer_kb or nil
-        play_url = append_play_buffer(play_url, play_buffer_kb)
-        local play_fill_kb = audio_fix and audio_fix.config and audio_fix.config.play_buffer_fill_kb or nil
-        play_url = append_play_buffer_fill(play_url, play_fill_kb)
+        -- Loopback buffering is enforced server-side for /play. Keep the ffmpeg input URL stable.
         return play_url, nil
     end
     if audio_fix and audio_fix.config and audio_fix.config.input_url and audio_fix.config.input_url ~= "" then
