@@ -1439,6 +1439,61 @@ select {
   color: var(--text);
 }
 
+.tags-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--text);
+}
+
+.tags-input:focus-within {
+  border-color: rgba(114, 156, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(114, 156, 255, 0.12);
+}
+
+.tags-input input {
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 6px 6px;
+  min-width: 120px;
+  flex: 1 1 120px;
+  color: var(--text);
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.tag button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tag button:hover {
+  color: var(--text);
+}
+
 .field.warn input,
 .field.warn select,
 .field.warn textarea {

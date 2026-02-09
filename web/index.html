@@ -2433,53 +2433,71 @@
   <div class="overlay" id="output-overlay" aria-hidden="true">
     <div class="modal">
       <div class="modal-head">
-        <div class="modal-title">Output settings</div>
+        <div class="modal-title" id="output-title">Output settings</div>
         <button class="icon-btn" id="output-close" aria-label="Close">
           <span class="icon-x"></span>
         </button>
       </div>
       <form id="output-form">
         <div class="modal-body-scroll">
-        <div class="form-subsection">
+        <div class="form-subsection" id="output-basic-block">
           <div class="form-grid">
-            <label class="field">
+            <label class="field span-6">
               <span>Preset</span>
               <select id="output-preset">
-                <option value="">Custom</option>
-                <option value="http_ts">HTTP MPEG-TS (local)</option>
-                <option value="hls_basic">HLS (local)</option>
-                <option value="udp_multicast">UDP Multicast</option>
-                <option value="rtp_multicast">RTP Multicast</option>
+                <option value="custom">Custom</option>
+                <option value="hls_local">HLS (local)</option>
+                <option value="dash_local">DASH (local)</option>
+                <option value="http_ts_local">HTTP-TS (local)</option>
+                <option value="embed_local">Embed page (local)</option>
+                <option value="udp_multicast">UDP (multicast)</option>
+                <option value="rtp_multicast">RTP (multicast)</option>
                 <option value="srt_bridge">SRT (bridge)</option>
-                <option value="np_push">NetworkPush</option>
+                <option value="rtmp_push">RTMP (push)</option>
+                <option value="rtsp_push">RTSP (push)</option>
                 <option value="file_ts">MPEG-TS File</option>
               </select>
             </label>
-            <div class="field">
-              <span>Apply</span>
-              <button class="btn ghost" type="button" id="output-preset-apply">Apply</button>
-            </div>
+            <label class="checkline span-6">
+              <input type="checkbox" id="output-enabled" />
+              <span>Enable</span>
+            </label>
           </div>
-          <div class="form-hint">Applies fields for the selected preset (does not change inputs).</div>
-        </div>
-        <label class="field">
-          <span>Type</span>
-          <select id="output-type">
-            <option value="srt">SRT</option>
-            <option value="http">HTTP/HLS</option>
-            <option value="udp">UDP</option>
-            <option value="rtp">RTP</option>
-            <option value="resi" disabled>RESI Modulator</option>
-            <option value="np">NetworkPush</option>
-            <option value="file">MPEG-TS Files</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>BISS key (optional)</span>
-          <input type="text" id="output-biss" placeholder="1122330044556600" />
-        </label>
-        <div class="form-hint">16 hex chars. Control sum is calculated automatically.</div>
 
+          <label class="field" id="output-variants-field">
+            <span id="output-variants-label">Variants (empty = all)</span>
+            <div class="tags-input" id="output-variants-tags">
+              <input type="text" id="output-variants-input" list="output-variants-list" placeholder="HDHigh" />
+            </div>
+            <datalist id="output-variants-list"></datalist>
+            <input type="hidden" id="output-variants" />
+          </label>
+
+          <label class="checkline" id="output-public-auto-field">
+            <input type="checkbox" id="output-public-auto" />
+            <span>Auto public URL</span>
+          </label>
+          <label class="field" id="output-public-url-field">
+            <span>Public URL</span>
+            <input type="text" id="output-public-url" placeholder="(auto)" />
+          </label>
+          <div class="apply-row" id="output-public-reset-row">
+            <button class="btn ghost" type="button" id="output-public-reset">Reset to Auto</button>
+          </div>
+
+          <label class="field" id="output-destination-field">
+            <span>Destination</span>
+            <input type="text" id="output-destination" placeholder="udp://239.0.0.1:1234" />
+          </label>
+
+          <div class="form-hint" id="output-hint"></div>
+
+          <div class="apply-row">
+            <button class="btn ghost" type="button" id="output-advanced-toggle">Advanced ▾</button>
+          </div>
+        </div>
+
+        <div id="output-advanced-block" hidden>
         <div class="output-group" data-group="http">
           <label class="field">
             <span>Mode</span>
@@ -2774,83 +2792,11 @@
           </label>
         </div>
         </div>
+        </div>
 
         <div class="modal-footer">
           <button class="btn" type="submit" id="output-save">OK</button>
           <button class="btn ghost" type="button" id="output-cancel">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="overlay" id="transcode-output-overlay" aria-hidden="true">
-    <div class="modal">
-      <div class="modal-head">
-        <div class="modal-title">Transcode output</div>
-        <button class="icon-btn" id="transcode-output-close" aria-label="Close">
-          <span class="icon-x"></span>
-        </button>
-      </div>
-      <form id="transcode-output-form">
-        <div class="modal-body-scroll">
-        <label class="field">
-          <span>Preset</span>
-          <select id="transcode-output-preset">
-            <option value="">Custom</option>
-            <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
-            <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
-            <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
-            <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
-            <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
-            <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Name</span>
-          <input type="text" id="transcode-output-name" placeholder="720p" />
-        </label>
-        <label class="field">
-          <span>URL</span>
-          <input type="text" id="transcode-output-url" placeholder="udp://239.1.1.1:1234?pkt_size=1316" />
-        </label>
-        <label class="field">
-          <span>Video filter (vf)</span>
-          <input type="text" id="transcode-output-vf" placeholder="scale=1280:720,fps=25" />
-        </label>
-        <label class="field">
-          <span>Video codec</span>
-          <input type="text" id="transcode-output-vcodec" placeholder="libx264" />
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="transcode-output-repeat-headers" />
-          <span>Repeat SPS/PPS headers (libx264)</span>
-        </label>
-        <label class="field">
-          <span>Video args (one per line)</span>
-          <textarea id="transcode-output-v-args" class="textarea-grow" rows="2" placeholder="-preset&#10;slow"></textarea>
-        </label>
-        <label class="field">
-          <span>Audio codec</span>
-          <input type="text" id="transcode-output-acodec" placeholder="aac" />
-        </label>
-        <label class="field">
-          <span>Audio args (one per line)</span>
-          <textarea id="transcode-output-a-args" class="textarea-grow" rows="2" placeholder="-ab&#10;128k"></textarea>
-        </label>
-        <label class="field">
-          <span>Format args (one per line)</span>
-          <textarea id="transcode-output-format-args" class="textarea-grow" rows="2" placeholder="-f&#10;mpegts"></textarea>
-        </label>
-        <label class="field">
-          <span>Metadata args (one per line)</span>
-          <textarea id="transcode-output-metadata" class="textarea-grow" rows="2" placeholder="-metadata&#10;service_name=Channel"></textarea>
-        </label>
-        </div>
-
-        <div class="form-note" id="transcode-output-error"></div>
-        <div class="modal-footer">
-          <button class="btn" type="submit" id="transcode-output-save">OK</button>
-          <button class="btn ghost" type="button" id="transcode-output-cancel">Cancel</button>
         </div>
       </form>
     </div>
@@ -3034,89 +2980,6 @@
         <div class="modal-footer">
           <button class="btn" type="submit" id="transcode-monitor-save">OK</button>
           <button class="btn ghost" type="button" id="transcode-monitor-cancel">Cancel</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <div class="overlay" id="transcode-publish-target-overlay" aria-hidden="true">
-    <div class="modal">
-      <div class="modal-head">
-        <div class="modal-title" id="transcode-publish-target-title">Output settings</div>
-        <button class="icon-btn" id="transcode-publish-target-close" aria-label="Close">
-          <span class="icon-x"></span>
-        </button>
-      </div>
-      <form id="transcode-publish-target-form">
-        <div class="modal-body-scroll">
-          <div class="form-subsection">
-            <div class="form-grid">
-              <label class="field">
-                <span>Preset</span>
-                <select id="transcode-publish-target-preset">
-                  <option value="">Custom</option>
-                  <option value="hls">HLS</option>
-                  <option value="dash">DASH</option>
-                  <option value="http-ts">HTTP-TS</option>
-                  <option value="embed">Embed page</option>
-                  <option value="udp">UDP</option>
-                  <option value="rtp">RTP</option>
-                  <option value="rtmp">RTMP</option>
-                  <option value="rtsp">RTSP</option>
-                </select>
-              </label>
-              <div class="field">
-                <span>Apply</span>
-                <button class="btn ghost" type="button" id="transcode-publish-target-preset-apply">Apply</button>
-              </div>
-            </div>
-          </div>
-          <label class="field">
-            <span>Type</span>
-            <select id="transcode-publish-target-type">
-              <option value="hls">HLS</option>
-              <option value="dash">DASH</option>
-              <option value="http-ts">HTTP-TS</option>
-              <option value="embed">Embed page</option>
-              <option value="udp">UDP</option>
-              <option value="rtp">RTP</option>
-              <option value="rtmp">RTMP</option>
-              <option value="rtsp">RTSP</option>
-              <option value="llhls" disabled>LL-HLS (experimental)</option>
-              <option value="mss" disabled>MSS (experimental)</option>
-              <option value="m4f" disabled>M4F/CMAF (experimental)</option>
-            </select>
-          </label>
-	          <label class="field" id="transcode-publish-target-variants-field">
-	            <span id="transcode-publish-target-variants-label">Variants (comma-separated profile ids, empty = all)</span>
-	            <input type="text" id="transcode-publish-target-variants" placeholder="HDHigh,HDMedium" />
-	          </label>
-	          <label class="checkline" id="transcode-publish-target-public-auto-field">
-	            <input type="checkbox" id="transcode-publish-target-public-auto" />
-	            <span>Auto public URL</span>
-	          </label>
-	          <label class="field" id="transcode-publish-target-public-url-field">
-	            <span>Public URL</span>
-	            <input type="text" id="transcode-publish-target-public-url" placeholder="(auto)" />
-	          </label>
-	          <div class="apply-row" id="transcode-publish-target-public-reset-row">
-	            <button class="btn ghost" type="button" id="transcode-publish-target-public-reset">Reset to Auto</button>
-	          </div>
-	          <label class="field" id="transcode-publish-target-url-field">
-	            <span>URL</span>
-	            <input type="text" id="transcode-publish-target-url" placeholder="udp://239.0.0.1:1234" />
-	          </label>
-          <label class="checkline">
-            <input type="checkbox" id="transcode-publish-target-enabled" />
-            <span>Enabled</span>
-          </label>
-          <div class="form-hint" id="transcode-publish-target-hint"></div>
-        </div>
-
-        <div class="form-note" id="transcode-publish-target-error"></div>
-        <div class="modal-footer">
-          <button class="btn" type="submit" id="transcode-publish-target-save">OK</button>
-          <button class="btn ghost" type="button" id="transcode-publish-target-cancel">Cancel</button>
         </div>
       </form>
     </div>
