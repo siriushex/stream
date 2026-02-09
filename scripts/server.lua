@@ -1995,10 +1995,15 @@ function main()
             end
 
             local entry = runtime.streams[stream_id]
-            local channel = entry and entry.channel or nil
             local job = entry and entry.job or nil
             if not job and transcode and transcode.jobs then
                 job = transcode.jobs[stream_id]
+            end
+            -- /input is the "raw input" stage for internal ffmpeg/transcode consumers.
+            -- If a transcode/audio-fix job exists, prefer its loop channel over the stream output.
+            local channel = nil
+            if not job then
+                channel = entry and entry.channel or nil
             end
             if not channel and job then
                 local n = loop_input_id or 1
@@ -2012,7 +2017,7 @@ function main()
                 end
             end
             if not channel then
-                server:abort(client, 404)
+                server:abort(client, job and 503 or 404)
                 return nil
             end
 

@@ -442,6 +442,16 @@ function transcode.ensure_loop_channel(job, input_id)
     if not entry then
         return false
     end
+    -- Loop channels are "raw input" fanout channels (no transcode). Base stream channels support
+    -- stream:// references only in MPTS mode, so normalize stream refs (and bare ids) to a localhost /play/* URL.
+    local loop_entry = entry
+    local play_id = extract_play_id_from_input(entry)
+    if play_id and play_id ~= "" then
+        local play_url = build_transcode_play_url(play_id)
+        if play_url and play_url ~= "" then
+            loop_entry = play_url
+        end
+    end
     local loop_cfg = {}
     for k, v in pairs(cfg) do
         loop_cfg[k] = v
@@ -449,7 +459,7 @@ function transcode.ensure_loop_channel(job, input_id)
     loop_cfg.type = nil
     loop_cfg.transcode = nil
     loop_cfg.backup_type = "disabled"
-    loop_cfg.input = { entry }
+    loop_cfg.input = { loop_entry }
     loop_cfg.output = {}
     loop_cfg.__disable_auto_hls = true
     loop_cfg.__internal_loop = true
