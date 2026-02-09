@@ -1406,6 +1406,11 @@ local function channel_prepare_input(channel_data, input_id, opts)
                 if state.last_error and state.last_error ~= "" then
                     input_data.last_error = state.last_error
                     input_data.health_reason = state.last_error
+                elseif state.state == "running" then
+                    -- Если input восстановился, очищаем "залипший" reason, иначе UI/авто-тюнинг
+                    -- видят устаревшую ошибку даже при `on_air=true`.
+                    input_data.last_error = nil
+                    input_data.health_reason = nil
                 end
                 if state.state then
                     input_data.health_state = state.state
@@ -1418,6 +1423,9 @@ local function channel_prepare_input(channel_data, input_id, opts)
                 input_data.health_state = stats.state
                 if stats.last_error and stats.last_error ~= "" then
                     input_data.health_reason = stats.last_error
+                elseif stats.state == "running" then
+                    input_data.last_error = nil
+                    input_data.health_reason = nil
                 end
             end
         end
