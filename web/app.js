@@ -339,6 +339,26 @@ const NET_RESILIENCE_DEFAULTS = {
 const INPUT_RESILIENCE_DEFAULTS = {
   enabled: false,
   default_profile: 'wan',
+  net_auto_defaults: {
+    dc: { enabled: false },
+    wan: { enabled: false },
+    bad: {
+      enabled: true,
+      max_level: 4,
+      relax_sec: 180,
+      window_sec: 25,
+      min_interval_sec: 5,
+      burst_threshold: 3,
+    },
+    max: {
+      enabled: true,
+      max_level: 6,
+      relax_sec: 600,
+      window_sec: 60,
+      min_interval_sec: 10,
+      burst_threshold: 1,
+    },
+  },
   profiles: {
     dc: {
       connect_timeout_ms: 2500,
@@ -380,7 +400,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
       low_speed_limit_bytes_sec: 8192,
       low_speed_time_sec: 10,
       keepalive: true,
-      user_agent: 'Astral/1.0',
+      user_agent: 'VLC/3.0.20',
     },
     max: {
       connect_timeout_ms: 12000,
@@ -394,7 +414,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
       low_speed_limit_bytes_sec: 4096,
       low_speed_time_sec: 15,
       keepalive: true,
-      user_agent: 'Astral/1.0',
+      user_agent: 'VLC/3.0.20',
     },
   },
   hls_defaults: {
@@ -406,8 +426,8 @@ const INPUT_RESILIENCE_DEFAULTS = {
   jitter_defaults_ms: {
     dc: 200,
     wan: 400,
-    bad: 800,
-    max: 1200,
+    bad: 2000,
+    max: 3000,
   },
   max_active_resilient_inputs: 50,
 };
@@ -981,6 +1001,12 @@ const elements = {
   transcodePublishTargetVariantsField: $('#transcode-publish-target-variants-field'),
   transcodePublishTargetVariantsLabel: $('#transcode-publish-target-variants-label'),
   transcodePublishTargetVariants: $('#transcode-publish-target-variants'),
+  transcodePublishTargetPublicAutoField: $('#transcode-publish-target-public-auto-field'),
+  transcodePublishTargetPublicAuto: $('#transcode-publish-target-public-auto'),
+  transcodePublishTargetPublicUrlField: $('#transcode-publish-target-public-url-field'),
+  transcodePublishTargetPublicUrl: $('#transcode-publish-target-public-url'),
+  transcodePublishTargetPublicResetRow: $('#transcode-publish-target-public-reset-row'),
+  transcodePublishTargetPublicReset: $('#transcode-publish-target-public-reset'),
   transcodePublishTargetUrlField: $('#transcode-publish-target-url-field'),
   transcodePublishTargetUrl: $('#transcode-publish-target-url'),
   transcodePublishTargetEnabled: $('#transcode-publish-target-enabled'),
@@ -1379,6 +1405,13 @@ const elements = {
   httpPlayXspfTitle: $('#http-play-xspf-title'),
   btnSaveHttpPlay: $('#btn-save-http-play'),
   btnApplyHttpPlay: $('#btn-apply-http-play'),
+  publicHttpBaseUrl: $('#public-http-base-url'),
+  publicHttpsBaseUrl: $('#public-https-base-url'),
+  publicHlsBaseUrl: $('#public-hls-base-url'),
+  publicDashBaseUrl: $('#public-dash-base-url'),
+  publicRtmpBaseUrl: $('#public-rtmp-base-url'),
+  publicRtspBaseUrl: $('#public-rtsp-base-url'),
+  btnSavePublicUrls: $('#btn-save-public-urls'),
   bufferSettingEnabled: $('#buffer-setting-enabled'),
   bufferSettingHost: $('#buffer-setting-host'),
   bufferSettingPort: $('#buffer-setting-port'),
@@ -6532,12 +6565,22 @@ function updateTranscodePublishTargetModalVisibility() {
   const isPull = ['hls', 'dash', 'http-ts'].includes(type);
   const isEmbed = type === 'embed';
   const isPush = ['udp', 'rtp', 'rtmp', 'rtsp'].includes(type);
+  const showPublicUrl = isPull || isEmbed;
 
   if (elements.transcodePublishTargetVariantsField) {
     elements.transcodePublishTargetVariantsField.hidden = !(isPull || isPush);
   }
   if (elements.transcodePublishTargetUrlField) {
     elements.transcodePublishTargetUrlField.hidden = !(isPush);
+  }
+  if (elements.transcodePublishTargetPublicAutoField) {
+    elements.transcodePublishTargetPublicAutoField.hidden = !showPublicUrl;
+  }
+  if (elements.transcodePublishTargetPublicUrlField) {
+    elements.transcodePublishTargetPublicUrlField.hidden = !showPublicUrl;
+  }
+  if (elements.transcodePublishTargetPublicResetRow) {
+    elements.transcodePublishTargetPublicResetRow.hidden = !showPublicUrl;
   }
 
   if (elements.transcodePublishTargetVariantsLabel) {
@@ -6558,6 +6601,68 @@ function updateTranscodePublishTargetModalVisibility() {
       elements.transcodePublishTargetHint.textContent = 'Push output. Select one ladder profile id and a destination URL.';
     } else {
       elements.transcodePublishTargetHint.textContent = '';
+    }
+  }
+
+  syncTranscodePublishTargetPublicUrlUi();
+}
+
+function getEditingStreamIdForPublicUrls() {
+  const streamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value)
+    : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+  return streamId || '';
+}
+
+function computeTranscodePublishAutoPublicUrl(type, variants, streamId) {
+  const entry = { type: String(type || '').toLowerCase() };
+  if (Array.isArray(variants) && variants.length) entry.variants = variants;
+  return getPublishOutputPublicUrl(entry, streamId);
+}
+
+function validatePublishPublicUrl(type, url) {
+  const t = String(type || '').toLowerCase();
+  const value = String(url || '').trim();
+  if (!value) {
+    throw new Error('Public URL is required (or enable Auto public URL)');
+  }
+  if (!hasUrlScheme(value)) {
+    throw new Error('Public URL must be a full URL (scheme://host/...)');
+  }
+  const lower = value.toLowerCase();
+  if (t === 'hls' && !lower.includes('.m3u8')) {
+    throw new Error('HLS Public URL must point to a .m3u8 playlist');
+  }
+  if (t === 'dash' && !lower.includes('.mpd')) {
+    throw new Error('DASH Public URL must point to a .mpd manifest');
+  }
+  if (t === 'http-ts' && !lower.includes('.ts')) {
+    throw new Error('HTTP-TS Public URL must point to a .ts endpoint');
+  }
+  return value;
+}
+
+function syncTranscodePublishTargetPublicUrlUi() {
+  if (!elements.transcodePublishTargetType) return;
+  if (!elements.transcodePublishTargetPublicUrl) return;
+  if (!elements.transcodePublishTargetPublicAuto) return;
+  const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
+  const isPull = ['hls', 'dash', 'http-ts'].includes(type);
+  const isEmbed = type === 'embed';
+  if (!(isPull || isEmbed)) return;
+  const streamId = getEditingStreamIdForPublicUrls();
+  const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
+  const autoEnabled = elements.transcodePublishTargetPublicAuto.checked;
+  if (autoEnabled) {
+    elements.transcodePublishTargetPublicUrl.value = computeTranscodePublishAutoPublicUrl(type, variants, streamId);
+    elements.transcodePublishTargetPublicUrl.readOnly = true;
+    if (elements.transcodePublishTargetPublicReset) {
+      elements.transcodePublishTargetPublicReset.disabled = true;
+    }
+  } else {
+    elements.transcodePublishTargetPublicUrl.readOnly = false;
+    if (elements.transcodePublishTargetPublicReset) {
+      elements.transcodePublishTargetPublicReset.disabled = false;
     }
   }
 }
@@ -6585,6 +6690,12 @@ function applyTranscodePublishTargetPreset(preset) {
   }
   if (elements.transcodePublishTargetUrl) {
     elements.transcodePublishTargetUrl.value = '';
+  }
+  if (elements.transcodePublishTargetPublicAuto) {
+    elements.transcodePublishTargetPublicAuto.checked = true;
+  }
+  if (elements.transcodePublishTargetPublicUrl) {
+    elements.transcodePublishTargetPublicUrl.value = '';
   }
   updateTranscodePublishTargetModalVisibility();
 }
@@ -6614,6 +6725,17 @@ function openTranscodePublishTargetModal(target, index) {
   if (elements.transcodePublishTargetUrl) {
     elements.transcodePublishTargetUrl.value = (target && target.url) || '';
   }
+  const showPublicUrl = ['hls', 'dash', 'http-ts'].includes(type) || type === 'embed';
+  if (showPublicUrl && elements.transcodePublishTargetPublicAuto) {
+    elements.transcodePublishTargetPublicAuto.checked = !(target && target.auto_url === false);
+  }
+  if (showPublicUrl && elements.transcodePublishTargetPublicUrl) {
+    if (target && target.auto_url === false) {
+      elements.transcodePublishTargetPublicUrl.value = String(target.public_url || '').trim();
+    } else {
+      elements.transcodePublishTargetPublicUrl.value = '';
+    }
+  }
   elements.transcodePublishTargetEnabled.checked = !(target && target.enabled === false);
   updateTranscodePublishTargetModalVisibility();
   if (elements.transcodePublishTargetError) {
@@ -6625,6 +6747,19 @@ function openTranscodePublishTargetModal(target, index) {
 function readTranscodePublishTargetForm() {
   const type = String(elements.transcodePublishTargetType.value || '').toLowerCase();
   const enabled = elements.transcodePublishTargetEnabled.checked;
+  const applyPublicUrl = (out) => {
+    if (!elements.transcodePublishTargetPublicAuto || !elements.transcodePublishTargetPublicUrl) return out;
+    const autoEnabled = elements.transcodePublishTargetPublicAuto.checked;
+    if (autoEnabled) {
+      delete out.public_url;
+      delete out.auto_url;
+      return out;
+    }
+    const url = validatePublishPublicUrl(type, elements.transcodePublishTargetPublicUrl.value);
+    out.auto_url = false;
+    out.public_url = url;
+    return out;
+  };
 
   if (type === 'hls' || type === 'dash') {
     const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
@@ -6633,7 +6768,8 @@ function readTranscodePublishTargetForm() {
         throw new Error('Variant id must be URL-safe (letters, numbers, _, -)');
       }
     });
-    return variants.length ? { type, enabled, variants } : { type, enabled };
+    const out = variants.length ? { type, enabled, variants } : { type, enabled };
+    return applyPublicUrl(out);
   }
   if (type === 'http-ts') {
     const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
@@ -6642,10 +6778,11 @@ function readTranscodePublishTargetForm() {
         throw new Error('Variant id must be URL-safe (letters, numbers, _, -)');
       }
     });
-    return variants.length ? { type, enabled, variants } : { type, enabled };
+    const out = variants.length ? { type, enabled, variants } : { type, enabled };
+    return applyPublicUrl(out);
   }
   if (type === 'embed') {
-    return { type, enabled };
+    return applyPublicUrl({ type, enabled });
   }
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
     const variants = parseCsvIds(elements.transcodePublishTargetVariants && elements.transcodePublishTargetVariants.value);
@@ -8251,26 +8388,31 @@ function getEditingProfileIds() {
 function getPublishOutputPublicUrl(entry, streamId) {
   const type = String(entry && entry.type || '').toLowerCase();
   if (!streamId) streamId = '';
-  const base = getPlayBaseUrl();
+  const manual = entry && entry.auto_url === false ? String(entry.public_url || '').trim() : '';
+  if (manual) return manual;
   const id = encodeURIComponent(streamId);
   if (type === 'hls') {
-    return `${base}/hls/${id}/index.m3u8`;
+    const base = getPublicBaseUrlForKind('hls');
+    return joinPath(base, `/hls/${id}/index.m3u8`);
   }
   if (type === 'dash') {
-    return `${base}/dash/${id}/manifest.mpd`;
+    const base = getPublicBaseUrlForKind('dash');
+    return joinPath(base, `/dash/${id}/manifest.mpd`);
   }
   if (type === 'embed') {
-    return `${base}/embed/${id}`;
+    const base = getPublicBaseUrlForKind('http');
+    return joinPath(base, `/embed/${id}`);
   }
   if (type === 'http-ts') {
+    const base = getPublicBaseUrlForKind('http');
     const variants = Array.isArray(entry.variants)
       ? entry.variants
       : (entry.profile ? [entry.profile] : []);
     if (variants.length === 1) {
-      return `${base}/live/${id}~${encodeURIComponent(variants[0])}.ts`;
+      return joinPath(base, `/live/${id}~${encodeURIComponent(variants[0])}.ts`);
     }
     // Template-like preview for "all" or multiple variants.
-    return `${base}/live/${id}~<profile>.ts`;
+    return joinPath(base, `/live/${id}~<profile>.ts`);
   }
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
     return entry && entry.url ? String(entry.url) : '';
@@ -10055,6 +10197,62 @@ function setInputAdvancedFoldVisibility(format) {
   const isHttpLike = type === 'http' || type === 'https' || type === 'hls';
   if (elements.inputNetFold) elements.inputNetFold.hidden = !isHttpLike;
   if (elements.inputHlsFold) elements.inputHlsFold.hidden = type !== 'hls';
+}
+
+function getInputResiliencePrefill(profile) {
+  const p = String(profile || '').toLowerCase();
+  if (p !== 'bad' && p !== 'max') return null;
+
+  const inputRes = getSettingObject('input_resilience', {});
+  const jitterDefaults = (inputRes && inputRes.jitter_defaults_ms && typeof inputRes.jitter_defaults_ms === 'object')
+    ? inputRes.jitter_defaults_ms
+    : {};
+  const netAutoDefaults = (inputRes && inputRes.net_auto_defaults && typeof inputRes.net_auto_defaults === 'object')
+    ? inputRes.net_auto_defaults
+    : {};
+
+  const jitterMs = Number.isFinite(Number(jitterDefaults[p]))
+    ? Number(jitterDefaults[p])
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms[p];
+  const auto = (netAutoDefaults[p] && typeof netAutoDefaults[p] === 'object')
+    ? netAutoDefaults[p]
+    : INPUT_RESILIENCE_DEFAULTS.net_auto_defaults[p];
+
+  // Явный max jitter лимит нужен для "запаса": даже если авто-лимит рассчитан ниже,
+  // оператору проще иметь повторяемый результат при выборе профиля.
+  const jitterMaxMb = (p === 'bad') ? 16 : 32;
+
+  return { profile: p, jitterMs, jitterMaxMb, auto };
+}
+
+function applyInputResiliencePrefill(profile) {
+  const prefill = getInputResiliencePrefill(profile);
+  if (!prefill) return;
+
+  const setIfEmpty = (el, value) => {
+    if (!el) return;
+    const cur = String(el.value || '').trim();
+    if (cur) return;
+    el.value = String(value);
+  };
+
+  if (elements.inputHttpUa) {
+    const ua = String(elements.inputHttpUa.value || '').trim();
+    if (!ua) elements.inputHttpUa.value = 'vlc';
+  }
+
+  setIfEmpty(elements.inputJitterMs, prefill.jitterMs);
+  setIfEmpty(elements.inputJitterMaxMb, prefill.jitterMaxMb);
+
+  const auto = prefill.auto || {};
+  if (auto.enabled === true && elements.inputNetAuto && !elements.inputNetAuto.checked) {
+    elements.inputNetAuto.checked = true;
+  }
+  setIfEmpty(elements.inputNetAutoMaxLevel, auto.max_level);
+  setIfEmpty(elements.inputNetAutoRelaxSec, auto.relax_sec);
+  setIfEmpty(elements.inputNetAutoWindowSec, auto.window_sec);
+  setIfEmpty(elements.inputNetAutoMinInterval, auto.min_interval_sec);
+  setIfEmpty(elements.inputNetAutoBurst, auto.burst_threshold);
 }
 
 function openInputModal(index) {
@@ -16878,7 +17076,38 @@ function getPlaylistUrl(stream) {
   return joinPath(hls.base_url, playlist);
 }
 
-function getPlayBaseUrl() {
+function getPublicBaseUrls() {
+  const value = state && state.settings ? state.settings.public_base_urls : null;
+  return value && typeof value === 'object' ? value : {};
+}
+
+function normalizeBaseUrlSetting(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  // Allow relative prefixes like "/streams" (attach to current origin).
+  if (raw.startsWith('/')) {
+    const base = String(window.location.origin || '').replace(/\/$/, '');
+    return joinPath(base, raw).replace(/\/$/, '');
+  }
+  if (!hasUrlScheme(raw)) {
+    // "example.com:9060" -> "http://example.com:9060"
+    return `http://${raw}`.replace(/\/$/, '');
+  }
+  return raw.replace(/\/$/, '');
+}
+
+function getMainBaseUrl() {
+  const urls = getPublicBaseUrls();
+  const http = normalizeBaseUrlSetting(urls.http_base_url || '');
+  const https = normalizeBaseUrlSetting(urls.https_base_url || '');
+  const preferHttps = String(window.location.protocol || '') === 'https:';
+  if (preferHttps && https) return https;
+  if (http) return http;
+  if (https) return https;
+  return String(window.location.origin || '').replace(/\/$/, '');
+}
+
+function getPlayBaseUrlFallback() {
   const configuredPort = getSettingNumber('http_play_port', undefined);
   const fallbackPort = window.location.port ? Number(window.location.port) : undefined;
   // http_play_port=0 трактуем как "использовать основной HTTP порт".
@@ -16893,6 +17122,34 @@ function getPlayBaseUrl() {
   return base.toString().replace(/\/$/, '');
 }
 
+function getPlayBaseUrl() {
+  const urls = getPublicBaseUrls();
+  const override = normalizeBaseUrlSetting(urls.play_base_url || '');
+  if (override) return override;
+  return getPlayBaseUrlFallback();
+}
+
+function getPublicBaseUrlForKind(kind) {
+  const urls = getPublicBaseUrls();
+  const type = String(kind || '').toLowerCase();
+  if (type === 'hls') {
+    const v = normalizeBaseUrlSetting(urls.hls_base_url || '');
+    return v || getMainBaseUrl();
+  }
+  if (type === 'dash') {
+    const v = normalizeBaseUrlSetting(urls.dash_base_url || '');
+    return v || getMainBaseUrl();
+  }
+  if (type === 'rtmp') {
+    return normalizeBaseUrlSetting(urls.rtmp_base_url || '');
+  }
+  if (type === 'rtsp') {
+    return normalizeBaseUrlSetting(urls.rtsp_base_url || '');
+  }
+  // http-ts, embed, etc
+  return getMainBaseUrl();
+}
+
 function getPlayUrl(stream) {
   if (!stream || !stream.id) return '';
   const base = getPlayBaseUrl();
@@ -16903,7 +17160,7 @@ function getHlsUrl(stream) {
   const configured = getPlaylistUrl(stream);
   if (configured) return configured;
   if (!stream || !stream.id) return '';
-  const base = getPlayBaseUrl();
+  const base = getPublicBaseUrlForKind('hls');
   return `${base}/hls/${encodeURIComponent(stream.id)}/index.m3u8`;
 }
 
@@ -17634,6 +17891,28 @@ function applySettingsToUI() {
   }
   if (elements.httpPlayXspfTitle) {
     elements.httpPlayXspfTitle.value = getSettingString('http_play_xspf_title', '');
+  }
+
+  const publicUrls = (state.settings && typeof state.settings.public_base_urls === 'object' && state.settings.public_base_urls)
+    ? state.settings.public_base_urls
+    : {};
+  if (elements.publicHttpBaseUrl) {
+    elements.publicHttpBaseUrl.value = String(publicUrls.http_base_url || '');
+  }
+  if (elements.publicHttpsBaseUrl) {
+    elements.publicHttpsBaseUrl.value = String(publicUrls.https_base_url || '');
+  }
+  if (elements.publicHlsBaseUrl) {
+    elements.publicHlsBaseUrl.value = String(publicUrls.hls_base_url || '');
+  }
+  if (elements.publicDashBaseUrl) {
+    elements.publicDashBaseUrl.value = String(publicUrls.dash_base_url || '');
+  }
+  if (elements.publicRtmpBaseUrl) {
+    elements.publicRtmpBaseUrl.value = String(publicUrls.rtmp_base_url || '');
+  }
+  if (elements.publicRtspBaseUrl) {
+    elements.publicRtspBaseUrl.value = String(publicUrls.rtsp_base_url || '');
   }
 
   if (elements.bufferSettingEnabled) {
@@ -18390,6 +18669,21 @@ function collectHttpPlaySettings() {
     http_play_m3u_header: elements.httpPlayM3uHeader.value.trim(),
     http_play_xspf_title: elements.httpPlayXspfTitle.value.trim(),
   };
+}
+
+function collectPublicUrlsSettings() {
+  const urls = {
+    http_base_url: elements.publicHttpBaseUrl ? elements.publicHttpBaseUrl.value.trim() : '',
+    https_base_url: elements.publicHttpsBaseUrl ? elements.publicHttpsBaseUrl.value.trim() : '',
+    hls_base_url: elements.publicHlsBaseUrl ? elements.publicHlsBaseUrl.value.trim() : '',
+    dash_base_url: elements.publicDashBaseUrl ? elements.publicDashBaseUrl.value.trim() : '',
+    rtmp_base_url: elements.publicRtmpBaseUrl ? elements.publicRtmpBaseUrl.value.trim() : '',
+    rtsp_base_url: elements.publicRtspBaseUrl ? elements.publicRtspBaseUrl.value.trim() : '',
+  };
+  Object.keys(urls).forEach((key) => {
+    if (!urls[key]) delete urls[key];
+  });
+  return { public_base_urls: urls };
 }
 
 function collectBufferSettings() {
@@ -22396,6 +22690,19 @@ function bindEvents() {
     });
   }
 
+  if (elements.btnSavePublicUrls) {
+    elements.btnSavePublicUrls.addEventListener('click', async () => {
+      try {
+        await saveSettings(collectPublicUrlsSettings(), {
+          reload: false,
+          status: 'Public URL settings saved.',
+        });
+      } catch (err) {
+        setStatus(err.message);
+      }
+    });
+  }
+
   if (elements.btnApplyBuffer) {
     elements.btnApplyBuffer.addEventListener('click', async () => {
       try {
@@ -23328,6 +23635,24 @@ function bindEvents() {
       updateTranscodePublishTargetModalVisibility();
     });
   }
+  if (elements.transcodePublishTargetVariants) {
+    elements.transcodePublishTargetVariants.addEventListener('input', () => {
+      syncTranscodePublishTargetPublicUrlUi();
+    });
+  }
+  if (elements.transcodePublishTargetPublicAuto) {
+    elements.transcodePublishTargetPublicAuto.addEventListener('change', () => {
+      syncTranscodePublishTargetPublicUrlUi();
+    });
+  }
+  if (elements.transcodePublishTargetPublicReset) {
+    elements.transcodePublishTargetPublicReset.addEventListener('click', () => {
+      if (elements.transcodePublishTargetPublicAuto) {
+        elements.transcodePublishTargetPublicAuto.checked = true;
+      }
+      syncTranscodePublishTargetPublicUrlUi();
+    });
+  }
   if (elements.transcodePublishTargetPresetApply && elements.transcodePublishTargetPreset) {
     elements.transcodePublishTargetPresetApply.addEventListener('click', () => {
       applyTranscodePublishTargetPreset(elements.transcodePublishTargetPreset.value);
@@ -23391,6 +23716,11 @@ function bindEvents() {
           : (type === 'srt' || type === 'rtsp' ? 'bridge' : type));
       setInputGroup(group);
       setInputAdvancedFoldVisibility(type);
+    });
+  }
+  if (elements.inputNetProfile) {
+    elements.inputNetProfile.addEventListener('change', () => {
+      applyInputResiliencePrefill(elements.inputNetProfile.value);
     });
   }
   if (elements.inputPresetApply && elements.inputPreset) {
