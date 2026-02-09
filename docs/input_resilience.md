@@ -5,7 +5,7 @@ This document describes network resilience for HTTP-TS and HLS inputs.
 ## Compatibility (important)
 Nothing changes for existing configs unless you explicitly enable it:
 - Global: `settings.input_resilience.enabled=true`
-- Or per-input: add `#net_profile=dc|wan|bad|max` to the input URL
+- Or per-input: add `#net_profile=dc|wan|bad|max|superbad` to the input URL
 
 ## What it does
 - Reconnects on errors and stalls.
@@ -13,12 +13,13 @@ Nothing changes for existing configs unless you explicitly enable it:
 - Tracks input health (online/degraded/offline).
 - Optional jitter buffer to smooth short gaps.
 
-## Profiles (dc/wan/bad/max)
+## Profiles (dc/wan/bad/max/superbad)
 You can select a network profile per input:
 - `dc`: stable datacenter networks
 - `wan`: typical WAN between sites
 - `bad`: unstable internet / poor connectivity
 - `max`: aggressive profile for very unstable sources
+- `superbad`: extreme profile for the worst sources (higher timeouts + larger jitter defaults)
 
 When profiles are enabled (globally or per-input), Astral uses:
 - `settings.input_resilience.profiles[profile]` as base net timeouts/backoff
@@ -26,6 +27,24 @@ When profiles are enabled (globally or per-input), Astral uses:
 - `settings.input_resilience.jitter_defaults_ms[profile]` as default jitter (if input does not set `jitter_buffer_ms`)
 
 Per-input URL options always override the profile defaults.
+
+## Scheduled optimizer (optional)
+If you have a stream that stays unstable even with `bad/max`, you can enable scheduled autotune per input:
+- Add `#net_tune=1` to the input URL (per input).
+- Schedule `tools/net_autotune.py` (cron/systemd timer) to periodically test and apply the best preset.
+
+Example input:
+```
+http://host:port/stream.ts#net_tune=1&net_profile=bad
+```
+
+Example run (4 minutes per stream, sequential, minimal load):
+```
+python3 tools/net_autotune.py --api http://127.0.0.1:9060 --username admin --password admin --duration-sec 240
+```
+
+The script tries `bad,max,superbad` and chooses the lowest error score based on `/api/v1/stream-status`.
+It only touches inputs explicitly marked with `#net_tune=1`.
 
 ## Adaptive auto-tune (optional)
 For unstable sources you can enable adaptive tuning:

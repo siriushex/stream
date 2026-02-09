@@ -468,6 +468,14 @@ local NET_RESILIENCE_KEYS = {
 	            min_interval_sec = 10,
 	            burst_threshold = 1,
 	        },
+	        superbad = {
+	            enabled = true,
+	            max_level = 8,
+	            relax_sec = 900,
+	            window_sec = 120,
+	            min_interval_sec = 10,
+	            burst_threshold = 1,
+	        },
 	    },
 	    profiles = {
 	        dc = {
@@ -526,6 +534,20 @@ local NET_RESILIENCE_KEYS = {
 	            keepalive = true,
 	            user_agent = "VLC/3.0.20",
 	        },
+	        superbad = {
+	            connect_timeout_ms = 20000,
+	            read_timeout_ms = 60000,
+	            stall_timeout_ms = 30000,
+	            max_retries = 0,
+	            backoff_min_ms = 2000,
+	            backoff_max_ms = 60000,
+	            backoff_jitter_pct = 40,
+	            cooldown_sec = 90,
+	            low_speed_limit_bytes_sec = 2048,
+	            low_speed_time_sec = 25,
+	            keepalive = true,
+	            user_agent = "VLC/3.0.20",
+	        },
 	    },
 	    hls_defaults = {
 	        max_segments = 10,
@@ -540,6 +562,7 @@ local NET_RESILIENCE_KEYS = {
 	        -- иначе клиент видит частые паузы на коротких сетевых дырах.
 	        bad = 2000,
 	        max = 3000,
+	        superbad = 5000,
 	    },
 	    -- Оценка ожидаемого битрейта для авто-расчёта лимита jitter буфера (MB).
 	    jitter_assumed_mbps = {
@@ -547,9 +570,10 @@ local NET_RESILIENCE_KEYS = {
 	        wan = 12,
 	        bad = 16,
 	        max = 20,
+	        superbad = 20,
 	    },
 	    -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
-	    jitter_max_auto_mb = 32,
+	    jitter_max_auto_mb = 64,
 	    max_active_resilient_inputs = 50,
 	}
 
@@ -569,7 +593,7 @@ local function normalize_net_profile(value)
         return nil
     end
     local s = tostring(value or ""):lower()
-    if s == "dc" or s == "wan" or s == "bad" or s == "max" then
+    if s == "dc" or s == "wan" or s == "bad" or s == "max" or s == "superbad" then
         return s
     end
     return nil
@@ -592,12 +616,14 @@ local function get_input_resilience_settings()
 	            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.wan),
 	            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.bad),
 	            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.max),
+	            superbad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.profiles.superbad),
 	        },
 	        net_auto_defaults = {
 	            dc = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.dc),
 	            wan = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.wan),
 	            bad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.bad),
 	            max = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.max),
+	            superbad = copy_shallow(INPUT_RESILIENCE_DEFAULTS.net_auto_defaults.superbad),
 	        },
 	        hls_defaults = copy_shallow(INPUT_RESILIENCE_DEFAULTS.hls_defaults),
 	        jitter_defaults_ms = copy_shallow(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms),
@@ -627,7 +653,7 @@ local function get_input_resilience_settings()
     end
 
 	    if type(raw.profiles) == "table" then
-	        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
+	        for _, name in ipairs({ "dc", "wan", "bad", "max", "superbad" }) do
 	            local p = raw.profiles[name]
 	            if type(p) == "table" then
 	                for k, v in pairs(p) do
@@ -638,7 +664,7 @@ local function get_input_resilience_settings()
 	    end
 	
 	    if type(raw.net_auto_defaults) == "table" then
-	        for _, name in ipairs({ "dc", "wan", "bad", "max" }) do
+	        for _, name in ipairs({ "dc", "wan", "bad", "max", "superbad" }) do
 	            local p = raw.net_auto_defaults[name]
 	            if type(p) == "table" then
 	                for k, v in pairs(p) do
