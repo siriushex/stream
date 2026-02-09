@@ -427,7 +427,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
     superbad: {
       connect_timeout_ms: 20000,
       read_timeout_ms: 60000,
-      stall_timeout_ms: 30000,
+      stall_timeout_ms: 20000,
       max_retries: 0,
       backoff_min_ms: 2000,
       backoff_max_ms: 60000,
@@ -450,8 +450,16 @@ const INPUT_RESILIENCE_DEFAULTS = {
     wan: 400,
     bad: 2000,
     max: 3000,
-    superbad: 5000,
+    superbad: 20000,
   },
+  jitter_assumed_mbps: {
+    dc: 20,
+    wan: 12,
+    bad: 16,
+    max: 20,
+    superbad: 20,
+  },
+  jitter_max_auto_mb: 64,
   max_active_resilient_inputs: 50,
 };
 
@@ -10245,6 +10253,9 @@ function getInputResiliencePrefill(profile) {
   const jitterDefaults = (inputRes && inputRes.jitter_defaults_ms && typeof inputRes.jitter_defaults_ms === 'object')
     ? inputRes.jitter_defaults_ms
     : {};
+  const jitterAssumed = (inputRes && inputRes.jitter_assumed_mbps && typeof inputRes.jitter_assumed_mbps === 'object')
+    ? inputRes.jitter_assumed_mbps
+    : {};
   const netAutoDefaults = (inputRes && inputRes.net_auto_defaults && typeof inputRes.net_auto_defaults === 'object')
     ? inputRes.net_auto_defaults
     : {};
@@ -10252,15 +10263,30 @@ function getInputResiliencePrefill(profile) {
   const jitterMs = Number.isFinite(Number(jitterDefaults[p]))
     ? Number(jitterDefaults[p])
     : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms[p];
+  const assumedMbps = Number.isFinite(Number(jitterAssumed[p]))
+    ? Number(jitterAssumed[p])
+    : (INPUT_RESILIENCE_DEFAULTS.jitter_assumed_mbps ? INPUT_RESILIENCE_DEFAULTS.jitter_assumed_mbps[p] : 10);
+  const jitterMaxAutoMb = Number.isFinite(Number(inputRes && inputRes.jitter_max_auto_mb))
+    ? Number(inputRes.jitter_max_auto_mb)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_max_auto_mb;
   const auto = (netAutoDefaults[p] && typeof netAutoDefaults[p] === 'object')
     ? netAutoDefaults[p]
     : INPUT_RESILIENCE_DEFAULTS.net_auto_defaults[p];
 
-  // Явный max jitter лимит нужен для "запаса": даже если авто-лимит рассчитан ниже,
-  // оператору проще иметь повторяемый результат при выборе профиля.
-  const jitterMaxMb = (p === 'bad') ? 16 : ((p === 'superbad') ? 64 : 32);
+  return { profile: p, jitterMs, assumedMbps, jitterMaxAutoMb, auto };
+}
 
-  return { profile: p, jitterMs, jitterMaxMb, auto };
+function calcJitterMaxMb(jitterMs, assumedMbps, maxAutoMb) {
+  const ms = Number(jitterMs);
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const mbps = (Number.isFinite(Number(assumedMbps)) && Number(assumedMbps) > 0) ? Number(assumedMbps) : 10;
+  const maxMb = (Number.isFinite(Number(maxAutoMb)) && Number(maxAutoMb) > 0) ? Math.floor(Number(maxAutoMb)) : 32;
+  const safety = 4;
+  const bytes = (ms / 1000) * (mbps * 1000 * 1000 / 8) * safety;
+  let mb = Math.ceil(bytes / (1024 * 1024));
+  if (mb < 8) mb = 8;
+  if (mb > maxMb) mb = maxMb;
+  return mb;
 }
 
 function applyInputResiliencePrefill(profile) {
@@ -10280,7 +10306,9 @@ function applyInputResiliencePrefill(profile) {
   }
 
   setIfEmpty(elements.inputJitterMs, prefill.jitterMs);
-  setIfEmpty(elements.inputJitterMaxMb, prefill.jitterMaxMb);
+  const effectiveJitterMs = elements.inputJitterMs ? Number(elements.inputJitterMs.value) : NaN;
+  const jitterMaxMb = calcJitterMaxMb(effectiveJitterMs, prefill.assumedMbps, prefill.jitterMaxAutoMb);
+  if (jitterMaxMb !== null) setIfEmpty(elements.inputJitterMaxMb, jitterMaxMb);
 
   const auto = prefill.auto || {};
   if (auto.enabled === true && elements.inputNetAuto && !elements.inputNetAuto.checked) {
@@ -10416,6 +10444,10 @@ function openInputModal(index) {
   if (elements.inputHlsMaxGap) elements.inputHlsMaxGap.value = opts.hls_max_gap_segments || '';
   if (elements.inputHlsSegRetries) elements.inputHlsSegRetries.value = opts.hls_segment_retries || '';
   if (elements.inputHlsMaxParallel) elements.inputHlsMaxParallel.value = opts.hls_max_parallel || '';
+
+  if (elements.inputNetProfile) {
+    applyInputResiliencePrefill(elements.inputNetProfile.value);
+  }
 
   elements.inputBridgeUrl.value = parsed.url || '';
   elements.inputBridgePort.value = opts.bridge_port || '';
