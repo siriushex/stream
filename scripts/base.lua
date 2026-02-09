@@ -1956,16 +1956,17 @@ end
 	    return false
 	end
 
-	init_input_module.http = function(conf)
-	    local instance_id = conf.host .. ":" .. conf.port .. conf.path
-	    local instance = http_input_instance_list[instance_id]
+init_input_module.http = function(conf)
+    local instance_id = conf.host .. ":" .. conf.port .. conf.path
+    local instance = http_input_instance_list[instance_id]
 
-	    if not instance then
-	        instance = {
-	            clients = 0,
-	            running = true,
-	        }
-	        http_input_instance_list[instance_id] = instance
+    if not instance then
+        local res = resolve_input_resilience(conf)
+        instance = {
+            clients = 0,
+            running = true,
+        }
+        http_input_instance_list[instance_id] = instance
 
         instance.on_error = function(message)
             log.error("[" .. conf.name .. "] " .. message)
@@ -1993,6 +1994,14 @@ end
 	            -- makes consumption stable for downstream pipelines.
 	            sync = 1
 	        end
+	        -- Для профильного режима (bad/max/superbad) включаем sync по умолчанию:
+	        -- это помогает переживать переподключения, когда поток может начатьcя не с границы TS-пакета.
+	        if sync == nil and res and res.enabled == true then
+	            local p = res.profile_effective
+	            if p == "bad" or p == "max" or p == "superbad" then
+	                sync = 1
+	            end
+	        end
 	        local timeout = conf.timeout
 	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
 	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
@@ -2001,7 +2010,7 @@ end
 	            timeout = 60
 	        end
 
-        instance.net_cfg = build_net_resilience(conf)
+        instance.net_cfg = build_net_resilience(conf, res)
         instance.net = net_make_state(instance.net_cfg)
         instance.net_auto = net_auto_init(conf, instance.net_cfg)
         if instance.net_auto then
@@ -2231,16 +2240,23 @@ end
             conf.user_agent = conf.ua
         end
 
+	        local res = resolve_input_resilience(conf)
 	        local sync = conf.sync
 	        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
 	            sync = 1
+	        end
+	        if sync == nil and res and res.enabled == true then
+	            local p = res.profile_effective
+	            if p == "bad" or p == "max" or p == "superbad" then
+	                sync = 1
+	            end
 	        end
 	        local timeout = conf.timeout
 	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
 	            timeout = 60
 	        end
 
-        instance.net_cfg = build_net_resilience(conf)
+        instance.net_cfg = build_net_resilience(conf, res)
         instance.net = net_make_state(instance.net_cfg)
 
         local function build_headers(host, port)

@@ -1172,6 +1172,7 @@ function on_analyze_spts(channel_data, input_id, data)
             input_data.ok_since = input_data.ok_since or now
             input_data.fail_since = nil
             input_data.last_error = nil
+            input_data.health_reason = nil
             input_data.fail_count = 0
         else
             if not input_data.fail_since then
