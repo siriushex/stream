@@ -290,7 +290,7 @@ local function build_transcode_live_url(stream_id, profile_id)
     end
     -- Pass internal=1 so localhost ffmpeg publishers can bypass http/token auth for /live.
     return "http://127.0.0.1:" .. tostring(port)
-        .. "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts?internal=1"
+        .. "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. "?internal=1"
 end
 
 local function normalize_route_path(value, fallback)
@@ -335,7 +335,8 @@ local function build_public_live_path(stream_id, profile_id)
     if not stream_id or stream_id == "" or not profile_id or profile_id == "" then
         return nil
     end
-    return "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id) .. ".ts"
+    -- Canonical HTTP-TS endpoints are extensionless. Backend still accepts legacy ".ts".
+    return "/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id)
 end
 
 local function build_public_hls_master_path(stream_id)

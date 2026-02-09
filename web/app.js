@@ -6692,9 +6692,7 @@ function validatePublishPublicUrl(type, url) {
   if (t === 'dash' && !lower.includes('.mpd')) {
     throw new Error('DASH Public URL must point to a .mpd manifest');
   }
-  if (t === 'http-ts' && !lower.includes('.ts')) {
-    throw new Error('HTTP-TS Public URL must point to a .ts endpoint');
-  }
+  // HTTP-TS endpoints in Astral are extensionless by default (backend also accepts legacy ".ts").
   return value;
 }
 
@@ -8465,10 +8463,11 @@ function getPublishOutputPublicUrl(entry, streamId) {
       ? entry.variants
       : (entry.profile ? [entry.profile] : []);
     if (variants.length === 1) {
-      return joinPath(base, `/live/${id}~${encodeURIComponent(variants[0])}.ts`);
+      // Canonical HTTP-TS endpoints are extensionless. Backend still accepts legacy ".ts".
+      return joinPath(base, `/live/${id}~${encodeURIComponent(variants[0])}`);
     }
     // Template-like preview for "all" or multiple variants.
-    return joinPath(base, `/live/${id}~<profile>.ts`);
+    return joinPath(base, `/live/${id}~<profile>`);
   }
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
     return entry && entry.url ? String(entry.url) : '';
@@ -15216,7 +15215,7 @@ function updateEditorTranscodeStatus() {
     profiles.forEach((p) => {
       const pid = p && p.profile_id ? String(p.profile_id) : '';
       if (!pid) return;
-      const url = liveByProfile[pid] || `/live/${stream.id}~${pid}.ts`;
+      const url = liveByProfile[pid] || `/live/${stream.id}~${pid}`;
       addRow(`LIVE ${pid}`, url);
     });
 
