@@ -182,6 +182,7 @@ const state = {
   adapterEditing: null,
   outputs: [],
   outputEditingIndex: null,
+  outputEditingKind: 'legacy',
   transcodeOutputs: [],
   transcodeOutputEditingIndex: null,
   transcodeOutputMonitorIndex: null,
@@ -1145,13 +1146,27 @@ const elements = {
   btnClone: $('#btn-clone'),
   btnAnalyze: $('#btn-analyze'),
   outputOverlay: $('#output-overlay'),
+  outputTitle: $('#output-title'),
   outputForm: $('#output-form'),
   outputClose: $('#output-close'),
   outputCancel: $('#output-cancel'),
   outputPreset: $('#output-preset'),
-  outputPresetApply: $('#output-preset-apply'),
-  outputType: $('#output-type'),
-  outputBiss: $('#output-biss'),
+  outputEnabled: $('#output-enabled'),
+  outputVariantsField: $('#output-variants-field'),
+  outputVariantsLabel: $('#output-variants-label'),
+  outputVariantsTags: $('#output-variants-tags'),
+  outputVariantsInput: $('#output-variants-input'),
+  outputVariantsList: $('#output-variants-list'),
+  outputVariants: $('#output-variants'),
+  outputPublicAuto: $('#output-public-auto'),
+  outputPublicUrl: $('#output-public-url'),
+  outputPublicReset: $('#output-public-reset'),
+  outputPublicResetRow: $('#output-public-reset-row'),
+  outputDestinationField: $('#output-destination-field'),
+  outputDestination: $('#output-destination'),
+  outputHint: $('#output-hint'),
+  outputAdvancedToggle: $('#output-advanced-toggle'),
+  outputAdvancedBlock: $('#output-advanced-block'),
   outputHttpMode: $('#output-http-mode'),
   outputHttpHost: $('#output-http-host'),
   outputHttpPort: $('#output-http-port'),
@@ -7508,19 +7523,14 @@ function applyInputPreset(key) {
 }
 
 const OUTPUT_PRESETS = {
-  http_ts: {
-    type: 'http',
-    mode: 'http',
-    host: '0.0.0.0',
-    port: 8000,
-    path: '/stream',
-    buffer_size: 1024,
-    buffer_fill: 256,
-    keep_active: false,
+  custom: {
+    kind: 'custom',
   },
-  hls_basic: {
-    type: 'http',
-    mode: 'hls',
+  hls_local: {
+    kind: 'pull',
+    legacy_supported: true,
+    group: 'http',
+    http_mode: 'hls',
     playlist: 'index.m3u8',
     prefix: 'segment',
     target_duration: 6,
@@ -7528,8 +7538,31 @@ const OUTPUT_PRESETS = {
     cleanup: 10,
     use_wall: true,
   },
+  http_ts_local: {
+    kind: 'pull',
+    legacy_supported: true,
+    group: 'http',
+    http_mode: 'http',
+    host: '0.0.0.0',
+    port: 8000,
+    path: '/stream',
+    buffer_size: 1024,
+    buffer_fill: 256,
+    keep_active: false,
+  },
+  dash_local: {
+    kind: 'pull',
+    legacy_supported: false,
+  },
+  embed_local: {
+    kind: 'pull',
+    legacy_supported: false,
+  },
   udp_multicast: {
-    type: 'udp',
+    kind: 'push',
+    legacy_supported: true,
+    group: 'udp',
+    format: 'udp',
     addr: '239.0.0.1',
     port: 1234,
     ttl: 1,
@@ -7539,7 +7572,10 @@ const OUTPUT_PRESETS = {
     cbr: '',
   },
   rtp_multicast: {
-    type: 'rtp',
+    kind: 'push',
+    legacy_supported: true,
+    group: 'udp',
+    format: 'rtp',
     addr: '239.0.0.1',
     port: 1234,
     ttl: 1,
@@ -7549,20 +7585,26 @@ const OUTPUT_PRESETS = {
     cbr: '',
   },
   srt_bridge: {
-    type: 'srt',
+    kind: 'push',
+    legacy_supported: true,
+    group: 'srt',
+    format: 'srt',
     url: 'srt://host:port?mode=caller',
     bridge_port: 14000,
   },
-  np_push: {
-    type: 'np',
-    host: 'example.com',
-    port: 80,
-    path: '/push',
-    timeout: 5,
-    buffer_size: 1024,
+  rtmp_push: {
+    kind: 'push',
+    legacy_supported: false,
+  },
+  rtsp_push: {
+    kind: 'push',
+    legacy_supported: false,
   },
   file_ts: {
-    type: 'file',
+    kind: 'push',
+    legacy_supported: true,
+    group: 'file',
+    format: 'file',
     filename: '/tmp/stream.ts',
     buffer_size: 32,
     m2ts: false,
@@ -7571,116 +7613,217 @@ const OUTPUT_PRESETS = {
   },
 };
 
-function applyOutputPreset(key) {
+function getOutputPresetMeta(key) {
   const preset = OUTPUT_PRESETS[key];
-  if (!preset) return;
+  if (!preset) return null;
+  return preset;
+}
 
-  const type = preset.type;
-  elements.outputType.value = type;
-  setOutputGroup(type === 'rtp' ? 'udp' : type);
+function isOutputPresetPull(key) {
+  const meta = getOutputPresetMeta(key);
+  return meta && meta.kind === 'pull';
+}
 
-  if (type === 'http') {
-    const mode = preset.mode || 'http';
+function isOutputPresetPush(key) {
+  const meta = getOutputPresetMeta(key);
+  return meta && meta.kind === 'push';
+}
+
+function setOutputAdvancedVisible(visible) {
+  if (elements.outputAdvancedToggle) {
+    elements.outputAdvancedToggle.style.display = visible ? '' : 'none';
+  }
+  if (!visible && elements.outputAdvancedBlock) {
+    elements.outputAdvancedBlock.hidden = true;
+  }
+}
+
+function syncOutputModalBasicVisibility() {
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  const pull = isOutputPresetPull(presetKey);
+  const push = isOutputPresetPush(presetKey);
+
+  if (elements.outputVariantsField) {
+    // Variants make sense only for transcoding publish targets (except embed/custom).
+    const show = state.outputEditingKind === 'publish'
+      && presetKey !== 'embed_local'
+      && presetKey !== 'custom';
+    elements.outputVariantsField.style.display = show ? '' : 'none';
+  }
+  if (elements.outputPublicAuto && elements.outputPublicUrl) {
+    elements.outputPublicAuto.disabled = !pull;
+  }
+  if (elements.outputPublicAuto && elements.outputPublicUrl && elements.outputPublicResetRow) {
+    const showPublic = pull;
+    elements.outputPublicAuto.closest('#output-public-auto-field').style.display = showPublic ? '' : 'none';
+    elements.outputPublicUrl.closest('#output-public-url-field').style.display = showPublic ? '' : 'none';
+    elements.outputPublicResetRow.style.display = showPublic ? '' : 'none';
+  }
+  if (elements.outputDestinationField) {
+    elements.outputDestinationField.style.display = push ? '' : 'none';
+  }
+
+  const showAdvanced = state.outputEditingKind === 'legacy';
+  setOutputAdvancedVisible(showAdvanced);
+}
+
+function syncOutputModalPublicUrlEditability() {
+  if (!elements.outputPublicAuto || !elements.outputPublicUrl) return;
+  const auto = elements.outputPublicAuto.checked;
+  elements.outputPublicUrl.readOnly = auto;
+  if (elements.outputPublicReset) {
+    elements.outputPublicReset.disabled = auto;
+  }
+}
+
+function applyOutputPreset(key) {
+  const meta = getOutputPresetMeta(key);
+  if (!meta) {
+    syncOutputModalBasicVisibility();
+    if (elements.outputTitle) {
+      elements.outputTitle.textContent = 'Output settings';
+    }
+    renderOutputVariantsTags();
+    syncOutputModalPublicUrlFromForm();
+    updateOutputAudioFixVisibility();
+    return;
+  }
+
+  // Basic visibility (pull vs push) is common for legacy/publish.
+  syncOutputModalBasicVisibility();
+  syncOutputModalPublicUrlEditability();
+  fillOutputVariantsSuggestions();
+  if (elements.outputTitle && elements.outputPreset && elements.outputPreset.selectedOptions && elements.outputPreset.selectedOptions[0]) {
+    const label = String(elements.outputPreset.selectedOptions[0].textContent || '').trim();
+    elements.outputTitle.textContent = label ? `Output settings — ${label}` : 'Output settings';
+  }
+  if (elements.outputVariantsLabel && state.outputEditingKind === 'publish') {
+    elements.outputVariantsLabel.textContent = isOutputPresetPush(key)
+      ? 'Variant (profile id)'
+      : 'Variants (empty = all)';
+  }
+  if (state.outputEditingKind === 'publish' && isOutputPresetPush(key) && elements.outputVariants && getOutputVariantsValue().length === 0) {
+    const ids = getEditingProfileIds();
+    if (ids.length) {
+      elements.outputVariants.value = ids[0];
+    }
+  }
+  renderOutputVariantsTags();
+  syncOutputModalPublicUrlFromForm();
+
+  if (state.outputEditingKind !== 'legacy') {
+    updateOutputAudioFixVisibility();
+    return;
+  }
+
+  // Legacy outputs are configured via the advanced fields (Astra output modules).
+  if (!meta.legacy_supported) {
+    if (elements.outputHint) {
+      elements.outputHint.textContent = 'This output preset requires Transcoding publish. Enable Transcoding to use it.';
+    }
+    updateOutputAudioFixVisibility();
+    return;
+  }
+  if (elements.outputHint) {
+    elements.outputHint.textContent = '';
+  }
+
+  if (meta.group) {
+    setOutputGroup(meta.group);
+  }
+
+  if (meta.group === 'http' && elements.outputHttpMode) {
+    const mode = meta.http_mode || 'http';
     elements.outputHttpMode.value = mode;
     setOutputHttpMode(mode);
-
     if (mode === 'http') {
-      elements.outputHttpHost.value = preset.host || '0.0.0.0';
-      elements.outputHttpPort.value = preset.port || 8000;
-      elements.outputHttpPath.value = preset.path || '/stream';
-      elements.outputHttpBuffer.value = preset.buffer_size || 1024;
-      elements.outputHttpBufferFill.value = preset.buffer_fill || 256;
-      elements.outputHttpKeep.checked = preset.keep_active === true;
+      elements.outputHttpHost.value = meta.host || '0.0.0.0';
+      elements.outputHttpPort.value = meta.port || 8000;
+      elements.outputHttpPath.value = meta.path || '/stream';
+      elements.outputHttpBuffer.value = meta.buffer_size || 1024;
+      elements.outputHttpBufferFill.value = meta.buffer_fill || 256;
+      elements.outputHttpKeep.checked = meta.keep_active === true;
       if (elements.outputHttpSctp) {
-        elements.outputHttpSctp.checked = preset.sctp === true;
+        elements.outputHttpSctp.checked = meta.sctp === true;
       }
     } else {
       const defaults = defaultHlsOutput(elements.streamId.value || 'stream');
-      const useWall = preset.use_wall !== undefined ? preset.use_wall : defaults.use_wall;
+      const useWall = meta.use_wall !== undefined ? meta.use_wall : defaults.use_wall;
       elements.outputHlsPath.value = defaults.path;
       elements.outputHlsBase.value = defaults.base_url;
-      elements.outputHlsPlaylist.value = preset.playlist || defaults.playlist || 'index.m3u8';
-      elements.outputHlsPrefix.value = preset.prefix || defaults.prefix || 'segment';
-      elements.outputHlsTarget.value = preset.target_duration || defaults.target_duration || 6;
-      elements.outputHlsWindow.value = preset.window || defaults.window || 5;
-      elements.outputHlsCleanup.value = preset.cleanup || defaults.cleanup || 10;
+      elements.outputHlsPlaylist.value = meta.playlist || defaults.playlist || 'index.m3u8';
+      elements.outputHlsPrefix.value = meta.prefix || defaults.prefix || 'segment';
+      elements.outputHlsTarget.value = meta.target_duration || defaults.target_duration || 6;
+      elements.outputHlsWindow.value = meta.window || defaults.window || 5;
+      elements.outputHlsCleanup.value = meta.cleanup || defaults.cleanup || 10;
       elements.outputHlsWall.checked = useWall !== false;
       if (elements.outputHlsNaming) {
-        elements.outputHlsNaming.value = preset.naming || defaults.naming || getSettingString('hls_naming', 'sequence');
+        elements.outputHlsNaming.value = meta.naming || defaults.naming || getSettingString('hls_naming', 'sequence');
       }
       if (elements.outputHlsRound) {
-        elements.outputHlsRound.checked = preset.round_duration === true;
+        elements.outputHlsRound.checked = meta.round_duration === true;
       }
       if (elements.outputHlsTsExtension) {
-        elements.outputHlsTsExtension.value = preset.ts_extension || getSettingString('hls_ts_extension', 'ts');
+        elements.outputHlsTsExtension.value = meta.ts_extension || getSettingString('hls_ts_extension', 'ts');
       }
       if (elements.outputHlsPassData) {
-        elements.outputHlsPassData.checked = preset.pass_data !== false;
+        elements.outputHlsPassData.checked = meta.pass_data !== false;
       }
     }
+    updateOutputAudioFixVisibility();
     return;
   }
 
-  if (type === 'udp' || type === 'rtp') {
-    elements.outputUdpAddr.value = preset.addr || '239.0.0.1';
-    elements.outputUdpPort.value = preset.port || 1234;
-    elements.outputUdpTtl.value = preset.ttl || 1;
-    elements.outputUdpLocal.value = preset.localaddr || '';
-    elements.outputUdpSocket.value = preset.socket_size || '';
-    elements.outputUdpSync.value = preset.sync || '';
-    elements.outputUdpCbr.value = preset.cbr || '';
+  if (meta.group === 'udp') {
+    const format = meta.format || 'udp';
+    elements.outputUdpAddr.value = meta.addr || '239.0.0.1';
+    elements.outputUdpPort.value = meta.port || 1234;
+    elements.outputUdpTtl.value = meta.ttl || 1;
+    elements.outputUdpLocal.value = meta.localaddr || '';
+    elements.outputUdpSocket.value = meta.socket_size || '';
+    elements.outputUdpSync.value = meta.sync || '';
+    elements.outputUdpCbr.value = meta.cbr || '';
+    updateOutputAudioFixVisibility();
     return;
   }
 
-  if (type === 'srt') {
-    elements.outputSrtUrl.value = preset.url || '';
-    elements.outputSrtBridgePort.value = preset.bridge_port || '';
+  if (meta.group === 'srt') {
+    elements.outputSrtUrl.value = meta.url || '';
+    elements.outputSrtBridgePort.value = meta.bridge_port || '';
     if (elements.outputSrtBridgeAddr) {
-      elements.outputSrtBridgeAddr.value = preset.bridge_addr || '127.0.0.1';
+      elements.outputSrtBridgeAddr.value = meta.bridge_addr || '127.0.0.1';
     }
     if (elements.outputSrtBridgeLocaladdr) {
-      elements.outputSrtBridgeLocaladdr.value = preset.bridge_localaddr || '';
+      elements.outputSrtBridgeLocaladdr.value = meta.bridge_localaddr || '';
     }
     if (elements.outputSrtBridgePktSize) {
-      elements.outputSrtBridgePktSize.value = preset.bridge_pkt_size || 1316;
+      elements.outputSrtBridgePktSize.value = meta.bridge_pkt_size || 1316;
     }
     if (elements.outputSrtBridgeSocket) {
-      elements.outputSrtBridgeSocket.value = preset.bridge_socket_size || '';
+      elements.outputSrtBridgeSocket.value = meta.bridge_socket_size || '';
     }
     if (elements.outputSrtBridgeTtl) {
-      elements.outputSrtBridgeTtl.value = preset.bridge_ttl || '';
+      elements.outputSrtBridgeTtl.value = meta.bridge_ttl || '';
     }
     if (elements.outputSrtBridgeBin) {
-      elements.outputSrtBridgeBin.value = preset.bridge_bin || '';
+      elements.outputSrtBridgeBin.value = meta.bridge_bin || '';
     }
     if (elements.outputSrtBridgeLog) {
-      elements.outputSrtBridgeLog.value = preset.bridge_log_level || 'warning';
+      elements.outputSrtBridgeLog.value = meta.bridge_log_level || 'warning';
     }
+    updateOutputAudioFixVisibility();
     return;
   }
 
-  if (type === 'np') {
-    elements.outputNpHost.value = preset.host || '';
-    elements.outputNpPort.value = preset.port || 80;
-    elements.outputNpPath.value = preset.path || '/push';
-    elements.outputNpTimeout.value = preset.timeout || 5;
-    elements.outputNpBuffer.value = preset.buffer_size || '';
-    if (elements.outputNpBufferFill) {
-      elements.outputNpBufferFill.value = preset.buffer_fill || '';
-    }
-    if (elements.outputNpSctp) {
-      elements.outputNpSctp.checked = preset.sctp === true;
-    }
-    return;
+  if (meta.group === 'file') {
+    elements.outputFileName.value = meta.filename || '/tmp/stream.ts';
+    elements.outputFileBuffer.value = meta.buffer_size || 32;
+    elements.outputFileM2ts.checked = meta.m2ts === true;
+    elements.outputFileAio.checked = meta.aio === true;
+    elements.outputFileDirectio.checked = meta.directio === true;
   }
 
-  if (type === 'file') {
-    elements.outputFileName.value = preset.filename || '/tmp/stream.ts';
-    elements.outputFileBuffer.value = preset.buffer_size || 32;
-    elements.outputFileM2ts.checked = preset.m2ts === true;
-    elements.outputFileAio.checked = preset.aio === true;
-    elements.outputFileDirectio.checked = preset.directio === true;
-  }
+  updateOutputAudioFixVisibility();
 }
 
 function normalizeUrlText(value) {
@@ -8475,6 +8618,242 @@ function getPublishOutputPublicUrl(entry, streamId) {
   return '';
 }
 
+function publishPresetFromType(type) {
+  const t = String(type || '').toLowerCase();
+  if (t === 'hls') return 'hls_local';
+  if (t === 'dash') return 'dash_local';
+  if (t === 'http-ts') return 'http_ts_local';
+  if (t === 'embed') return 'embed_local';
+  if (t === 'udp') return 'udp_multicast';
+  if (t === 'rtp') return 'rtp_multicast';
+  if (t === 'rtmp') return 'rtmp_push';
+  if (t === 'rtsp') return 'rtsp_push';
+  return 'custom';
+}
+
+function publishTypeFromPreset(presetKey) {
+  const key = String(presetKey || '').toLowerCase();
+  if (key === 'hls_local') return 'hls';
+  if (key === 'dash_local') return 'dash';
+  if (key === 'http_ts_local') return 'http-ts';
+  if (key === 'embed_local') return 'embed';
+  if (key === 'udp_multicast') return 'udp';
+  if (key === 'rtp_multicast') return 'rtp';
+  if (key === 'rtmp_push') return 'rtmp';
+  if (key === 'rtsp_push') return 'rtsp';
+  return '';
+}
+
+function parseVariantsCsv(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return [];
+  return raw.split(',').map((v) => String(v || '').trim()).filter(Boolean);
+}
+
+function uniqStrings(items) {
+  const out = [];
+  const seen = new Set();
+  (items || []).forEach((item) => {
+    const value = String(item || '').trim();
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(value);
+  });
+  return out;
+}
+
+function isOutputVariantsSingleMode() {
+  if (state.outputEditingKind !== 'publish') return false;
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  return isOutputPresetPush(presetKey);
+}
+
+function setOutputVariantsValue(tags) {
+  if (!elements.outputVariants) return;
+  let next = uniqStrings(tags);
+  if (isOutputVariantsSingleMode() && next.length > 1) {
+    next = next.slice(0, 1);
+  }
+  elements.outputVariants.value = next.join(',');
+  renderOutputVariantsTags();
+  syncOutputModalPublicUrlFromForm();
+}
+
+function getOutputVariantsValue() {
+  return elements.outputVariants ? parseVariantsCsv(elements.outputVariants.value) : [];
+}
+
+function renderOutputVariantsTags() {
+  if (!elements.outputVariantsTags || !elements.outputVariantsInput || !elements.outputVariants) return;
+  const tags = getOutputVariantsValue();
+  const input = elements.outputVariantsInput;
+  const box = elements.outputVariantsTags;
+  box.innerHTML = '';
+
+  tags.forEach((tagValue) => {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = tagValue;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-label', `Remove ${tagValue}`);
+    btn.textContent = 'x';
+    btn.addEventListener('click', () => {
+      const next = getOutputVariantsValue().filter((item) => item.toLowerCase() !== tagValue.toLowerCase());
+      setOutputVariantsValue(next);
+    });
+
+    tag.appendChild(btn);
+    box.appendChild(tag);
+  });
+
+  box.appendChild(input);
+  input.value = '';
+
+  const single = isOutputVariantsSingleMode();
+  const hasOne = tags.length >= 1;
+  input.disabled = single && hasOne;
+  input.placeholder = single ? (hasOne ? '(one variant)' : 'HDHigh') : 'HDHigh';
+}
+
+function fillOutputVariantsSuggestions() {
+  if (!elements.outputVariantsList) return;
+  const list = elements.outputVariantsList;
+  list.innerHTML = '';
+  getEditingProfileIds().forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    list.appendChild(opt);
+  });
+}
+
+function syncOutputModalPublicUrlFromForm() {
+  if (!elements.outputPublicAuto || !elements.outputPublicUrl) return;
+  if (!elements.outputPublicAuto.checked) return;
+
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  if (!isOutputPresetPull(presetKey)) return;
+
+  const streamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value).trim()
+    : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+  if (!streamId) return;
+
+  if (state.outputEditingKind === 'publish') {
+    const type = publishTypeFromPreset(presetKey);
+    if (!type) return;
+    const entry = {
+      type,
+      enabled: elements.outputEnabled ? elements.outputEnabled.checked : true,
+      variants: getOutputVariantsValue(),
+      auto_url: true,
+    };
+    elements.outputPublicUrl.value = getPublishOutputPublicUrl(entry, streamId);
+    return;
+  }
+
+  const output = state.outputEditingIndex !== null ? state.outputs[state.outputEditingIndex] : null;
+  elements.outputPublicUrl.value = computeDefaultLegacyPublicUrl(output || {}, presetKey, streamId);
+}
+
+function openPublishOutputModal(index) {
+  const publish = parseEditingTranscodePublishJsonSafe();
+  const entry = publish[index];
+  if (!entry) return;
+  state.outputEditingIndex = index;
+  state.outputEditingKind = 'publish';
+
+  if (elements.outputHint) {
+    elements.outputHint.textContent = '';
+  }
+  if (elements.outputEnabled) {
+    elements.outputEnabled.checked = entry.enabled !== false;
+  }
+
+  const presetKey = publishPresetFromType(entry.type);
+  if (elements.outputPreset) {
+    elements.outputPreset.value = presetKey;
+  }
+  applyOutputPreset(presetKey);
+
+  if (elements.outputVariantsLabel) {
+    elements.outputVariantsLabel.textContent = isOutputPresetPush(presetKey)
+      ? 'Variant (profile id)'
+      : 'Variants (empty = all)';
+  }
+  if (elements.outputVariants) {
+    let variants = Array.isArray(entry.variants) ? entry.variants : [];
+    if (isOutputPresetPush(presetKey) && (!variants || variants.length === 0)) {
+      const ids = getEditingProfileIds();
+      if (ids.length) variants = [ids[0]];
+    }
+    elements.outputVariants.value = (variants || []).join(',');
+  }
+  fillOutputVariantsSuggestions();
+  renderOutputVariantsTags();
+
+  if (elements.outputPublicAuto) {
+    elements.outputPublicAuto.checked = entry.auto_url !== false;
+  }
+  syncOutputModalPublicUrlEditability();
+  if (elements.outputPublicUrl) {
+    const streamId = (elements.streamId && elements.streamId.value)
+      ? String(elements.streamId.value).trim()
+      : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+    const manual = (entry.auto_url === false && entry.public_url) ? String(entry.public_url) : '';
+    elements.outputPublicUrl.value = manual || getPublishOutputPublicUrl(entry, streamId);
+  }
+  if (elements.outputDestination) {
+    elements.outputDestination.value = entry.url ? String(entry.url) : '';
+  }
+
+  setOverlay(elements.outputOverlay, true);
+}
+
+function readPublishOutputForm() {
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  const type = publishTypeFromPreset(presetKey);
+  if (!type) {
+    if (elements.outputHint) elements.outputHint.textContent = 'Unsupported preset for publish.';
+    return null;
+  }
+  const enabled = elements.outputEnabled ? elements.outputEnabled.checked : true;
+  const out = { type, enabled };
+
+  const variants = elements.outputVariants ? parseVariantsCsv(elements.outputVariants.value) : [];
+  if (type === 'hls' || type === 'dash' || type === 'http-ts') {
+    if (variants.length) out.variants = variants;
+  } else if (type === 'udp' || type === 'rtp' || type === 'rtmp' || type === 'rtsp') {
+    if (variants.length !== 1) {
+      if (elements.outputHint) elements.outputHint.textContent = 'Exactly one Variant (profile id) is required.';
+      return null;
+    }
+    out.variants = [variants[0]];
+    const url = elements.outputDestination ? String(elements.outputDestination.value || '').trim() : '';
+    if (!url) {
+      if (elements.outputHint) elements.outputHint.textContent = 'Destination URL is required.';
+      return null;
+    }
+    out.url = url;
+  } else if (type === 'embed') {
+    // embed uses HLS, no variants needed
+  }
+
+  if (elements.outputPublicAuto && elements.outputPublicUrl) {
+    if (elements.outputPublicAuto.checked) {
+      // auto mode: omit manual fields
+    } else {
+      out.auto_url = false;
+      out.public_url = validatePublishPublicUrl(type, elements.outputPublicUrl.value);
+    }
+  }
+
+  return out;
+}
+
 function formatPublishOutputLabel(entry, streamId) {
   const type = String(entry && entry.type || '').toLowerCase();
   const enabled = entry && entry.enabled === false ? 'OFF' : 'ON';
@@ -8500,6 +8879,47 @@ function formatPublishOutputLabel(entry, streamId) {
     return `EMBED (${enabled}) · uses HLS · ${url}`;
   }
   return `${type.toUpperCase() || 'PUBLISH'} (${enabled})`;
+}
+
+function getLegacyOutputPublicUrl(output, presetKey, streamId) {
+  const manual = output && output.auto_url === false ? String(output.public_url || '').trim() : '';
+  if (manual) return manual;
+  return computeDefaultLegacyPublicUrl(output, presetKey, streamId);
+}
+
+function getLegacyOutputCopyValue(output, presetKey, streamId) {
+  if (!output) return '';
+  if (presetKey === 'hls_local' || presetKey === 'http_ts_local') {
+    return getLegacyOutputPublicUrl(output, presetKey, streamId);
+  }
+  if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
+    const proto = presetKey === 'rtp_multicast' ? 'rtp' : 'udp';
+    return formatUdpUrl(proto, output) || '';
+  }
+  if (presetKey === 'srt_bridge') {
+    return output.url ? String(output.url) : '';
+  }
+  if (presetKey === 'file_ts') {
+    return output.filename ? String(output.filename) : '';
+  }
+  return getOutputInlineValue(output, state.settings) || '';
+}
+
+function formatLegacyOutputLabel(output, streamId) {
+  const presetKey = getLegacyOutputPreset(output);
+  const enabled = output && output.enabled === false ? 'OFF' : 'ON';
+  const names = {
+    hls_local: 'HLS',
+    http_ts_local: 'HTTP-TS',
+    udp_multicast: 'UDP',
+    rtp_multicast: 'RTP',
+    srt_bridge: 'SRT',
+    file_ts: 'FILE',
+    custom: 'CUSTOM',
+  };
+  const title = names[presetKey] || String(presetKey || 'OUTPUT').toUpperCase();
+  const url = getLegacyOutputCopyValue(output, presetKey, streamId);
+  return `${title} (${enabled}) · ${url || 'n/a'}`;
 }
 
 function renderPublishOutputList() {
@@ -8540,20 +8960,20 @@ function renderPublishOutputList() {
     const copy = document.createElement('button');
     copy.className = 'icon-btn';
     copy.type = 'button';
-    copy.dataset.action = 'publish-output-copy';
+    copy.dataset.action = 'output-copy';
     copy.title = 'Copy URL';
     copy.textContent = 'Copy';
 
     const options = document.createElement('button');
     options.className = 'icon-btn';
     options.type = 'button';
-    options.dataset.action = 'publish-output-options';
+    options.dataset.action = 'output-options';
     options.textContent = '...';
 
     const remove = document.createElement('button');
     remove.className = 'icon-btn';
     remove.type = 'button';
-    remove.dataset.action = 'publish-output-remove';
+    remove.dataset.action = 'output-remove';
     remove.textContent = 'x';
 
     row.appendChild(idx);
@@ -8574,6 +8994,9 @@ function renderOutputList() {
     return;
   }
   elements.outputList.innerHTML = '';
+  const streamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value)
+    : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
   if (state.outputs.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'panel subtle';
@@ -8592,53 +9015,22 @@ function renderOutputList() {
     idx.textContent = `#${index + 1}`;
 
     const label = document.createElement('div');
-    label.className = 'output-label';
-    const displayUrl = getOutputInlineValue(output, state.settings);
-    const inlineInput = document.createElement('input');
-    inlineInput.className = 'list-input output-inline';
-    inlineInput.type = 'text';
-    inlineInput.value = output._inline_value !== undefined ? output._inline_value : (displayUrl || '');
-    inlineInput.placeholder = 'Output URL';
-    if (displayUrl) {
-      inlineInput.title = displayUrl;
-    }
-    if (output._inline_invalid) {
-      inlineInput.classList.add('is-invalid');
-    }
-    inlineInput.addEventListener('input', () => {
-      output._inline_value = inlineInput.value;
-    });
-    inlineInput.addEventListener('change', () => {
-      applyOutputInlineValue(index, inlineInput.value);
-    });
-    inlineInput.addEventListener('blur', () => {
-      applyOutputInlineValue(index, inlineInput.value);
-    });
-    label.appendChild(inlineInput);
+    label.className = 'list-input';
+    label.textContent = formatLegacyOutputLabel(output, streamId);
 
     const isUdp = String(output.format || '').toLowerCase() === 'udp';
     let audioFixMeta = null;
     if (isUdp) {
       const status = getEditingOutputStatus(index);
       audioFixMeta = getOutputAudioFixMeta(output, status);
-      const meta = document.createElement('div');
-      meta.className = 'output-meta';
-      meta.dataset.role = 'output-audio-meta';
-
-      const audioSpan = document.createElement('span');
-      audioSpan.className = `output-audio-status ${audioFixMeta.audioClass}`.trim();
-      audioSpan.dataset.role = 'output-audio-type';
-      audioSpan.textContent = audioFixMeta.audioText;
-
-      const fixSpan = document.createElement('span');
-      fixSpan.className = `output-audio-status ${audioFixMeta.fixClass}`.trim();
-      fixSpan.dataset.role = 'output-audio-fix';
-      fixSpan.textContent = audioFixMeta.fixText;
-
-      meta.appendChild(audioSpan);
-      meta.appendChild(fixSpan);
-      label.appendChild(meta);
     }
+
+    const copy = document.createElement('button');
+    copy.className = 'icon-btn';
+    copy.type = 'button';
+    copy.dataset.action = 'output-copy';
+    copy.title = 'Copy URL';
+    copy.textContent = 'Copy';
 
     const options = document.createElement('button');
     options.className = 'icon-btn';
@@ -8667,6 +9059,7 @@ function renderOutputList() {
       spacer.className = 'output-action-spacer';
       row.appendChild(spacer);
     }
+    row.appendChild(copy);
     row.appendChild(options);
     row.appendChild(remove);
 
@@ -9808,7 +10201,8 @@ function setOutputHttpMode(mode) {
 
 function updateOutputAudioFixVisibility() {
   if (!elements.outputUdpAudioFixBlock) return;
-  const isUdp = elements.outputType.value === 'udp';
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  const isUdp = presetKey === 'udp_multicast';
   elements.outputUdpAudioFixBlock.classList.toggle('is-hidden', !isUdp);
   if (!isUdp) {
     elements.outputUdpAudioFixBlock.classList.remove('is-enabled');
@@ -9818,22 +10212,70 @@ function updateOutputAudioFixVisibility() {
   elements.outputUdpAudioFixBlock.classList.toggle('is-enabled', enabled);
 }
 
+function getLegacyOutputPreset(output) {
+  const format = String(output && output.format || '').toLowerCase();
+  if (format === 'hls') return 'hls_local';
+  if (format === 'http') return 'http_ts_local';
+  if (format === 'udp') return 'udp_multicast';
+  if (format === 'rtp') return 'rtp_multicast';
+  if (format === 'srt') return 'srt_bridge';
+  if (format === 'file') return 'file_ts';
+  return 'custom';
+}
+
+function computeDefaultLegacyPublicUrl(output, presetKey, streamId) {
+  const id = streamId ? encodeURIComponent(streamId) : '';
+  if (presetKey === 'hls_local') {
+    const base = getPublicBaseUrlForKind('hls');
+    return joinPath(base, `/hls/${id}/index.m3u8`);
+  }
+  if (presetKey === 'http_ts_local') {
+    // Legacy "http" output starts its own http_server on output.port and serves TS on output.path.
+    // Public URL should use the configured public host/scheme, but the output's port.
+    const base = getPublicBaseUrlForKind('http-ts');
+    const path = (output && output.path) ? String(output.path) : '/stream';
+    const port = output && Number.isFinite(Number(output.port)) ? Number(output.port) : null;
+    if (!port) {
+      return joinPath(base, path);
+    }
+    try {
+      const u = new URL(base);
+      u.port = String(port);
+      return joinPath(u.toString().replace(/\/$/, ''), path);
+    } catch (_err) {
+      return joinPath(base, path);
+    }
+  }
+  if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
+    return formatUdpUrl(presetKey === 'rtp_multicast' ? 'rtp' : 'udp', output) || '';
+  }
+  if (presetKey === 'srt_bridge') {
+    return (output && output.url) ? String(output.url) : '';
+  }
+  if (presetKey === 'file_ts') {
+    return (output && output.filename) ? String(output.filename) : '';
+  }
+  return '';
+}
+
 function openOutputModal(index) {
   const output = state.outputs[index];
   if (!output) return;
   state.outputEditingIndex = index;
+  state.outputEditingKind = 'legacy';
 
-  if (elements.outputPreset) elements.outputPreset.value = '';
-  const uiType = getOutputUiType(output);
-  const uiMode = getOutputUiMode(output);
-
-  elements.outputType.value = uiType;
-  elements.outputHttpMode.value = uiMode;
-  setOutputGroup(uiType === 'rtp' ? 'udp' : uiType);
-  setOutputHttpMode(uiMode);
-  if (elements.outputBiss) {
-    elements.outputBiss.value = output.biss || '';
+  if (elements.outputHint) {
+    elements.outputHint.textContent = '';
   }
+  if (elements.outputEnabled) {
+    elements.outputEnabled.checked = output.enabled !== false;
+  }
+
+  const presetKey = getLegacyOutputPreset(output);
+  if (elements.outputPreset) {
+    elements.outputPreset.value = presetKey;
+  }
+  applyOutputPreset(presetKey);
 
   elements.outputHttpHost.value = output.host || '0.0.0.0';
   elements.outputHttpPort.value = output.port || 8000;
@@ -9961,37 +10403,126 @@ function openOutputModal(index) {
   elements.outputFileAio.checked = output.aio === true;
   elements.outputFileDirectio.checked = output.directio === true;
 
+  if (elements.outputPublicAuto) {
+    const auto = output.auto_url !== false;
+    elements.outputPublicAuto.checked = auto;
+  }
+  syncOutputModalPublicUrlEditability();
+  if (elements.outputPublicUrl) {
+    const streamId = (elements.streamId && elements.streamId.value) ? String(elements.streamId.value).trim() : '';
+    const manual = (output.auto_url === false && output.public_url) ? String(output.public_url) : '';
+    elements.outputPublicUrl.value = manual || computeDefaultLegacyPublicUrl(output, presetKey, streamId);
+  }
+  if (elements.outputDestination) {
+    // Destination is meaningful mostly for push outputs; keep it in sync for convenience.
+    if (typeof output === 'string') {
+      elements.outputDestination.value = String(output || '');
+    } else {
+      const fmt = String(output.format || '').toLowerCase();
+      if (fmt === 'udp' || fmt === 'rtp') {
+        elements.outputDestination.value = formatUdpUrl(fmt, output) || '';
+      } else if (fmt === 'srt') {
+        elements.outputDestination.value = output.url || '';
+      } else if (fmt === 'file') {
+        elements.outputDestination.value = output.filename || '';
+      } else {
+        elements.outputDestination.value = '';
+      }
+    }
+  }
+
   updateOutputAudioFixVisibility();
   setOverlay(elements.outputOverlay, true);
 }
 
 function closeOutputModal() {
   state.outputEditingIndex = null;
+  state.outputEditingKind = 'legacy';
   setOverlay(elements.outputOverlay, false);
 }
 
 function readOutputForm() {
-  const type = elements.outputType.value;
-  const biss = elements.outputBiss ? elements.outputBiss.value.trim() : '';
-  const applyBiss = (output) => {
-    if (biss) output.biss = biss;
+  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
+  const enabled = elements.outputEnabled ? elements.outputEnabled.checked : true;
+
+  // Publish outputs are handled in a separate code path.
+  if (state.outputEditingKind === 'publish') {
+    return null;
+  }
+
+  if (presetKey === 'custom') {
+    const raw = elements.outputDestination ? String(elements.outputDestination.value || '').trim() : '';
+    if (!raw) {
+      if (elements.outputHint) elements.outputHint.textContent = 'Destination is required for Custom output.';
+      return null;
+    }
+    const existing = (state.outputEditingIndex !== null && state.outputs[state.outputEditingIndex]
+      && typeof state.outputs[state.outputEditingIndex] === 'object')
+      ? state.outputs[state.outputEditingIndex]
+      : {};
+    const parsed = parseOutputInlineValue(raw, existing);
+    if (!parsed || !parsed.output || !parsed.valid) {
+      if (elements.outputHint) elements.outputHint.textContent = 'Invalid output URL.';
+      return null;
+    }
+    const out = parsed.output;
+    out.enabled = enabled;
+    return out;
+  }
+
+  const meta = getOutputPresetMeta(presetKey);
+  if (!meta) return null;
+  if (meta.legacy_supported === false) {
+    if (elements.outputHint) {
+      elements.outputHint.textContent = 'This output preset requires Transcoding publish.';
+    }
+    return null;
+  }
+
+  const applyCommonUiFields = (output) => {
+    output.enabled = enabled;
+    if (elements.outputPublicAuto && elements.outputPublicUrl) {
+      if (elements.outputPublicAuto.checked) {
+        delete output.auto_url;
+        delete output.public_url;
+      } else {
+        output.auto_url = false;
+        const kind = (presetKey === 'hls_local') ? 'hls' : ((presetKey === 'http_ts_local') ? 'http-ts' : '');
+        output.public_url = validatePublishPublicUrl(kind || 'http-ts', elements.outputPublicUrl.value);
+      }
+    }
     return output;
   };
-  if (type === 'http') {
-    const mode = elements.outputHttpMode.value;
-    if (mode === 'http') {
-      return applyBiss({
-        format: 'http',
-        host: elements.outputHttpHost.value.trim(),
-        port: toNumber(elements.outputHttpPort.value) || 8000,
-        path: elements.outputHttpPath.value.trim() || '/stream',
-        buffer_size: toNumber(elements.outputHttpBuffer.value),
-        buffer_fill: toNumber(elements.outputHttpBufferFill.value),
-        keep_active: elements.outputHttpKeep.checked,
-        sctp: elements.outputHttpSctp && elements.outputHttpSctp.checked,
-      });
+
+  if (presetKey === 'http_ts_local') {
+    const mode = elements.outputHttpMode ? elements.outputHttpMode.value : 'http';
+    if (mode !== 'http') {
+      if (elements.outputHint) {
+        elements.outputHint.textContent = 'HTTP-TS preset expects HTTP mode. Use HLS preset for HLS.';
+      }
+      return null;
     }
-    return applyBiss({
+    return applyCommonUiFields({
+      format: 'http',
+      host: elements.outputHttpHost.value.trim(),
+      port: toNumber(elements.outputHttpPort.value) || 8000,
+      path: elements.outputHttpPath.value.trim() || '/stream',
+      buffer_size: toNumber(elements.outputHttpBuffer.value),
+      buffer_fill: toNumber(elements.outputHttpBufferFill.value),
+      keep_active: elements.outputHttpKeep.checked,
+      sctp: elements.outputHttpSctp && elements.outputHttpSctp.checked,
+    });
+  }
+
+  if (presetKey === 'hls_local') {
+    const mode = elements.outputHttpMode ? elements.outputHttpMode.value : 'hls';
+    if (mode !== 'hls') {
+      if (elements.outputHint) {
+        elements.outputHint.textContent = 'HLS preset expects HLS mode. Use HTTP-TS preset for HTTP.';
+      }
+      return null;
+    }
+    return applyCommonUiFields({
       format: 'hls',
       path: elements.outputHlsPath.value.trim(),
       base_url: elements.outputHlsBase.value.trim(),
@@ -10009,9 +10540,10 @@ function readOutputForm() {
     });
   }
 
-  if (type === 'udp' || type === 'rtp') {
-    const payload = applyBiss({
-      format: type,
+  if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
+    const format = presetKey === 'rtp_multicast' ? 'rtp' : 'udp';
+    const payload = applyCommonUiFields({
+      format,
       addr: elements.outputUdpAddr.value.trim(),
       port: toNumber(elements.outputUdpPort.value),
       ttl: toNumber(elements.outputUdpTtl.value),
@@ -10020,7 +10552,7 @@ function readOutputForm() {
       sync: toNumber(elements.outputUdpSync.value),
       cbr: toNumber(elements.outputUdpCbr.value),
     });
-    if (type === 'udp' && elements.outputUdpAudioFixEnabled) {
+    if (format === 'udp' && elements.outputUdpAudioFixEnabled) {
       payload.audio_fix = {
         enabled: elements.outputUdpAudioFixEnabled.checked,
         force_on: elements.outputUdpAudioFixForce ? elements.outputUdpAudioFixForce.checked : false,
@@ -10052,8 +10584,8 @@ function readOutputForm() {
     return payload;
   }
 
-  if (type === 'srt') {
-    const output = applyBiss({
+  if (presetKey === 'srt_bridge') {
+    const output = applyCommonUiFields({
       format: 'srt',
       url: elements.outputSrtUrl.value.trim(),
       bridge_port: toNumber(elements.outputSrtBridgePort.value),
@@ -10079,21 +10611,8 @@ function readOutputForm() {
     return output;
   }
 
-  if (type === 'np') {
-    return applyBiss({
-      format: 'np',
-      host: elements.outputNpHost.value.trim(),
-      port: toNumber(elements.outputNpPort.value),
-      path: elements.outputNpPath.value.trim(),
-      timeout: toNumber(elements.outputNpTimeout.value),
-      buffer_size: toNumber(elements.outputNpBuffer.value),
-      buffer_fill: toNumber(elements.outputNpBufferFill && elements.outputNpBufferFill.value),
-      sctp: elements.outputNpSctp && elements.outputNpSctp.checked,
-    });
-  }
-
-  if (type === 'file') {
-    return applyBiss({
+  if (presetKey === 'file_ts') {
+    return applyCommonUiFields({
       format: 'file',
       filename: elements.outputFileName.value.trim(),
       buffer_size: toNumber(elements.outputFileBuffer.value),
@@ -13599,8 +14118,16 @@ function openEditor(stream, isNew) {
   }
   elements.streamEnabled.checked = stream.enabled !== false;
   if (elements.streamTranscodeEnabled) {
-    const hasTranscode = (config.type === 'transcode' || config.type === 'ffmpeg')
-      || (config.transcode && typeof config.transcode === 'object' && Object.keys(config.transcode).length > 0);
+    const stype = String(config.type || '').toLowerCase();
+    const tc = (config.transcode && typeof config.transcode === 'object') ? config.transcode : null;
+    const truthy = (value) => {
+      if (value === true || value === 1 || value === '1') return true;
+      if (value === false || value === 0 || value === '0') return false;
+      const text = String(value || '').toLowerCase();
+      return text === 'true' || text === 'yes' || text === 'on';
+    };
+    // Enable is explicit: config.type=transcode/ffmpeg (legacy) or config.transcode.enabled=true (new).
+    const hasTranscode = (stype === 'transcode' || stype === 'ffmpeg') || truthy(tc && tc.enabled);
     elements.streamTranscodeEnabled.checked = Boolean(hasTranscode);
     setTranscodeMode(Boolean(hasTranscode));
     updateTranscodeGeneralControls();
@@ -13940,24 +14467,16 @@ function openEditor(stream, isNew) {
     updateTranscodeLadderToggle();
 
     // Make "Enable Transcode" behave like a one-click action:
-    // if the stream has transcode enabled but no ladder profiles (and no legacy outputs),
-    // auto-generate a default ladder so the pipeline actually produces output.
+    // if the stream has transcoding enabled but no ladder profiles, auto-generate a default ladder
+    // so the pipeline actually produces output and OUTPUT LIST can configure publish targets.
     if (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked) {
       const hasProfiles = Array.isArray(tc.profiles) && tc.profiles.length > 0;
-      const hasLegacyOutputs = Array.isArray(tc.outputs) && tc.outputs.length > 0;
-      if (!hasProfiles && !hasLegacyOutputs) {
+      if (!hasProfiles) {
         applyTranscodeLadderPreset('3');
-      } else if (hasProfiles && elements.streamTranscodePublishJson) {
+      } else if (elements.streamTranscodePublishJson) {
         const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
         if (!rawPublish) {
-          const variants = Array.isArray(tc.profiles)
-            ? tc.profiles.map((p) => String(p && p.id || '').trim()).filter(Boolean)
-            : [];
-          const publish = [
-            { type: 'hls', enabled: true, variants },
-            { type: 'dash', enabled: false, variants },
-          ];
-          elements.streamTranscodePublishJson.value = formatJson(publish);
+          elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
           renderOutputList();
         }
       }
@@ -17352,8 +17871,19 @@ function isStreamTranscodedForPlayer(stream) {
   }
   const cfg = stream.config || {};
   if (cfg.type === 'transcode' || cfg.type === 'ffmpeg') return true;
-  const tcCfg = cfg.transcode;
-  return !!(tcCfg && typeof tcCfg === 'object' && Object.keys(tcCfg).length > 0);
+  const tcCfg = (cfg.transcode && typeof cfg.transcode === 'object') ? cfg.transcode : null;
+  if (!tcCfg) return false;
+  const truthy = (value) => {
+    if (value === true || value === 1 || value === '1') return true;
+    if (value === false || value === 0 || value === '0') return false;
+    const text = String(value || '').toLowerCase();
+    return text === 'true' || text === 'yes' || text === 'on';
+  };
+  // Avoid treating "has transcode config object" as transcoded: many streams keep disabled transcode keys.
+  // We only consider the stream transcoded when it is explicitly enabled or has a real ladder config.
+  if (truthy(tcCfg.enabled)) return true;
+  if (Array.isArray(tcCfg.profiles) && tcCfg.profiles.length > 0) return true;
+  return false;
 }
 
 function canPlayMpegTs() {
@@ -19878,10 +20408,16 @@ async function startPlayer(stream, opts = {}) {
   // В браузере гарантированно надёжнее HLS, чем попытка проигрывать MPEG-TS напрямую.
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
   if (!(forceVideoOnly || forceAudioAac || forceH264)) {
-    // For transcoded streams always go through /preview/start:
-    // - if HLS publish is enabled, it returns the master playlist URL;
-    // - otherwise it creates a lightweight (remux-only) HLS preview from the transcode output bus.
-    url = transcoded ? null : getPlaylistUrl(stream);
+    if (transcoded) {
+      const tc = stream.config && stream.config.transcode ? stream.config.transcode : null;
+      const publish = tc && Array.isArray(tc.publish) ? tc.publish : [];
+      const hls = publish.find((out) => out && String(out.type || '').toLowerCase() === 'hls' && out.enabled !== false);
+      // For transcoded streams, preview must play the already-transcoded output "as-is".
+      // Prefer the configured HLS publish URL; fall back to the canonical /hls/<id>/index.m3u8.
+      url = hls ? getPublishOutputPublicUrl(hls, stream.id) : getHlsUrl(stream);
+    } else {
+      url = getPlaylistUrl(stream);
+    }
   } else {
     url = null;
   }
@@ -23476,11 +24012,15 @@ function bindEvents() {
 
   elements.btnAddOutput.addEventListener('click', () => {
     if (isEditingLadderTranscodeStream()) {
-      openTranscodePublishTargetModal({
+      const publish = parseEditingTranscodePublishJsonSafe();
+      publish.push({
         type: 'hls',
         enabled: true,
         variants: [],
-      }, null);
+      });
+      setEditingTranscodePublishJson(publish);
+      renderOutputList();
+      openPublishOutputModal(publish.length - 1);
       return;
     }
     state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));
@@ -23496,22 +24036,20 @@ function bindEvents() {
     const index = Number(row.dataset.index);
 
     if (isEditingLadderTranscodeStream()) {
-      if (action.dataset.action === 'publish-output-copy') {
-        const publish = parseEditingTranscodePublishJsonSafe();
-        const entry = publish[index];
-        const streamId = (elements.streamId && elements.streamId.value)
-          ? String(elements.streamId.value)
-          : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+      const publish = parseEditingTranscodePublishJsonSafe();
+      const entry = publish[index];
+      const streamId = (elements.streamId && elements.streamId.value)
+        ? String(elements.streamId.value)
+        : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+
+      if (action.dataset.action === 'output-copy') {
         const url = entry ? getPublishOutputPublicUrl(entry, streamId) : '';
         if (url) copyText(url);
       }
-      if (action.dataset.action === 'publish-output-options') {
-        const publish = parseEditingTranscodePublishJsonSafe();
-        const entry = publish[index];
-        if (entry) openTranscodePublishTargetModal(entry, index);
+      if (action.dataset.action === 'output-options') {
+        if (entry) openPublishOutputModal(index);
       }
-      if (action.dataset.action === 'publish-output-remove') {
-        const publish = parseEditingTranscodePublishJsonSafe();
+      if (action.dataset.action === 'output-remove') {
         publish.splice(index, 1);
         setEditingTranscodePublishJson(publish);
         renderOutputList();
@@ -23519,6 +24057,16 @@ function bindEvents() {
       return;
     }
 
+    if (action.dataset.action === 'output-copy') {
+      const streamId = (elements.streamId && elements.streamId.value)
+        ? String(elements.streamId.value)
+        : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+      const output = state.outputs[index];
+      const presetKey = getLegacyOutputPreset(output);
+      const url = getLegacyOutputCopyValue(output, presetKey, streamId);
+      if (url) copyText(url);
+      return;
+    }
     if (action.dataset.action === 'output-audio-fix') {
       toggleOutputAudioFix(index);
       return;
@@ -23591,23 +24139,72 @@ function bindEvents() {
     openAnalyze(state.editing.stream);
   });
 
-  elements.outputType.addEventListener('change', () => {
-    const type = elements.outputType.value;
-    setOutputGroup(type === 'rtp' ? 'udp' : type);
-    updateOutputAudioFixVisibility();
-  });
   if (elements.outputUdpAudioFixEnabled) {
     elements.outputUdpAudioFixEnabled.addEventListener('change', () => {
       updateOutputAudioFixVisibility();
     });
   }
 
-  if (elements.outputPresetApply && elements.outputPreset) {
-    elements.outputPresetApply.addEventListener('click', () => {
-      applyOutputPreset(elements.outputPreset.value);
-    });
+  if (elements.outputPreset) {
     elements.outputPreset.addEventListener('change', () => {
       applyOutputPreset(elements.outputPreset.value);
+    });
+  }
+  if (elements.outputVariantsInput) {
+    const commit = (text) => {
+      const raw = String(text || '').trim();
+      if (!raw) return;
+      const parts = raw.split(/[,\s]+/).map((v) => String(v || '').trim()).filter(Boolean);
+      if (!parts.length) return;
+      const next = getOutputVariantsValue().concat(parts);
+      setOutputVariantsValue(next);
+    };
+    elements.outputVariantsInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ',') {
+        event.preventDefault();
+        commit(elements.outputVariantsInput.value);
+        return;
+      }
+      if (event.key === 'Backspace' && !elements.outputVariantsInput.value) {
+        const current = getOutputVariantsValue();
+        if (current.length) {
+          event.preventDefault();
+          setOutputVariantsValue(current.slice(0, -1));
+        }
+      }
+    });
+    elements.outputVariantsInput.addEventListener('blur', () => {
+      commit(elements.outputVariantsInput.value);
+    });
+    elements.outputVariantsInput.addEventListener('paste', (event) => {
+      const text = event.clipboardData && event.clipboardData.getData
+        ? event.clipboardData.getData('text')
+        : '';
+      if (text && (text.includes(',') || /\s/.test(text))) {
+        event.preventDefault();
+        commit(text);
+      }
+    });
+  }
+  if (elements.outputPublicAuto) {
+    elements.outputPublicAuto.addEventListener('change', () => {
+      syncOutputModalPublicUrlEditability();
+      syncOutputModalPublicUrlFromForm();
+    });
+  }
+  if (elements.outputPublicReset) {
+    elements.outputPublicReset.addEventListener('click', () => {
+      if (!elements.outputPublicAuto) return;
+      elements.outputPublicAuto.checked = true;
+      syncOutputModalPublicUrlEditability();
+      syncOutputModalPublicUrlFromForm();
+    });
+  }
+  if (elements.outputAdvancedToggle && elements.outputAdvancedBlock) {
+    elements.outputAdvancedToggle.addEventListener('click', () => {
+      const hidden = elements.outputAdvancedBlock.hidden;
+      elements.outputAdvancedBlock.hidden = !hidden;
+      elements.outputAdvancedToggle.textContent = hidden ? 'Advanced ▴' : 'Advanced ▾';
     });
   }
   elements.outputHttpMode.addEventListener('change', () => {
@@ -23616,6 +24213,22 @@ function bindEvents() {
 
   elements.outputForm.addEventListener('submit', (event) => {
     event.preventDefault();
+    if (state.outputEditingKind === 'publish') {
+      const output = readPublishOutputForm();
+      if (!output) return;
+      const publish = parseEditingTranscodePublishJsonSafe();
+      const idx = state.outputEditingIndex;
+      if (idx === null || idx === undefined) {
+        publish.push(output);
+      } else {
+        publish[idx] = output;
+      }
+      setEditingTranscodePublishJson(publish);
+      renderOutputList();
+      closeOutputModal();
+      return;
+    }
+
     const output = readOutputForm();
     if (!output) return;
     if (state.outputEditingIndex !== null) {
