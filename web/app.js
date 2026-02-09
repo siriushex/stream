@@ -7732,9 +7732,8 @@ function applyOutputPreset(key) {
     setOutputGroup(meta.group);
   }
 
-  if (meta.group === 'http' && elements.outputHttpMode) {
+  if (meta.group === 'http') {
     const mode = meta.http_mode || 'http';
-    elements.outputHttpMode.value = mode;
     setOutputHttpMode(mode);
     if (mode === 'http') {
       elements.outputHttpHost.value = meta.host || '0.0.0.0';
@@ -10495,13 +10494,6 @@ function readOutputForm() {
   };
 
   if (presetKey === 'http_ts_local') {
-    const mode = elements.outputHttpMode ? elements.outputHttpMode.value : 'http';
-    if (mode !== 'http') {
-      if (elements.outputHint) {
-        elements.outputHint.textContent = 'HTTP-TS preset expects HTTP mode. Use HLS preset for HLS.';
-      }
-      return null;
-    }
     return applyCommonUiFields({
       format: 'http',
       host: elements.outputHttpHost.value.trim(),
@@ -10515,13 +10507,6 @@ function readOutputForm() {
   }
 
   if (presetKey === 'hls_local') {
-    const mode = elements.outputHttpMode ? elements.outputHttpMode.value : 'hls';
-    if (mode !== 'hls') {
-      if (elements.outputHint) {
-        elements.outputHint.textContent = 'HLS preset expects HLS mode. Use HTTP-TS preset for HTTP.';
-      }
-      return null;
-    }
     return applyCommonUiFields({
       format: 'hls',
       path: elements.outputHlsPath.value.trim(),
@@ -14036,18 +14021,16 @@ function validateOutput(output, index) {
   if (output._inline_invalid) {
     throw new Error(`${label}${tabHint}: invalid output URL`);
   }
-  if (output.biss) {
-    const parsed = parseBissKey(output.biss);
-    if (parsed.error) {
-      throw new Error(`${label}${tabHint}: ${parsed.error}`);
-    }
-    output.biss = parsed.value;
-  }
   if (!output.format) {
     throw new Error(`${label}${tabHint}: format is required`);
   }
   if (output.format === 'hls') {
-    if (!output.path) throw new Error(`${label}${tabHint}: HLS output directory is required`);
+    // HLS output directory is auto-generated; do not expose/require it in UI.
+    if (!output.path) {
+      const defaults = getHlsDefaults(elements.streamId ? (elements.streamId.value || 'stream') : 'stream');
+      output.path = defaults.path;
+      output.base_url = output.base_url || defaults.base_url;
+    }
     return;
   }
   if (output.format === 'http') {
@@ -14644,6 +14627,7 @@ function readStreamForm() {
       validateOutput(output, index);
       const clone = { ...output };
       delete clone.auto;
+      delete clone.biss;
       delete clone._inline_value;
       delete clone._inline_invalid;
       return clone;
@@ -20409,12 +20393,11 @@ async function startPlayer(stream, opts = {}) {
   // /play/* оставляем для "Open in new tab" / "Copy link" (VLC/плееры).
   if (!(forceVideoOnly || forceAudioAac || forceH264)) {
     if (transcoded) {
-      const tc = stream.config && stream.config.transcode ? stream.config.transcode : null;
-      const publish = tc && Array.isArray(tc.publish) ? tc.publish : [];
-      const hls = publish.find((out) => out && String(out.type || '').toLowerCase() === 'hls' && out.enabled !== false);
-      // For transcoded streams, preview must play the already-transcoded output "as-is".
-      // Prefer the configured HLS publish URL; fall back to the canonical /hls/<id>/index.m3u8.
-      url = hls ? getPublishOutputPublicUrl(hls, stream.id) : getHlsUrl(stream);
+      // For transcoded streams, always ask the backend for a playable HLS URL.
+      // preview.start() will:
+      // - return the already-published HLS (no extra ffmpeg) when available, OR
+      // - create a lightweight remux-only /preview/<token>/index.m3u8 session from the transcode output bus.
+      url = null;
     } else {
       url = getPlaylistUrl(stream);
     }
@@ -24207,9 +24190,6 @@ function bindEvents() {
       elements.outputAdvancedToggle.textContent = hidden ? 'Advanced ▴' : 'Advanced ▾';
     });
   }
-  elements.outputHttpMode.addEventListener('change', () => {
-    setOutputHttpMode(elements.outputHttpMode.value);
-  });
 
   elements.outputForm.addEventListener('submit', (event) => {
     event.preventDefault();
