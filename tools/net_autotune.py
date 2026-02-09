@@ -19,6 +19,7 @@ import argparse
 import copy
 import http.cookiejar
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -275,6 +276,8 @@ class InputMetrics:
     backoff_ms: int
     last_recv_ts: int
     auto_level: int
+    jitter_underruns: int
+    jitter_drops: int
 
 
 def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optional[InputMetrics]:
@@ -297,7 +300,11 @@ def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optio
     backoff_ms = int(net.get("current_backoff_ms") or 0)
     last_recv_ts = int(net.get("last_recv_ts") or 0)
     auto_level = int(net.get("auto_level") or 0)
-    ok = health == "ok" or health == "running"
+    jitter = entry.get("jitter") if isinstance(entry.get("jitter"), dict) else {}
+    jitter_underruns = int(jitter.get("buffer_underruns_total") or 0)
+    jitter_drops = int(jitter.get("buffer_drops_total") or 0)
+
+    ok = health in ("ok", "online", "running")
     return InputMetrics(
         ok=ok,
         health=health,
@@ -308,6 +315,8 @@ def extract_metrics_for_input(status: Dict[str, Any], input_index: int) -> Optio
         backoff_ms=backoff_ms,
         last_recv_ts=last_recv_ts,
         auto_level=auto_level,
+        jitter_underruns=jitter_underruns,
+        jitter_drops=jitter_drops,
     )
 
 
@@ -318,6 +327,8 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
     last = samples[-1]
     delta_reconnects = max(0, last.reconnects - first.reconnects)
     delta_fail = max(0, last.fail_count - first.fail_count)
+    delta_underruns = max(0, last.jitter_underruns - first.jitter_underruns)
+    delta_drops = max(0, last.jitter_drops - first.jitter_drops)
     offline = sum(1 for s in samples if s.health == "offline")
     degraded = sum(1 for s in samples if s.health == "degraded")
     onair_bad = sum(1 for s in samples if not s.on_air)
@@ -326,13 +337,18 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
     score = 0
     score += delta_reconnects * 50
     score += delta_fail * 10
+    score += delta_underruns * 200
+    score += delta_drops * 10
     score += degraded * 20
     score += offline * 200
-    score += onair_bad * 5
+    # Для вещания важнее всего непрерывность; on_air провалы считаем сильно.
+    score += onair_bad * 50
 
     summary = {
         "delta_reconnects": delta_reconnects,
         "delta_fail": delta_fail,
+        "delta_jitter_underruns": delta_underruns,
+        "delta_jitter_drops": delta_drops,
         "degraded_samples": degraded,
         "offline_samples": offline,
         "onair_bad_samples": onair_bad,
@@ -343,12 +359,62 @@ def score_window(samples: List[InputMetrics]) -> Tuple[int, Dict[str, Any]]:
     return score, summary
 
 
+def calc_jitter_max_mb(jitter_ms: int, assumed_mbps: int, max_auto_mb: int) -> int:
+    # Должно совпадать по смыслу с base.lua/web/app.js (safety factor + clamp).
+    safety = 4
+    bytes_count = (jitter_ms / 1000.0) * (assumed_mbps * 1000 * 1000 / 8.0) * safety
+    mb = int((bytes_count + (1024 * 1024 - 1)) // (1024 * 1024))
+    if mb < 8:
+        mb = 8
+    if mb > max_auto_mb:
+        mb = max_auto_mb
+    return mb
+
+
+def expand_candidates(base_candidates: List[str], jitter_variants_ms: List[int]) -> List[Tuple[str, Dict[str, Any]]]:
+    out: List[Tuple[str, Dict[str, Any]]] = []
+    for name in base_candidates:
+        preset = PRESETS.get(name)
+        if not preset:
+            continue
+        # Для bad/max пробуем разные jitter варианты. superbad оставляем как есть (у него уже большой jitter).
+        if name in ("bad", "max") and jitter_variants_ms:
+            for ms in jitter_variants_ms:
+                p = copy.deepcopy(preset)
+                p["jitter_buffer_ms"] = int(ms)
+                # Расчёт лимита по "профильному" assumed Mbps.
+                assumed = 16 if name == "bad" else 20
+                p["jitter_max_buffer_mb"] = calc_jitter_max_mb(int(ms), assumed_mbps=assumed, max_auto_mb=64)
+                out.append((f"{name}-j{ms}", p))
+        else:
+            out.append((name, preset))
+    return out
+
+
+def acquire_lock(lock_file: str) -> Optional[int]:
+    # Стараемся не плодить параллельные autotune прогоны (таймеры/cron могут пересекаться).
+    try:
+        import fcntl  # type: ignore
+    except Exception:
+        return -1
+    fd = os.open(lock_file, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    os.ftruncate(fd, 0)
+    os.write(fd, str(os.getpid()).encode("ascii"))
+    os.fsync(fd)
+    return fd
+
+
 def tune_one_input(
     client: AstralClient,
     stream_id: str,
     input_index: int,
     original_url: str,
-    candidates: List[str],
+    candidates: List[Tuple[str, Dict[str, Any]]],
     total_budget_sec: int,
     settle_sec: int,
     poll_sec: int,
@@ -366,10 +432,7 @@ def tune_one_input(
     results = []
     best = None
 
-    for prof in candidates:
-        preset = PRESETS.get(prof)
-        if not preset:
-            continue
+    for prof, preset in candidates:
         new_opts = copy.deepcopy(opts)
         # Важно: не выключаем net_tune.
         new_opts["net_tune"] = "1"
@@ -433,7 +496,7 @@ def tune_one_input(
         "original_url": original_url,
         "budget_sec": total_budget_sec,
         "per_candidate_sec": per_candidate,
-        "candidates": candidates,
+        "candidates": [c[0] for c in candidates],
         "results": results,
         "best": best,
     }
@@ -468,13 +531,34 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--settle-sec", type=int, default=15, help="Seconds to wait after applying a candidate")
     ap.add_argument("--poll-sec", type=int, default=10, help="Status polling interval (sec)")
     ap.add_argument("--candidates", default="bad,max,superbad", help="Comma-separated profiles to try")
+    ap.add_argument("--jitter-variants-ms", default="2000,6000,12000", help="Comma-separated jitter_buffer_ms values for bad/max candidates")
+    ap.add_argument("--lock-file", default="/tmp/astral_net_autotune.lock", help="Lock file to avoid overlapping runs")
     ap.add_argument("--dry-run", action="store_true", help="Don't apply changes, only print what would be done")
     args = ap.parse_args(argv)
 
-    candidates = [c.strip().lower() for c in str(args.candidates).split(",") if c.strip()]
-    for c in candidates:
+    lock_fd = acquire_lock(str(args.lock_file))
+    if lock_fd is None:
+        print(_json_dumps({"ok": True, "skipped": True, "reason": "locked"}))
+        return 0
+
+    base_candidates = [c.strip().lower() for c in str(args.candidates).split(",") if c.strip()]
+    for c in base_candidates:
         if c not in PRESETS:
             raise SystemExit(f"unknown candidate profile: {c}")
+
+    jitter_variants = []
+    for part in str(args.jitter_variants_ms).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ms = int(part)
+        except Exception:
+            continue
+        if ms > 0:
+            jitter_variants.append(ms)
+    jitter_variants = sorted(set(jitter_variants))
+    candidates = expand_candidates(base_candidates, jitter_variants)
 
     client = AstralClient(args.api, args.username, args.password)
 

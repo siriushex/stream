@@ -46,6 +46,15 @@ python3 tools/net_autotune.py --api http://127.0.0.1:9060 --username admin --pas
 The script tries `bad,max,superbad` and chooses the lowest error score based on `/api/v1/stream-status`.
 It only touches inputs explicitly marked with `#net_tune=1`.
 
+Systemd timer (per instance, recommended):
+```
+cp contrib/systemd/astral-net-autotune@.service /etc/systemd/system/
+cp contrib/systemd/astral-net-autotune@.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now astral-net-autotune@prod.timer
+```
+The timer runs periodically and the script uses a lock file (`/tmp/astral_net_autotune.lock`) to avoid overlaps.
+
 ## Adaptive auto-tune (optional)
 For unstable sources you can enable adaptive tuning:
 ```
@@ -119,7 +128,7 @@ Each input reports:
 - `health_reason`: last error or degrade reason
 - `net.*`: state, backoff, reconnects, last_error, last_recv_ts
 - `hls.*`: state, last_seq, segment_errors_total, gap_count
-- `jitter.*`: buffer_fill_ms, buffer_target_ms, buffer_underruns_total
+- `jitter.*`: buffer_fill_ms, buffer_target_ms, buffer_underruns_total, buffer_drops_total
 
 These are visible in the Analyze modal input rows and in the API stream status.
 

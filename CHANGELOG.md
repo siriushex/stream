@@ -12,6 +12,14 @@
 ## Entries
 ### 2026-02-09
 - Changes:
+  - Jitter: pace TS output using EMA bitrate to avoid long pauses on bursty HTTP-TS sources; expose `buffer_drops_total` and make `buffer_fill_ms` reflect remaining buffered time.
+  - Tools/Systemd: improve `tools/net_autotune.py` (lock file, jitter variants, scoring uses on_air/underruns/drops) and add `astral-net-autotune@` systemd timer/service templates for scheduled per-instance tuning.
+  - Docs: document systemd autotune timer and the new jitter drops metric.
+- Tests:
+  - `./configure.sh && make`
+  - `python3 -m py_compile tools/net_autotune.py tools/tests/mock_http_ts.py tools/tests/mock_hls_server.py`
+### 2026-02-09
+- Changes:
   - Inputs: avoid enabling HTTP input `sync=1`/timeout=60 defaults for external sources that happen to use `/play/*` or `/stream/*` paths (sync defaults now apply only for localhost inputs).
   - Inputs: keep `stall_timeout_ms` stable in `net_auto` mode (don’t scale with auto level) to prevent long hangs.
   - Inputs/UI: compute jitter max memory prefill from `jitter_buffer_ms` (assumed bitrate + safety factor, clamped) and apply profile prefill on Input modal open.
