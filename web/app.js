@@ -7216,36 +7216,73 @@ const TRANSCODE_WATCHDOG_DEFAULTS = {
   restart_cooldown_sec: 1200,
 };
 
+function buildPresetProfile(profile) {
+  const fps = 25;
+  const width = Number(profile && profile.width) || 0;
+  const height = Number(profile && profile.height) || 0;
+  const bitrateKbps = Number(profile && profile.bitrate_kbps) || 0;
+  const maxrateKbps = Number(profile && profile.maxrate_kbps) || 0;
+  const audioBitrateKbps = Number(profile && profile.audio_bitrate_kbps) || 128;
+  const audioSr = Number(profile && profile.audio_sr) || 48000;
+  const audioChannels = Number(profile && profile.audio_channels) || 2;
+  return {
+    id: String(profile && profile.id || 'HDHigh'),
+    name: String(profile && profile.name || `${height}p`),
+    width,
+    height,
+    fps,
+    bitrate_kbps: bitrateKbps,
+    maxrate_kbps: maxrateKbps || Math.floor(bitrateKbps * 1.2),
+    audio_mode: 'aac',
+    audio_bitrate_kbps: audioBitrateKbps,
+    audio_sr: audioSr,
+    audio_channels: audioChannels,
+    deinterlace: String(profile && profile.deinterlace || 'auto'),
+  };
+}
+
 const TRANSCODE_PRESETS = {
   cpu_1080p: {
     engine: 'cpu',
-    output_preset: 'cpu_1080p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '1080p', width: 1920, height: 1080, bitrate_kbps: 6000, maxrate_kbps: 7200 })],
   },
   cpu_720p: {
     engine: 'cpu',
-    output_preset: 'cpu_720p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '720p', width: 1280, height: 720, bitrate_kbps: 2500, maxrate_kbps: 3000 })],
   },
   cpu_540p: {
     engine: 'cpu',
-    output_preset: 'cpu_540p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '540p', width: 960, height: 540, bitrate_kbps: 1000, maxrate_kbps: 1500 })],
   },
   nvidia_1080p: {
     engine: 'nvidia',
     gpu_device: 0,
     decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
-    output_preset: 'nvidia_1080p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '1080p', width: 1920, height: 1080, bitrate_kbps: 6000, maxrate_kbps: 7200 })],
   },
   nvidia_720p: {
     engine: 'nvidia',
     gpu_device: 0,
     decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
-    output_preset: 'nvidia_720p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '720p', width: 1280, height: 720, bitrate_kbps: 2500, maxrate_kbps: 3000 })],
   },
   nvidia_540p: {
     engine: 'nvidia',
     gpu_device: 0,
     decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
-    output_preset: 'nvidia_540p',
+    profiles: [buildPresetProfile({ id: 'HDHigh', name: '540p', width: 960, height: 540, bitrate_kbps: 1000, maxrate_kbps: 1500 })],
+  },
+  nvidia_ladder_2: {
+    engine: 'nvidia',
+    gpu_device: 0,
+    decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
+    profiles: getLadderPresetProfiles('2'),
+  },
+  nvidia_ladder_3: {
+    engine: 'nvidia',
+    gpu_device: 0,
+    decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
+    profiles: getLadderPresetProfiles('3'),
   },
 };
 
@@ -7380,17 +7417,24 @@ function applyStreamTranscodePreset(key) {
     elements.streamTranscodeEnabled.checked = true;
     setTranscodeMode(true);
   }
+  updateTranscodeGeneralControls();
+
+  if (elements.streamTranscodeLadderEnabled) {
+    elements.streamTranscodeLadderEnabled.checked = true;
+  }
+  updateTranscodeLadderToggle();
+
   if (elements.streamTranscodeEngine) {
     elements.streamTranscodeEngine.value = preset.engine || '';
   }
   if (elements.streamTranscodeGpuDevice) {
     elements.streamTranscodeGpuDevice.value = preset.gpu_device !== undefined ? preset.gpu_device : '';
   }
-  if (elements.streamTranscodeGlobalArgs) {
-    elements.streamTranscodeGlobalArgs.value = argsToLines(preset.global_args);
-  }
   if (elements.streamTranscodeDecoderArgs) {
     elements.streamTranscodeDecoderArgs.value = argsToLines(preset.decoder_args);
+  }
+  if (elements.streamTranscodeGlobalArgs) {
+    elements.streamTranscodeGlobalArgs.value = argsToLines(preset.global_args);
   }
   if (elements.streamTranscodeCommonArgs) {
     elements.streamTranscodeCommonArgs.value = argsToLines(preset.common_output_args);
@@ -7399,27 +7443,27 @@ function applyStreamTranscodePreset(key) {
     elements.streamTranscodeLogMain.checked = true;
   }
 
-  const outputPreset = preset.output_preset;
-  if (outputPreset) {
-    if (!Array.isArray(state.transcodeOutputs)) {
-      state.transcodeOutputs = [];
-    }
-    let targetIndex = state.transcodeOutputs.findIndex(isTranscodeOutputEmpty);
-    if (targetIndex === -1) {
-      targetIndex = state.transcodeOutputs.length;
-      state.transcodeOutputs.push({});
-    }
-    const presetOutput = buildTranscodeOutputFromPreset(outputPreset);
-    if (presetOutput) {
-      const existing = state.transcodeOutputs[targetIndex];
-      if (!existing || !existing.url) {
-        presetOutput.url = getDefaultTranscodeOutputUrl(outputPreset);
-      }
-      state.transcodeOutputs[targetIndex] = { ...state.transcodeOutputs[targetIndex], ...presetOutput };
-    }
-    state.transcodeOutputs = state.transcodeOutputs.map(ensureTranscodeOutputWatchdog);
-    renderTranscodeOutputList();
+  const nextProfiles = Array.isArray(preset.profiles) ? preset.profiles : [];
+  if (!nextProfiles.length) return;
+  const nextProfilesText = formatJson(nextProfiles);
+  const currentProfilesText = String(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value || '').trim();
+  if (currentProfilesText && currentProfilesText !== nextProfilesText) {
+    const ok = window.confirm('Apply preset will overwrite transcoding profiles and engine. Continue?');
+    if (!ok) return;
   }
+  if (elements.streamTranscodeProfilesJson) {
+    elements.streamTranscodeProfilesJson.value = nextProfilesText;
+  }
+  state.transcodeProfiles = nextProfiles;
+  renderTranscodeProfileList();
+
+  if (elements.streamTranscodePublishJson) {
+    const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
+    if (!rawPublish) {
+      elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
+    }
+  }
+  renderOutputList();
 }
 
 function getOutputUiType(output) {
@@ -23779,9 +23823,6 @@ function bindEvents() {
   }
   if (elements.streamTranscodePresetApply && elements.streamTranscodePreset) {
     elements.streamTranscodePresetApply.addEventListener('click', () => {
-      applyStreamTranscodePreset(elements.streamTranscodePreset.value);
-    });
-    elements.streamTranscodePreset.addEventListener('change', () => {
       applyStreamTranscodePreset(elements.streamTranscodePreset.value);
     });
   }
