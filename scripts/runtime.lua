@@ -419,7 +419,7 @@ local function collect_input_stats(channel)
             return nil
         end
         local s = tostring(value or ""):lower()
-        if s == "dc" or s == "wan" or s == "bad" or s == "max" then
+        if s == "dc" or s == "wan" or s == "bad" or s == "max" or s == "superbad" then
             return s
         end
         return nil

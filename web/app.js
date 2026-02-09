@@ -358,6 +358,14 @@ const INPUT_RESILIENCE_DEFAULTS = {
       min_interval_sec: 10,
       burst_threshold: 1,
     },
+    superbad: {
+      enabled: true,
+      max_level: 8,
+      relax_sec: 900,
+      window_sec: 120,
+      min_interval_sec: 10,
+      burst_threshold: 1,
+    },
   },
   profiles: {
     dc: {
@@ -416,6 +424,20 @@ const INPUT_RESILIENCE_DEFAULTS = {
       keepalive: true,
       user_agent: 'VLC/3.0.20',
     },
+    superbad: {
+      connect_timeout_ms: 20000,
+      read_timeout_ms: 60000,
+      stall_timeout_ms: 30000,
+      max_retries: 0,
+      backoff_min_ms: 2000,
+      backoff_max_ms: 60000,
+      backoff_jitter_pct: 40,
+      cooldown_sec: 90,
+      low_speed_limit_bytes_sec: 2048,
+      low_speed_time_sec: 25,
+      keepalive: true,
+      user_agent: 'VLC/3.0.20',
+    },
   },
   hls_defaults: {
     max_segments: 10,
@@ -428,6 +450,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
     wan: 400,
     bad: 2000,
     max: 3000,
+    superbad: 5000,
   },
   max_active_resilient_inputs: 50,
 };
@@ -1256,6 +1279,7 @@ const elements = {
   inputNetAutoWindowSec: $('#input-net-auto-window-sec'),
   inputNetAutoMinInterval: $('#input-net-auto-min-interval'),
   inputNetAutoBurst: $('#input-net-auto-burst'),
+  inputNetTune: $('#input-net-tune'),
   inputNetFold: $('#input-net-fold'),
   inputJitterMs: $('#input-jitter-ms'),
   inputJitterMaxMb: $('#input-jitter-max-mb'),
@@ -1659,7 +1683,7 @@ const SETTINGS_GENERAL_SECTIONS = [
       {
         id: 'input-resilience',
         title: 'Input Resilience',
-        description: 'Профили сети (dc/wan/bad) для устойчивого приёма HTTP/HLS. По умолчанию выключено.',
+        description: 'Профили сети (dc/wan/bad/max/superbad) для устойчивого приёма HTTP/HLS. По умолчанию выключено.',
         level: 'basic',
         toggle: { id: 'settings-input-resilience-enabled', label: 'Enable profiles (global)', disableCard: false },
         collapsible: true,
@@ -1674,11 +1698,12 @@ const SETTINGS_GENERAL_SECTIONS = [
               { value: 'wan', label: 'wan' },
               { value: 'bad', label: 'bad (unstable)' },
               { value: 'max', label: 'max (aggressive)' },
+              { value: 'superbad', label: 'superbad (extreme)' },
             ],
           },
           {
             type: 'note',
-            text: 'Если глобально выключено, resilience можно включить на конкретном input через `#net_profile=dc|wan|bad|max`.',
+            text: 'Если глобально выключено, resilience можно включить на конкретном input через `#net_profile=dc|wan|bad|max|superbad`.',
             level: 'basic',
           },
           {
@@ -1725,6 +1750,14 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'number',
             level: 'advanced',
             placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max),
+          },
+          {
+            id: 'settings-input-resilience-jitter-superbad',
+            label: 'superbad jitter (ms)',
+            type: 'input',
+            inputType: 'number',
+            level: 'advanced',
+            placeholder: String(INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.superbad),
           },
           {
             type: 'heading',
@@ -1788,6 +1821,10 @@ const SETTINGS_GENERAL_SECTIONS = [
             'settings-input-resilience-jitter-max',
             INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max
           );
+          const jitterSuperbad = readNumberValue(
+            'settings-input-resilience-jitter-superbad',
+            INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.superbad
+          );
           const hlsSeg = readNumberValue(
             'settings-input-resilience-hls-max-segments',
             INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_segments
@@ -1804,7 +1841,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             'settings-input-resilience-hls-max-parallel',
             INPUT_RESILIENCE_DEFAULTS.hls_defaults.max_parallel
           );
-          return `${enabled ? 'Включено' : 'Выключено'} · Default: ${profile} · Jitter: ${jitterDc}/${jitterWan}/${jitterBad}/${jitterMax}ms · HLS: seg ${hlsSeg} gap ${hlsGap} retries ${hlsRetries} par ${hlsPar}`;
+          return `${enabled ? 'Включено' : 'Выключено'} · Default: ${profile} · Jitter: ${jitterDc}/${jitterWan}/${jitterBad}/${jitterMax}/${jitterSuperbad}ms · HLS: seg ${hlsSeg} gap ${hlsGap} retries ${hlsRetries} par ${hlsPar}`;
         },
       },
       {
@@ -3319,6 +3356,7 @@ function bindGeneralElements() {
     settingsInputResilienceJitterWan: 'settings-input-resilience-jitter-wan',
     settingsInputResilienceJitterBad: 'settings-input-resilience-jitter-bad',
     settingsInputResilienceJitterMax: 'settings-input-resilience-jitter-max',
+    settingsInputResilienceJitterSuperbad: 'settings-input-resilience-jitter-superbad',
     settingsInputResilienceHlsMaxSegments: 'settings-input-resilience-hls-max-segments',
     settingsInputResilienceHlsMaxGap: 'settings-input-resilience-hls-max-gap',
     settingsInputResilienceHlsSegRetries: 'settings-input-resilience-hls-seg-retries',
@@ -10201,7 +10239,7 @@ function setInputAdvancedFoldVisibility(format) {
 
 function getInputResiliencePrefill(profile) {
   const p = String(profile || '').toLowerCase();
-  if (p !== 'bad' && p !== 'max') return null;
+  if (p !== 'bad' && p !== 'max' && p !== 'superbad') return null;
 
   const inputRes = getSettingObject('input_resilience', {});
   const jitterDefaults = (inputRes && inputRes.jitter_defaults_ms && typeof inputRes.jitter_defaults_ms === 'object')
@@ -10220,7 +10258,7 @@ function getInputResiliencePrefill(profile) {
 
   // Явный max jitter лимит нужен для "запаса": даже если авто-лимит рассчитан ниже,
   // оператору проще иметь повторяемый результат при выборе профиля.
-  const jitterMaxMb = (p === 'bad') ? 16 : 32;
+  const jitterMaxMb = (p === 'bad') ? 16 : ((p === 'superbad') ? 64 : 32);
 
   return { profile: p, jitterMs, jitterMaxMb, auto };
 }
@@ -10314,6 +10352,7 @@ function openInputModal(index) {
     'net_auto_min_interval_sec',
     'net_auto_burst',
     'net_auto_burst_threshold',
+    'net_tune',
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
@@ -10370,6 +10409,7 @@ function openInputModal(index) {
     const burst = opts.net_auto_burst || opts.net_auto_burst_threshold;
     elements.inputNetAutoBurst.value = burst || '';
   }
+  if (elements.inputNetTune) elements.inputNetTune.checked = asBool(opts.net_tune);
   if (elements.inputJitterMs) elements.inputJitterMs.value = opts.jitter_buffer_ms || opts.jitter_ms || '';
   if (elements.inputJitterMaxMb) elements.inputJitterMaxMb.value = opts.jitter_max_buffer_mb || '';
   if (elements.inputHlsMaxSegments) elements.inputHlsMaxSegments.value = opts.hls_max_segments || '';
@@ -10462,6 +10502,7 @@ function readInputForm() {
   addNumber('net_auto_window_sec', elements.inputNetAutoWindowSec && elements.inputNetAutoWindowSec.value);
   addNumber('net_auto_min_interval_sec', elements.inputNetAutoMinInterval && elements.inputNetAutoMinInterval.value);
   addNumber('net_auto_burst', elements.inputNetAutoBurst && elements.inputNetAutoBurst.value);
+  if (elements.inputNetTune && elements.inputNetTune.checked) options.net_tune = true;
   addNumber('jitter_buffer_ms', elements.inputJitterMs && elements.inputJitterMs.value);
   addNumber('jitter_max_buffer_mb', elements.inputJitterMaxMb && elements.inputJitterMaxMb.value);
   addString('net_profile', elements.inputNetProfile && elements.inputNetProfile.value);
@@ -17387,7 +17428,7 @@ function applySettingsToUI() {
   }
   const inputRes = getSettingObject('input_resilience', {});
   const inputResEnabled = inputRes && inputRes.enabled === true;
-  const allowedProfiles = ['dc', 'wan', 'bad', 'max'];
+  const allowedProfiles = ['dc', 'wan', 'bad', 'max', 'superbad'];
   const inputResDefault = allowedProfiles.includes(String(inputRes.default_profile))
     ? String(inputRes.default_profile)
     : INPUT_RESILIENCE_DEFAULTS.default_profile;
@@ -17409,6 +17450,9 @@ function applySettingsToUI() {
   const jitterMax = Number.isFinite(Number(inputResJitter.max))
     ? Number(inputResJitter.max)
     : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max;
+  const jitterSuperbad = Number.isFinite(Number(inputResJitter.superbad))
+    ? Number(inputResJitter.superbad)
+    : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.superbad;
   const inputResHls = (inputRes && inputRes.hls_defaults && typeof inputRes.hls_defaults === 'object')
     ? inputRes.hls_defaults
     : {};
@@ -17444,6 +17488,9 @@ function applySettingsToUI() {
   }
   if (elements.settingsInputResilienceJitterMax) {
     elements.settingsInputResilienceJitterMax.value = jitterMax;
+  }
+  if (elements.settingsInputResilienceJitterSuperbad) {
+    elements.settingsInputResilienceJitterSuperbad.value = jitterSuperbad;
   }
   if (elements.settingsInputResilienceHlsMaxSegments) {
     elements.settingsInputResilienceHlsMaxSegments.value = hlsMaxSegments;
@@ -18117,7 +18164,7 @@ function collectGeneralSettings() {
   const inputResDefaultProfileRaw = elements.settingsInputResilienceDefaultProfile
     ? String(elements.settingsInputResilienceDefaultProfile.value || '').trim()
     : '';
-  const inputResAllowedProfiles = ['dc', 'wan', 'bad'];
+  const inputResAllowedProfiles = ['dc', 'wan', 'bad', 'max', 'superbad'];
   const inputResDefaultProfile = inputResAllowedProfiles.includes(inputResDefaultProfileRaw)
     ? inputResDefaultProfileRaw
     : INPUT_RESILIENCE_DEFAULTS.default_profile;
@@ -18140,6 +18187,10 @@ function collectGeneralSettings() {
   const inputResJitterMax = toNumber(elements.settingsInputResilienceJitterMax && elements.settingsInputResilienceJitterMax.value);
   if (inputResJitterMax !== undefined && inputResJitterMax < 0) {
     throw new Error('max jitter must be >= 0');
+  }
+  const inputResJitterSuperbad = toNumber(elements.settingsInputResilienceJitterSuperbad && elements.settingsInputResilienceJitterSuperbad.value);
+  if (inputResJitterSuperbad !== undefined && inputResJitterSuperbad < 0) {
+    throw new Error('superbad jitter must be >= 0');
   }
   const inputResHlsMaxSegments = toNumber(elements.settingsInputResilienceHlsMaxSegments && elements.settingsInputResilienceHlsMaxSegments.value);
   if (inputResHlsMaxSegments !== undefined && inputResHlsMaxSegments < 0) {
@@ -18435,6 +18486,7 @@ function collectGeneralSettings() {
     wan: inputResJitterWan !== undefined ? Math.floor(inputResJitterWan) : (Number.isFinite(Number(currentJitterDefaults.wan)) ? Number(currentJitterDefaults.wan) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.wan),
     bad: inputResJitterBad !== undefined ? Math.floor(inputResJitterBad) : (Number.isFinite(Number(currentJitterDefaults.bad)) ? Number(currentJitterDefaults.bad) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.bad),
     max: inputResJitterMax !== undefined ? Math.floor(inputResJitterMax) : (Number.isFinite(Number(currentJitterDefaults.max)) ? Number(currentJitterDefaults.max) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.max),
+    superbad: inputResJitterSuperbad !== undefined ? Math.floor(inputResJitterSuperbad) : (Number.isFinite(Number(currentJitterDefaults.superbad)) ? Number(currentJitterDefaults.superbad) : INPUT_RESILIENCE_DEFAULTS.jitter_defaults_ms.superbad),
   };
   payload.input_resilience = mergedInputRes;
   if (elements.settingsEventRequest) {

@@ -3237,6 +3237,7 @@
               <option value="wan">wan (WAN)</option>
               <option value="bad">bad (unstable)</option>
               <option value="max">max (aggressive)</option>
+              <option value="superbad">superbad (extreme)</option>
             </select>
           </label>
           <label class="field">
@@ -3352,6 +3353,10 @@
             <label class="field">
               <span>Jitter max (MB)</span>
               <input type="number" id="input-jitter-max-mb" placeholder="4" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="input-net-tune" />
+              <span>Scheduled optimizer (3-5 min test)</span>
             </label>
           </div>
           <div class="form-hint">Overrides global defaults for this input only.</div>
