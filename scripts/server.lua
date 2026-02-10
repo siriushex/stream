@@ -1634,42 +1634,53 @@ function main()
 	    local function http_play_stream(server, client, request)
 	        local client_data = server:data(client)
 
-	        if not request then
-            if client_data.output_data and client_data.output_data.channel_data then
-                local channel_data = client_data.output_data.channel_data
-                channel_data.clients = channel_data.clients - 1
-                if channel_data.keep_timer then
-                    channel_data.keep_timer:close()
-                    channel_data.keep_timer = nil
-                end
-                if channel_data.clients == 0 and channel_data.input[1].input ~= nil then
-                    local keep_active = tonumber(channel_data.config.http_keep_active or 0) or 0
-                    if keep_active == 0 then
-                        for input_id, input_data in ipairs(channel_data.input) do
-                            if input_data.input then
-                                channel_kill_input(channel_data, input_id)
-                            end
-                        end
-                        channel_data.active_input_id = 0
-                    elseif keep_active > 0 then
-                        channel_data.keep_timer = timer({
-                            interval = keep_active,
-                            callback = function(self)
-                                self:close()
-                                channel_data.keep_timer = nil
-                                if channel_data.clients == 0 then
-                                    for input_id, input_data in ipairs(channel_data.input) do
-                                        if input_data.input then
-                                            channel_kill_input(channel_data, input_id)
-                                        end
-                                    end
-                                    channel_data.active_input_id = 0
-                                end
-                            end,
-                        })
-                    end
-                end
-            end
+	            if not request then
+	                if client_data.output_data and client_data.output_data.channel_data then
+	                    local channel_data = client_data.output_data.channel_data
+	                    local clients = tonumber(channel_data.clients or 0) or 0
+	                    clients = clients - 1
+	                    if clients < 0 then
+	                        clients = 0
+	                    end
+	                    channel_data.clients = clients
+	                    if channel_data.keep_timer then
+	                        channel_data.keep_timer:close()
+	                        channel_data.keep_timer = nil
+	                    end
+	                    -- Loopback channels can be torn down while clients are still connected (stream config changes,
+	                    -- transcode restarts, etc). Be defensive and avoid panics during disconnect.
+	                    local inputs = channel_data.input
+	                    local has_input = (type(inputs) == "table" and inputs[1] and inputs[1].input ~= nil)
+	                    if clients == 0 and has_input then
+	                        local keep_active = tonumber((channel_data.config and channel_data.config.http_keep_active) or 0) or 0
+	                        if keep_active == 0 then
+	                            for input_id, input_data in ipairs(inputs) do
+	                                if input_data and input_data.input then
+	                                    channel_kill_input(channel_data, input_id)
+	                                end
+	                            end
+	                            channel_data.active_input_id = 0
+	                        elseif keep_active > 0 then
+	                            channel_data.keep_timer = timer({
+	                                interval = keep_active,
+	                                callback = function(self)
+	                                    self:close()
+	                                    channel_data.keep_timer = nil
+	                                    local cur_clients = tonumber(channel_data.clients or 0) or 0
+	                                    local cur_inputs = channel_data.input
+	                                    if cur_clients == 0 and type(cur_inputs) == "table" then
+	                                        for input_id, input_data in ipairs(cur_inputs) do
+	                                            if input_data and input_data.input then
+	                                                channel_kill_input(channel_data, input_id)
+	                                            end
+	                                        end
+	                                        channel_data.active_input_id = 0
+	                                    end
+	                                end,
+	                            })
+	                        end
+	                    end
+	                end
 
             http_output_client(server, client, nil)
             if client_data.auth_session_id and auth and auth.unregister_client then
@@ -1881,45 +1892,56 @@ function main()
 				        allow_stream(nil)
 				    end
 
-        local function http_input_stream(server, client, request)
-            local client_data = server:data(client)
+	        local function http_input_stream(server, client, request)
+	            local client_data = server:data(client)
 
-            if not request then
-                if client_data.output_data and client_data.output_data.channel_data then
-                    local channel_data = client_data.output_data.channel_data
-                    channel_data.clients = channel_data.clients - 1
-                    if channel_data.keep_timer then
-                        channel_data.keep_timer:close()
-                        channel_data.keep_timer = nil
-                    end
-                    if channel_data.clients == 0 and channel_data.input[1].input ~= nil then
-                        local keep_active = tonumber(channel_data.config.http_keep_active or 0) or 0
-                        if keep_active == 0 then
-                            for input_id, input_data in ipairs(channel_data.input) do
-                                if input_data.input then
-                                    channel_kill_input(channel_data, input_id)
-                                end
-                            end
-                            channel_data.active_input_id = 0
-                        elseif keep_active > 0 then
-                            channel_data.keep_timer = timer({
-                                interval = keep_active,
-                                callback = function(self)
-                                    self:close()
-                                    channel_data.keep_timer = nil
-                                    if channel_data.clients == 0 then
-                                        for input_id, input_data in ipairs(channel_data.input) do
-                                            if input_data.input then
-                                                channel_kill_input(channel_data, input_id)
-                                            end
-                                        end
-                                        channel_data.active_input_id = 0
-                                    end
-                                end,
-                            })
-                        end
-                    end
-                end
+	            if not request then
+	                if client_data.output_data and client_data.output_data.channel_data then
+	                    local channel_data = client_data.output_data.channel_data
+	                    local clients = tonumber(channel_data.clients or 0) or 0
+	                    clients = clients - 1
+	                    if clients < 0 then
+	                        clients = 0
+	                    end
+	                    channel_data.clients = clients
+	                    if channel_data.keep_timer then
+	                        channel_data.keep_timer:close()
+	                        channel_data.keep_timer = nil
+	                    end
+	                    -- Loopback channels can be torn down while clients are still connected (stream config changes,
+	                    -- transcode restarts, etc). Be defensive and avoid panics during disconnect.
+	                    local inputs = channel_data.input
+	                    local has_input = (type(inputs) == "table" and inputs[1] and inputs[1].input ~= nil)
+	                    if clients == 0 and has_input then
+	                        local keep_active = tonumber((channel_data.config and channel_data.config.http_keep_active) or 0) or 0
+	                        if keep_active == 0 then
+	                            for input_id, input_data in ipairs(inputs) do
+	                                if input_data and input_data.input then
+	                                    channel_kill_input(channel_data, input_id)
+	                                end
+	                            end
+	                            channel_data.active_input_id = 0
+	                        elseif keep_active > 0 then
+	                            channel_data.keep_timer = timer({
+	                                interval = keep_active,
+	                                callback = function(self)
+	                                    self:close()
+	                                    channel_data.keep_timer = nil
+	                                    local cur_clients = tonumber(channel_data.clients or 0) or 0
+	                                    local cur_inputs = channel_data.input
+	                                    if cur_clients == 0 and type(cur_inputs) == "table" then
+	                                        for input_id, input_data in ipairs(cur_inputs) do
+	                                            if input_data and input_data.input then
+	                                                channel_kill_input(channel_data, input_id)
+	                                            end
+	                                        end
+	                                        channel_data.active_input_id = 0
+	                                    end
+	                                end,
+	                            })
+	                        end
+	                    end
+	                end
 
                 http_output_client(server, client, nil)
                 if client_data.auth_session_id and auth and auth.unregister_client then
