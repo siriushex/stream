@@ -726,8 +726,11 @@ function preview.start(stream_id, opts)
     -- Streams with an active transcode job already have an encoded output. For preview we must not launch
     -- another ffmpeg transcoder. Use published HLS when available, otherwise create a lightweight
     -- (remux-only) HLS preview from the transcode output bus.
-    if stream.job then
-        local job = stream.job
+    local job = stream.job
+    if not job and transcode and transcode.jobs then
+        job = transcode.jobs[stream_id]
+    end
+    if job then
 
         -- Never spawn preview ffmpeg for transcode streams, even if UI requested a fallback profile.
         video_only = false
