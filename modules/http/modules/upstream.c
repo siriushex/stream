@@ -235,7 +235,14 @@ static int module_call(module_data_t *mod)
             lua_pushvalue(lua, 2);
             lua_pushvalue(lua, 3);
             lua_pushvalue(lua, 4);
-            lua_call(lua, 3, 0);
+            if(lua_pcall(lua, 3, 0, 0) != 0)
+            {
+                const char *err = lua_tostring(lua, -1);
+                asc_log_error("[http_upstream] callback failed: %s", err ? err : "unknown error");
+                lua_pop(lua, 1);
+                if(client->sock)
+                    http_client_abort(client, 500, "handler error");
+            }
 
             module_stream_destroy(client->response);
 
@@ -255,7 +262,14 @@ static int module_call(module_data_t *mod)
     lua_pushvalue(lua, 2);
     lua_pushvalue(lua, 3);
     lua_pushvalue(lua, 4);
-    lua_call(lua, 3, 0);
+    if(lua_pcall(lua, 3, 0, 0) != 0)
+    {
+        const char *err = lua_tostring(lua, -1);
+        asc_log_error("[http_upstream] callback failed: %s", err ? err : "unknown error");
+        lua_pop(lua, 1);
+        if(client->sock)
+            http_client_abort(client, 500, "handler error");
+    }
 
     return 0;
 }

@@ -125,6 +125,7 @@ struct module_data_t
     string_buffer_t *content;
 
     bool is_active;
+    bool callback_failed;
 
     // receiver
     struct
@@ -177,13 +178,21 @@ static void on_close(void *);
 
 static void callback(module_data_t *mod)
 {
+    if(mod->callback_failed)
+        return;
     const int response = lua_gettop(lua);
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_self);
     lua_getfield(lua, -1, "__options");
     lua_getfield(lua, -1, "callback");
     lua_pushvalue(lua, -3);
     lua_pushvalue(lua, response);
-    lua_call(lua, 2, 0);
+    if(lua_pcall(lua, 2, 0, 0) != 0)
+    {
+        const char *msg = lua_tostring(lua, -1);
+        asc_log_error(MSG("callback error: %s"), msg ? msg : "unknown");
+        lua_pop(lua, 1);
+        mod->callback_failed = true;
+    }
     lua_pop(lua, 3); // self + options + response
 }
 

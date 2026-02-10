@@ -84,6 +84,9 @@
     <main class="content">
       <section class="view active" id="view-dashboard">
         <div class="dashboard-notice" id="dashboard-notice"></div>
+        <div class="dashboard-system" id="dashboard-system" hidden>
+          <div class="dashboard-system-cards" id="dashboard-system-cards"></div>
+        </div>
         <div class="stream-views" id="stream-views" data-view-mode="cards">
           <div class="tile-grid stream-view stream-view-cards" id="dashboard-streams"></div>
           <div class="stream-table stream-view stream-view-table" id="stream-table">
@@ -893,9 +896,42 @@
           <div class="observability-empty muted" id="obs-empty">Observability disabled or no data yet.</div>
           <div class="observability-hint muted" id="obs-hint"></div>
 
+          <div class="observability-system" id="obs-system" hidden>
+            <div class="observability-system-head">
+              <div class="chart-title">Server</div>
+              <label class="field obs-net-field">
+                <span>Network</span>
+                <select id="obs-net-iface"></select>
+              </label>
+            </div>
+            <div class="observability-system-cards" id="obs-system-cards"></div>
+
+            <div class="observability-system-timeseries" id="obs-system-timeseries" hidden>
+              <div class="observability-system-timeseries-hint muted" id="obs-system-timeseries-hint"></div>
+              <div class="observability-charts" id="obs-system-timeseries-charts" hidden>
+                <div class="chart-card">
+                  <div class="chart-title">CPU usage (%)</div>
+                  <canvas id="obs-sys-chart-cpu"></canvas>
+                </div>
+                <div class="chart-card">
+                  <div class="chart-title">Memory used (%)</div>
+                  <canvas id="obs-sys-chart-mem"></canvas>
+                </div>
+                <div class="chart-card">
+                  <div class="chart-title">Disk used (%)</div>
+                  <canvas id="obs-sys-chart-disk"></canvas>
+                </div>
+                <div class="chart-card">
+                  <div class="chart-title">Network RX/TX (B/s)</div>
+                  <canvas id="obs-sys-chart-net"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="observability-summary" id="obs-summary"></div>
 
-          <div class="observability-charts">
+          <div class="observability-charts" id="obs-charts">
             <div class="chart-card">
               <div class="chart-title">Bitrate</div>
               <canvas id="obs-chart-bitrate"></canvas>
@@ -910,7 +946,7 @@
             </div>
           </div>
 
-          <div class="observability-logs">
+          <div class="observability-logs" id="obs-errors">
             <div class="chart-title">Recent errors</div>
             <div class="observability-log-list" id="obs-logs"></div>
           </div>
@@ -1632,9 +1668,12 @@
 
           <div class="form-subsection" id="stream-transcode-general">
             <div class="form-grid">
-              <label class="checkline span-6">
-                <input type="checkbox" id="stream-transcode-enabled" />
-                <span>Enable transcoding</span>
+              <label class="switchline span-6">
+                <span class="switch-text">Enable transcoding</span>
+                <span class="switch">
+                  <input type="checkbox" id="stream-transcode-enabled" />
+                  <span class="switch-slider"></span>
+                </span>
               </label>
               <div class="field span-6">
                 <span>Status</span>
@@ -1659,15 +1698,18 @@
           <div class="list-block stream-output-block">
             <div class="list-header">
               <span>OUTPUT LIST</span>
-              <button class="text-link" type="button" id="btn-add-output">NEW OUTPUT</button>
+              <div class="list-actions">
+                <button class="text-link" type="button" id="btn-add-output">NEW OUTPUT</button>
+                <button class="text-link btn-inline-add" type="button" id="btn-add-output-inline">+</button>
+              </div>
             </div>
             <div class="list" id="output-list"></div>
           </div>
 
-	          <div class="form-hint stream-transcode-note">
-	            For transcode ladder streams, configure publish outputs (HLS/DASH/HTTP-TS/Embed/UDP/RTP/RTMP/RTSP) in the OUTPUT LIST.
-	          </div>
-        </div>
+		          <div class="form-hint stream-transcode-note">
+		            When transcoding is enabled, configure outputs (HLS/DASH/HTTP-TS/Embed/UDP/RTP/RTMP/RTSP) in the OUTPUT LIST.
+		          </div>
+	        </div>
 
         <div class="tab-content" data-tab-content="groups" data-tab-scope="stream-editor">
           <div class="form-grid">
@@ -2238,28 +2280,19 @@
 	            Seamless cutover requires per-output mode and UDP/RTP outputs. For UDP unicast inputs, per-output mode may require multicast.
 	          </div>
 
-		          <label class="checkline" hidden>
-		            <input type="checkbox" id="stream-transcode-ladder-enabled" />
-		            <span>Multi-bitrate ladder (profiles + publish)</span>
-		          </label>
-				          <div class="form-hint">
-				            Transcoding runs in ladder mode. Configure publish outputs in the OUTPUT LIST (General tab).
-				          </div>
-			          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
-	            <div class="form-grid">
-	              <div class="field span-12">
-	                <span>Quick presets</span>
-	                <div class="btn-row">
-	                  <button class="btn ghost" type="button" id="stream-transcode-ladder-preset-2">2 profiles (720+540)</button>
-	                  <button class="btn ghost" type="button" id="stream-transcode-ladder-preset-3">3 profiles (720+540+360)</button>
-	                </div>
-	              </div>
-	            </div>
-	            <div class="list-block" id="stream-transcode-profiles-block">
-	              <div class="list-header">
-	                <span>PROFILES</span>
-	                <button class="text-link" type="button" id="btn-add-transcode-profile">ADD PROFILE</button>
-	              </div>
+			          <label class="checkline" hidden>
+			            <input type="checkbox" id="stream-transcode-ladder-enabled" />
+			            <span>Profiles pipeline (internal)</span>
+			          </label>
+					          <div class="form-hint" id="stream-transcode-mode-hint">
+					            Mode is derived from profiles: 1 profile = single output, 2+ profiles = multi-bitrate ladder. Configure outputs in the OUTPUT LIST (General tab).
+					          </div>
+				          <div class="form-subsection" id="stream-transcode-ladder-block" hidden>
+		            <div class="list-block" id="stream-transcode-profiles-block">
+		              <div class="list-header">
+		                <span>PROFILES</span>
+		                <button class="text-link" type="button" id="btn-add-transcode-profile">ADD PROFILE</button>
+		              </div>
 	              <div class="list" id="transcode-profile-list"></div>
 	            </div>
 	            <details class="fold">
@@ -3005,6 +3038,21 @@
                 <option value="file_loop">MPEG-TS File (loop)</option>
               </select>
             </label>
+            <label class="field">
+              <span>Type</span>
+              <select id="input-type">
+                <option value="dvb">DVB</option>
+                <option value="udp">UDP</option>
+                <option value="rtp">RTP</option>
+                <option value="srt">SRT</option>
+                <option value="rtsp">RTSP</option>
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+                <option value="hls">HLS</option>
+                <option value="stream">Stream</option>
+                <option value="file">MPEG-TS File</option>
+              </select>
+            </label>
             <div class="field">
               <span>Apply</span>
               <button class="btn ghost" type="button" id="input-preset-apply">Apply</button>
@@ -3013,19 +3061,9 @@
           <div class="form-hint">Applies common input fields and options.</div>
         </div>
         <label class="field">
-          <span>Type</span>
-          <select id="input-type">
-            <option value="dvb">DVB</option>
-            <option value="udp">UDP</option>
-            <option value="rtp">RTP</option>
-            <option value="srt">SRT</option>
-            <option value="rtsp">RTSP</option>
-            <option value="http">HTTP</option>
-            <option value="https">HTTPS</option>
-            <option value="hls">HLS</option>
-            <option value="stream">Stream</option>
-            <option value="file">MPEG-TS File</option>
-          </select>
+          <span>Input URL / Raw string</span>
+          <input type="text" id="input-raw" placeholder="udp://239.0.0.1:1234#cc_limit=1" />
+          <div class="form-hint input-raw-error" id="input-raw-error"></div>
         </label>
 
         <div class="input-group" data-group="dvb">
@@ -3341,14 +3379,148 @@
             <input type="text" id="input-filter-not" placeholder="pid,pid" />
           </label>
           <label class="field">
-            <span>CC limit</span>
-            <input type="number" id="input-cc-limit" placeholder="0" />
-          </label>
-          <label class="field">
             <span>Bitrate limit (Kbit/s)</span>
             <input type="number" id="input-bitrate-limit" placeholder="0" />
           </label>
         </div>
+
+        <details class="fold" id="input-detectors-fold">
+          <summary class="fold-summary">Quality detectors (advanced)</summary>
+          <div class="fold-body">
+            <label class="field detector-preset">
+              <span>Quality preset</span>
+              <select id="input-quality-preset">
+                <option value="off">Off</option>
+                <option value="basic">Basic</option>
+                <option value="full">Full</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+
+            <div class="detectors-list">
+              <div class="detector-group">
+                <div class="detector-row">
+                  <label class="checkline detector-toggle">
+                    <input type="checkbox" id="input-cc-limit-enabled" />
+                    <span>CC errors limit</span>
+                  </label>
+                  <label class="field detector-field">
+                    <span>Limit</span>
+                    <input type="number" id="input-cc-limit" placeholder="1" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="detector-group">
+                <div class="detector-row">
+                  <label class="checkline detector-toggle">
+                    <input type="checkbox" id="input-no-audio-enabled" />
+                    <span>No audio detection</span>
+                  </label>
+                  <label class="field detector-field">
+                    <span>Timeout (sec)</span>
+                    <input type="number" id="input-no-audio-timeout" placeholder="5" />
+                  </label>
+                  <div class="detector-hint">Cheap, no decoding</div>
+                </div>
+              </div>
+
+              <div class="detector-group">
+                <div class="detector-row">
+                  <label class="checkline detector-toggle">
+                    <input type="checkbox" id="input-stop-video-enabled" />
+                    <span>Stop video detection</span>
+                  </label>
+                  <label class="field detector-field">
+                    <span>Timeout (sec)</span>
+                    <input type="number" id="input-stop-video-timeout" placeholder="5" />
+                  </label>
+                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-stop-video-details" aria-expanded="false">
+                    Details
+                  </button>
+                </div>
+                <div class="detector-details" id="detector-stop-video-details" hidden>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Mode</span>
+                      <select id="input-stop-video-mode">
+                        <option value="pts">PTS / no video</option>
+                        <option value="freeze">Freeze (IDR hash)</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Freeze window (sec)</span>
+                      <input type="number" id="input-stop-video-freeze" placeholder="10" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="detector-group">
+                <div class="detector-row">
+                  <label class="checkline detector-toggle">
+                    <input type="checkbox" id="input-detect-av-enabled" />
+                    <span>Detect AV desync</span>
+                  </label>
+                  <label class="field detector-field">
+                    <span>Threshold (ms)</span>
+                    <input type="number" id="input-detect-av-threshold" placeholder="800" />
+                  </label>
+                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-av-details" aria-expanded="false">
+                    Details
+                  </button>
+                </div>
+                <div class="detector-details" id="detector-av-details" hidden>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Hold (sec)</span>
+                      <input type="number" id="input-detect-av-hold" placeholder="3" />
+                    </label>
+                    <label class="field">
+                      <span>Stable (sec)</span>
+                      <input type="number" id="input-detect-av-stable" placeholder="10" />
+                    </label>
+                    <label class="field">
+                      <span>Resend (sec)</span>
+                      <input type="number" id="input-detect-av-resend" placeholder="60" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div class="detector-group">
+                <div class="detector-row">
+                  <label class="checkline detector-toggle">
+                    <input type="checkbox" id="input-silence-enabled" />
+                    <span>Silence detect (ffmpeg probe)</span>
+                  </label>
+                  <label class="field detector-field">
+                    <span>Duration (sec)</span>
+                    <input type="number" id="input-silence-duration" placeholder="20" />
+                  </label>
+                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-silence-details" aria-expanded="false">
+                    Details
+                  </button>
+                </div>
+                <div class="detector-details" id="detector-silence-details" hidden>
+                  <div class="form-grid">
+                    <label class="field">
+                      <span>Interval (sec)</span>
+                      <input type="number" id="input-silence-interval" placeholder="10" />
+                    </label>
+                    <label class="field">
+                      <span>Noise (dB)</span>
+                      <input type="number" id="input-silence-noise" placeholder="-30" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-error" id="input-detectors-error"></div>
+          </div>
+          <div class="form-hint">Detectors run only on the active input. Silence detect uses a short ffmpeg probe.</div>
+        </details>
 
         <label class="checkline">
           <input type="checkbox" id="input-cam" />

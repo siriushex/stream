@@ -3535,6 +3535,16 @@ local function set_settings(server, client, request)
             then
                 ai_observability.configure()
             end
+            if system_metrics and system_metrics.configure
+                and (body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
+                    or body.ai_rollup_interval_sec ~= nil
+                    or body.observability_system_rollup_enabled ~= nil
+                    or body.observability_system_rollup_interval_sec ~= nil
+                    or body.observability_system_retention_sec ~= nil
+                    or body.observability_system_include_virtual_ifaces ~= nil)
+            then
+                system_metrics.configure()
+            end
             if watchdog and watchdog.configure
                 and (body.resource_watchdog_enabled ~= nil or body.resource_watchdog_interval_sec ~= nil
                     or body.resource_watchdog_cpu_pct ~= nil or body.resource_watchdog_rss_mb ~= nil
@@ -3713,6 +3723,105 @@ local function ai_metrics(server, client, request)
         range = range,
         items = rows,
         mode = "rollup",
+    })
+end
+
+local function observability_enabled()
+    -- Keep in sync with web/app.js isViewEnabled('observability')
+    local on_demand = setting_bool("ai_metrics_on_demand", true)
+    local logs_days = setting_number("ai_logs_retention_days", 0)
+    local metrics_days = setting_number("ai_metrics_retention_days", 0)
+    if on_demand then
+        metrics_days = 0
+    end
+    return (logs_days or 0) > 0 or (metrics_days or 0) > 0
+end
+
+local function system_metrics_snapshot(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not observability_enabled() then
+        return error_response(server, client, 403, "observability disabled")
+    end
+    if not system_metrics or not system_metrics.snapshot then
+        return error_response(server, client, 400, "system metrics unavailable")
+    end
+
+    local snap = system_metrics.snapshot() or {}
+    local now_ms = (snap.ts or os.time()) * 1000
+    snap.ts_ms = now_ms
+
+    json_response(server, client, 200, {
+        now = now_ms,
+        snapshot = snap,
+        flags = {
+            enabled = true,
+            rollup = (system_metrics.state and system_metrics.state.rollup_enabled) == true,
+        },
+    })
+end
+
+local function system_metrics_timeseries(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not observability_enabled() then
+        return error_response(server, client, 403, "observability disabled")
+    end
+    if not system_metrics or not system_metrics.get_timeseries then
+        return error_response(server, client, 400, "system metrics unavailable")
+    end
+
+    local query = request and request.query or {}
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local result = system_metrics.get_timeseries(range) or {}
+    local items = result.items or {}
+
+    local series = {
+        cpu_usage = {},
+        mem_used_percent = {},
+        disk_used_percent = {},
+        net_rx_bps = {},
+        net_tx_bps = {},
+    }
+
+    for _, pt in ipairs(items) do
+        local t = pt.t_ms
+        if t then
+            if pt.cpu_usage ~= nil then
+                table.insert(series.cpu_usage, { t, pt.cpu_usage })
+            end
+            if pt.mem_used_percent ~= nil then
+                table.insert(series.mem_used_percent, { t, pt.mem_used_percent })
+            end
+            if pt.disk_used_percent ~= nil then
+                table.insert(series.disk_used_percent, { t, pt.disk_used_percent })
+            end
+            if pt.net then
+                for iface, v in pairs(pt.net) do
+                    if v and v.rx_bps ~= nil then
+                        series.net_rx_bps[iface] = series.net_rx_bps[iface] or {}
+                        table.insert(series.net_rx_bps[iface], { t, v.rx_bps })
+                    end
+                    if v and v.tx_bps ~= nil then
+                        series.net_tx_bps[iface] = series.net_tx_bps[iface] or {}
+                        table.insert(series.net_tx_bps[iface], { t, v.tx_bps })
+                    end
+                end
+            end
+        end
+    end
+
+    local now_ms = os.time() * 1000
+    json_response(server, client, 200, {
+        now = now_ms,
+        timeseries = series,
+        flags = {
+            enabled = true,
+            rollup = result.rollup == true,
+            rollup_enabled = (system_metrics.state and system_metrics.state.rollup_enabled) == true,
+        },
     })
 end
 
@@ -5880,6 +5989,12 @@ function api.handle_request(server, client, request)
     if path == "/api/v1/ai/metrics" and method == "GET" then
         return ai_metrics(server, client, request)
     end
+    if path == "/api/v1/observability/system/snapshot" and method == "GET" then
+        return system_metrics_snapshot(server, client, request)
+    end
+    if path == "/api/v1/observability/system/timeseries" and method == "GET" then
+        return system_metrics_timeseries(server, client, request)
+    end
     if path == "/api/v1/ai/summary" and method == "GET" then
         return ai_summary(server, client, request)
     end
@@ -5924,6 +6039,10 @@ function api.start(opts)
     opts = opts or {}
     local addr = opts.addr or "0.0.0.0"
     local port = opts.port or 8000
+    local http_request_line_max = setting_number("http_request_line_max", 4096)
+    local http_headers_max = setting_number("http_headers_max", 12288)
+    local http_header_max = setting_number("http_header_max", 4096)
+    local http_content_length_max = setting_number("http_content_length_max", 8 * 1024 * 1024)
 
     http_server({
         addr = addr,
@@ -5932,6 +6051,10 @@ function api.start(opts)
         route = {
             { "/api/*", api.handle_request },
         },
+        request_line_max = http_request_line_max,
+        headers_max = http_headers_max,
+        header_max = http_header_max,
+        content_length_max = http_content_length_max,
     })
 
     log.info("[api] listening on " .. addr .. ":" .. port)

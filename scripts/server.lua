@@ -40,9 +40,33 @@ dofile(script_path("ai_tools.lua"))
 dofile(script_path("ai_prompt.lua"))
 dofile(script_path("ai_telegram.lua"))
 dofile(script_path("ai_observability.lua"))
+dofile(script_path("system_metrics.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("preview.lua"))
 dofile(script_path("api.lua"))
+
+-- Guardrail: never allow a Lua exception in an HTTP/timer callback to unwind into the main loop.
+-- This is intentionally lightweight (no extra allocations per request beyond xpcall itself).
+local function safe_callback(name, fn)
+    if type(fn) ~= "function" then
+        return fn
+    end
+    local unpack_fn = table.unpack or unpack
+    return function(...)
+        local server, client, request = ...
+        local results = { xpcall(fn, debug.traceback, ...) }
+        local ok = table.remove(results, 1)
+        if ok then
+            return unpack_fn(results)
+        end
+        local err = results[1]
+        log.error("[safe] callback failed: " .. tostring(name) .. ": " .. tostring(err))
+        if request and server and client and server.abort then
+            pcall(function() server:abort(client, 500) end)
+        end
+        return nil
+    end
+end
 
 local opt = {
     addr = "0.0.0.0",
@@ -102,7 +126,7 @@ options = {
         opt.port = tonumber(argv[idx + 1])
         if not opt.port then
             log.error("[server] wrong port value")
-            astra.abort()
+            os.exit(78)
         end
         opt.port_set = true
         return 1
@@ -1060,7 +1084,7 @@ function main()
         local ok, created = config.ensure_config_file(opt.config_path)
         if not ok then
             log.error("[server] import failed: " .. tostring(created))
-            astra.abort()
+            os.exit(78)
         end
         if created then
             log.warning("[server] config file missing, created defaults: " .. tostring(opt.config_path))
@@ -1068,7 +1092,7 @@ function main()
         local summary, err = config.import_astra_file(opt.config_path, { mode = opt.import_mode })
         if not summary then
             log.error("[server] import failed: " .. tostring(err))
-            astra.abort()
+            os.exit(78)
         else
             log.info(string.format(
                 "[server] import ok: settings=%d users=%d adapters=%d streams=%d softcam=%d splitters=%d splitter_links=%d splitter_allow=%d",
@@ -1143,6 +1167,9 @@ function main()
     if ai_observability and ai_observability.configure then
         ai_observability.configure()
     end
+    if system_metrics and system_metrics.configure then
+        system_metrics.configure()
+    end
     if watchdog and watchdog.configure then
         watchdog.configure()
     end
@@ -1198,7 +1225,7 @@ function main()
     local web_stat = utils.stat(opt.web_dir)
     if web_stat.type ~= "directory" then
         log.error("[server] web directory not found: " .. opt.web_dir)
-        astra.abort()
+        os.exit(78)
     end
 
     config.set_setting("hls_dir", hls_dir)
@@ -1428,6 +1455,10 @@ function main()
     local http_play_xspf_title = setting_string("http_play_xspf_title", "Playlist")
     local http_play_no_tls = setting_bool("http_play_no_tls", false)
     local http_play_enabled = http_play_allow or http_play_hls
+    local http_request_line_max = setting_number("http_request_line_max", 4096)
+    local http_headers_max = setting_number("http_headers_max", 12288)
+    local http_header_max = setting_number("http_header_max", 4096)
+    local http_content_length_max = setting_number("http_content_length_max", 8 * 1024 * 1024)
 
     if buffer and buffer.refresh then
         buffer.refresh({
@@ -1899,7 +1930,7 @@ function main()
 				        allow_stream(nil)
 				    end
 
-	        local function http_input_stream(server, client, request)
+        local function http_input_stream(server, client, request)
 	            local client_data = server:data(client)
 
 	            if not request then
@@ -2027,21 +2058,29 @@ function main()
             if not job then
                 channel = entry and entry.channel or nil
             end
-            if not channel and job then
-                local n = loop_input_id or 1
-                if transcode and transcode.ensure_loop_channel then
-                    pcall(transcode.ensure_loop_channel, job, n)
-                end
-                if job.loop_channels and job.loop_channels[n] then
-                    channel = job.loop_channels[n]
-                elseif job.loop_channel then
-                    channel = job.loop_channel
-                end
-            end
-            if not channel then
-                server:abort(client, job and 503 or 404)
-                return nil
-            end
+	            if not channel and job then
+	                local n = loop_input_id or 1
+	                if transcode and transcode.ensure_loop_channel then
+	                    local ok, err_or_result = pcall(transcode.ensure_loop_channel, job, n)
+	                    if not ok then
+	                        log.error("[http input] ensure_loop_channel failed: stream=" .. tostring(stream_id)
+	                            .. " input=" .. tostring(n) .. " err=" .. tostring(err_or_result))
+	                    end
+	                end
+	                if job.loop_channels and job.loop_channels[n] then
+	                    channel = job.loop_channels[n]
+	                elseif job.loop_channel then
+	                    channel = job.loop_channel
+	                end
+	            end
+	            if not channel then
+	                if job then
+	                    log.warning("[http input] loop channel not ready: stream=" .. tostring(stream_id)
+	                        .. " raw=" .. tostring(raw_stream_id))
+	                end
+	                server:abort(client, job and 503 or 404)
+	                return nil
+	            end
 
             local function allow_stream(_session)
                 client_data.output_data = { channel_data = channel }
@@ -2055,18 +2094,25 @@ function main()
 	                local cur_clients = tonumber(channel_data.clients or 0) or 0
 	                channel_data.clients = cur_clients + 1
 
-	                local inputs = channel_data.input
-	                if type(inputs) ~= "table" or not inputs[1] then
-	                    channel_data.clients = cur_clients
-	                    server:abort(client, 503)
-	                    return nil
-	                end
-	                if not inputs[1].input then
-	                    channel_init_input(channel_data, 1)
-	                end
-	                -- Internal loop channels are created with no outputs, so their active input is not started
-	                -- until a client connects. For /input we must explicitly activate the upstream to avoid
-	                -- returning 200 with an empty body (NO_PROGRESS in ffmpeg).
+		                local inputs = channel_data.input
+		                if type(inputs) ~= "table" or not inputs[1] then
+		                    channel_data.clients = cur_clients
+		                    log.warning("[http input] channel inputs not ready: stream=" .. tostring(stream_id))
+		                    server:abort(client, 503)
+		                    return nil
+		                end
+		                if not inputs[1].input then
+		                    local ok_init = channel_init_input(channel_data, 1)
+		                    if not ok_init or not inputs[1].input or not inputs[1].input.tail then
+		                        channel_data.clients = cur_clients
+		                        log.warning("[http input] init_input failed: stream=" .. tostring(stream_id))
+		                        server:abort(client, 503)
+		                        return nil
+		                    end
+		                end
+		                -- Internal loop channels are created with no outputs, so their active input is not started
+		                -- until a client connects. For /input we must explicitly activate the upstream to avoid
+		                -- returning 200 with an empty body (NO_PROGRESS in ffmpeg).
                 if (channel_data.active_input_id or 0) == 0
                     and channel_data.transmit
                     and channel_data.input
@@ -2854,49 +2900,49 @@ function main()
 	        end)
 	    end
 
-	    local function build_http_play_routes(include_redirect, include_hls_route, include_web)
-	        local routes = {}
-	        if not http_play_enabled then
-	            return routes
-	        end
+    local function build_http_play_routes(include_redirect, include_hls_route, include_web)
+        local routes = {}
+        if not http_play_enabled then
+            return routes
+        end
 	        -- /input is internal-only (loopback + ?internal=1 + no forwarded headers) but it must be reachable
 	        -- on the http_play server too, because many deployments expose only http_play_port to ffmpeg.
-	        local input_upstream = http_upstream({ callback = http_input_stream })
-	        table.insert(routes, { http_play_playlist_name, http_play_playlist })
-	        table.insert(routes, { xspf_path, http_play_xspf })
-	        table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
-	        table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
-	        table.insert(routes, { "/favicon.ico", http_favicon })
-	        if http_play_allow then
-	            local upstream = http_upstream({ callback = http_play_stream })
-	            table.insert(routes, { "/stream/*", upstream })
-	            table.insert(routes, { "/play/*", upstream })
-	        end
-	        table.insert(routes, { "/input/*", input_upstream })
-	        if include_hls_route and http_play_hls then
-	            table.insert(routes, { opt.hls_route .. "/*", hls_route_handler })
-	        end
-	        if include_redirect then
-	            table.insert(routes, { "/", http_redirect({ location = http_play_playlist_name }) })
+        local input_upstream = http_upstream({ callback = safe_callback("http_input_stream", http_input_stream) })
+        table.insert(routes, { http_play_playlist_name, http_play_playlist })
+        table.insert(routes, { xspf_path, http_play_xspf })
+        table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
+        table.insert(routes, { "/play/playlist.xspf", http_play_xspf })
+        table.insert(routes, { "/favicon.ico", safe_callback("http_favicon", http_favicon) })
+        if http_play_allow then
+            local upstream = http_upstream({ callback = safe_callback("http_play_stream", http_play_stream) })
+            table.insert(routes, { "/stream/*", upstream })
+            table.insert(routes, { "/play/*", upstream })
+        end
+        table.insert(routes, { "/input/*", input_upstream })
+        if include_hls_route and http_play_hls then
+            table.insert(routes, { opt.hls_route .. "/*", safe_callback("hls_route_handler", hls_route_handler) })
+        end
+        if include_redirect then
+            table.insert(routes, { "/", http_redirect({ location = http_play_playlist_name }) })
         end
         if include_web then
-            table.insert(routes, { "/index.html", web_static })
-            table.insert(routes, { "/*", web_index })
+            table.insert(routes, { "/index.html", safe_callback("web_static", web_static) })
+            table.insert(routes, { "/*", safe_callback("web_index", web_index) })
         end
         return routes
     end
 
-	    local play_upstream = http_upstream({ callback = http_play_stream })
-	    local input_upstream = http_upstream({ callback = http_input_stream })
-	    local live_upstream = http_upstream({ callback = http_live_stream })
+    local play_upstream = http_upstream({ callback = safe_callback("http_play_stream", http_play_stream) })
+    local input_upstream = http_upstream({ callback = safe_callback("http_input_stream", http_input_stream) })
+    local live_upstream = http_upstream({ callback = safe_callback("http_live_stream", http_live_stream) })
 
-		    local main_routes = {
-		        { "/api/*", api.handle_request },
-		        { "/live/*", live_upstream },
-		        { "/input/*", input_upstream },
-		        { "/favicon.ico", http_favicon },
-		        { "/index.html", web_static },
-		    }
+    local main_routes = {
+        { "/api/*", safe_callback("api.handle_request", api.handle_request) },
+        { "/live/*", live_upstream },
+        { "/input/*", input_upstream },
+        { "/favicon.ico", safe_callback("http_favicon", http_favicon) },
+        { "/index.html", safe_callback("web_static", web_static) },
+    }
 
 		    if http_play_enabled and http_play_port == opt.port then
 		        for _, route in ipairs(build_http_play_routes(false, false, false)) do
@@ -2906,23 +2952,27 @@ function main()
 		
 		    -- Internal-only /play (stream refs) even when external http_play is disabled.
 		    -- Note: direct inputs use /input/* loopback instead of /play/*.
-		    if not http_play_allow then
-		        table.insert(main_routes, { "/stream/*", play_upstream })
-		        table.insert(main_routes, { "/play/*", play_upstream })
-		    end
+    if not http_play_allow then
+        table.insert(main_routes, { "/stream/*", play_upstream })
+        table.insert(main_routes, { "/play/*", play_upstream })
+    end
 
-		    table.insert(main_routes, { "/preview/*", preview_route_handler })
-		    table.insert(main_routes, { opt.hls_route .. "/*", hls_route_handler })
-		    table.insert(main_routes, { dash_route .. "/*", dash_route_handler })
-		    table.insert(main_routes, { embed_route .. "/*", embed_route_handler })
-	    table.insert(main_routes, { "/", web_index })
-	    table.insert(main_routes, { "/*", web_index })
+    table.insert(main_routes, { "/preview/*", safe_callback("preview_route_handler", preview_route_handler) })
+    table.insert(main_routes, { opt.hls_route .. "/*", safe_callback("hls_route_handler", hls_route_handler) })
+    table.insert(main_routes, { dash_route .. "/*", safe_callback("dash_route_handler", dash_route_handler) })
+    table.insert(main_routes, { embed_route .. "/*", safe_callback("embed_route_handler", embed_route_handler) })
+    table.insert(main_routes, { "/", safe_callback("web_index", web_index) })
+    table.insert(main_routes, { "/*", safe_callback("web_index", web_index) })
 
     http_server({
         addr = opt.addr,
         port = opt.port,
         server_name = "Astra Studio",
         route = main_routes,
+        request_line_max = http_request_line_max,
+        headers_max = http_headers_max,
+        header_max = http_header_max,
+        content_length_max = http_content_length_max,
     })
 
     if http_play_enabled and http_play_port ~= opt.port then
@@ -2931,6 +2981,10 @@ function main()
             port = http_play_port,
             server_name = "Astra HTTP Play",
             route = build_http_play_routes(true, true, true),
+            request_line_max = http_request_line_max,
+            headers_max = http_headers_max,
+            header_max = http_header_max,
+            content_length_max = http_content_length_max,
         })
         log.info("[server] http play on " .. opt.addr .. ":" .. http_play_port)
     end

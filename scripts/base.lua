@@ -344,6 +344,10 @@ function parse_url(url)
     local opts = nil
     if b then
         opts = url:sub(b + 1)
+        -- Support legacy/misused option separator "#" inside the fragment.
+        -- Historically Astra uses a single "#k=v&k2=v2" fragment, but configs and
+        -- UI sometimes use "#k=v#k2=v2". Treat extra "#" as "&" separators.
+        opts = opts:gsub("#", "&")
         url = url:sub(1, b - 1)
     end
     if not opts and (data.format == "udp" or data.format == "rtp") then
@@ -367,6 +371,9 @@ function parse_url(url)
 
     if opts then
         local function parse_key_val(o)
+            if not o or o == "" then
+                return
+            end
             local k, v
             local x = o:find("=")
             if x then

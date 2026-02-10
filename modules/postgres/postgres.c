@@ -158,7 +158,12 @@ static void process_query(module_data_t *mod)
                     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->current_task->callback);
                     lua_pushvalue(lua, -2);
 
-                    lua_call(lua, 1, 0);
+                    if(lua_pcall(lua, 1, 0, 0) != 0)
+                    {
+                        const char *msg = lua_tostring(lua, -1);
+                        asc_log_error("[postgres] callback error: %s", msg ? msg : "unknown");
+                        lua_pop(lua, 1);
+                    }
 
                     lua_pop(lua, 1);
 

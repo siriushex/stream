@@ -271,7 +271,14 @@ static void on_websocket_read(void *arg)
             lua_pushlstring(lua, (const char *)data, response->data_size);
         }
 
-        lua_call(lua, 3, 0);
+        if(lua_pcall(lua, 3, 0, 0) != 0)
+        {
+            const char *msg = lua_tostring(lua, -1);
+            asc_log_error("[websocket] callback error: %s", msg ? msg : "unknown");
+            lua_pop(lua, 1);
+            http_client_close(client);
+            return;
+        }
 
         response->header_size = 0;
         response->data_size = 0;
@@ -292,7 +299,14 @@ static void on_websocket_read(void *arg)
             lua_pushlightuserdata(lua, client);
             string_buffer_push(lua, client->content);
             client->content = NULL;
-            lua_call(lua, 3, 0);
+            if(lua_pcall(lua, 3, 0, 0) != 0)
+            {
+                const char *msg = lua_tostring(lua, -1);
+                asc_log_error("[websocket] callback error: %s", msg ? msg : "unknown");
+                lua_pop(lua, 1);
+                http_client_close(client);
+                return;
+            }
 
             response->header_size = 0;
             response->data_size = 0;
@@ -312,7 +326,12 @@ static int module_call(module_data_t *mod)
             lua_rawgeti(lua, LUA_REGISTRYINDEX, client->idx_server);
             lua_pushlightuserdata(lua, client);
             lua_pushnil(lua);
-            lua_call(lua, 3, 0);
+            if(lua_pcall(lua, 3, 0, 0) != 0)
+            {
+                const char *msg = lua_tostring(lua, -1);
+                asc_log_error("[websocket] callback error: %s", msg ? msg : "unknown");
+                lua_pop(lua, 1);
+            }
 
             if(client->content)
             {

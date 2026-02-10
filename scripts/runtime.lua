@@ -48,6 +48,23 @@ local function setting_string(key, fallback)
     return tostring(value)
 end
 
+local function copy_table(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    if not seen then
+        seen = {}
+    elseif seen[value] then
+        return seen[value]
+    end
+    local out = {}
+    seen[value] = out
+    for k, v in pairs(value) do
+        out[copy_table(k, seen)] = copy_table(v, seen)
+    end
+    return out
+end
+
 local function url_escape(text)
     local value = tostring(text or "")
     return value:gsub("([^%w%-_%.~])", function(ch)
@@ -556,6 +573,10 @@ local function collect_input_stats(channel)
             entry.on_air = input_data and input_data.on_air == true
         end
 
+        if input_data and input_data.health then
+            entry.health = input_data.health
+        end
+
         if not entry.state then
             if active_id == idx then
                 entry.state = entry.on_air == true and "ACTIVE" or "DOWN"
@@ -708,6 +729,43 @@ local function attach_hls_totals(entry)
     end
 end
 
+local function build_channel_safe(cfg)
+    local ok, channel_or_err = pcall(make_channel, cfg)
+    if not ok then
+        log.error("[runtime] make_channel failed: " .. tostring(channel_or_err))
+        return nil, channel_or_err
+    end
+    if not channel_or_err then
+        return nil, "failed to create stream"
+    end
+    return channel_or_err
+end
+
+local function has_file_output(cfg)
+    local outputs = cfg and cfg.output
+    if type(outputs) ~= "table" then
+        return false
+    end
+    for _, entry in ipairs(outputs) do
+        if type(entry) == "string" then
+            local parsed = parse_url(entry)
+            if parsed and tostring(parsed.format or ""):lower() == "file" then
+                return true
+            end
+        elseif type(entry) == "table" then
+            local format = entry.format
+            if not format and type(entry.url) == "string" then
+                local parsed = parse_url(entry.url)
+                format = parsed and parsed.format or nil
+            end
+            if tostring(format or ""):lower() == "file" then
+                return true
+            end
+        end
+    end
+    return false
+end
+
 local function apply_stream(id, row, force)
     local existing = runtime.streams[id]
     local enabled = (tonumber(row.enabled) or 0) ~= 0
@@ -733,20 +791,22 @@ local function apply_stream(id, row, force)
     local is_transcode = transcode and transcode.is_transcode_config and transcode.is_transcode_config(cfg)
     local hash = row.config_json or ""
     if is_transcode then
+        local job, err = transcode.upsert(id, row, force)
+        if not job then
+            log.error("[runtime] failed to create transcode job: " .. id .. " (" .. tostring(err or "unknown error") .. ")")
+            return false, err or "failed to create transcode job"
+        end
         if existing and existing.kind ~= "transcode" then
             kill_channel(existing.channel)
         end
-        local job = transcode.upsert(id, row, force)
-        if not job then
-            log.error("[runtime] failed to create transcode job: " .. id)
-            runtime.streams[id] = nil
-            return false, "failed to create transcode job"
-        end
-        runtime.streams[id] = { kind = "transcode", job = job, hash = hash }
+        runtime.streams[id] = { kind = "transcode", job = job, hash = hash, config_snapshot = copy_table(cfg) }
         return true
     end
 
     if existing and existing.hash == hash and not force then
+        if not existing.config_snapshot then
+            existing.config_snapshot = copy_table(cfg)
+        end
         return true
     end
 
@@ -758,6 +818,24 @@ local function apply_stream(id, row, force)
         end
     end
 
+    local file_output = has_file_output(cfg)
+    if not file_output then
+        local channel, err = build_channel_safe(cfg)
+        if not channel then
+            log.error("[runtime] failed to create stream: " .. id .. " (" .. tostring(err or "unknown error") .. ")")
+            return false, err or "failed to create stream"
+        end
+        if existing then
+            if existing.kind == "transcode" and transcode then
+                transcode.delete(id)
+            else
+                kill_channel(existing.channel)
+            end
+        end
+        runtime.streams[id] = { kind = "stream", channel = channel, hash = hash, config_snapshot = copy_table(cfg) }
+        return true
+    end
+
     if existing then
         if existing.kind == "transcode" and transcode then
             transcode.delete(id)
@@ -766,13 +844,26 @@ local function apply_stream(id, row, force)
         end
     end
 
-    local channel = make_channel(cfg)
+    local channel, err = build_channel_safe(cfg)
     if not channel then
-        log.error("[runtime] failed to create stream: " .. id)
-        return false, "failed to create stream"
+        log.error("[runtime] failed to create stream: " .. id .. " (" .. tostring(err or "unknown error") .. ")")
+        if existing and existing.kind == "stream" and existing.config_snapshot then
+            local rollback_channel = build_channel_safe(existing.config_snapshot)
+            if rollback_channel then
+                runtime.streams[id] = {
+                    kind = "stream",
+                    channel = rollback_channel,
+                    hash = existing.hash,
+                    config_snapshot = existing.config_snapshot,
+                }
+                return false, "apply failed; rolled back"
+            end
+        end
+        runtime.streams[id] = nil
+        return false, err or "failed to create stream"
     end
 
-    runtime.streams[id] = { kind = "stream", channel = channel, hash = hash }
+    runtime.streams[id] = { kind = "stream", channel = channel, hash = hash, config_snapshot = copy_table(cfg) }
     return true
 end
 

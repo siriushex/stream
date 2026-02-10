@@ -519,7 +519,8 @@ function ai_observability.get_on_demand_metrics(range_sec, interval_sec, scope, 
 end
 
 function ai_observability.configure()
-    local logs_days = setting_number("ai_logs_retention_days", 7)
+    -- Default to disabled unless explicitly enabled via settings.
+    local logs_days = setting_number("ai_logs_retention_days", 0)
     local rollup_interval = sanitize_interval(setting_number("ai_rollup_interval_sec", 60))
     local on_demand = setting_bool("ai_metrics_on_demand", true)
     if not on_demand then

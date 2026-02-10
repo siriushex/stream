@@ -983,7 +983,22 @@ static void on_status_timer(void *arg)
     lua_setfield(lua, -2, "ber");
     lua_pushnumber(lua, mod->fe->unc);
     lua_setfield(lua, -2, "unc");
-    lua_call(lua, 1, 0);
+    if(lua_pcall(lua, 1, 0, 0) != 0)
+    {
+        const char *msg = lua_tostring(lua, -1);
+        asc_log_error("[dvb] status callback error: %s", msg ? msg : "unknown");
+        lua_pop(lua, 1);
+        if(mod->status_timer)
+        {
+            asc_timer_destroy(mod->status_timer);
+            mod->status_timer = NULL;
+        }
+        if(mod->idx_callback)
+        {
+            luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_callback);
+            mod->idx_callback = 0;
+        }
+    }
 }
 
 static int method_ca_set_pnr(module_data_t *mod)

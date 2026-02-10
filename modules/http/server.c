@@ -27,6 +27,10 @@
  *      port         - number, server port
  *      server_name  - string, default value: "Astra"
  *      http_version - string, default value: "HTTP/1.1"
+ *      request_line_max   - number, max request line bytes (default: 4096)
+ *      headers_max        - number, max headers bytes (default: 12288)
+ *      header_max         - number, max single header line bytes (default: 4096)
+ *      content_length_max - number, max request body bytes (default: 8388608)
  *      sctp         - boolean, use sctp instead of tcp
  *      route        - list, format: { { "/path", callback }, ... }
  *
@@ -57,6 +61,10 @@ struct module_data_t
     int port;
     const char *server_name;
     const char *http_version;
+    int request_line_max;
+    int headers_max;
+    int header_max;
+    int content_length_max;
 
     asc_list_t *routes;
 
@@ -82,6 +90,22 @@ static const char __message[] = "message";
 static const char __content_length[] = "Content-Length: ";
 static const char __connection_close[] = "Connection: close";
 
+static size_t find_line_end(const char *buf, size_t size)
+{
+    for(size_t i = 0; i < size; ++i)
+    {
+        if(buf[i] == '\n')
+            return i + 1;
+        if(buf[i] == '\r')
+        {
+            if(i + 1 < size && buf[i + 1] == '\n')
+                return i + 2;
+            return 0;
+        }
+    }
+    return 0;
+}
+
 /*
  *   oooooooo8 ooooo       ooooo ooooooooooo oooo   oooo ooooooooooo
  * o888     88  888         888   888    88   8888o  88  88  888  88
@@ -93,6 +117,7 @@ static const char __connection_close[] = "Connection: close";
 
 static void callback(http_client_t *client)
 {
+    module_data_t *mod = client->mod;
     lua_rawgeti(lua, LUA_REGISTRYINDEX, client->idx_callback);
     lua_rawgeti(lua, LUA_REGISTRYINDEX, client->mod->idx_self);
     lua_pushlightuserdata(lua, client);
@@ -100,7 +125,14 @@ static void callback(http_client_t *client)
         lua_rawgeti(lua, LUA_REGISTRYINDEX, client->idx_request);
     else
         lua_pushnil(lua);
-    lua_call(lua, 3, 0);
+    if(lua_pcall(lua, 3, 0, 0) != 0)
+    {
+        const char *err = lua_tostring(lua, -1);
+        asc_log_error(MSG("route callback failed: %s"), err ? err : "unknown error");
+        lua_pop(lua, 1);
+        if(client->sock)
+            http_client_abort(client, 500, "handler error");
+    }
 }
 
 static void on_client_close(void *arg)
@@ -216,6 +248,34 @@ static void on_client_read(void *arg)
 
     if(client->status == 0)
     {
+        if(mod->request_line_max > 0)
+        {
+            const size_t line_end = find_line_end(client->buffer, client->buffer_skip);
+            if(line_end == 0 && client->buffer_skip > (size_t)mod->request_line_max)
+            {
+                http_client_abort(client, 414, "request line too long");
+                return;
+            }
+            if(line_end > 0 && line_end > (size_t)mod->request_line_max)
+            {
+                http_client_abort(client, 414, "request line too long");
+                return;
+            }
+        }
+        if(mod->headers_max > 0)
+        {
+            size_t total_max = (size_t)mod->headers_max;
+            if(mod->request_line_max > 0)
+                total_max += (size_t)mod->request_line_max;
+            if(total_max > HTTP_BUFFER_SIZE)
+                total_max = HTTP_BUFFER_SIZE;
+            if(client->buffer_skip > total_max)
+            {
+                http_client_abort(client, 431, "request headers too large");
+                return;
+            }
+        }
+
         // check empty line
         while(skip < client->buffer_skip)
         {
@@ -238,6 +298,16 @@ static void on_client_read(void *arg)
     if(client->status == 1)
     {
         parse_match_t m[4];
+
+        if(mod->headers_max > 0)
+        {
+            const size_t line_end = find_line_end(client->buffer, eoh);
+            if(line_end > 0 && (eoh - line_end) > (size_t)mod->headers_max)
+            {
+                http_client_abort(client, 431, "request headers too large");
+                return;
+            }
+        }
 
         skip = 0;
 
@@ -357,6 +427,12 @@ static void on_client_read(void *arg)
                 return;
             }
 
+            if(mod->header_max > 0 && m[0].eo > (size_t)mod->header_max)
+            {
+                http_client_abort(client, 431, "header too long");
+                return;
+            }
+
             if(m[1].eo == 0)
             { /* empty line */
                 skip += m[0].eo;
@@ -383,6 +459,12 @@ static void on_client_read(void *arg)
             client->chunk_left = lua_tonumber(lua, -1);
             if(client->chunk_left > 0)
             {
+                if(mod->content_length_max > 0 && client->chunk_left > (size_t)mod->content_length_max)
+                {
+                    lua_pop(lua, 1); // content-length
+                    http_client_abort(client, 413, "payload too large");
+                    return;
+                }
                 if(client->content)
                     string_buffer_free(client->content);
                 client->content = string_buffer_alloc();
@@ -957,6 +1039,32 @@ static void module_init(module_data_t *mod)
 
     mod->http_version = "HTTP/1.1";
     module_option_string("http_version", &mod->http_version, NULL);
+
+    mod->request_line_max = 4096;
+    module_option_number("request_line_max", &mod->request_line_max);
+    if(mod->request_line_max <= 0)
+        mod->request_line_max = 4096;
+    if(mod->request_line_max > HTTP_BUFFER_SIZE)
+        mod->request_line_max = HTTP_BUFFER_SIZE;
+
+    mod->headers_max = 12288;
+    module_option_number("headers_max", &mod->headers_max);
+    if(mod->headers_max <= 0)
+        mod->headers_max = 12288;
+    if(mod->headers_max > HTTP_BUFFER_SIZE)
+        mod->headers_max = HTTP_BUFFER_SIZE;
+
+    mod->header_max = 4096;
+    module_option_number("header_max", &mod->header_max);
+    if(mod->header_max <= 0)
+        mod->header_max = 4096;
+    if(mod->header_max > HTTP_BUFFER_SIZE)
+        mod->header_max = HTTP_BUFFER_SIZE;
+
+    mod->content_length_max = 8 * 1024 * 1024;
+    module_option_number("content_length_max", &mod->content_length_max);
+    if(mod->content_length_max <= 0)
+        mod->content_length_max = 8 * 1024 * 1024;
 
     // store routes in registry
     mod->routes = asc_list_init();
