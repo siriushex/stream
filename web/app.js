@@ -7440,6 +7440,9 @@ function applyStreamTranscodePreset(key) {
   const preset = TRANSCODE_PRESETS[key];
   if (!preset) return;
 
+  if (elements.streamTranscodePreset) {
+    elements.streamTranscodePreset.value = String(key || '').trim();
+  }
   if (elements.streamTranscodeEnabled) {
     elements.streamTranscodeEnabled.checked = true;
     setTranscodeMode(true);
@@ -14527,12 +14530,15 @@ function openEditor(stream, isNew) {
     updateTranscodeLadderToggle();
 
     // Make "Enable Transcode" behave like a one-click action:
-    // if the stream has transcoding enabled but no ladder profiles, auto-generate a default ladder
+    // if the stream has transcoding enabled but no ladder profiles, apply a safe default profile
     // so the pipeline actually produces output and OUTPUT LIST can configure publish targets.
     if (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked) {
       const hasProfiles = Array.isArray(tc.profiles) && tc.profiles.length > 0;
       if (!hasProfiles) {
-        applyTranscodeLadderPreset('3');
+        if (elements.streamTranscodePreset) {
+          elements.streamTranscodePreset.value = 'cpu_720p';
+        }
+        applyStreamTranscodePreset('cpu_720p');
       } else if (elements.streamTranscodePublishJson) {
         const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
         if (!rawPublish) {
