@@ -723,10 +723,10 @@ function preview.start(stream_id, opts)
         return nil, "stream not found", 404
     end
 
-    -- Transcode streams already have an encoded output. For preview we must not launch
-    -- another ffmpeg transcoder. Use published HLS when available, otherwise create a
-    -- lightweight (remux-only) HLS preview from the transcode output bus.
-    if stream.kind == "transcode" and stream.job then
+    -- Streams with an active transcode job already have an encoded output. For preview we must not launch
+    -- another ffmpeg transcoder. Use published HLS when available, otherwise create a lightweight
+    -- (remux-only) HLS preview from the transcode output bus.
+    if stream.job then
         local job = stream.job
 
         -- Never spawn preview ffmpeg for transcode streams, even if UI requested a fallback profile.

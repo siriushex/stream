@@ -1741,50 +1741,43 @@ function main()
             return nil
         end
         local channel = entry.channel
+
+        -- /play is "stream output". If a transcode job exists (even for regular streams with a base channel),
+        -- prefer its encoded output over the raw channel output.
+        local job = entry.job
+        if not job and transcode and transcode.jobs then
+            job = transcode.jobs[stream_id]
+        end
         local transcode_upstream = nil
-        if not channel and entry.job then
-            local job = entry.job
+        if job then
             if job.ladder_enabled == true then
                 local first = job.profiles and job.profiles[1] or nil
                 local pid = first and first.id or nil
                 local bus = pid and job.profile_buses and job.profile_buses[pid] or nil
                 if bus and bus.switch then
                     transcode_upstream = bus.switch:stream()
-                else
-                    server:send(client, {
-                        code = 503,
-                        headers = {
-                            "Content-Type: text/plain",
-                            "Cache-Control: no-store",
-                            "Pragma: no-cache",
-                            "Retry-After: 1",
-                            "Connection: close",
-                        },
-                        content = "transcode ladder output not ready",
-                    })
-                    return nil
                 end
             elseif job.process_per_output == true then
                 local worker = job.workers and job.workers[1] or nil
                 if worker and worker.proxy_enabled == true and worker.proxy_switch then
                     transcode_upstream = worker.proxy_switch:stream()
-                else
-                    server:send(client, {
-                        code = 503,
-                        headers = {
-                            "Content-Type: text/plain",
-                            "Cache-Control: no-store",
-                            "Pragma: no-cache",
-                            "Retry-After: 1",
-                            "Connection: close",
-                        },
-                        content = "transcode output not ready (enable per-output + udp proxy)",
-                    })
-                    return nil
                 end
+            end
+
+            if transcode_upstream then
+                channel = nil
             else
-                -- Legacy single-process transcode does not expose a stable internal bus for /play.
-                server:abort(client, 404)
+                server:send(client, {
+                    code = 503,
+                    headers = {
+                        "Content-Type: text/plain",
+                        "Cache-Control: no-store",
+                        "Pragma: no-cache",
+                        "Retry-After: 1",
+                        "Connection: close",
+                    },
+                    content = "transcode output not ready",
+                })
                 return nil
             end
         end
