@@ -1643,28 +1643,8 @@
                 </div>
               </div>
             </div>
-            <div class="form-grid">
-              <label class="field span-6">
-                <span>Preset</span>
-                <select id="stream-transcode-preset" disabled>
-                  <option value="">Custom</option>
-                  <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
-                  <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
-                  <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
-                  <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
-                  <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
-                  <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
-                  <option value="nvidia_ladder_2">NVIDIA 2 profiles (720+540)</option>
-                  <option value="nvidia_ladder_3">NVIDIA 3 profiles (720+540+360)</option>
-                </select>
-              </label>
-              <div class="field span-6">
-                <span>Apply</span>
-                <button class="btn ghost" type="button" id="stream-transcode-preset-apply" disabled>Apply</button>
-              </div>
-            </div>
             <div class="form-hint">
-              Ultra-minimal: enable transcoding, apply a preset, then configure publish outputs in the OUTPUT LIST.
+              Ultra-minimal: enable transcoding, then select a preset on the Transcode tab. Publish outputs are configured in the OUTPUT LIST.
             </div>
           </div>
 
@@ -2194,7 +2174,29 @@
           </div>
         </div>
         <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
-          <div class="form-hint">Enable transcoding and apply presets on the General tab. Advanced options are below.</div>
+          <div class="form-subsection">
+            <div class="form-grid">
+              <label class="field span-6">
+                <span>Preset</span>
+                <select id="stream-transcode-preset" disabled>
+                  <option value="">Custom</option>
+                  <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
+                  <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
+                  <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
+                  <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
+                  <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
+                  <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
+                  <option value="nvidia_ladder_2">NVIDIA 2 profiles (720+540)</option>
+                  <option value="nvidia_ladder_3">NVIDIA 3 profiles (720+540+360)</option>
+                </select>
+              </label>
+              <div class="field span-6">
+                <span>Apply</span>
+                <button class="btn ghost" type="button" id="stream-transcode-preset-apply" disabled>Apply</button>
+              </div>
+            </div>
+            <div class="form-hint">Apply preset overwrites transcoding profiles. Publish outputs are configured in the OUTPUT LIST (General tab).</div>
+          </div>
           <details class="fold">
             <summary class="fold-summary">Advanced</summary>
             <div class="fold-body">
