@@ -6139,7 +6139,14 @@ async function syncStreamsSilently() {
 
 function isTranscodeStream(stream) {
   const typeValue = String(stream && stream.config && stream.config.type || '').toLowerCase();
-  return typeValue === 'transcode' || typeValue === 'ffmpeg';
+  if (typeValue === 'transcode' || typeValue === 'ffmpeg') {
+    return true;
+  }
+  const tc = stream && stream.config && stream.config.transcode;
+  if (tc && typeof tc === 'object' && tc.enabled === true) {
+    return true;
+  }
+  return false;
 }
 
 function normalizeOutputList(outputs) {
@@ -6185,9 +6192,29 @@ function outputFormatLabel(format) {
 
 function getOutputSummary(stream) {
   if (!stream || !stream.config) return '-';
-  const outputs = isTranscodeStream(stream)
-    ? normalizeOutputList(stream.config.transcode && stream.config.transcode.outputs)
-    : normalizeOutputList(stream.config.output);
+  const tc = stream.config.transcode;
+  const tcEnabled = tc && typeof tc === 'object' && tc.enabled === true;
+  const publish = tcEnabled ? normalizeOutputList(tc && tc.publish) : [];
+  if (tcEnabled && publish.length) {
+    const labels = [];
+    publish.forEach((entry) => {
+      const t = String(entry && entry.type || '').toLowerCase();
+      const label = {
+        'hls': 'HLS',
+        'dash': 'DASH',
+        'http-ts': 'HTTP-TS',
+        'embed': 'EMBED',
+        'udp': 'UDP',
+        'rtp': 'RTP',
+        'rtmp': 'RTMP',
+        'rtsp': 'RTSP',
+      }[t] || (t ? t.toUpperCase() : '');
+      if (label && !labels.includes(label)) labels.push(label);
+    });
+    return labels.length ? labels.join(' / ') : '-';
+  }
+
+  const outputs = normalizeOutputList(stream.config.output);
   if (!outputs.length) return '-';
   const labels = [];
   outputs.forEach((entry) => {
@@ -23788,32 +23815,81 @@ function bindEvents() {
       const enabled = elements.streamTranscodeEnabled.checked;
       setTranscodeMode(enabled);
       updateTranscodeGeneralControls();
-      if (enabled) {
-        // Ladder is the default/expected mode for transcoding.
-        // Auto-enable it and apply sane defaults so "Enable Transcode" actually starts producing output.
-        if (elements.streamTranscodeLadderEnabled) {
-          elements.streamTranscodeLadderEnabled.checked = true;
-        }
-        updateTranscodeLadderToggle();
+      if (!enabled) {
+        renderOutputList();
+        return;
+      }
 
-        const rawProfiles = String(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value || '').trim();
-        if (!rawProfiles) {
-          applyTranscodeLadderPreset('3');
-          return;
-        }
+      // Ladder is the default/expected mode for transcoding.
+      if (elements.streamTranscodeLadderEnabled) {
+        elements.streamTranscodeLadderEnabled.checked = true;
+      }
+      updateTranscodeLadderToggle();
 
-        // If profiles exist but publish is empty, default to HLS ON + DASH OFF for all variants.
-        if (elements.streamTranscodePublishJson) {
-          const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
-          if (!rawPublish) {
-            const publish = getLadderPresetPublish('3');
-            elements.streamTranscodePublishJson.value = formatJson(publish);
+      const ensurePublishFromLegacyOutputs = () => {
+        if (!elements.streamTranscodePublishJson) return false;
+        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
+        if (rawPublish) return false;
+        if (!Array.isArray(state.outputs) || state.outputs.length === 0) return false;
+
+        const publish = getLadderPresetPublish('3');
+        const firstProfile = getEditingProfileIds()[0] || 'HDHigh';
+
+        state.outputs.forEach((out) => {
+          const presetKey = getLegacyOutputPreset(out);
+          const outEnabled = !(out && out.enabled === false);
+          if (presetKey === 'hls_local') {
+            const entry = publish.find((e) => e && e.type === 'hls');
+            if (entry) entry.enabled = outEnabled;
+            return;
+          }
+          if (presetKey === 'http_ts_local') {
+            const entry = publish.find((e) => e && e.type === 'http-ts');
+            if (entry) entry.enabled = outEnabled;
+            return;
+          }
+          if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
+            const proto = presetKey === 'rtp_multicast' ? 'rtp' : 'udp';
+            const url = formatUdpUrl(proto, out);
+            if (!url) return;
+            publish.push({
+              type: proto,
+              enabled: outEnabled,
+              variants: [firstProfile],
+              url,
+            });
+          }
+        });
+
+        elements.streamTranscodePublishJson.value = formatJson(publish);
+        return true;
+      };
+
+      const rawProfiles = String(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value || '').trim();
+      if (!rawProfiles) {
+        // Ultra-minimal default: apply preset on first enable to create profiles + publish.
+        ensurePublishFromLegacyOutputs();
+        let presetKey = elements.streamTranscodePreset ? String(elements.streamTranscodePreset.value || '').trim() : '';
+        if (!presetKey) {
+          presetKey = 'cpu_720p';
+          if (elements.streamTranscodePreset) {
+            elements.streamTranscodePreset.value = presetKey;
           }
         }
-        renderOutputList();
-      } else {
-        renderOutputList();
+        applyStreamTranscodePreset(presetKey);
+        return;
       }
+
+      // If profiles exist but publish is empty, default to HLS ON + HTTP-TS ON for all variants.
+      if (elements.streamTranscodePublishJson) {
+        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
+        if (!rawPublish) {
+          if (!ensurePublishFromLegacyOutputs()) {
+            elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
+          }
+        }
+      }
+      renderOutputList();
     });
   }
   if (elements.streamBackupType) {
