@@ -12,6 +12,7 @@ EnvironmentFile=-/etc/default/astra
 ExecStart=/opt/astra/astra scripts/server.lua --config ${ASTRA_CONFIG} -p ${ASTRA_HTTP_PORT} --data-dir ${ASTRA_DATA_DIR} --web-dir ${ASTRA_WEB_DIR} ${ASTRA_EXTRA_ARGS}
 Restart=on-failure
 RestartSec=2
+RestartPreventExitStatus=78
 LimitNOFILE=65536
 
 [Install]

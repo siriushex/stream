@@ -183,6 +183,7 @@ const state = {
   outputs: [],
   outputEditingIndex: null,
   outputEditingKind: 'legacy',
+  outputInlineDraft: null,
   transcodeOutputs: [],
   transcodeOutputEditingIndex: null,
   transcodeOutputMonitorIndex: null,
@@ -196,6 +197,10 @@ const state = {
   mptsCa: [],
   inputEditingIndex: null,
   inputExtras: {},
+  inputRawDebounce: null,
+  inputRawParseDebounce: null,
+  inputRawSyncing: false,
+  inputQualityPresetApplying: false,
   settingsSection: 'general',
   licenseLoaded: false,
   configRevisions: [],
@@ -257,6 +262,17 @@ const state = {
   accessLogTimer: null,
   logTimer: null,
   observabilityTimer: null,
+  systemMetricsSnapshot: null,
+  systemMetricsIface: '',
+  systemMetricsLastFetchMs: 0,
+  systemMetricsInFlight: false,
+  systemMetricsFlags: null,
+  systemMetricsTimeseries: null,
+  systemMetricsTimeseriesLastFetchMs: 0,
+  systemMetricsTimeseriesInFlight: false,
+  observabilityLastItems: null,
+  observabilityLastScope: 'global',
+  observabilityLastStreamId: '',
   logCursor: 0,
   logEntries: [],
   logLevelFilter: 'all',
@@ -484,8 +500,20 @@ const elements = {
   observabilityStreamField: $('#obs-stream-field'),
   observabilityRefresh: $('#obs-refresh'),
   observabilitySummary: $('#obs-summary'),
+  observabilityChartsBlock: $('#obs-charts'),
+  observabilityLogsBlock: $('#obs-errors'),
   observabilityEmpty: $('#obs-empty'),
   observabilityHint: $('#obs-hint'),
+  observabilitySystem: $('#obs-system'),
+  observabilitySystemCards: $('#obs-system-cards'),
+  observabilitySystemTimeseries: $('#obs-system-timeseries'),
+  observabilitySystemTimeseriesHint: $('#obs-system-timeseries-hint'),
+  observabilitySystemTimeseriesCharts: $('#obs-system-timeseries-charts'),
+  observabilitySystemChartCpu: $('#obs-sys-chart-cpu'),
+  observabilitySystemChartMem: $('#obs-sys-chart-mem'),
+  observabilitySystemChartDisk: $('#obs-sys-chart-disk'),
+  observabilitySystemChartNet: $('#obs-sys-chart-net'),
+  observabilityNetIface: $('#obs-net-iface'),
   observabilityChartBitrate: $('#obs-chart-bitrate'),
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
@@ -787,6 +815,10 @@ const elements = {
   settingsObservabilityMetricsDays: $('#settings-observability-metrics-days'),
   settingsObservabilityRollup: $('#settings-observability-rollup'),
   settingsObservabilityOnDemand: $('#settings-observability-on-demand'),
+  settingsSystemMetricsRollupEnabled: $('#settings-system-metrics-rollup-enabled'),
+  settingsSystemMetricsRollupInterval: $('#settings-system-metrics-rollup-interval'),
+  settingsSystemMetricsRetention: $('#settings-system-metrics-retention'),
+  settingsSystemMetricsIncludeVirtual: $('#settings-system-metrics-include-virtual'),
   settingsTelegramEnabled: $('#settings-telegram-enabled'),
   settingsTelegramLevel: $('#settings-telegram-level'),
   settingsTelegramToken: $('#settings-telegram-token'),
@@ -999,6 +1031,7 @@ const elements = {
   streamOnPublish: $('#stream-on-publish'),
   streamSessionKeys: $('#stream-session-keys'),
   streamTranscodeStatusPill: $('#stream-transcode-status-pill'),
+  streamTranscodeModeHint: $('#stream-transcode-mode-hint'),
   streamTranscodeEngine: $('#stream-transcode-engine'),
   streamTranscodeGpuDevice: $('#stream-transcode-gpu-device'),
   streamTranscodeFfmpegPath: $('#stream-transcode-ffmpeg-path'),
@@ -1009,8 +1042,6 @@ const elements = {
   streamTranscodeLadderEnabled: $('#stream-transcode-ladder-enabled'),
   streamTranscodeLadderBlock: $('#stream-transcode-ladder-block'),
   streamTranscodeOutputsBlock: $('#stream-transcode-outputs-block'),
-  streamTranscodeLadderPreset2: $('#stream-transcode-ladder-preset-2'),
-  streamTranscodeLadderPreset3: $('#stream-transcode-ladder-preset-3'),
   streamTranscodeProfilesJson: $('#stream-transcode-profiles-json'),
   streamTranscodePublishHlsEnabled: $('#stream-transcode-publish-hls-enabled'),
   streamTranscodePublishHlsVariants: $('#stream-transcode-publish-hls-variants'),
@@ -1141,6 +1172,7 @@ const elements = {
   mptsBulkServiceType: $('#mpts-bulk-service-type'),
   btnMptsBulkApply: $('#btn-mpts-bulk-apply'),
   btnAddOutput: $('#btn-add-output'),
+  btnAddOutputInline: $('#btn-add-output-inline'),
   btnApplyStream: $('#btn-apply'),
   btnDelete: $('#btn-delete'),
   btnClone: $('#btn-clone'),
@@ -1271,6 +1303,8 @@ const elements = {
   inputClose: $('#input-close'),
   inputCancel: $('#input-cancel'),
   inputType: $('#input-type'),
+  inputRaw: $('#input-raw'),
+  inputRawError: $('#input-raw-error'),
   inputDvbId: $('#input-dvb-id'),
   inputUdpIface: $('#input-udp-iface'),
   inputUdpAddr: $('#input-udp-addr'),
@@ -1337,14 +1371,34 @@ const elements = {
   inputMap: $('#input-map'),
   inputFilter: $('#input-filter'),
   inputFilterNot: $('#input-filter-not'),
+  inputCcLimitEnabled: $('#input-cc-limit-enabled'),
   inputCcLimit: $('#input-cc-limit'),
   inputBitrateLimit: $('#input-bitrate-limit'),
+  inputQualityPreset: $('#input-quality-preset'),
+  inputNoAudioEnabled: $('#input-no-audio-enabled'),
+  inputNoAudioTimeout: $('#input-no-audio-timeout'),
+  inputStopVideoEnabled: $('#input-stop-video-enabled'),
+  inputStopVideoMode: $('#input-stop-video-mode'),
+  inputStopVideoTimeout: $('#input-stop-video-timeout'),
+  inputStopVideoFreeze: $('#input-stop-video-freeze'),
+  inputDetectAvEnabled: $('#input-detect-av-enabled'),
+  inputDetectAvThreshold: $('#input-detect-av-threshold'),
+  inputDetectAvHold: $('#input-detect-av-hold'),
+  inputDetectAvStable: $('#input-detect-av-stable'),
+  inputDetectAvResend: $('#input-detect-av-resend'),
+  inputSilenceEnabled: $('#input-silence-enabled'),
+  inputSilenceDuration: $('#input-silence-duration'),
+  inputSilenceInterval: $('#input-silence-interval'),
+  inputSilenceNoise: $('#input-silence-noise'),
+  inputDetectorsError: $('#input-detectors-error'),
+  inputDetectorsFold: $('#input-detectors-fold'),
   inputCam: $('#input-cam'),
   inputCas: $('#input-cas'),
   inputPassSdt: $('#input-pass-sdt'),
   inputPassEit: $('#input-pass-eit'),
   inputNoReload: $('#input-no-reload'),
   inputNoAnalyze: $('#input-no-analyze'),
+  inputSave: $('#input-save'),
   adapterList: $('#adapter-list'),
   adapterListEmpty: $('#adapter-list-empty'),
   adapterEditor: $('#adapter-editor'),
@@ -1408,6 +1462,8 @@ const elements = {
   analyzeCc: $('#analyze-cc'),
   analyzePes: $('#analyze-pes'),
   dashboardNotice: $('#dashboard-notice'),
+  dashboardSystem: $('#dashboard-system'),
+  dashboardSystemCards: $('#dashboard-system-cards'),
   playerOverlay: $('#player-overlay'),
   playerVideo: $('#player-video'),
   playerClose: $('#player-close'),
@@ -2081,6 +2137,74 @@ const SETTINGS_GENERAL_SECTIONS = [
             ? '—'
             : formatSeconds(readNumberValue('settings-observability-rollup', 60));
           return `Включено · Logs: ${formatDays(logs)} · Metrics: ${metrics} · Rollup: ${rollup}`;
+        },
+      },
+      {
+        id: 'observability-system-metrics',
+        title: 'Server metrics',
+        description: 'CPU/MEM/Disk/Network. Очень дёшево: /proc + statvfs, без ffprobe.',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-system-metrics-rollup-enabled',
+            label: 'Collect server history (rollup)',
+            type: 'switch',
+            key: 'observability_system_rollup_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-system-metrics-rollup-interval',
+            label: 'Rollup interval (sec)',
+            type: 'select',
+            key: 'observability_system_rollup_interval_sec',
+            level: 'advanced',
+            options: [
+              { value: '10', label: '10' },
+              { value: '30', label: '30' },
+              { value: '60', label: '60' },
+              { value: '300', label: '300' },
+              { value: '600', label: '600' },
+              { value: '3600', label: '3600' },
+            ],
+            dependsOn: { id: 'settings-system-metrics-rollup-enabled', value: true },
+          },
+          {
+            id: 'settings-system-metrics-retention',
+            label: 'Retention',
+            type: 'select',
+            key: 'observability_system_retention_sec',
+            level: 'advanced',
+            options: [
+              { value: '0', label: '0 (disabled)' },
+              { value: '600', label: '10 min' },
+              { value: '3600', label: '1 hour' },
+              { value: '21600', label: '6 hours' },
+              { value: '86400', label: '24 hours' },
+            ],
+            dependsOn: { id: 'settings-system-metrics-rollup-enabled', value: true },
+          },
+          {
+            id: 'settings-system-metrics-include-virtual',
+            label: 'Include virtual interfaces (lo/docker/veth)',
+            type: 'switch',
+            key: 'observability_system_include_virtual_ifaces',
+            level: 'advanced',
+            dependsOn: { id: 'settings-system-metrics-rollup-enabled', value: true },
+          },
+          {
+            type: 'note',
+            text: 'История хранится в памяти (ring buffer). Вкладка Observability может показать графики только если rollup включён.',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const enabled = readBoolValue('settings-system-metrics-rollup-enabled', false);
+          if (!enabled) return 'Выключено';
+          const interval = readNumberValue('settings-system-metrics-rollup-interval', 60);
+          const retention = readNumberValue('settings-system-metrics-retention', 3600);
+          const virt = readBoolValue('settings-system-metrics-include-virtual', false);
+          return `Включено · Interval: ${formatSeconds(interval)} · Retention: ${formatSeconds(retention)} · Virtual ifaces: ${formatOnOff(virt)}`;
         },
       },
       {
@@ -3427,6 +3551,10 @@ function bindGeneralElements() {
     settingsObservabilityMetricsDays: 'settings-observability-metrics-days',
     settingsObservabilityRollup: 'settings-observability-rollup',
     settingsObservabilityOnDemand: 'settings-observability-on-demand',
+    settingsSystemMetricsRollupEnabled: 'settings-system-metrics-rollup-enabled',
+    settingsSystemMetricsRollupInterval: 'settings-system-metrics-rollup-interval',
+    settingsSystemMetricsRetention: 'settings-system-metrics-retention',
+    settingsSystemMetricsIncludeVirtual: 'settings-system-metrics-include-virtual',
     settingsWatchdogEnabled: 'settings-watchdog-enabled',
     settingsWatchdogCpu: 'settings-watchdog-cpu',
     settingsWatchdogRssMb: 'settings-watchdog-rss-mb',
@@ -5437,6 +5565,7 @@ function setThemeMode(mode, opts) {
   }
   applyThemeMode(next);
   updateViewMenuSelection();
+  scheduleChartRedraw();
 }
 
 function cycleViewMode() {
@@ -5749,6 +5878,30 @@ function parseJsonArray(text, label) {
   return parsed;
 }
 
+function hasNonEmptyJsonArray(text, label) {
+  const raw = String(text || '').trim();
+  if (!raw) return false;
+  try {
+    const parsed = parseJsonArray(raw, label);
+    return parsed.length > 0;
+  } catch (_err) {
+    // Invalid JSON: treat as "non-empty" so we don't auto-overwrite user data.
+    return true;
+  }
+}
+
+function isMissingOrEmptyJsonArray(text, label) {
+  const raw = String(text || '').trim();
+  if (!raw) return true;
+  try {
+    const parsed = parseJsonArray(raw, label);
+    return parsed.length === 0;
+  } catch (_err) {
+    // Invalid JSON: do not treat as empty.
+    return false;
+  }
+}
+
 function setTranscodeMode(enabled) {
   if (!elements.streamForm) return;
   elements.streamForm.classList.toggle('is-transcode', enabled);
@@ -5762,6 +5915,33 @@ function updateTranscodeGeneralControls() {
   if (elements.streamTranscodePresetApply) {
     elements.streamTranscodePresetApply.disabled = !enabled;
   }
+}
+
+function updateTranscodeModeHint() {
+  if (!elements.streamTranscodeModeHint) return;
+
+  const transcodeEnabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+  if (!transcodeEnabled) {
+    elements.streamTranscodeModeHint.textContent = 'Enable transcoding to configure profiles and publish outputs.';
+    return;
+  }
+
+  const ladderEnabled = Boolean(elements.streamTranscodeLadderEnabled && elements.streamTranscodeLadderEnabled.checked);
+  if (!ladderEnabled) {
+    elements.streamTranscodeModeHint.textContent = 'Mode: legacy outputs (no profiles). OUTPUT LIST edits legacy outputs.';
+    return;
+  }
+
+  const count = Array.isArray(state.transcodeProfiles) ? state.transcodeProfiles.length : 0;
+  if (count <= 0) {
+    elements.streamTranscodeModeHint.textContent = 'Mode: profiles pipeline (no profiles yet). Apply a preset to create profiles. Outputs are configured in the OUTPUT LIST (General tab).';
+    return;
+  }
+  if (count === 1) {
+    elements.streamTranscodeModeHint.textContent = 'Mode: single profile (1 variant). Outputs are configured in the OUTPUT LIST (General tab).';
+    return;
+  }
+  elements.streamTranscodeModeHint.textContent = `Mode: multi-bitrate ladder (${count} variants). Outputs are configured in the OUTPUT LIST (General tab).`;
 }
 
 function updateStreamBackupFields() {
@@ -6029,11 +6209,12 @@ function buildStreamTile(stream) {
         </div>
         <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
         <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
+        <div class="tile-detectors is-hidden" data-role="tile-detectors" hidden></div>
       </div>
     </div>
     <div class="tile-details" id="${detailsId}">
       <div class="tile-inputs" data-role="tile-inputs"></div>
-      <div class="tile-mpts-meta is-hidden" data-role="tile-mpts-meta">MPTS: -</div>
+      <div class="tile-mpts-meta is-hidden" data-role="tile-mpts-meta" hidden>MPTS: -</div>
     </div>
     <div class="tile-menu">
       <button class="menu-item" data-action="edit">Edit</button>
@@ -6315,7 +6496,6 @@ function defaultHlsOutput(streamId) {
     window: window,
     cleanup: cleanup,
     use_wall: true,
-    auto: true,
   };
 }
 
@@ -7041,23 +7221,6 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
   elements.streamTranscodePublishJson.value = next.length ? formatJson(next) : '';
 }
 
-function applyTranscodeLadderPreset(mode) {
-  if (!elements.streamTranscodeLadderEnabled) return;
-  elements.streamTranscodeLadderEnabled.checked = true;
-  updateTranscodeLadderToggle();
-  const presetProfiles = getLadderPresetProfiles(mode);
-  if (elements.streamTranscodeProfilesJson) {
-    elements.streamTranscodeProfilesJson.value = formatJson(presetProfiles);
-  }
-  state.transcodeProfiles = presetProfiles;
-  renderTranscodeProfileList();
-  if (elements.streamTranscodePublishJson) {
-    elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish(mode));
-  }
-  syncTranscodeLadderPublishCommonUiFromJson();
-  renderOutputList();
-}
-
 function updateTranscodeLadderToggle() {
   if (!elements.streamTranscodeLadderEnabled) return;
   const enabled = elements.streamTranscodeLadderEnabled.checked;
@@ -7084,6 +7247,7 @@ function updateTranscodeLadderToggle() {
     renderTranscodeProfileList();
     renderTranscodePublishTargetList();
   }
+  updateTranscodeModeHint();
 }
 
 function closeTranscodeProfileModal() {
@@ -7486,13 +7650,6 @@ function applyStreamTranscodePreset(key) {
   }
   state.transcodeProfiles = nextProfiles;
   renderTranscodeProfileList();
-
-  if (elements.streamTranscodePublishJson) {
-    const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
-    if (!rawPublish) {
-      elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
-    }
-  }
   renderOutputList();
 }
 
@@ -7812,7 +7969,8 @@ function applyOutputPreset(key) {
     if (mode === 'http') {
       elements.outputHttpHost.value = meta.host || '0.0.0.0';
       elements.outputHttpPort.value = meta.port || 8000;
-      elements.outputHttpPath.value = meta.path || '/stream';
+      const defaultPath = `/live/${slugifyStreamId(elements.streamId ? (elements.streamId.value || 'stream') : 'stream')}`;
+      elements.outputHttpPath.value = meta.path || defaultPath;
       elements.outputHttpBuffer.value = meta.buffer_size || 1024;
       elements.outputHttpBufferFill.value = meta.buffer_fill || 256;
       elements.outputHttpKeep.checked = meta.keep_active === true;
@@ -7849,8 +8007,11 @@ function applyOutputPreset(key) {
 
   if (meta.group === 'udp') {
     const format = meta.format || 'udp';
-    elements.outputUdpAddr.value = meta.addr || '239.0.0.1';
-    elements.outputUdpPort.value = meta.port || 1234;
+    const used = collectAllOutputUrls();
+    const candidate = makeUniqueUdpUrl(format === 'rtp' ? 'rtp' : 'udp', used, meta.addr || '239.0.0.1', meta.port || 1234);
+    const parsed = parseOutputInlineValue(candidate, { format });
+    elements.outputUdpAddr.value = parsed.output && parsed.output.addr ? parsed.output.addr : (meta.addr || '239.0.0.1');
+    elements.outputUdpPort.value = parsed.output && parsed.output.port ? parsed.output.port : (meta.port || 1234);
     elements.outputUdpTtl.value = meta.ttl || 1;
     elements.outputUdpLocal.value = meta.localaddr || '';
     elements.outputUdpSocket.value = meta.socket_size || '';
@@ -8398,7 +8559,8 @@ function parseInputUrl(url) {
   if (!url) return out;
   const parts = url.split('#');
   const base = parts[0];
-  out.options = parseOptionsString(parts[1] || '');
+  const optionString = parts.length > 1 ? parts.slice(1).join('&') : '';
+  out.options = parseOptionsString(optionString);
 
   const schemeIndex = base.indexOf('://');
   if (schemeIndex === -1) return out;
@@ -8540,6 +8702,19 @@ function buildInputUrl(data) {
   addOpt('no_analyze', o.no_analyze);
   addOpt('cc_limit', o.cc_limit);
   addOpt('bitrate_limit', o.bitrate_limit);
+  addOpt('no_audio_on', o.no_audio_on);
+  addOpt('stop_video', o.stop_video);
+  addOpt('stop_video_timeout_sec', o.stop_video_timeout_sec);
+  addOpt('stop_video_freeze_sec', o.stop_video_freeze_sec);
+  addOpt('detect_av', o.detect_av);
+  addOpt('detect_av_threshold_ms', o.detect_av_threshold_ms);
+  addOpt('detect_av_hold_sec', o.detect_av_hold_sec);
+  addOpt('detect_av_stable_sec', o.detect_av_stable_sec);
+  addOpt('detect_av_resend_interval_sec', o.detect_av_resend_interval_sec);
+  addOpt('silencedetect', o.silencedetect);
+  addOpt('silencedetect_duration', o.silencedetect_duration);
+  addOpt('silencedetect_interval', o.silencedetect_interval);
+  addOpt('silencedetect_noise', o.silencedetect_noise);
   addOpt('net_profile', o.net_profile);
   addOpt('ua', o.ua);
   addOpt('timeout', o.timeout);
@@ -8585,6 +8760,22 @@ function buildInputUrl(data) {
       'no_analyze',
       'cc_limit',
       'bitrate_limit',
+      'no_audio_on',
+      'stop_video',
+      'stop_video_timeout_sec',
+      'stop_video_freeze_sec',
+      'detect_av',
+      'detect_av_threshold_ms',
+      'detect_av_hold_sec',
+      'detect_av_stable_sec',
+      'detect_av_resend_interval_sec',
+      'silencedetect',
+      'silencedetect_duration',
+      'silencedetect_interval',
+      'silencedetect_noise',
+      'silence_duration',
+      'silence_interval',
+      'silence_noise',
       'net_profile',
       'ua',
       'timeout',
@@ -8622,11 +8813,15 @@ function buildInputUrl(data) {
 }
 
 function isEditingLadderTranscodeStream() {
-  // Ladder/publish is the default mode for transcoding in Astral.
-  // Treat any enabled transcoding stream as "ladder mode" from the UI perspective,
-  // so OUTPUT LIST always configures publish targets (no legacy transcode outputs UI).
-  if (!elements.streamTranscodeEnabled) return false;
-  return Boolean(elements.streamTranscodeEnabled.checked);
+  // Ladder/publish mode is enabled when transcoding is enabled AND ladder profiles are configured.
+  // Keep legacy transcode (tc.outputs) compatible: when ladder is not enabled, OUTPUT LIST remains
+  // the legacy Astra output list.
+  if (!elements.streamTranscodeEnabled || !elements.streamTranscodeEnabled.checked) return false;
+  if (elements.streamTranscodeLadderEnabled) return Boolean(elements.streamTranscodeLadderEnabled.checked);
+  return hasNonEmptyJsonArray(
+    elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+    'Profiles (Transcode tab)',
+  );
 }
 
 function parseEditingTranscodePublishJsonSafe() {
@@ -8840,9 +9035,12 @@ function syncOutputModalPublicUrlFromForm() {
 
 function openPublishOutputModal(index) {
   const publish = parseEditingTranscodePublishJsonSafe();
-  const entry = publish[index];
+  const isNew = index === null || index === undefined;
+  const entry = isNew
+    ? { type: 'hls', enabled: true, variants: [], auto_url: true }
+    : publish[index];
   if (!entry) return;
-  state.outputEditingIndex = index;
+  state.outputEditingIndex = isNew ? null : index;
   state.outputEditingKind = 'publish';
 
   if (elements.outputHint) {
@@ -9001,7 +9199,576 @@ function formatLegacyOutputLabel(output, streamId) {
   return `${title} (${enabled}) · ${url || 'n/a'}`;
 }
 
+function normalizeOutputUrlKey(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+  if (!match) return raw;
+  const scheme = match[1].toLowerCase();
+  if (scheme === 'http' || scheme === 'https') {
+    try {
+      const u = new URL(raw);
+      u.protocol = `${scheme}:`;
+      u.hostname = u.hostname.toLowerCase();
+      u.hash = '';
+      u.search = '';
+      u.pathname = u.pathname.replace(/\/$/, '');
+      return u.toString().replace(/\/$/, '');
+    } catch (_err) {
+      return raw.toLowerCase();
+    }
+  }
+  let rest = raw.slice(match[0].length);
+  const slashIdx = rest.indexOf('/');
+  const host = (slashIdx >= 0 ? rest.slice(0, slashIdx) : rest).toLowerCase();
+  const tail = slashIdx >= 0 ? rest.slice(slashIdx) : '';
+  return `${scheme}://${host}${tail}`.replace(/\/$/, '');
+}
+
+function collectAllOutputUrls() {
+  const used = new Set();
+  const add = (value) => {
+    const key = normalizeOutputUrlKey(value);
+    if (key) used.add(key);
+  };
+  const addLegacy = (output, streamId) => {
+    if (!output) return;
+    if (typeof output === 'string') {
+      add(output);
+      return;
+    }
+    const presetKey = getLegacyOutputPreset(output);
+    const url = getLegacyOutputCopyValue(output, presetKey, streamId);
+    if (url) add(url);
+  };
+  const addPublish = (entry, streamId) => {
+    if (!entry) return;
+    const type = String(entry.type || '').toLowerCase();
+    if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
+      if (entry.url) add(entry.url);
+    } else {
+      const url = getPublishOutputPublicUrl(entry, streamId);
+      if (url) add(url);
+    }
+  };
+
+  const streams = Array.isArray(state.streams) ? state.streams : [];
+  streams.forEach((stream) => {
+    if (!stream) return;
+    const streamId = String(stream.id || (stream.config && stream.config.id) || '').trim();
+    const outputs = normalizeOutputList(stream.config && stream.config.output);
+    outputs.forEach((out) => addLegacy(out, streamId));
+    const tc = stream.config && stream.config.transcode;
+    const publish = Array.isArray(tc && tc.publish) ? tc.publish : [];
+    publish.forEach((entry) => addPublish(entry, streamId));
+  });
+
+  const currentId = getEditingStreamIdForPublicUrls();
+  if (Array.isArray(state.outputs)) {
+    state.outputs.forEach((out) => addLegacy(out, currentId));
+  }
+  const publish = parseEditingTranscodePublishJsonSafe();
+  publish.forEach((entry) => addPublish(entry, currentId));
+  return used;
+}
+
+function makeOutputSlug(streamId) {
+  const base = String(streamId || '').trim();
+  if (base) return slugifyStreamId(base);
+  const name = elements.streamName ? String(elements.streamName.value || '').trim() : '';
+  return slugifyStreamId(name || 'stream');
+}
+
+function makeUniquePathUrl(base, prefix, slug, suffix, used) {
+  const baseUrl = String(base || '').replace(/\/$/, '');
+  let attempt = 0;
+  while (attempt < 5000) {
+    const tag = attempt === 0 ? slug : `${slug}-${attempt + 1}`;
+    const url = joinPath(baseUrl, `${prefix}/${tag}${suffix}`);
+    if (!used.has(normalizeOutputUrlKey(url))) return url;
+    attempt += 1;
+  }
+  return joinPath(baseUrl, `${prefix}/${slug}${suffix}`);
+}
+
+function makeUniqueUdpUrl(proto, used, baseAddr, basePort) {
+  const addr = baseAddr || '239.0.0.1';
+  let port = Number(basePort) || 1234;
+  for (let i = 0; i < 5000; i += 1) {
+    const url = `${proto}://${addr}:${port}`;
+    if (!used.has(normalizeOutputUrlKey(url))) return url;
+    port += 1;
+    if (port > 65535) port = 1024;
+  }
+  return `${proto}://${addr}:${basePort || 1234}`;
+}
+
+function generateUniqueOutputUrl(kind, type, streamId, used) {
+  const slug = makeOutputSlug(streamId);
+  const usedSet = used || collectAllOutputUrls();
+  const t = String(type || '').toLowerCase();
+  if (kind === 'publish') {
+    if (t === 'hls') return makeUniquePathUrl(getPublicBaseUrlForKind('hls'), '/hls', slug, '/index.m3u8', usedSet);
+    if (t === 'dash') return makeUniquePathUrl(getPublicBaseUrlForKind('dash'), '/dash', slug, '/manifest.mpd', usedSet);
+    if (t === 'http-ts') return makeUniquePathUrl(getPublicBaseUrlForKind('http-ts'), '/live', slug, '', usedSet);
+    if (t === 'embed') return makeUniquePathUrl(getPublicBaseUrlForKind('http'), '/embed', slug, '', usedSet);
+    if (t === 'udp') return makeUniqueUdpUrl('udp', usedSet, '239.0.0.1', 1234);
+    if (t === 'rtp') return makeUniqueUdpUrl('rtp', usedSet, '239.0.0.1', 1234);
+    if (t === 'rtmp') {
+      const base = getPublicBaseUrlForKind('rtmp') || 'rtmp://127.0.0.1';
+      return makeUniquePathUrl(base, '/live', slug, '', usedSet);
+    }
+    if (t === 'rtsp') {
+      const base = getPublicBaseUrlForKind('rtsp') || 'rtsp://127.0.0.1';
+      return makeUniquePathUrl(base, '', slug, '', usedSet);
+    }
+    return '';
+  }
+  if (t === 'hls_local') return makeUniquePathUrl(getPublicBaseUrlForKind('hls'), '/hls', slug, '/index.m3u8', usedSet);
+  if (t === 'http_ts_local') return makeUniquePathUrl(getPublicBaseUrlForKind('http-ts'), '/live', slug, '', usedSet);
+  if (t === 'udp_multicast') return makeUniqueUdpUrl('udp', usedSet, '239.0.0.1', 1234);
+  if (t === 'rtp_multicast') return makeUniqueUdpUrl('rtp', usedSet, '239.0.0.1', 1234);
+  if (t === 'srt_bridge') return 'srt://host:port?mode=caller';
+  if (t === 'file_ts') return '/tmp/stream.ts';
+  if (t === 'custom') return makeUniqueUdpUrl('udp', usedSet, '239.0.0.1', 1234);
+  return '';
+}
+
+function createOutputInlineDraft(kind, streamId) {
+  const type = kind === 'publish' ? 'hls' : 'custom';
+  const used = collectAllOutputUrls();
+  const url = generateUniqueOutputUrl(kind, type, streamId, used);
+  return {
+    kind,
+    enabled: true,
+    type,
+    url,
+    error: '',
+    typeManual: false,
+    autoUrl: true,
+  };
+}
+
+function ensureOutputInlineDraftKind(kind) {
+  if (state.outputInlineDraft && state.outputInlineDraft.kind !== kind) {
+    state.outputInlineDraft = null;
+  }
+}
+
+function getInlineOutputTypeOptions(kind) {
+  if (kind === 'publish') {
+    return [
+      { value: '', label: 'Type' },
+      { value: 'hls', label: 'HLS (local)' },
+      { value: 'dash', label: 'DASH (local)' },
+      { value: 'http-ts', label: 'HTTP-TS (local)' },
+      { value: 'embed', label: 'Embed page' },
+      { value: 'udp', label: 'UDP' },
+      { value: 'rtp', label: 'RTP' },
+      { value: 'rtmp', label: 'RTMP' },
+      { value: 'rtsp', label: 'RTSP' },
+    ];
+  }
+  return [
+    { value: '', label: 'Type' },
+    { value: 'hls_local', label: 'HLS (local)' },
+    { value: 'http_ts_local', label: 'HTTP-TS (local)' },
+    { value: 'udp_multicast', label: 'UDP' },
+    { value: 'rtp_multicast', label: 'RTP' },
+    { value: 'srt_bridge', label: 'SRT' },
+    { value: 'file_ts', label: 'File' },
+    { value: 'custom', label: 'Custom' },
+  ];
+}
+
+function inferInlineLegacyTypeFromUrl(url) {
+  const text = String(url || '').trim().toLowerCase();
+  if (!text) return '';
+  if (text.startsWith('udp://')) return 'udp_multicast';
+  if (text.startsWith('rtp://')) return 'rtp_multicast';
+  if (text.startsWith('srt://')) return 'srt_bridge';
+  if (text.startsWith('file://')) return 'file_ts';
+  if (text.startsWith('http://') || text.startsWith('https://')) {
+    if (text.includes('.m3u8')) return 'hls_local';
+    return 'http_ts_local';
+  }
+  return '';
+}
+
+function inferInlinePublishTypeFromUrl(url) {
+  const text = String(url || '').trim().toLowerCase();
+  if (!text) return '';
+  if (text.startsWith('udp://')) return 'udp';
+  if (text.startsWith('rtp://')) return 'rtp';
+  if (text.startsWith('rtmp://')) return 'rtmp';
+  if (text.startsWith('rtsp://')) return 'rtsp';
+  return '';
+}
+
+function buildLegacyOutputFromPreset(presetKey, streamId) {
+  if (presetKey === 'hls_local') {
+    return defaultHlsOutput(streamId);
+  }
+  if (presetKey === 'http_ts_local') {
+    const meta = getOutputPresetMeta(presetKey) || {};
+    const id = streamId ? String(streamId) : 'stream';
+    const path = `/live/${slugifyStreamId(id)}`;
+    return {
+      format: 'http',
+      host: meta.host || '0.0.0.0',
+      port: meta.port || 8000,
+      path: path,
+      buffer_size: meta.buffer_size || 1024,
+      buffer_fill: meta.buffer_fill || 256,
+      keep_active: meta.keep_active === true,
+    };
+  }
+  const meta = getOutputPresetMeta(presetKey) || {};
+  const output = {};
+  if (meta.format) output.format = meta.format;
+  if (meta.addr) output.addr = meta.addr;
+  if (meta.port) output.port = meta.port;
+  if (meta.ttl) output.ttl = meta.ttl;
+  if (meta.localaddr !== undefined) output.localaddr = meta.localaddr;
+  if (meta.socket_size !== undefined) output.socket_size = meta.socket_size;
+  if (meta.sync !== undefined) output.sync = meta.sync;
+  if (meta.cbr !== undefined) output.cbr = meta.cbr;
+  if (meta.url) output.url = meta.url;
+  if (meta.bridge_port) output.bridge_port = meta.bridge_port;
+  if (meta.filename) output.filename = meta.filename;
+  if (meta.buffer_size) output.buffer_size = meta.buffer_size;
+  if (meta.m2ts !== undefined) output.m2ts = meta.m2ts;
+  if (meta.aio !== undefined) output.aio = meta.aio;
+  if (meta.directio !== undefined) output.directio = meta.directio;
+  return Object.keys(output).length ? output : null;
+}
+
+function validateInlineOutputDraft(draft, streamId) {
+  if (!draft) return { ok: false, error: 'Output is not ready' };
+  const kind = draft.kind;
+  const url = String(draft.url || '').trim();
+  if (url.length > 2048) return { ok: false, error: 'URL is слишком длинный (max 2048)' };
+  if (/\s/.test(url)) return { ok: false, error: 'URL не должен содержать пробелы' };
+
+  if (kind === 'publish') {
+    let type = String(draft.type || '').trim();
+    if (!type && !draft.typeManual) {
+      type = inferInlinePublishTypeFromUrl(url);
+      if (type) draft.type = type;
+    }
+    if (!type) return { ok: false, error: 'Выберите тип выхода' };
+    const entry = { type, enabled: draft.enabled !== false };
+    const isPush = ['udp', 'rtp', 'rtmp', 'rtsp'].includes(type);
+    if (isPush) {
+      if (!url) return { ok: false, error: 'Destination URL обязателен' };
+      const lower = url.toLowerCase();
+      if (!lower.startsWith(`${type}://`)) {
+        return { ok: false, error: `URL должен начинаться с ${type}://` };
+      }
+      if (type === 'udp' || type === 'rtp') {
+        const parsed = parseOutputInlineValue(url, { format: type });
+        if (!parsed.valid || !parsed.output.addr || !parsed.output.port) {
+          return { ok: false, error: 'Неверный UDP/RTP адрес или порт' };
+        }
+      }
+      const profiles = getEditingProfileIds();
+      if (!profiles.length) {
+        return { ok: false, error: 'Нет профилей для публикации' };
+      }
+      entry.variants = [profiles[0]];
+      entry.url = url;
+    } else {
+      if (type === 'hls' || type === 'dash' || type === 'http-ts') {
+        entry.variants = [];
+      }
+      entry.auto_url = true;
+      if (url) {
+        try {
+          entry.auto_url = false;
+          entry.public_url = validatePublishPublicUrl(type, url);
+        } catch (err) {
+          return { ok: false, error: err.message || 'Public URL invalid' };
+        }
+      }
+    }
+    return { ok: true, entry };
+  }
+
+  let presetKey = String(draft.type || '').trim();
+  if (!presetKey) {
+    presetKey = inferInlineLegacyTypeFromUrl(url) || (url ? 'custom' : '');
+    if (presetKey) draft.type = presetKey;
+  }
+  if (!presetKey) return { ok: false, error: 'Выберите тип выхода' };
+
+  const meta = getOutputPresetMeta(presetKey);
+  const requiresUrl = presetKey === 'custom' || (meta && meta.kind === 'push');
+  if (requiresUrl && !url) {
+    return { ok: false, error: 'URL обязателен для выбранного типа' };
+  }
+
+  if (presetKey === 'custom') {
+    if (!hasUrlScheme(url) && !url.startsWith('/')) {
+      return { ok: false, error: 'Custom URL должен содержать схему (scheme://)' };
+    }
+    return { ok: true, output: url };
+  }
+
+  let output = buildLegacyOutputFromPreset(presetKey, streamId);
+  if (!output) return { ok: false, error: 'Unsupported output type' };
+
+  if (url) {
+    if (presetKey === 'hls_local' || presetKey === 'http_ts_local') {
+      try {
+        const kind = presetKey === 'hls_local' ? 'hls' : 'http-ts';
+        output.auto_url = false;
+        output.public_url = validatePublishPublicUrl(kind, url);
+      } catch (err) {
+        return { ok: false, error: err.message || 'Public URL invalid' };
+      }
+    } else if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
+      const parsed = parseOutputInlineValue(url, output);
+      if (!parsed.valid || !parsed.output.addr || !parsed.output.port) {
+        return { ok: false, error: 'Неверный UDP/RTP адрес или порт' };
+      }
+      output = { ...output, ...parsed.output };
+    } else if (presetKey === 'srt_bridge') {
+      if (!url.toLowerCase().startsWith('srt://')) {
+        return { ok: false, error: 'SRT URL должен начинаться с srt://' };
+      }
+      output.url = url;
+    } else if (presetKey === 'file_ts') {
+      output.filename = url;
+    }
+  }
+
+  if (draft.enabled === false) {
+    output.enabled = false;
+  }
+  try {
+    validateOutput(output, 0);
+  } catch (err) {
+    return { ok: false, error: err.message || 'Invalid output' };
+  }
+
+  return { ok: true, output };
+}
+
+function renderOutputInlineRow(container, draft, streamId) {
+  if (!draft) return;
+  const row = document.createElement('div');
+  row.className = 'list-row output-row output-inline-row';
+
+  const idx = document.createElement('div');
+  idx.className = 'list-index';
+  idx.textContent = '+';
+
+  const label = document.createElement('div');
+  label.className = 'list-input';
+
+  const grid = document.createElement('div');
+  grid.className = 'output-inline-grid';
+
+  const toggle = document.createElement('label');
+  toggle.className = 'output-inline-toggle';
+  const toggleInput = document.createElement('input');
+  toggleInput.type = 'checkbox';
+  toggleInput.checked = draft.enabled !== false;
+  const toggleText = document.createElement('span');
+  toggleText.textContent = 'Enabled';
+  toggle.appendChild(toggleInput);
+  toggle.appendChild(toggleText);
+
+  const typeSelect = document.createElement('select');
+  typeSelect.className = 'output-inline-type';
+  getInlineOutputTypeOptions(draft.kind).forEach((opt) => {
+    const option = document.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    typeSelect.appendChild(option);
+  });
+  typeSelect.value = draft.type || '';
+
+  const urlInput = document.createElement('input');
+  urlInput.type = 'text';
+  urlInput.className = 'output-inline output-inline-url';
+  urlInput.value = draft.url || '';
+
+  const error = document.createElement('div');
+  error.className = 'output-inline-error';
+  const resetRow = document.createElement('div');
+  resetRow.className = 'output-inline-reset-row';
+  const resetBtn = document.createElement('button');
+  resetBtn.type = 'button';
+  resetBtn.className = 'output-inline-reset';
+  resetBtn.textContent = 'Reset to auto';
+  resetRow.appendChild(resetBtn);
+
+  const syncPlaceholder = () => {
+    const type = String(draft.type || '').trim();
+    if (draft.kind === 'publish') {
+      if (type === 'udp') urlInput.placeholder = 'udp://239.0.0.1:1234';
+      else if (type === 'rtp') urlInput.placeholder = 'rtp://239.0.0.1:1234';
+      else if (type === 'rtmp') urlInput.placeholder = 'rtmp://host/app/stream';
+      else if (type === 'rtsp') urlInput.placeholder = 'rtsp://host/stream';
+      else if (type === 'hls') urlInput.placeholder = 'auto (HLS public URL)';
+      else if (type === 'dash') urlInput.placeholder = 'auto (DASH public URL)';
+      else if (type === 'http-ts') urlInput.placeholder = 'auto (HTTP-TS public URL)';
+      else if (type === 'embed') urlInput.placeholder = 'auto (Embed URL)';
+      else urlInput.placeholder = 'URL (optional for local)';
+    } else {
+      if (type === 'udp_multicast') urlInput.placeholder = 'udp://239.0.0.1:1234';
+      else if (type === 'rtp_multicast') urlInput.placeholder = 'rtp://239.0.0.1:1234';
+      else if (type === 'srt_bridge') urlInput.placeholder = 'srt://host:port?mode=caller';
+      else if (type === 'file_ts') urlInput.placeholder = '/tmp/stream.ts';
+      else if (type === 'hls_local') urlInput.placeholder = 'auto (HLS public URL)';
+      else if (type === 'http_ts_local') urlInput.placeholder = 'auto (HTTP-TS public URL)';
+      else if (type === 'custom') urlInput.placeholder = 'scheme://host/...';
+      else urlInput.placeholder = 'URL (optional for local)';
+    }
+  };
+
+  const applyAutoUrl = (force) => {
+    if (!force && draft.autoUrl === false) return;
+    const used = collectAllOutputUrls();
+    const next = generateUniqueOutputUrl(draft.kind, draft.type, streamId, used);
+    if (next) {
+      draft.url = next;
+      urlInput.value = next;
+      draft.autoUrl = true;
+    }
+  };
+
+  toggleInput.addEventListener('change', () => {
+    draft.enabled = toggleInput.checked;
+    validate();
+  });
+
+  typeSelect.addEventListener('change', () => {
+    draft.type = typeSelect.value;
+    draft.typeManual = true;
+    draft.autoUrl = true;
+    syncPlaceholder();
+    applyAutoUrl(true);
+    validate();
+  });
+
+  urlInput.addEventListener('input', () => {
+    draft.url = urlInput.value;
+    draft.autoUrl = false;
+    if (!draft.typeManual) {
+      const inferred = draft.kind === 'publish'
+        ? inferInlinePublishTypeFromUrl(draft.url)
+        : inferInlineLegacyTypeFromUrl(draft.url);
+      if (inferred) {
+        draft.type = inferred;
+        typeSelect.value = inferred;
+      }
+    }
+    syncPlaceholder();
+    validate();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    draft.autoUrl = true;
+    applyAutoUrl(true);
+    validate();
+  });
+
+  grid.appendChild(toggle);
+  grid.appendChild(typeSelect);
+  grid.appendChild(urlInput);
+  label.appendChild(grid);
+  label.appendChild(error);
+  label.appendChild(resetRow);
+
+  const actions = document.createElement('div');
+  actions.className = 'output-inline-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'icon-btn';
+  saveBtn.textContent = 'Save';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.className = 'icon-btn';
+  cancelBtn.textContent = 'Cancel';
+
+  const moreBtn = document.createElement('button');
+  moreBtn.type = 'button';
+  moreBtn.className = 'icon-btn';
+  moreBtn.textContent = '...';
+
+  const validate = () => {
+    const result = validateInlineOutputDraft(draft, streamId);
+    error.textContent = result.error || '';
+    saveBtn.disabled = !result.ok;
+    if (draft.url && result.error) {
+      urlInput.classList.add('is-invalid');
+    } else {
+      urlInput.classList.remove('is-invalid');
+    }
+    resetRow.style.display = draft.autoUrl === false ? '' : 'none';
+    return result;
+  };
+
+  saveBtn.addEventListener('click', () => {
+    const result = validate();
+    if (!result.ok) return;
+    if (draft.kind === 'publish') {
+      const publish = parseEditingTranscodePublishJsonSafe();
+      publish.push(result.entry);
+      setEditingTranscodePublishJson(publish);
+    } else {
+      state.outputs.push(result.output);
+    }
+    state.outputInlineDraft = null;
+    renderOutputList();
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    state.outputInlineDraft = null;
+    renderOutputList();
+  });
+
+  moreBtn.addEventListener('click', () => {
+    const result = validate();
+    if (!result.ok) return;
+    if (draft.kind === 'publish') {
+      const publish = parseEditingTranscodePublishJsonSafe();
+      publish.push(result.entry);
+      setEditingTranscodePublishJson(publish);
+      state.outputInlineDraft = null;
+      renderOutputList();
+      openPublishOutputModal(publish.length - 1);
+      return;
+    }
+    state.outputs.push(result.output);
+    const index = state.outputs.length - 1;
+    state.outputInlineDraft = null;
+    renderOutputList();
+    openOutputModal(index);
+  });
+
+  actions.appendChild(saveBtn);
+  actions.appendChild(cancelBtn);
+  actions.appendChild(moreBtn);
+
+  row.appendChild(idx);
+  row.appendChild(label);
+  row.appendChild(actions);
+
+  container.appendChild(row);
+  syncPlaceholder();
+  if (!draft.url) {
+    applyAutoUrl(true);
+  }
+  validate();
+}
+
 function renderPublishOutputList() {
+  ensureOutputInlineDraftKind('publish');
   elements.outputList.innerHTML = '';
   const publish = parseEditingTranscodePublishJsonSafe();
   const streamId = (elements.streamId && elements.streamId.value)
@@ -9015,18 +9782,23 @@ function renderPublishOutputList() {
       return ['hls', 'dash', 'http-ts', 'embed', 'udp', 'rtp', 'rtmp', 'rtsp'].includes(t);
     });
 
-  if (supported.length === 0) {
+  const showInline = state.outputInlineDraft && state.outputInlineDraft.kind === 'publish';
+  if (supported.length === 0 && !showInline) {
     const empty = document.createElement('div');
     empty.className = 'panel subtle';
-    empty.textContent = 'No outputs configured.';
+    empty.textContent = 'No publish outputs configured.';
     elements.outputList.appendChild(empty);
-    return;
+  }
+
+  if (showInline) {
+    renderOutputInlineRow(elements.outputList, state.outputInlineDraft, streamId);
   }
 
   supported.forEach(({ entry, index }, displayIndex) => {
     const row = document.createElement('div');
     row.className = 'list-row output-row';
     row.dataset.index = String(index);
+    row.dataset.kind = 'publish';
 
     const idx = document.createElement('div');
     idx.className = 'list-index';
@@ -9035,6 +9807,9 @@ function renderPublishOutputList() {
     const label = document.createElement('div');
     label.className = 'list-input';
     label.textContent = formatPublishOutputLabel(entry, streamId);
+
+    const actions = document.createElement('div');
+    actions.className = 'output-actions';
 
     const copy = document.createElement('button');
     copy.className = 'icon-btn';
@@ -9050,48 +9825,64 @@ function renderPublishOutputList() {
     options.textContent = '...';
 
     const remove = document.createElement('button');
-    remove.className = 'icon-btn';
+    remove.className = 'icon-btn is-danger';
     remove.type = 'button';
     remove.dataset.action = 'output-remove';
+    remove.title = 'Remove output';
     remove.textContent = 'x';
+
+    actions.appendChild(copy);
+    actions.appendChild(options);
+    actions.appendChild(remove);
 
     row.appendChild(idx);
     row.appendChild(label);
-    const spacer = document.createElement('div');
-    spacer.className = 'output-action-spacer';
-    row.appendChild(spacer);
-    row.appendChild(copy);
-    row.appendChild(options);
-    row.appendChild(remove);
+    row.appendChild(actions);
     elements.outputList.appendChild(row);
   });
 }
 
 function renderOutputList() {
-  if (isEditingLadderTranscodeStream()) {
+  const ladder = isEditingLadderTranscodeStream();
+  ensureOutputInlineDraftKind(ladder ? 'publish' : 'legacy');
+  if (ladder) {
     renderPublishOutputList();
-    return;
+  } else {
+    elements.outputList.innerHTML = '';
   }
-  elements.outputList.innerHTML = '';
   const streamId = (elements.streamId && elements.streamId.value)
     ? String(elements.streamId.value)
     : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
-  if (state.outputs.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'panel subtle';
-    empty.textContent = 'No outputs configured.';
-    elements.outputList.appendChild(empty);
-    return;
+  const showInline = state.outputInlineDraft && state.outputInlineDraft.kind === 'legacy';
+  const visible = state.outputs.map((output, index) => ({ output, index }));
+
+  if (!ladder) {
+    if (visible.length === 0 && !showInline) {
+      const empty = document.createElement('div');
+      empty.className = 'panel subtle';
+      empty.textContent = 'No outputs configured.';
+      elements.outputList.appendChild(empty);
+    }
+
+    if (showInline) {
+      renderOutputInlineRow(elements.outputList, state.outputInlineDraft, streamId);
+    }
+  } else if (visible.length > 0) {
+    const heading = document.createElement('div');
+    heading.className = 'output-section-heading';
+    heading.textContent = 'Saved outputs (inactive while Transcoding is enabled)';
+    elements.outputList.appendChild(heading);
   }
 
-  state.outputs.forEach((output, index) => {
+  visible.forEach(({ output, index }, displayIndex) => {
     const row = document.createElement('div');
     row.className = 'list-row output-row';
     row.dataset.index = String(index);
+    row.dataset.kind = 'legacy';
 
     const idx = document.createElement('div');
     idx.className = 'list-index';
-    idx.textContent = `#${index + 1}`;
+    idx.textContent = `#${displayIndex + 1}`;
 
     const label = document.createElement('div');
     label.className = 'list-input';
@@ -9104,6 +9895,9 @@ function renderOutputList() {
       audioFixMeta = getOutputAudioFixMeta(output, status);
     }
 
+    const actions = document.createElement('div');
+    actions.className = 'output-actions';
+
     const copy = document.createElement('button');
     copy.className = 'icon-btn';
     copy.type = 'button';
@@ -9118,10 +9912,15 @@ function renderOutputList() {
     options.textContent = '...';
 
     const remove = document.createElement('button');
-    remove.className = 'icon-btn';
+    remove.className = 'icon-btn is-danger';
     remove.type = 'button';
     remove.dataset.action = 'output-remove';
+    remove.title = 'Remove output';
     remove.textContent = 'x';
+
+    actions.appendChild(copy);
+    actions.appendChild(options);
+    actions.appendChild(remove);
 
     row.appendChild(idx);
     row.appendChild(label);
@@ -9132,15 +9931,9 @@ function renderOutputList() {
       audioToggle.className = `output-audio-toggle ${audioFix.enabled ? 'is-on' : 'is-off'}`;
       audioToggle.dataset.action = 'output-audio-fix';
       audioToggle.textContent = audioFix.enabled ? 'Audio Fix: ON' : 'Audio Fix: OFF';
-      row.appendChild(audioToggle);
-    } else {
-      const spacer = document.createElement('div');
-      spacer.className = 'output-action-spacer';
-      row.appendChild(spacer);
+      actions.prepend(audioToggle);
     }
-    row.appendChild(copy);
-    row.appendChild(options);
-    row.appendChild(remove);
+    row.appendChild(actions);
 
     elements.outputList.appendChild(row);
   });
@@ -9361,6 +10154,7 @@ function renderTranscodeProfileList() {
     empty.className = 'panel subtle';
     empty.textContent = 'No profiles configured.';
     elements.transcodeProfileList.appendChild(empty);
+    updateTranscodeModeHint();
     return;
   }
 
@@ -9396,6 +10190,7 @@ function renderTranscodeProfileList() {
 
     elements.transcodeProfileList.appendChild(row);
   });
+  updateTranscodeModeHint();
 }
 
 function setTab(name, scope) {
@@ -9483,6 +10278,9 @@ function renderInputList() {
       state.inputs[index] = input.value;
     });
 
+    const reorder = document.createElement('div');
+    reorder.className = 'input-reorder';
+
     const moveUp = document.createElement('button');
     moveUp.className = 'icon-btn';
     moveUp.type = 'button';
@@ -9497,23 +10295,27 @@ function renderInputList() {
     moveDown.textContent = '↓';
     moveDown.disabled = index === state.inputs.length - 1;
 
-    const options = document.createElement('button');
-    options.className = 'icon-btn';
-    options.type = 'button';
-    options.dataset.action = 'input-options';
-    options.textContent = '...';
+    reorder.appendChild(moveUp);
+    reorder.appendChild(moveDown);
+
+    const settingsBtn = document.createElement('button');
+    settingsBtn.className = 'icon-btn input-gear';
+    settingsBtn.type = 'button';
+    settingsBtn.dataset.action = 'input-options';
+    settingsBtn.title = 'Input settings';
+    settingsBtn.textContent = '⚙';
 
     const remove = document.createElement('button');
-    remove.className = 'icon-btn';
+    remove.className = 'icon-btn is-danger';
     remove.type = 'button';
     remove.dataset.action = 'input-remove';
+    remove.title = 'Remove input';
     remove.textContent = 'x';
 
     row.appendChild(idx);
     row.appendChild(input);
-    row.appendChild(moveUp);
-    row.appendChild(moveDown);
-    row.appendChild(options);
+    row.appendChild(reorder);
+    row.appendChild(settingsBtn);
     row.appendChild(remove);
 
     elements.inputList.appendChild(row);
@@ -10312,7 +11114,8 @@ function computeDefaultLegacyPublicUrl(output, presetKey, streamId) {
     // Legacy "http" output starts its own http_server on output.port and serves TS on output.path.
     // Public URL should use the configured public host/scheme, but the output's port.
     const base = getPublicBaseUrlForKind('http-ts');
-    const path = (output && output.path) ? String(output.path) : '/stream';
+    const fallback = streamId ? `/live/${slugifyStreamId(streamId)}` : '/live/stream';
+    const path = (output && output.path) ? String(output.path) : fallback;
     const port = output && Number.isFinite(Number(output.port)) ? Number(output.port) : null;
     if (!port) {
       return joinPath(base, path);
@@ -10338,9 +11141,13 @@ function computeDefaultLegacyPublicUrl(output, presetKey, streamId) {
 }
 
 function openOutputModal(index) {
-  const output = state.outputs[index];
+  const isNew = index === null || index === undefined;
+  const streamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value).trim()
+    : (state.editing && state.editing.stream ? String(state.editing.stream.id || '').trim() : '');
+  const output = isNew ? defaultHlsOutput(streamId || 'stream') : state.outputs[index];
   if (!output) return;
-  state.outputEditingIndex = index;
+  state.outputEditingIndex = isNew ? null : index;
   state.outputEditingKind = 'legacy';
 
   if (elements.outputHint) {
@@ -10356,9 +11163,13 @@ function openOutputModal(index) {
   }
   applyOutputPreset(presetKey);
 
+  const httpStreamId = (elements.streamId && elements.streamId.value)
+    ? String(elements.streamId.value).trim()
+    : (output.id ? String(output.id) : 'stream');
+  const httpDefaultPath = `/live/${slugifyStreamId(httpStreamId)}`;
   elements.outputHttpHost.value = output.host || '0.0.0.0';
   elements.outputHttpPort.value = output.port || 8000;
-  elements.outputHttpPath.value = output.path || '/stream';
+  elements.outputHttpPath.value = output.path || httpDefaultPath;
   elements.outputHttpBuffer.value = output.buffer_size || 1024;
   elements.outputHttpBufferFill.value = output.buffer_fill || 256;
   elements.outputHttpKeep.checked = output.keep_active === true;
@@ -10574,11 +11385,15 @@ function readOutputForm() {
   };
 
   if (presetKey === 'http_ts_local') {
+    const httpStreamId = (elements.streamId && elements.streamId.value)
+      ? String(elements.streamId.value).trim()
+      : 'stream';
+    const defaultPath = `/live/${slugifyStreamId(httpStreamId)}`;
     return applyCommonUiFields({
       format: 'http',
       host: elements.outputHttpHost.value.trim(),
       port: toNumber(elements.outputHttpPort.value) || 8000,
-      path: elements.outputHttpPath.value.trim() || '/stream',
+      path: elements.outputHttpPath.value.trim() || defaultPath,
       buffer_size: toNumber(elements.outputHttpBuffer.value),
       buffer_fill: toNumber(elements.outputHttpBufferFill.value),
       keep_active: elements.outputHttpKeep.checked,
@@ -10975,11 +11790,25 @@ function applyInputResiliencePresetOverwrite(profile) {
   setValue(elements.inputPlayoutMaxMb, enablePlayout ? (jitterMaxMb !== null ? jitterMaxMb : 16) : '');
 }
 
-function openInputModal(index) {
-  const url = state.inputs[index] || '';
-  const parsed = parseInputUrl(url);
-  state.inputEditingIndex = index;
+function setInputRawError(message) {
+  if (elements.inputRawError) {
+    elements.inputRawError.textContent = message || '';
+    elements.inputRawError.classList.toggle('is-error', Boolean(message));
+  }
+  if (elements.inputRaw) {
+    elements.inputRaw.classList.toggle('is-invalid', Boolean(message));
+  }
+}
 
+function setInputRawValue(value) {
+  if (!elements.inputRaw) return;
+  state.inputRawSyncing = true;
+  elements.inputRaw.value = value || '';
+  state.inputRawSyncing = false;
+}
+
+function fillInputFormFromParsed(parsed, index) {
+  if (!parsed) parsed = {};
   if (elements.inputPreset) elements.inputPreset.value = '';
   const format = parsed.format || 'udp';
   elements.inputType.value = format;
@@ -11051,6 +11880,22 @@ function openInputModal(index) {
     'hls_max_gap_segments',
     'hls_segment_retries',
     'hls_max_parallel',
+    'no_audio_on',
+    'stop_video',
+    'stop_video_timeout_sec',
+    'stop_video_freeze_sec',
+    'detect_av',
+    'detect_av_threshold_ms',
+    'detect_av_hold_sec',
+    'detect_av_stable_sec',
+    'detect_av_resend_interval_sec',
+    'silencedetect',
+    'silencedetect_duration',
+    'silencedetect_interval',
+    'silencedetect_noise',
+    'silence_duration',
+    'silence_interval',
+    'silence_noise',
   ]);
   const extras = {};
   Object.keys(opts).forEach((key) => {
@@ -11058,7 +11903,10 @@ function openInputModal(index) {
       extras[key] = opts[key];
     }
   });
-  state.inputExtras[index] = extras;
+  const extrasIndex = (index !== null && index !== undefined) ? index : state.inputEditingIndex;
+  if (extrasIndex !== null && extrasIndex !== undefined) {
+    state.inputExtras[extrasIndex] = extras;
+  }
   const asBool = (value) => value === true || value === 'true' || value === '1';
 
   elements.inputDvbId.value = parsed.dvbId || '';
@@ -11151,8 +11999,78 @@ function openInputModal(index) {
   elements.inputMap.value = opts.map || '';
   elements.inputFilter.value = opts.filter || '';
   elements.inputFilterNot.value = opts['filter~'] || '';
-  elements.inputCcLimit.value = opts.cc_limit || '';
+  if (elements.inputCcLimitEnabled) {
+    const ccRaw = opts.cc_limit;
+    const ccEnabled = ccRaw !== undefined && ccRaw !== null
+      && ccRaw !== false && ccRaw !== '0' && ccRaw !== 0 && ccRaw !== '';
+    elements.inputCcLimitEnabled.checked = ccEnabled;
+    if (elements.inputCcLimit) {
+      elements.inputCcLimit.value = ccEnabled ? String(ccRaw || '') : '';
+    }
+  } else {
+    elements.inputCcLimit.value = opts.cc_limit || '';
+  }
   elements.inputBitrateLimit.value = opts.bitrate_limit || '';
+
+  if (elements.inputNoAudioEnabled) {
+    const noAudioRaw = opts.no_audio_on;
+    const noAudioEnabled = noAudioRaw !== undefined && noAudioRaw !== null
+      && noAudioRaw !== false && noAudioRaw !== '0' && noAudioRaw !== 'false';
+    elements.inputNoAudioEnabled.checked = noAudioEnabled;
+    if (elements.inputNoAudioTimeout) {
+      if (noAudioEnabled && noAudioRaw !== true && noAudioRaw !== 'true' && noAudioRaw !== '1') {
+        elements.inputNoAudioTimeout.value = String(noAudioRaw || '');
+      } else {
+        elements.inputNoAudioTimeout.value = '';
+      }
+    }
+  }
+
+  if (elements.inputStopVideoEnabled) {
+    const stopRaw = opts.stop_video;
+    const stopEnabled = stopRaw !== undefined && stopRaw !== null
+      && stopRaw !== false && stopRaw !== '0' && stopRaw !== 'false';
+    elements.inputStopVideoEnabled.checked = stopEnabled;
+    if (elements.inputStopVideoMode) {
+      const mode = (String(stopRaw || '').toLowerCase() === 'freeze') ? 'freeze' : 'pts';
+      elements.inputStopVideoMode.value = mode;
+    }
+    if (elements.inputStopVideoTimeout) {
+      elements.inputStopVideoTimeout.value = opts.stop_video_timeout_sec || '';
+    }
+    if (elements.inputStopVideoFreeze) {
+      elements.inputStopVideoFreeze.value = opts.stop_video_freeze_sec || '';
+    }
+  }
+
+  if (elements.inputDetectAvEnabled) {
+    const avRaw = opts.detect_av;
+    const avEnabled = avRaw !== undefined && avRaw !== null
+      && avRaw !== false && avRaw !== '0' && avRaw !== 'false';
+    elements.inputDetectAvEnabled.checked = avEnabled;
+    if (elements.inputDetectAvThreshold) elements.inputDetectAvThreshold.value = opts.detect_av_threshold_ms || '';
+    if (elements.inputDetectAvHold) elements.inputDetectAvHold.value = opts.detect_av_hold_sec || '';
+    if (elements.inputDetectAvStable) elements.inputDetectAvStable.value = opts.detect_av_stable_sec || '';
+    if (elements.inputDetectAvResend) elements.inputDetectAvResend.value = opts.detect_av_resend_interval_sec || '';
+  }
+
+  if (elements.inputSilenceEnabled) {
+    const silenceRaw = opts.silencedetect;
+    const silenceEnabled = silenceRaw !== undefined && silenceRaw !== null
+      && silenceRaw !== false && silenceRaw !== '0' && silenceRaw !== 'false';
+    elements.inputSilenceEnabled.checked = silenceEnabled;
+    const dur = opts.silencedetect_duration || opts.silence_duration || '';
+    const interval = opts.silencedetect_interval || opts.silence_interval || '';
+    const noise = opts.silencedetect_noise || opts.silence_noise || '';
+    if (elements.inputSilenceDuration) elements.inputSilenceDuration.value = dur;
+    if (elements.inputSilenceInterval) elements.inputSilenceInterval.value = interval;
+    if (elements.inputSilenceNoise) elements.inputSilenceNoise.value = noise;
+  }
+
+  if (elements.inputQualityPreset) {
+    elements.inputQualityPreset.value = deriveInputQualityPreset();
+  }
+  ensureDetectorDefaults();
 
   const backupSelected = elements.inputCamBackupId && elements.inputCamBackupId.value;
   elements.inputCam.checked = asBool(opts.cam) || !!elements.inputCamId.value || !!backupSelected;
@@ -11161,7 +12079,322 @@ function openInputModal(index) {
   elements.inputPassEit.checked = asBool(opts.pass_eit);
   elements.inputNoReload.checked = asBool(opts.no_reload);
   elements.inputNoAnalyze.checked = asBool(opts.no_analyze);
+}
 
+const INPUT_QUALITY_DEFAULTS = {
+  cc_limit: 1,
+  no_audio_on: 5,
+  stop_video_timeout_sec: 5,
+  stop_video_freeze_sec: 10,
+  detect_av_threshold_ms: 800,
+  detect_av_hold_sec: 3,
+  detect_av_stable_sec: 10,
+  detect_av_resend_interval_sec: 60,
+  silencedetect_duration: 20,
+  silencedetect_interval: 10,
+  silencedetect_noise: -30,
+};
+
+function setInputDetectorsError(message) {
+  if (!elements.inputDetectorsError) return;
+  elements.inputDetectorsError.textContent = message || '';
+  elements.inputDetectorsError.classList.toggle('is-error', Boolean(message));
+  if (elements.inputSave) elements.inputSave.disabled = Boolean(message);
+}
+
+function detectorToggleEnabled(toggle) {
+  if (!toggle) return false;
+  return !!toggle.checked;
+}
+
+function deriveInputQualityPreset() {
+  const ccEnabled = detectorToggleEnabled(elements.inputCcLimitEnabled);
+  const noAudioEnabled = detectorToggleEnabled(elements.inputNoAudioEnabled);
+  const stopEnabled = detectorToggleEnabled(elements.inputStopVideoEnabled);
+  const avEnabled = detectorToggleEnabled(elements.inputDetectAvEnabled);
+  const silenceEnabled = detectorToggleEnabled(elements.inputSilenceEnabled);
+  if (!ccEnabled && !noAudioEnabled && !stopEnabled && !avEnabled && !silenceEnabled) return 'off';
+  const readNumber = (el) => {
+    if (!el) return undefined;
+    const raw = String(el.value || '').trim();
+    if (!raw) return undefined;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : NaN;
+  };
+  const valueOrDefault = (el, def) => {
+    const val = readNumber(el);
+    if (val === undefined) return def;
+    return val;
+  };
+  const equalsDefault = (el, def) => {
+    const val = valueOrDefault(el, def);
+    return Number.isFinite(val) && Number(val) === Number(def);
+  };
+  const stopMode = elements.inputStopVideoMode
+    ? String(elements.inputStopVideoMode.value || '').toLowerCase()
+    : 'pts';
+  const basicEnabled = ccEnabled && noAudioEnabled && stopEnabled && avEnabled && !silenceEnabled;
+  const fullEnabled = ccEnabled && noAudioEnabled && stopEnabled && avEnabled && silenceEnabled;
+  const baseDefaultsOk = (
+    (!elements.inputCcLimit || equalsDefault(elements.inputCcLimit, INPUT_QUALITY_DEFAULTS.cc_limit))
+    && (!elements.inputNoAudioTimeout || equalsDefault(elements.inputNoAudioTimeout, INPUT_QUALITY_DEFAULTS.no_audio_on))
+    && (!elements.inputStopVideoTimeout || equalsDefault(elements.inputStopVideoTimeout, INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec))
+    && (!elements.inputDetectAvThreshold || equalsDefault(elements.inputDetectAvThreshold, INPUT_QUALITY_DEFAULTS.detect_av_threshold_ms))
+    && (!elements.inputDetectAvHold || equalsDefault(elements.inputDetectAvHold, INPUT_QUALITY_DEFAULTS.detect_av_hold_sec))
+    && (!elements.inputDetectAvStable || equalsDefault(elements.inputDetectAvStable, INPUT_QUALITY_DEFAULTS.detect_av_stable_sec))
+    && (!elements.inputDetectAvResend || equalsDefault(elements.inputDetectAvResend, INPUT_QUALITY_DEFAULTS.detect_av_resend_interval_sec))
+  );
+  const stopModeOk = stopMode !== 'freeze';
+  if (basicEnabled && baseDefaultsOk && stopModeOk) {
+    return 'basic';
+  }
+  if (fullEnabled && baseDefaultsOk && stopModeOk
+    && (!elements.inputSilenceDuration || equalsDefault(elements.inputSilenceDuration, INPUT_QUALITY_DEFAULTS.silencedetect_duration))
+    && (!elements.inputSilenceInterval || equalsDefault(elements.inputSilenceInterval, INPUT_QUALITY_DEFAULTS.silencedetect_interval))
+    && (!elements.inputSilenceNoise || equalsDefault(elements.inputSilenceNoise, INPUT_QUALITY_DEFAULTS.silencedetect_noise))
+  ) {
+    return 'full';
+  }
+  return 'custom';
+}
+
+function applyInputQualityPreset(preset) {
+  if (state.inputQualityPresetApplying) return;
+  state.inputQualityPresetApplying = true;
+  const setValue = (el, value) => {
+    if (!el) return;
+    el.value = String(value);
+  };
+  if (preset === 'off') {
+    if (elements.inputCcLimitEnabled) elements.inputCcLimitEnabled.checked = false;
+    if (elements.inputCcLimit) elements.inputCcLimit.value = '';
+    if (elements.inputNoAudioEnabled) elements.inputNoAudioEnabled.checked = false;
+    if (elements.inputNoAudioTimeout) elements.inputNoAudioTimeout.value = '';
+    if (elements.inputStopVideoEnabled) elements.inputStopVideoEnabled.checked = false;
+    if (elements.inputStopVideoTimeout) elements.inputStopVideoTimeout.value = '';
+    if (elements.inputStopVideoFreeze) elements.inputStopVideoFreeze.value = '';
+    if (elements.inputDetectAvEnabled) elements.inputDetectAvEnabled.checked = false;
+    if (elements.inputDetectAvThreshold) elements.inputDetectAvThreshold.value = '';
+    if (elements.inputDetectAvHold) elements.inputDetectAvHold.value = '';
+    if (elements.inputDetectAvStable) elements.inputDetectAvStable.value = '';
+    if (elements.inputDetectAvResend) elements.inputDetectAvResend.value = '';
+    if (elements.inputSilenceEnabled) elements.inputSilenceEnabled.checked = false;
+    if (elements.inputSilenceDuration) elements.inputSilenceDuration.value = '';
+    if (elements.inputSilenceInterval) elements.inputSilenceInterval.value = '';
+    if (elements.inputSilenceNoise) elements.inputSilenceNoise.value = '';
+  } else {
+    if (elements.inputCcLimitEnabled) elements.inputCcLimitEnabled.checked = true;
+    if (elements.inputCcLimit) setValue(elements.inputCcLimit, INPUT_QUALITY_DEFAULTS.cc_limit);
+
+    if (elements.inputNoAudioEnabled) elements.inputNoAudioEnabled.checked = true;
+    if (elements.inputNoAudioTimeout) setValue(elements.inputNoAudioTimeout, INPUT_QUALITY_DEFAULTS.no_audio_on);
+
+    if (elements.inputStopVideoEnabled) elements.inputStopVideoEnabled.checked = true;
+    if (elements.inputStopVideoMode) elements.inputStopVideoMode.value = 'pts';
+    if (elements.inputStopVideoTimeout) {
+      setValue(elements.inputStopVideoTimeout, INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec);
+    }
+
+    if (elements.inputDetectAvEnabled) elements.inputDetectAvEnabled.checked = true;
+    if (elements.inputDetectAvThreshold) {
+      setValue(elements.inputDetectAvThreshold, INPUT_QUALITY_DEFAULTS.detect_av_threshold_ms);
+    }
+    if (elements.inputDetectAvHold) setValue(elements.inputDetectAvHold, INPUT_QUALITY_DEFAULTS.detect_av_hold_sec);
+    if (elements.inputDetectAvStable) setValue(elements.inputDetectAvStable, INPUT_QUALITY_DEFAULTS.detect_av_stable_sec);
+    if (elements.inputDetectAvResend) setValue(elements.inputDetectAvResend, INPUT_QUALITY_DEFAULTS.detect_av_resend_interval_sec);
+
+    if (preset === 'full') {
+      if (elements.inputSilenceEnabled) elements.inputSilenceEnabled.checked = true;
+      if (elements.inputSilenceDuration) setValue(elements.inputSilenceDuration, INPUT_QUALITY_DEFAULTS.silencedetect_duration);
+      if (elements.inputSilenceInterval) setValue(elements.inputSilenceInterval, INPUT_QUALITY_DEFAULTS.silencedetect_interval);
+      if (elements.inputSilenceNoise) setValue(elements.inputSilenceNoise, INPUT_QUALITY_DEFAULTS.silencedetect_noise);
+    } else {
+      if (elements.inputSilenceEnabled) elements.inputSilenceEnabled.checked = false;
+      if (elements.inputSilenceDuration) elements.inputSilenceDuration.value = '';
+      if (elements.inputSilenceInterval) elements.inputSilenceInterval.value = '';
+      if (elements.inputSilenceNoise) elements.inputSilenceNoise.value = '';
+    }
+  }
+  state.inputQualityPresetApplying = false;
+  scheduleInputRawSync();
+  validateInputDetectors();
+}
+
+function markQualityPresetCustom() {
+  if (!elements.inputQualityPreset || state.inputQualityPresetApplying) return;
+  const derived = deriveInputQualityPreset();
+  const nextValue = derived === 'off' ? 'off' : 'custom';
+  if (elements.inputQualityPreset.value !== nextValue) {
+    elements.inputQualityPreset.value = nextValue;
+  }
+}
+
+function validateInputDetectors() {
+  if (!elements.inputDetectorsError) return true;
+  const toNum = (el) => {
+    if (!el) return undefined;
+    const raw = String(el.value || '').trim();
+    if (!raw) return undefined;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : undefined;
+  };
+  const range = (value, minValue, maxValue, label) => {
+    if (value === undefined) return;
+    if (value < minValue || value > maxValue) {
+      throw new Error(`${label} must be between ${minValue} and ${maxValue}`);
+    }
+  };
+
+  try {
+    if (detectorToggleEnabled(elements.inputCcLimitEnabled)) {
+      range(toNum(elements.inputCcLimit), 0, 50, 'CC limit');
+    }
+    if (detectorToggleEnabled(elements.inputNoAudioEnabled)) {
+      range(toNum(elements.inputNoAudioTimeout), 1, 600, 'No audio timeout');
+    }
+    if (detectorToggleEnabled(elements.inputStopVideoEnabled)) {
+      range(toNum(elements.inputStopVideoTimeout), 1, 600, 'Stop video timeout');
+      if (elements.inputStopVideoMode && String(elements.inputStopVideoMode.value || '').toLowerCase() === 'freeze') {
+        range(toNum(elements.inputStopVideoFreeze), 1, 600, 'Freeze window');
+      }
+    }
+    if (detectorToggleEnabled(elements.inputDetectAvEnabled)) {
+      range(toNum(elements.inputDetectAvThreshold), 100, 10000, 'AV desync threshold');
+      range(toNum(elements.inputDetectAvHold), 1, 600, 'AV desync hold');
+      range(toNum(elements.inputDetectAvStable), 1, 600, 'AV desync stable');
+      range(toNum(elements.inputDetectAvResend), 1, 600, 'AV desync resend');
+    }
+    if (detectorToggleEnabled(elements.inputSilenceEnabled)) {
+      range(toNum(elements.inputSilenceDuration), 1, 600, 'Silence duration');
+      range(toNum(elements.inputSilenceInterval), 1, 600, 'Silence interval');
+      const noise = toNum(elements.inputSilenceNoise);
+      if (noise !== undefined && (noise < -90 || noise > 0)) {
+        throw new Error('Silence noise must be between -90 and 0');
+      }
+    }
+    setInputDetectorsError('');
+    return true;
+  } catch (err) {
+    setInputDetectorsError(err.message || 'Invalid detector values');
+    return false;
+  }
+}
+
+const DETECTOR_INPUT_IDS = new Set([
+  'input-cc-limit-enabled',
+  'input-cc-limit',
+  'input-no-audio-enabled',
+  'input-no-audio-timeout',
+  'input-stop-video-enabled',
+  'input-stop-video-mode',
+  'input-stop-video-timeout',
+  'input-stop-video-freeze',
+  'input-detect-av-enabled',
+  'input-detect-av-threshold',
+  'input-detect-av-hold',
+  'input-detect-av-stable',
+  'input-detect-av-resend',
+  'input-silence-enabled',
+  'input-silence-duration',
+  'input-silence-interval',
+  'input-silence-noise',
+  'input-quality-preset',
+]);
+
+function isDetectorInputTarget(target) {
+  if (!target || !target.id) return false;
+  return DETECTOR_INPUT_IDS.has(target.id);
+}
+
+function ensureDetectorDefaults() {
+  const setIfEmpty = (el, value) => {
+    if (!el) return;
+    const cur = String(el.value || '').trim();
+    if (!cur) el.value = String(value);
+  };
+  if (detectorToggleEnabled(elements.inputCcLimitEnabled)) {
+    setIfEmpty(elements.inputCcLimit, INPUT_QUALITY_DEFAULTS.cc_limit);
+  }
+  if (detectorToggleEnabled(elements.inputNoAudioEnabled)) {
+    setIfEmpty(elements.inputNoAudioTimeout, INPUT_QUALITY_DEFAULTS.no_audio_on);
+  }
+  if (detectorToggleEnabled(elements.inputStopVideoEnabled)) {
+    if (elements.inputStopVideoMode && !elements.inputStopVideoMode.value) {
+      elements.inputStopVideoMode.value = 'pts';
+    }
+    setIfEmpty(elements.inputStopVideoTimeout, INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec);
+    if (elements.inputStopVideoMode
+      && String(elements.inputStopVideoMode.value || '').toLowerCase() === 'freeze') {
+      setIfEmpty(elements.inputStopVideoFreeze, INPUT_QUALITY_DEFAULTS.stop_video_freeze_sec);
+    }
+  }
+  if (detectorToggleEnabled(elements.inputDetectAvEnabled)) {
+    setIfEmpty(elements.inputDetectAvThreshold, INPUT_QUALITY_DEFAULTS.detect_av_threshold_ms);
+    setIfEmpty(elements.inputDetectAvHold, INPUT_QUALITY_DEFAULTS.detect_av_hold_sec);
+    setIfEmpty(elements.inputDetectAvStable, INPUT_QUALITY_DEFAULTS.detect_av_stable_sec);
+    setIfEmpty(elements.inputDetectAvResend, INPUT_QUALITY_DEFAULTS.detect_av_resend_interval_sec);
+  }
+  if (detectorToggleEnabled(elements.inputSilenceEnabled)) {
+    setIfEmpty(elements.inputSilenceDuration, INPUT_QUALITY_DEFAULTS.silencedetect_duration);
+    setIfEmpty(elements.inputSilenceInterval, INPUT_QUALITY_DEFAULTS.silencedetect_interval);
+    setIfEmpty(elements.inputSilenceNoise, INPUT_QUALITY_DEFAULTS.silencedetect_noise);
+  }
+}
+
+function applyInputRawToForm(raw) {
+  if (!raw) {
+    setInputRawError('');
+    return;
+  }
+  const parsed = parseInputUrl(raw);
+  if (!parsed.format) {
+    setInputRawError('Invalid input URL');
+    return;
+  }
+  setInputRawError('');
+  fillInputFormFromParsed(parsed, state.inputEditingIndex);
+  validateInputDetectors();
+}
+
+function scheduleInputRawParse() {
+  if (!elements.inputRaw) return;
+  if (state.inputRawParseDebounce) {
+    clearTimeout(state.inputRawParseDebounce);
+  }
+  state.inputRawParseDebounce = setTimeout(() => {
+    if (state.inputRawSyncing) return;
+    applyInputRawToForm(String(elements.inputRaw.value || '').trim());
+  }, 300);
+}
+
+function scheduleInputRawSync() {
+  if (!elements.inputRaw) return;
+  if (state.inputRawSyncing) return;
+  if (state.inputRawDebounce) {
+    clearTimeout(state.inputRawDebounce);
+  }
+  state.inputRawDebounce = setTimeout(() => {
+    if (state.inputRawSyncing) return;
+    try {
+      const url = readInputForm({ allowPartial: true });
+      if (url) setInputRawValue(url);
+    } catch (_err) {
+      // Ignore partial errors during live sync.
+    }
+  }, 250);
+}
+
+function openInputModal(index) {
+  const url = state.inputs[index] || '';
+  const parsed = parseInputUrl(url);
+  state.inputEditingIndex = index;
+  fillInputFormFromParsed(parsed, index);
+  if (elements.inputRaw) {
+    setInputRawValue(url || buildInputUrl(parsed));
+    setInputRawError('');
+  }
+  setInputDetectorsError('');
+  validateInputDetectors();
   setOverlay(elements.inputOverlay, true);
 }
 
@@ -11170,7 +12403,8 @@ function closeInputModal() {
   setOverlay(elements.inputOverlay, false);
 }
 
-function readInputForm() {
+function readInputForm(opts = {}) {
+  const allowPartial = !!opts.allowPartial;
   const format = elements.inputType.value;
   const options = {};
 
@@ -11183,6 +12417,12 @@ function readInputForm() {
     const str = (value || '').trim();
     if (str) options[key] = str;
   };
+  const requireMin = (value, minValue, label) => {
+    if (value === undefined) return;
+    if (!allowPartial && value < minValue) {
+      throw new Error(`${label} must be >= ${minValue}`);
+    }
+  };
 
   addNumber('pnr', elements.inputPnr.value);
   addNumber('set_pnr', elements.inputSetPnr.value);
@@ -11193,8 +12433,96 @@ function readInputForm() {
   addString('map', elements.inputMap.value);
   addString('filter', elements.inputFilter.value);
   addString('filter~', elements.inputFilterNot.value);
-  addNumber('cc_limit', elements.inputCcLimit.value);
   addNumber('bitrate_limit', elements.inputBitrateLimit.value);
+  if (elements.inputCcLimitEnabled) {
+    if (elements.inputCcLimitEnabled.checked) {
+      const limit = toNumber(elements.inputCcLimit && elements.inputCcLimit.value);
+      requireMin(limit, 0, 'CC limit');
+      if (!allowPartial && limit !== undefined && limit > 50) {
+        throw new Error('CC limit must be between 0 and 50');
+      }
+      options.cc_limit = limit !== undefined ? limit : INPUT_QUALITY_DEFAULTS.cc_limit;
+    }
+  } else {
+    addNumber('cc_limit', elements.inputCcLimit && elements.inputCcLimit.value);
+  }
+  if (elements.inputNoAudioEnabled && elements.inputNoAudioEnabled.checked) {
+    const timeout = toNumber(elements.inputNoAudioTimeout && elements.inputNoAudioTimeout.value);
+    requireMin(timeout, 1, 'No audio timeout');
+    if (!allowPartial && timeout !== undefined && timeout > 600) {
+      throw new Error('No audio timeout must be between 1 and 600');
+    }
+    options.no_audio_on = timeout !== undefined ? timeout : INPUT_QUALITY_DEFAULTS.no_audio_on;
+  }
+  if (elements.inputStopVideoEnabled && elements.inputStopVideoEnabled.checked) {
+    const mode = elements.inputStopVideoMode ? String(elements.inputStopVideoMode.value || '').trim() : '';
+    options.stop_video = (mode.toLowerCase() === 'freeze') ? 'freeze' : true;
+    const timeout = toNumber(elements.inputStopVideoTimeout && elements.inputStopVideoTimeout.value);
+    requireMin(timeout, 1, 'Stop video timeout');
+    if (!allowPartial && timeout !== undefined && timeout > 600) {
+      throw new Error('Stop video timeout must be between 1 and 600');
+    }
+    if (timeout !== undefined) {
+      options.stop_video_timeout_sec = timeout;
+    } else if (!allowPartial) {
+      options.stop_video_timeout_sec = INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec;
+    }
+    const freeze = toNumber(elements.inputStopVideoFreeze && elements.inputStopVideoFreeze.value);
+    if (mode.toLowerCase() === 'freeze') {
+      requireMin(freeze, 1, 'Freeze window');
+      if (!allowPartial && freeze !== undefined && freeze > 600) {
+        throw new Error('Freeze window must be between 1 and 600');
+      }
+      if (freeze !== undefined) options.stop_video_freeze_sec = freeze;
+    }
+  }
+  if (elements.inputDetectAvEnabled && elements.inputDetectAvEnabled.checked) {
+    options.detect_av = true;
+    const threshold = toNumber(elements.inputDetectAvThreshold && elements.inputDetectAvThreshold.value);
+    requireMin(threshold, 1, 'AV desync threshold');
+    if (!allowPartial && threshold !== undefined && (threshold < 100 || threshold > 10000)) {
+      throw new Error('AV desync threshold must be between 100 and 10000');
+    }
+    if (threshold !== undefined) options.detect_av_threshold_ms = threshold;
+    const hold = toNumber(elements.inputDetectAvHold && elements.inputDetectAvHold.value);
+    requireMin(hold, 1, 'AV desync hold');
+    if (!allowPartial && hold !== undefined && hold > 600) {
+      throw new Error('AV desync hold must be between 1 and 600');
+    }
+    if (hold !== undefined) options.detect_av_hold_sec = hold;
+    const stable = toNumber(elements.inputDetectAvStable && elements.inputDetectAvStable.value);
+    requireMin(stable, 1, 'AV desync stable');
+    if (!allowPartial && stable !== undefined && stable > 600) {
+      throw new Error('AV desync stable must be between 1 and 600');
+    }
+    if (stable !== undefined) options.detect_av_stable_sec = stable;
+    const resend = toNumber(elements.inputDetectAvResend && elements.inputDetectAvResend.value);
+    requireMin(resend, 1, 'AV desync resend');
+    if (!allowPartial && resend !== undefined && resend > 600) {
+      throw new Error('AV desync resend must be between 1 and 600');
+    }
+    if (resend !== undefined) options.detect_av_resend_interval_sec = resend;
+  }
+  if (elements.inputSilenceEnabled && elements.inputSilenceEnabled.checked) {
+    options.silencedetect = true;
+    const dur = toNumber(elements.inputSilenceDuration && elements.inputSilenceDuration.value);
+    requireMin(dur, 1, 'Silence duration');
+    if (!allowPartial && dur !== undefined && dur > 600) {
+      throw new Error('Silence duration must be between 1 and 600');
+    }
+    if (dur !== undefined) options.silencedetect_duration = dur;
+    const interval = toNumber(elements.inputSilenceInterval && elements.inputSilenceInterval.value);
+    requireMin(interval, 1, 'Silence interval');
+    if (!allowPartial && interval !== undefined && interval > 600) {
+      throw new Error('Silence interval must be between 1 and 600');
+    }
+    if (interval !== undefined) options.silencedetect_interval = interval;
+    const noise = toNumber(elements.inputSilenceNoise && elements.inputSilenceNoise.value);
+    if (!allowPartial && noise !== undefined && (noise > 0 || noise < -90)) {
+      throw new Error('Silence noise must be between -90 and 0');
+    }
+    if (noise !== undefined) options.silencedetect_noise = noise;
+  }
   addNumber('connect_timeout_ms', elements.inputNetConnect && elements.inputNetConnect.value);
   addNumber('read_timeout_ms', elements.inputNetRead && elements.inputNetRead.value);
   addNumber('stall_timeout_ms', elements.inputNetStall && elements.inputNetStall.value);
@@ -11259,13 +12587,13 @@ function readInputForm() {
 
   if (format === 'dvb') {
     data.dvbId = elements.inputDvbId.value.trim();
-    if (!data.dvbId) throw new Error('DVB adapter id is required');
+    if (!data.dvbId && !allowPartial) throw new Error('DVB adapter id is required');
   } else if (format === 'udp' || format === 'rtp') {
     data.iface = elements.inputUdpIface.value.trim();
     data.addr = elements.inputUdpAddr.value.trim();
     data.port = elements.inputUdpPort.value.trim();
     addNumber('socket_size', elements.inputUdpSocket.value);
-    if (!data.addr) throw new Error('UDP address is required');
+    if (!data.addr && !allowPartial) throw new Error('UDP address is required');
   } else if (format === 'http' || format === 'https' || format === 'hls') {
     data.login = elements.inputHttpLogin.value.trim();
     data.password = elements.inputHttpPass.value;
@@ -11275,22 +12603,22 @@ function readInputForm() {
     addString('ua', elements.inputHttpUa.value);
     addNumber('timeout', elements.inputHttpTimeout.value);
     addNumber('buffer_size', elements.inputHttpBuffer.value);
-    if (!data.host) throw new Error('HTTP host is required');
+    if (!data.host && !allowPartial) throw new Error('HTTP host is required');
   } else if (format === 'srt' || format === 'rtsp') {
     data.url = elements.inputBridgeUrl.value.trim();
     const bridgePort = toNumber(elements.inputBridgePort.value);
     if (bridgePort !== undefined) {
       options.bridge_port = bridgePort;
     }
-    if (!data.url) throw new Error('URL is required');
-    if (!options.bridge_port) throw new Error('Bridge port is required');
+    if (!data.url && !allowPartial) throw new Error('URL is required');
+    if (!options.bridge_port && !allowPartial) throw new Error('Bridge port is required');
   } else if (format === 'file') {
     data.file = elements.inputFileName.value.trim();
-    if (!data.file) throw new Error('Filename is required');
+    if (!data.file && !allowPartial) throw new Error('Filename is required');
     if (elements.inputFileLoop.checked) options.loop = true;
   } else if (format === 'stream') {
     data.streamId = elements.inputStreamId ? elements.inputStreamId.value.trim() : '';
-    if (!data.streamId) throw new Error('Stream ID is required');
+    if (!data.streamId && !allowPartial) throw new Error('Stream ID is required');
   }
 
   const extras = state.inputExtras[state.inputEditingIndex] || {};
@@ -14528,25 +15856,6 @@ function openEditor(stream, isNew) {
     updateInputProbeRestartToggle();
     updateSeamlessProxyToggle();
     updateTranscodeLadderToggle();
-
-    // Make "Enable Transcode" behave like a one-click action:
-    // if the stream has transcoding enabled but no ladder profiles, apply a safe default profile
-    // so the pipeline actually produces output and OUTPUT LIST can configure publish targets.
-    if (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked) {
-      const hasProfiles = Array.isArray(tc.profiles) && tc.profiles.length > 0;
-      if (!hasProfiles) {
-        if (elements.streamTranscodePreset) {
-          elements.streamTranscodePreset.value = 'cpu_720p';
-        }
-        applyStreamTranscodePreset('cpu_720p');
-      } else if (elements.streamTranscodePublishJson) {
-        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
-        if (!rawPublish) {
-          elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
-          renderOutputList();
-        }
-      }
-    }
   }
 
   state.inputs = normalizeInputs(config.input || []);
@@ -14565,6 +15874,7 @@ function openEditor(stream, isNew) {
   updateMptsFields();
 
   state.outputs = normalizeOutputs(config.output || [], stream.id || '');
+  state.outputInlineDraft = null;
   renderOutputList();
   renderTranscodeOutputList();
   updateEditorTranscodeOutputStatus();
@@ -14580,6 +15890,7 @@ function openEditor(stream, isNew) {
 function closeEditor() {
   state.editing = null;
   state.transcodeOutputMonitorIndex = null;
+  state.outputInlineDraft = null;
   setOverlay(elements.editorOverlay, false);
 }
 
@@ -14695,31 +16006,32 @@ function readStreamForm() {
 
   validateSoftcamInputs(inputs);
 
-  let outputs = [];
-  if (!isTranscode) {
-    outputs = state.outputs.map((output, index) => {
-      if (typeof output === 'string') {
-        return output.trim();
-      }
-      if (!output) return '';
-      if (!output.format && !output.type) {
-        const inlineText = output._inline_value !== undefined ? String(output._inline_value || '').trim() : '';
-        const fallback = inlineText || getOutputInlineValue(output, state.settings).trim();
-        if (fallback) return fallback;
-      }
+  // Keep legacy OUTPUT LIST config persisted even when transcoding is enabled.
+  // Runtime ignores cfg.output for transcode jobs, but we must preserve it so disabling transcoding
+  // does not destroy outputs (and so users can switch modes without losing configuration).
+  const outputs = state.outputs.map((output, index) => {
+    if (typeof output === 'string') {
+      return output.trim();
+    }
+    if (!output) return '';
+    if (!output.format && !output.type) {
+      const inlineText = output._inline_value !== undefined ? String(output._inline_value || '').trim() : '';
+      const fallback = inlineText || getOutputInlineValue(output, state.settings).trim();
+      if (fallback) return fallback;
+    }
+    if (!isTranscode) {
       validateOutput(output, index);
-      const clone = { ...output };
-      delete clone.auto;
-      delete clone.biss;
-      delete clone._inline_value;
-      delete clone._inline_invalid;
-      return clone;
-    }).filter((entry) => {
-      if (!entry) return false;
-      if (typeof entry === 'string') return entry.trim().length > 0;
-      return true;
-    });
-  }
+    }
+    const clone = { ...output };
+    delete clone.biss;
+    delete clone._inline_value;
+    delete clone._inline_invalid;
+    return clone;
+  }).filter((entry) => {
+    if (!entry) return false;
+    if (typeof entry === 'string') return entry.trim().length > 0;
+    return true;
+  });
 
   const config = {
     id,
@@ -15236,40 +16548,43 @@ function readStreamForm() {
 	      }
 	    }
 
-    const baseWatchdog = state.transcodeWatchdogDefaults || normalizeOutputWatchdog(null, TRANSCODE_WATCHDOG_DEFAULTS);
-    const tcOutputs = state.transcodeOutputs.map((output) => {
-      const cleaned = {};
-      const name = (output && output.name || '').trim();
-      const url = (output && output.url || '').trim();
-      const vf = (output && output.vf || '').trim();
-      const vcodec = (output && output.vcodec || '').trim();
-      const acodec = (output && output.acodec || '').trim();
+    // Legacy mode (no ladder profiles): keep tc.outputs for backward compatibility.
+    // Ladder mode uses internal per-profile buses + publish targets, so tc.outputs must not be persisted.
+    if (!ladderEnabled) {
+      const baseWatchdog = state.transcodeWatchdogDefaults || normalizeOutputWatchdog(null, TRANSCODE_WATCHDOG_DEFAULTS);
+      const tcOutputs = state.transcodeOutputs.map((output) => {
+        const cleaned = {};
+        const name = (output && output.name || '').trim();
+        const url = (output && output.url || '').trim();
+        const vf = (output && output.vf || '').trim();
+        const vcodec = (output && output.vcodec || '').trim();
+        const acodec = (output && output.acodec || '').trim();
 
-      if (name) cleaned.name = name;
-      if (url) cleaned.url = url;
-      if (vf) cleaned.vf = vf;
-      if (vcodec) cleaned.vcodec = vcodec;
-      if (acodec) cleaned.acodec = acodec;
+        if (name) cleaned.name = name;
+        if (url) cleaned.url = url;
+        if (vf) cleaned.vf = vf;
+        if (vcodec) cleaned.vcodec = vcodec;
+        if (acodec) cleaned.acodec = acodec;
 
-      const vArgs = cleanArgList(output && output.v_args);
-      if (vArgs.length) cleaned.v_args = vArgs;
-      const aArgs = cleanArgList(output && output.a_args);
-      if (aArgs.length) cleaned.a_args = aArgs;
-      const formatArgs = cleanArgList(output && output.format_args);
-      if (formatArgs.length) cleaned.format_args = formatArgs;
-      const metadata = cleanArgList(output && output.metadata);
-      if (metadata.length) cleaned.metadata = metadata;
+        const vArgs = cleanArgList(output && output.v_args);
+        if (vArgs.length) cleaned.v_args = vArgs;
+        const aArgs = cleanArgList(output && output.a_args);
+        if (aArgs.length) cleaned.a_args = aArgs;
+        const formatArgs = cleanArgList(output && output.format_args);
+        if (formatArgs.length) cleaned.format_args = formatArgs;
+        const metadata = cleanArgList(output && output.metadata);
+        if (metadata.length) cleaned.metadata = metadata;
 
-      const watchdog = normalizeOutputWatchdog(output && output.watchdog, baseWatchdog);
-      cleaned.watchdog = watchdog;
+        const watchdog = normalizeOutputWatchdog(output && output.watchdog, baseWatchdog);
+        cleaned.watchdog = watchdog;
 
-      return cleaned;
-    }).filter((output) => output && output.url);
-    if (!ladderEnabled && tcOutputs.length) {
-      tcOutputs.forEach(validateTranscodeOutput);
-    }
-    if (tcOutputs.length) {
-      transcode.outputs = tcOutputs;
+        return cleaned;
+      }).filter((output) => output && output.url);
+
+      if (tcOutputs.length) {
+        tcOutputs.forEach(validateTranscodeOutput);
+        transcode.outputs = tcOutputs;
+      }
     }
 
     config.transcode = transcode;
@@ -15280,25 +16595,43 @@ function readStreamForm() {
   return { id, enabled, config };
 }
 
-function ensureTileInputRows(container, inputs) {
+const TILE_INPUTS_DEFAULT_LIMIT = 5;
+
+function ensureTileInputRows(container, inputs, visibleIndices) {
   if (!container) return [];
   const current = Array.isArray(container.__rows) ? container.__rows : [];
-  if (container.dataset.mode === 'inputs' && current.length === inputs.length) {
+  const totalCount = inputs.length;
+  const indices = Array.isArray(visibleIndices) ? visibleIndices : [];
+  const targetCount = Math.min(indices.length, totalCount);
+  const indicesKey = indices.join(',');
+  if (
+    container.dataset.mode === 'inputs'
+    && current.length === targetCount
+    && container.dataset.total === String(totalCount)
+    && container.dataset.indices === indicesKey
+  ) {
     return current;
   }
   container.innerHTML = '';
   container.__rows = [];
+  container.__moreButton = null;
   if (!inputs.length) {
     const empty = document.createElement('div');
     empty.className = 'tile-input-empty';
     empty.textContent = 'No input stats yet.';
     container.appendChild(empty);
     container.dataset.mode = 'empty';
+    container.dataset.total = '0';
+    container.dataset.indices = '';
     return [];
   }
   container.dataset.mode = 'inputs';
+  container.dataset.total = String(totalCount);
+  container.dataset.indices = indicesKey;
 
-  inputs.forEach((input, index) => {
+  indices.slice(0, targetCount).forEach((inputIndex) => {
+    const index = Number(inputIndex);
+    const input = inputs[index] || {};
     const row = document.createElement('div');
     row.className = 'tile-input-row';
 
@@ -15327,19 +16660,44 @@ function ensureTileInputRows(container, inputs) {
     row.appendChild(copyButton);
 
     container.appendChild(row);
-    container.__rows.push({ row, badge, label, bitrateEl, copyButton });
+    container.__rows.push({
+      row,
+      badge,
+      label,
+      bitrateEl,
+      copyButton,
+      inputIndex: index,
+    });
   });
+
+  if (totalCount > targetCount) {
+    const moreButton = document.createElement('button');
+    moreButton.type = 'button';
+    moreButton.className = 'tile-input-more';
+    moreButton.textContent = `Show all inputs (${totalCount})`;
+    moreButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      container.dataset.showAll = '1';
+      if (container.__lastStats) {
+        updateTileInputs(container, container.__lastStats);
+      }
+    });
+    container.appendChild(moreButton);
+    container.__moreButton = moreButton;
+  }
 
   return container.__rows;
 }
 
 function updateTileInputs(container, stats) {
   if (!container) return;
+  container.__lastStats = stats;
   if (stats && stats.transcode_state) {
     // Для transcoding-stream inputs не показываем.
     if (container.dataset.mode !== 'transcode') {
       container.innerHTML = '';
       container.__rows = [];
+      container.__moreButton = null;
       container.dataset.mode = 'transcode';
     }
     return;
@@ -15347,10 +16705,22 @@ function updateTileInputs(container, stats) {
 
   const inputs = Array.isArray(stats && stats.inputs) ? stats.inputs : [];
   const activeIndex = getActiveInputIndex(stats);
-  const rows = ensureTileInputRows(container, inputs);
+  const showAll = container.dataset.showAll === '1';
+  let visibleIndices = [];
+  if (showAll || inputs.length <= TILE_INPUTS_DEFAULT_LIMIT) {
+    visibleIndices = inputs.map((_, index) => index);
+  } else {
+    const limit = Math.min(TILE_INPUTS_DEFAULT_LIMIT, inputs.length);
+    visibleIndices = Array.from({ length: limit }, (_, index) => index);
+    if (Number.isFinite(activeIndex) && activeIndex >= limit && activeIndex < inputs.length) {
+      visibleIndices[limit - 1] = activeIndex;
+    }
+  }
+  const rows = ensureTileInputRows(container, inputs, visibleIndices);
   if (!inputs.length) return;
 
-  rows.forEach((ref, index) => {
+  rows.forEach((ref) => {
+    const index = Number.isFinite(ref.inputIndex) ? ref.inputIndex : 0;
     const input = inputs[index] || {};
     const stateValue = getInputState(input, index, activeIndex);
     const stateSuffix = String(stateValue || '').toLowerCase();
@@ -15393,13 +16763,13 @@ function updateTileMptsMeta(meta, stream, stats) {
   const isMpts = stream && stream.config && stream.config.mpts === true;
   if (!isMpts) {
     meta.classList.add('is-hidden');
-    meta.textContent = 'MPTS: -';
+    meta.hidden = true;
     return;
   }
   const mpts = stats && stats.mpts_stats;
   if (!mpts) {
     meta.classList.add('is-hidden');
-    meta.textContent = 'MPTS: -';
+    meta.hidden = true;
     return;
   }
   const bitrate = formatBitrateBps(mpts.bitrate_bps);
@@ -15407,6 +16777,7 @@ function updateTileMptsMeta(meta, stream, stats) {
   const psi = Number.isFinite(Number(mpts.psi_interval_ms)) ? `${Math.round(mpts.psi_interval_ms)} ms` : '-';
   meta.textContent = `MPTS: ${bitrate} • null ${nullPct} • PSI ${psi}`;
   meta.classList.remove('is-hidden');
+  meta.hidden = false;
 }
 
 function getTileRefs(tile) {
@@ -15419,6 +16790,7 @@ function getTileRefs(tile) {
     compactStatusLabel: null,
     compactInput: tile.querySelector('[data-role="tile-compact-input"]'),
     compactSummary: tile.querySelector('[data-role="tile-compact-input-summary"]'),
+    detectors: tile.querySelector('[data-role="tile-detectors"]'),
     inputsContainer: tile.querySelector('[data-role="tile-inputs"]'),
     mptsMeta: tile.querySelector('[data-role="tile-mpts-meta"]'),
   };
@@ -15463,9 +16835,45 @@ function updateTiles() {
 
     if (refs && refs.rateEl) {
       if (transcodeState) {
-        const text = formatTranscodeBitrates(transcode);
-        if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
+        const inputLabel = formatMaybeBitrate(transcode.input_bitrate_kbps);
+        const outputLabel = formatMaybeBitrate(transcode.output_bitrate_kbps);
+        const compactLine = `In ${inputLabel} | Out ${outputLabel}`;
+        if (tile.classList.contains('is-compact')) {
+          if (refs.rateEl.dataset.mode !== 'transcode-compact') {
+            refs.rateEl.textContent = '';
+            refs.rateEl.classList.remove('is-transcode');
+            refs.rateEl.dataset.mode = 'transcode-compact';
+            refs.rateEl.__rateLines = null;
+          }
+          if (refs.rateEl.textContent !== compactLine) refs.rateEl.textContent = compactLine;
+        } else {
+          if (refs.rateEl.dataset.mode !== 'transcode') {
+            refs.rateEl.textContent = '';
+            const inLine = document.createElement('span');
+            inLine.className = 'tile-rate-line';
+            const outLine = document.createElement('span');
+            outLine.className = 'tile-rate-line';
+            refs.rateEl.appendChild(inLine);
+            refs.rateEl.appendChild(outLine);
+            refs.rateEl.__rateLines = { inLine, outLine };
+            refs.rateEl.dataset.mode = 'transcode';
+            refs.rateEl.classList.add('is-transcode');
+          }
+          const lines = refs.rateEl.__rateLines || {};
+          if (lines.inLine && lines.inLine.textContent !== `In ${inputLabel}`) {
+            lines.inLine.textContent = `In ${inputLabel}`;
+          }
+          if (lines.outLine && lines.outLine.textContent !== `Out ${outputLabel}`) {
+            lines.outLine.textContent = `Out ${outputLabel}`;
+          }
+        }
       } else {
+        if (refs.rateEl.dataset.mode) {
+          refs.rateEl.textContent = '';
+          refs.rateEl.dataset.mode = '';
+          refs.rateEl.__rateLines = null;
+          refs.rateEl.classList.remove('is-transcode');
+        }
         const text = formatBitrate(stats.bitrate || 0);
         if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       }
@@ -15528,6 +16936,26 @@ function updateTiles() {
     if (refs && refs.compactSummary) {
       const text = formatInputSummary(inputs, activeIndex);
       if (refs.compactSummary.textContent !== text) refs.compactSummary.textContent = text;
+    }
+    if (refs && refs.detectors) {
+      const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
+      const health = activeInput && activeInput.health ? activeInput.health : null;
+      if (!health) {
+        refs.detectors.textContent = '';
+        refs.detectors.classList.add('is-hidden');
+        refs.detectors.hidden = true;
+      } else {
+        const problems = [];
+        const fmtState = (value) => String(value || '').toUpperCase();
+        if (health.no_audio_state && fmtState(health.no_audio_state) !== 'OK') problems.push('No audio');
+        if (health.stop_video_state && fmtState(health.stop_video_state) !== 'OK') problems.push('Stop video');
+        if (health.av_desync_state && fmtState(health.av_desync_state) !== 'OK') problems.push('AV desync');
+        if (health.silence_state && fmtState(health.silence_state) !== 'OK') problems.push('Silence');
+        const text = problems.length ? `Detectors: ${problems.join(', ')}` : 'Detectors: OK';
+        if (refs.detectors.textContent !== text) refs.detectors.textContent = text;
+        refs.detectors.classList.remove('is-hidden');
+        refs.detectors.hidden = false;
+      }
     }
 
     // Детали обновляем только когда плитка раскрыта (иначе слишком дорого при большом числе стримов).
@@ -16107,6 +17535,9 @@ async function loadStreamStatus() {
     updateEditorTranscodeOutputStatus();
     updateEditorOutputStatus();
     updateEditorMptsStatus();
+    if (state.currentView === 'dashboard') {
+      loadSystemMetricsSnapshot(false).catch(() => {});
+    }
   } catch (err) {
   }
 }
@@ -17109,8 +18540,11 @@ function stopAccessLogPolling() {
 }
 
 function startObservabilityPolling() {
-  if (state.observabilityTimer) {
-    clearInterval(state.observabilityTimer);
+  stopObservabilityPolling();
+  // Default: on-demand refresh only (no background polling).
+  const onDemand = getSettingBool('ai_metrics_on_demand', true);
+  if (onDemand) {
+    return;
   }
   state.observabilityTimer = setInterval(() => {
     if (state.currentView === 'observability' && !document.hidden) {
@@ -17180,10 +18614,36 @@ function getThemeColor(name, fallback) {
   return value ? value.trim() : fallback;
 }
 
+let chartRedrawPending = false;
+
+function redrawChartsForCurrentView() {
+  renderSystemMetrics();
+
+  if (state.currentView === 'observability' && state.observabilityLastItems) {
+    renderObservabilityCharts(state.observabilityLastItems, state.observabilityLastScope || 'global');
+  }
+}
+
+function scheduleChartRedraw() {
+  if (chartRedrawPending) return;
+  if (document.hidden) return;
+  if (state.currentView !== 'observability' && state.currentView !== 'dashboard') return;
+  chartRedrawPending = true;
+  requestAnimationFrame(() => {
+    chartRedrawPending = false;
+    if (document.hidden) return;
+    redrawChartsForCurrentView();
+  });
+}
+
 function drawEmptyChart(canvas, message) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    scheduleChartRedraw();
+    return;
+  }
   const ratio = window.devicePixelRatio || 1;
   canvas.width = rect.width * ratio;
   canvas.height = rect.height * ratio;
@@ -17200,6 +18660,10 @@ function drawLineChart(canvas, series) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    scheduleChartRedraw();
+    return;
+  }
   const ratio = window.devicePixelRatio || 1;
   canvas.width = rect.width * ratio;
   canvas.height = rect.height * ratio;
@@ -17261,6 +18725,15 @@ function drawLineChart(canvas, series) {
       }
     });
     ctx.stroke();
+    if (points.length === 1) {
+      const pt = points[0];
+      const x = xScale(pt.x);
+      const y = yScale(pt.y);
+      ctx.fillStyle = item.color || getThemeColor('--accent', '#5aaae5');
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
   });
 }
 
@@ -17268,6 +18741,10 @@ function drawBarChart(canvas, series) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    scheduleChartRedraw();
+    return;
+  }
   const ratio = window.devicePixelRatio || 1;
   canvas.width = rect.width * ratio;
   canvas.height = rect.height * ratio;
@@ -17320,6 +18797,172 @@ function drawBarChart(canvas, series) {
       const h = (rect.height - padding.bottom) - y;
       ctx.fillRect(x, y, barWidth, h);
     });
+  });
+}
+
+function downsampleMinMax(points, maxPoints) {
+  if (!Array.isArray(points)) return [];
+  const input = points;
+  const total = input.length;
+  if (!Number.isFinite(maxPoints) || maxPoints <= 0) return [];
+  if (total <= maxPoints) return input;
+  if (total === 1) return input;
+  if (maxPoints === 1) return [input[total - 1]];
+  if (maxPoints === 2) return [input[0], input[total - 1]];
+
+  const bucketCount = Math.max(1, Math.floor(maxPoints / 2));
+  const bucketSize = total / bucketCount;
+  const out = [];
+
+  for (let b = 0; b < bucketCount; b += 1) {
+    const start = Math.floor(b * bucketSize);
+    const end = Math.min(total, Math.floor((b + 1) * bucketSize));
+    if (start >= total) break;
+    let minIdx = start;
+    let maxIdx = start;
+    for (let i = start; i < end; i += 1) {
+      const y = Number(input[i].y);
+      if (!Number.isFinite(y)) continue;
+      const minY = Number(input[minIdx].y);
+      const maxY = Number(input[maxIdx].y);
+      if (!Number.isFinite(minY) || y < minY) minIdx = i;
+      if (!Number.isFinite(maxY) || y > maxY) maxIdx = i;
+    }
+    if (minIdx === maxIdx) {
+      out.push(input[minIdx]);
+    } else if (minIdx < maxIdx) {
+      out.push(input[minIdx], input[maxIdx]);
+    } else {
+      out.push(input[maxIdx], input[minIdx]);
+    }
+    if (out.length >= maxPoints) break;
+  }
+
+  const last = input[total - 1];
+  if (out.length < maxPoints) {
+    if (out[out.length - 1] !== last) out.push(last);
+  } else {
+    out[out.length - 1] = last;
+  }
+  return out.slice(0, maxPoints);
+}
+
+function drawSparkline(canvas, series, opts) {
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    scheduleChartRedraw();
+    return;
+  }
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = rect.width * ratio;
+  canvas.height = rect.height * ratio;
+  ctx.scale(ratio, ratio);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const items = Array.isArray(series) ? series : [];
+  const allPoints = items.flatMap((item) => item.points || []);
+  if (!allPoints.length) {
+    // Subtle baseline to keep cards from looking "broken".
+    ctx.strokeStyle = getThemeColor('--border', '#3d434e');
+    ctx.globalAlpha = 0.4;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, rect.height - 1);
+    ctx.lineTo(rect.width, rect.height - 1);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  allPoints.forEach((pt) => {
+    minX = Math.min(minX, pt.x);
+    maxX = Math.max(maxX, pt.x);
+    minY = Math.min(minY, pt.y);
+    maxY = Math.max(maxY, pt.y);
+  });
+  const yMin = opts && Number.isFinite(opts.yMin) ? Number(opts.yMin) : minY;
+  const yMax = opts && Number.isFinite(opts.yMax) ? Number(opts.yMax) : maxY;
+  minY = yMin;
+  maxY = yMax;
+
+  if (minX === maxX) {
+    minX -= 1;
+    maxX += 1;
+  }
+  if (minY === maxY) {
+    minY = minY === 0 ? -1 : minY * 0.9;
+    maxY = maxY === 0 ? 1 : maxY * 1.1;
+  }
+
+  const padding = (opts && Number.isFinite(opts.padding)) ? Number(opts.padding) : 6;
+  const width = rect.width - padding * 2;
+  const height = rect.height - padding * 2;
+  const xScale = (x) => padding + ((x - minX) / (maxX - minX)) * width;
+  const yScale = (y) => rect.height - padding - ((y - minY) / (maxY - minY)) * height;
+
+  ctx.strokeStyle = getThemeColor('--border', '#3d434e');
+  ctx.globalAlpha = 0.35;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(padding, rect.height - padding);
+  ctx.lineTo(rect.width - padding, rect.height - padding);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  items.forEach((item) => {
+    const points = Array.isArray(item.points) ? item.points : [];
+    if (!points.length) return;
+    const color = item.color || getThemeColor('--accent', '#5aaae5');
+
+    if (points.length === 1) {
+      const x = xScale(points[0].x);
+      const y = yScale(points[0].y);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      return;
+    }
+
+    ctx.beginPath();
+    points.forEach((pt, idx) => {
+      const x = xScale(pt.x);
+      const y = yScale(pt.y);
+      if (idx === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+
+    // Fill under line.
+    const firstX = xScale(points[0].x);
+    const lastX = xScale(points[points.length - 1].x);
+    ctx.lineTo(lastX, rect.height - padding);
+    ctx.lineTo(firstX, rect.height - padding);
+    ctx.closePath();
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Stroke line on top.
+    ctx.beginPath();
+    points.forEach((pt, idx) => {
+      const x = xScale(pt.x);
+      const y = yScale(pt.y);
+      if (idx === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
   });
 }
 
@@ -17411,6 +19054,7 @@ function renderObservabilitySummary(summary, scope, streamId) {
 
 function renderObservabilityCharts(items, scope) {
   const seriesMap = groupMetrics(items || []);
+  const maxPoints = 240;
   const accent = getThemeColor('--accent', '#5aaae5');
   const warning = getThemeColor('--warning', '#f0b54d');
   const danger = getThemeColor('--danger', '#e06666');
@@ -17418,25 +19062,25 @@ function renderObservabilityCharts(items, scope) {
 
   if (scope === 'stream') {
     drawLineChart(elements.observabilityChartBitrate, [
-      { color: accent, points: seriesMap.bitrate_kbps || [] },
+      { color: accent, points: downsampleMinMax(seriesMap.bitrate_kbps || [], maxPoints) },
     ]);
     drawLineChart(elements.observabilityChartStreams, [
-      { color: success, points: seriesMap.on_air || [] },
+      { color: success, points: downsampleMinMax(seriesMap.on_air || [], maxPoints) },
     ]);
     drawLineChart(elements.observabilityChartSwitches, [
-      { color: warning, points: seriesMap.input_switch || [] },
+      { color: warning, points: downsampleMinMax(seriesMap.input_switch || [], maxPoints) },
     ]);
   } else {
     drawLineChart(elements.observabilityChartBitrate, [
-      { color: accent, points: seriesMap.total_bitrate_kbps || [] },
+      { color: accent, points: downsampleMinMax(seriesMap.total_bitrate_kbps || [], maxPoints) },
     ]);
     drawLineChart(elements.observabilityChartStreams, [
-      { color: success, points: seriesMap.streams_on_air || [] },
-      { color: danger, points: seriesMap.streams_down || [] },
+      { color: success, points: downsampleMinMax(seriesMap.streams_on_air || [], maxPoints) },
+      { color: danger, points: downsampleMinMax(seriesMap.streams_down || [], maxPoints) },
     ]);
     drawLineChart(elements.observabilityChartSwitches, [
-      { color: warning, points: seriesMap.input_switch || [] },
-      { color: danger, points: seriesMap.alerts_error || [] },
+      { color: warning, points: downsampleMinMax(seriesMap.input_switch || [], maxPoints) },
+      { color: danger, points: downsampleMinMax(seriesMap.alerts_error || [], maxPoints) },
     ]);
   }
 }
@@ -17493,13 +19137,358 @@ function renderObservabilityAiSummary(payload) {
   }
 }
 
+function formatBytesPerSec(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return `${formatBytes(num)}/s`;
+}
+
+function pickDefaultSystemIface(snapshot) {
+  const net = snapshot && Array.isArray(snapshot.net) ? snapshot.net : [];
+  const first = net.find((item) => item && item.iface) || null;
+  return first ? String(first.iface) : '';
+}
+
+function updateSystemNetIfaceOptions(snapshot) {
+  const net = snapshot && Array.isArray(snapshot.net) ? snapshot.net : [];
+  const ifaces = net.map((item) => item && item.iface ? String(item.iface) : '').filter(Boolean);
+  if (!ifaces.length) {
+    state.systemMetricsIface = '';
+    if (elements.observabilityNetIface) {
+      elements.observabilityNetIface.innerHTML = '';
+    }
+    return;
+  }
+  const current = state.systemMetricsIface || (elements.observabilityNetIface && elements.observabilityNetIface.value) || '';
+  const next = current && ifaces.includes(current) ? current : ifaces[0];
+  state.systemMetricsIface = next;
+  if (!elements.observabilityNetIface) return;
+
+  elements.observabilityNetIface.innerHTML = '';
+  ifaces.forEach((iface) => {
+    const option = createEl('option', '', iface);
+    option.value = iface;
+    elements.observabilityNetIface.appendChild(option);
+  });
+  elements.observabilityNetIface.value = next;
+}
+
+function renderSystemMetricsCards(container, snapshot, iface, timeseries, flags) {
+  if (!container) return { rollupEnabled: false, hasHistoryData: false };
+  container.innerHTML = '';
+  if (!snapshot || snapshot.enabled !== true) return { rollupEnabled: false, hasHistoryData: false };
+
+  const rollupEnabled = flags && flags.rollup === true;
+  const maxPoints = 160;
+
+  const accent = getThemeColor('--accent', '#5aaae5');
+  const warning = getThemeColor('--warning', '#f0b54d');
+  const danger = getThemeColor('--danger', '#e06666');
+  const success = getThemeColor('--success', '#5bc377');
+
+  const cpuUsage = snapshot.cpu && Number(snapshot.cpu.usage);
+  const cpuPct = Number.isFinite(cpuUsage) ? cpuUsage * 100 : undefined;
+
+  const memPct = snapshot.mem && Number(snapshot.mem.used_percent);
+
+  const disks = Array.isArray(snapshot.disk) ? snapshot.disk : [];
+  const rootDisk = disks.find((d) => d && d.path === '/') || disks[0] || null;
+  const diskPct = rootDisk && Number(rootDisk.used_percent);
+
+  const net = Array.isArray(snapshot.net) ? snapshot.net : [];
+  const picked = (iface && net.find((row) => row && row.iface === iface)) || net[0] || null;
+  const pickedIface = picked && picked.iface ? String(picked.iface) : '';
+  const rxNow = picked ? Number(picked.rx_bps) : undefined;
+  const txNow = picked ? Number(picked.tx_bps) : undefined;
+
+  const ts = (rollupEnabled && timeseries && typeof timeseries === 'object') ? timeseries : {};
+  const cpuHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.cpu_usage, (v) => v * 100) : [];
+  const memHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.mem_used_percent) : [];
+  const diskHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.disk_used_percent) : [];
+  const rxPairs = rollupEnabled && pickedIface && ts.net_rx_bps ? ts.net_rx_bps[pickedIface] : null;
+  const txPairs = rollupEnabled && pickedIface && ts.net_tx_bps ? ts.net_tx_bps[pickedIface] : null;
+  const rxHistoryRaw = rollupEnabled ? toTimeseriesPoints(rxPairs) : [];
+  const txHistoryRaw = rollupEnabled ? toTimeseriesPoints(txPairs) : [];
+
+  const hasHistoryData = !!(cpuHistoryRaw.length || memHistoryRaw.length || diskHistoryRaw.length || rxHistoryRaw.length || txHistoryRaw.length);
+
+  const flatLine = (value) => (Number.isFinite(Number(value)) ? [{ x: 0, y: Number(value) }, { x: 1, y: Number(value) }] : []);
+
+  const makeCard = ({ title, overlayLines, tooltip, series, sparkOpts, valueCompact }) => {
+    const card = createEl('div', 'metric-card');
+    const head = createEl('div', 'metric-card-head');
+    head.appendChild(createEl('div', 'metric-card-title', title));
+    card.appendChild(head);
+
+    const chartWrap = createEl('div', 'metric-card-chart');
+    const canvas = document.createElement('canvas');
+    canvas.className = 'metric-card-canvas';
+    chartWrap.appendChild(canvas);
+
+    const overlay = createEl('div', 'metric-card-overlay');
+    const lines = Array.isArray(overlayLines) ? overlayLines.filter((x) => x !== undefined && x !== null && String(x) !== '') : [];
+    if (lines.length) {
+      const valueClass = valueCompact ? 'metric-card-value compact' : 'metric-card-value';
+      overlay.appendChild(createEl('div', valueClass, String(lines[0])));
+      for (let i = 1; i < lines.length; i += 1) {
+        overlay.appendChild(createEl('div', 'metric-card-sub', String(lines[i])));
+      }
+    }
+    chartWrap.appendChild(overlay);
+    card.appendChild(chartWrap);
+
+    if (tooltip) card.title = tooltip;
+    container.appendChild(card);
+
+    const safeSeries = Array.isArray(series) ? series.map((s) => ({
+      color: s.color,
+      points: downsampleMinMax(s.points || [], maxPoints),
+    })) : [];
+    drawSparkline(canvas, safeSeries, sparkOpts);
+  };
+
+  const la1 = snapshot.cpu && snapshot.cpu.la1;
+  const la5 = snapshot.cpu && snapshot.cpu.la5;
+  const la15 = snapshot.cpu && snapshot.cpu.la15;
+  const laText = [la1, la5, la15].every((v) => Number.isFinite(Number(v)))
+    ? `Loadavg ${Number(la1).toFixed(2)} ${Number(la5).toFixed(2)} ${Number(la15).toFixed(2)}`
+    : '';
+
+  makeCard({
+    title: 'CPU',
+    overlayLines: [cpuPct !== undefined ? formatPercentOneDecimal(cpuPct) : '—'],
+    tooltip: laText,
+    series: [{
+      color: accent,
+      points: cpuHistoryRaw.length ? cpuHistoryRaw : flatLine(cpuPct),
+    }],
+    sparkOpts: { yMin: 0, yMax: 100, padding: 6 },
+  });
+
+  const memTooltip = (snapshot.mem && snapshot.mem.total_kb && snapshot.mem.used_kb)
+    ? `Used ${formatBytes(Number(snapshot.mem.used_kb) * 1024)} / ${formatBytes(Number(snapshot.mem.total_kb) * 1024)}`
+    : '';
+
+  makeCard({
+    title: 'Memory',
+    overlayLines: [Number.isFinite(memPct) ? formatPercentOneDecimal(memPct) : '—'],
+    tooltip: memTooltip,
+    series: [{
+      color: success,
+      points: memHistoryRaw.length ? memHistoryRaw : flatLine(memPct),
+    }],
+    sparkOpts: { yMin: 0, yMax: 100, padding: 6 },
+  });
+
+  const diskTooltip = rootDisk && rootDisk.total_bytes
+    ? `${rootDisk.path || '/'}: ${formatBytes(rootDisk.free_bytes)} free of ${formatBytes(rootDisk.total_bytes)}`
+    : '';
+
+  makeCard({
+    title: 'Disk',
+    overlayLines: [diskPct !== undefined ? formatPercentOneDecimal(diskPct) : '—'],
+    tooltip: diskTooltip,
+    series: [{
+      color: warning,
+      points: diskHistoryRaw.length ? diskHistoryRaw : flatLine(diskPct),
+    }],
+    sparkOpts: { yMin: 0, yMax: 100, padding: 6 },
+  });
+
+  const ifaceLabel = pickedIface ? `Net (${pickedIface})` : 'Net';
+  const rxText = `RX ${picked ? formatBytesPerSec(picked.rx_bps) : '—'}`;
+  const txText = `TX ${picked ? formatBytesPerSec(picked.tx_bps) : '—'}`;
+  const netTooltip = pickedIface && picked
+    ? `${pickedIface}: RX ${formatBytes(picked.rx_bytes)} • TX ${formatBytes(picked.tx_bytes)}`
+    : '';
+
+  makeCard({
+    title: ifaceLabel,
+    overlayLines: [rxText, txText],
+    tooltip: netTooltip,
+    valueCompact: true,
+    series: [
+      { color: accent, points: rxHistoryRaw.length ? rxHistoryRaw : flatLine(rxNow) },
+      { color: danger, points: txHistoryRaw.length ? txHistoryRaw : flatLine(txNow) },
+    ],
+    sparkOpts: { padding: 6 },
+  });
+
+  return { rollupEnabled, hasHistoryData };
+}
+
+function renderSystemMetrics() {
+  const enabled = isViewEnabled('observability');
+  const snapshot = state.systemMetricsSnapshot;
+  const iface = state.systemMetricsIface || pickDefaultSystemIface(snapshot);
+  const flags = state.systemMetricsFlags || {};
+  const rollupEnabled = flags.rollup === true;
+  const timeseries = state.systemMetricsTimeseries;
+
+  if (elements.observabilitySystem) {
+    const show = enabled && state.currentView === 'observability' && snapshot && snapshot.enabled === true;
+    elements.observabilitySystem.hidden = !show;
+    if (show) {
+      renderSystemMetricsCards(elements.observabilitySystemCards, snapshot, iface, timeseries, flags);
+    }
+  }
+  if (elements.dashboardSystem) {
+    const show = enabled && state.currentView === 'dashboard' && snapshot && snapshot.enabled === true;
+    elements.dashboardSystem.hidden = !show;
+    if (show) {
+      renderSystemMetricsCards(elements.dashboardSystemCards, snapshot, iface, timeseries, flags);
+    }
+  }
+
+  if (elements.observabilitySystemTimeseries) {
+    const show = enabled && state.currentView === 'observability' && snapshot && snapshot.enabled === true;
+    if (!show) {
+      elements.observabilitySystemTimeseries.hidden = true;
+    } else {
+      const hintNeeded = renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface);
+      elements.observabilitySystemTimeseries.hidden = !hintNeeded;
+    }
+  }
+}
+
+async function loadSystemMetricsSnapshot(force) {
+  if (!isViewEnabled('observability')) {
+    state.systemMetricsSnapshot = null;
+    state.systemMetricsLastFetchMs = 0;
+    state.systemMetricsInFlight = false;
+    state.systemMetricsFlags = null;
+    state.systemMetricsTimeseries = null;
+    state.systemMetricsTimeseriesLastFetchMs = 0;
+    state.systemMetricsTimeseriesInFlight = false;
+    renderSystemMetrics();
+    return;
+  }
+  const now = Date.now();
+  const ttl = 60000;
+  if (!force && state.systemMetricsLastFetchMs && (now - state.systemMetricsLastFetchMs) < ttl) {
+    // Snapshot is fresh; avoid redrawing on frequent status polling.
+    // Still render once if the user switched views while the fetch completed.
+    if (state.currentView === 'dashboard' && elements.dashboardSystemCards && !elements.dashboardSystemCards.children.length) {
+      renderSystemMetrics();
+    }
+    return;
+  }
+  if (state.systemMetricsInFlight) return;
+  state.systemMetricsInFlight = true;
+  try {
+    const payload = await apiJson('/api/v1/observability/system/snapshot');
+    const snap = payload && payload.snapshot ? payload.snapshot : null;
+    state.systemMetricsFlags = payload && payload.flags ? payload.flags : null;
+    state.systemMetricsSnapshot = snap;
+    state.systemMetricsLastFetchMs = Date.now();
+    if (snap && snap.enabled === true) {
+      updateSystemNetIfaceOptions(snap);
+    }
+    renderSystemMetrics();
+  } catch (err) {
+    renderSystemMetrics();
+  } finally {
+    state.systemMetricsInFlight = false;
+  }
+}
+
+function toTimeseriesPoints(pairs, transform) {
+  if (!Array.isArray(pairs)) return [];
+  const out = [];
+  pairs.forEach((row) => {
+    if (!Array.isArray(row) || row.length < 2) return;
+    const x = Number(row[0]);
+    const raw = Number(row[1]);
+    if (!Number.isFinite(x) || !Number.isFinite(raw)) return;
+    const y = transform ? transform(raw) : raw;
+    if (!Number.isFinite(y)) return;
+    out.push({ x, y });
+  });
+  out.sort((a, b) => a.x - b.x);
+  return out;
+}
+
+function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface) {
+  if (!elements.observabilitySystemTimeseriesHint || !elements.observabilitySystemTimeseriesCharts) return false;
+
+  const hintEl = elements.observabilitySystemTimeseriesHint;
+  const chartsEl = elements.observabilitySystemTimeseriesCharts;
+  // Legacy charts are replaced by sparklines in metric cards (renderSystemMetricsCards).
+  chartsEl.hidden = true;
+
+  if (!rollupEnabled) {
+    hintEl.textContent = 'Server history is disabled. Enable it in Settings → Observability → Server metrics.';
+    hintEl.hidden = false;
+    return true;
+  }
+
+  const ts = (timeseries && typeof timeseries === 'object') ? timeseries : {};
+  const cpuPoints = toTimeseriesPoints(ts.cpu_usage, (v) => v * 100);
+  const memPoints = toTimeseriesPoints(ts.mem_used_percent);
+  const diskPoints = toTimeseriesPoints(ts.disk_used_percent);
+  const rxPairs = ts.net_rx_bps && iface ? ts.net_rx_bps[String(iface)] : null;
+  const txPairs = ts.net_tx_bps && iface ? ts.net_tx_bps[String(iface)] : null;
+  const rxPoints = toTimeseriesPoints(rxPairs);
+  const txPoints = toTimeseriesPoints(txPairs);
+
+  const hasData = cpuPoints.length || memPoints.length || diskPoints.length || rxPoints.length || txPoints.length;
+  if (!hasData) {
+    hintEl.textContent = 'No server history yet. Wait 1-2 rollup intervals and press Refresh.';
+    hintEl.hidden = false;
+    return true;
+  }
+
+  hintEl.textContent = '';
+  hintEl.hidden = true;
+  return false;
+}
+
+async function loadSystemMetricsTimeseries(range) {
+  if (!isViewEnabled('observability')) {
+    state.systemMetricsTimeseries = null;
+    state.systemMetricsTimeseriesLastFetchMs = 0;
+    state.systemMetricsTimeseriesInFlight = false;
+    renderSystemMetrics();
+    return;
+  }
+  if (!(state.systemMetricsFlags && state.systemMetricsFlags.rollup === true)) {
+    state.systemMetricsTimeseries = null;
+    renderSystemMetrics();
+    return;
+  }
+  if (state.currentView !== 'observability') {
+    return;
+  }
+  if (state.systemMetricsTimeseriesInFlight) return;
+  state.systemMetricsTimeseriesInFlight = true;
+  try {
+    const url = new URL('/api/v1/observability/system/timeseries', window.location.origin);
+    if (range) url.searchParams.set('range', range);
+    const payload = await apiJson(url.toString());
+    state.systemMetricsTimeseries = payload && payload.timeseries ? payload.timeseries : null;
+    state.systemMetricsTimeseriesLastFetchMs = Date.now();
+    renderSystemMetrics();
+  } catch (err) {
+    renderSystemMetrics();
+  } finally {
+    state.systemMetricsTimeseriesInFlight = false;
+  }
+}
+
 
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return;
   const logsDays = getSettingNumber('ai_logs_retention_days', 0);
   const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
   const onDemand = getSettingBool('ai_metrics_on_demand', true);
-  const enabled = logsDays > 0 || metricsDays > 0;
+  const enabled = logsDays > 0 || (!onDemand && metricsDays > 0);
+
+  const setVisibility = (isEnabled) => {
+    if (elements.observabilitySummary) elements.observabilitySummary.hidden = !isEnabled;
+    if (elements.observabilityChartsBlock) elements.observabilityChartsBlock.hidden = !isEnabled;
+    if (elements.observabilityLogsBlock) elements.observabilityLogsBlock.hidden = !isEnabled;
+  };
+
   if (elements.observabilityEmpty) {
     elements.observabilityEmpty.classList.toggle('active', !enabled);
   }
@@ -17509,17 +19498,34 @@ async function loadObservability(showStatus) {
       : '';
   }
   if (!enabled) {
-    renderObservabilitySummary({ total_bitrate_kbps: 0, streams_on_air: 0, streams_down: 0, input_switch: 0, alerts_error: 0 }, 'global');
-    renderObservabilityCharts([], 'global');
-    renderObservabilityLogs([]);
-    renderObservabilityAiSummary({ note: 'AI summary unavailable.' });
+    setVisibility(false);
+    state.systemMetricsSnapshot = null;
+    state.systemMetricsFlags = null;
+    state.systemMetricsTimeseries = null;
+    state.observabilityLastItems = null;
+    state.observabilityLastScope = 'global';
+    state.observabilityLastStreamId = '';
+    renderSystemMetrics();
+    if (elements.observabilitySummary) elements.observabilitySummary.innerHTML = '';
+    if (elements.observabilityLogs) elements.observabilityLogs.innerHTML = '';
     return;
   }
+  setVisibility(true);
 
   const range = elements.observabilityRange.value || '24h';
   const scope = elements.observabilityScope.value || 'global';
   const streamId = elements.observabilityStream ? elements.observabilityStream.value : '';
+  await loadSystemMetricsSnapshot(true);
+  if (state.systemMetricsFlags && state.systemMetricsFlags.rollup === true) {
+    await loadSystemMetricsTimeseries(range);
+  } else {
+    state.systemMetricsTimeseries = null;
+    renderSystemMetrics();
+  }
   if (scope === 'stream' && !streamId) {
+    state.observabilityLastItems = [];
+    state.observabilityLastScope = 'stream';
+    state.observabilityLastStreamId = '';
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
@@ -17579,6 +19585,9 @@ async function loadObservability(showStatus) {
       };
     }
 
+    state.observabilityLastItems = items;
+    state.observabilityLastScope = scope;
+    state.observabilityLastStreamId = streamId || '';
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
@@ -18359,6 +20368,26 @@ function applySettingsToUI() {
     setSelectValue(elements.settingsObservabilityRollup, rollup || 60, 60);
     updateObservabilityOnDemandFields();
   }
+  if (elements.settingsSystemMetricsRollupEnabled) {
+    elements.settingsSystemMetricsRollupEnabled.checked = getSettingBool('observability_system_rollup_enabled', false);
+  }
+  if (elements.settingsSystemMetricsRollupInterval) {
+    setSelectValue(
+      elements.settingsSystemMetricsRollupInterval,
+      getSettingNumber('observability_system_rollup_interval_sec', 60),
+      60
+    );
+  }
+  if (elements.settingsSystemMetricsRetention) {
+    setSelectValue(
+      elements.settingsSystemMetricsRetention,
+      getSettingNumber('observability_system_retention_sec', 3600),
+      3600
+    );
+  }
+  if (elements.settingsSystemMetricsIncludeVirtual) {
+    elements.settingsSystemMetricsIncludeVirtual.checked = getSettingBool('observability_system_include_virtual_ifaces', false);
+  }
   if (elements.settingsTelegramEnabled) {
     elements.settingsTelegramEnabled.checked = getSettingBool('telegram_enabled', false);
   }
@@ -18997,6 +21026,10 @@ function collectGeneralSettings() {
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
   const observabilityOnDemand = true;
+  const systemMetricsRollupEnabled = elements.settingsSystemMetricsRollupEnabled && elements.settingsSystemMetricsRollupEnabled.checked;
+  const systemMetricsRollupInterval = toNumber(elements.settingsSystemMetricsRollupInterval && elements.settingsSystemMetricsRollupInterval.value);
+  const systemMetricsRetention = toNumber(elements.settingsSystemMetricsRetention && elements.settingsSystemMetricsRetention.value);
+  const systemMetricsIncludeVirtual = elements.settingsSystemMetricsIncludeVirtual && elements.settingsSystemMetricsIncludeVirtual.checked;
   if (observabilityEnabled) {
     if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
       throw new Error('Log retention days must be >= 1');
@@ -19008,6 +21041,14 @@ function collectGeneralSettings() {
     }
     if (observabilityRollup !== undefined && observabilityRollup < 30) {
       throw new Error('Rollup interval must be >= 30 sec');
+    }
+  }
+  if (systemMetricsRollupEnabled) {
+    if (systemMetricsRollupInterval !== undefined && (systemMetricsRollupInterval < 1 || systemMetricsRollupInterval > 3600)) {
+      throw new Error('System metrics rollup interval must be 1..3600 sec');
+    }
+    if (systemMetricsRetention !== undefined && (systemMetricsRetention < 1 || systemMetricsRetention > 86400)) {
+      throw new Error('System metrics retention must be 1..86400 sec');
     }
   }
   const telegramEnabled = elements.settingsTelegramEnabled && elements.settingsTelegramEnabled.checked;
@@ -19305,6 +21346,18 @@ function collectGeneralSettings() {
     } else {
       payload.ai_logs_retention_days = 0;
       payload.ai_metrics_retention_days = 0;
+    }
+    if (elements.settingsSystemMetricsRollupEnabled) {
+      payload.observability_system_rollup_enabled = !!systemMetricsRollupEnabled;
+    }
+    if (elements.settingsSystemMetricsRollupInterval && systemMetricsRollupInterval !== undefined) {
+      payload.observability_system_rollup_interval_sec = Math.floor(systemMetricsRollupInterval);
+    }
+    if (elements.settingsSystemMetricsRetention && systemMetricsRetention !== undefined) {
+      payload.observability_system_retention_sec = Math.floor(systemMetricsRetention);
+    }
+    if (elements.settingsSystemMetricsIncludeVirtual) {
+      payload.observability_system_include_virtual_ifaces = !!systemMetricsIncludeVirtual;
     }
   }
   if (elements.settingsObservabilityOnDemand) {
@@ -20735,6 +22788,39 @@ function buildInputStatusRow(input, index, activeIndex) {
     addLine(`HLS: ${hlsState} | Seq: ${hlsSeq} | Errors: ${hlsErrs} | Gap: ${hlsGap}`);
   }
 
+  if (input.health) {
+    const health = input.health || {};
+    const fmtState = (value) => {
+      if (!value) return 'n/a';
+      const upper = String(value).toUpperCase();
+      if (upper === 'ALERT' || upper === 'WARNING') return 'ALERT';
+      if (upper === 'OK') return 'OK';
+      return upper;
+    };
+    const bits = [];
+    if (health.no_audio_state) bits.push(`No audio: ${fmtState(health.no_audio_state)}`);
+    if (health.stop_video_state) {
+      const mode = health.stop_video_mode ? ` (${health.stop_video_mode})` : '';
+      bits.push(`Stop video: ${fmtState(health.stop_video_state)}${mode}`);
+    }
+    if (health.av_desync_state) {
+      const ms = Number.isFinite(Number(health.av_desync_ms)) ? ` ${Math.round(Number(health.av_desync_ms))}ms` : '';
+      bits.push(`AV desync: ${fmtState(health.av_desync_state)}${ms}`);
+    }
+    if (health.silence_state) {
+      const noise = Number.isFinite(Number(health.silence_noise_db)) ? ` ${health.silence_noise_db}dB` : '';
+      bits.push(`Silence: ${fmtState(health.silence_state)}${noise}`);
+    }
+    if (bits.length) {
+      addLine(`Detectors: ${bits.join(' | ')}`);
+    }
+    if (health.audio_present !== undefined || health.video_present !== undefined) {
+      const audio = health.audio_present ? 'audio' : 'no audio';
+      const video = health.video_present ? 'video' : 'no video';
+      addLine(`A/V: ${audio}, ${video}`);
+    }
+  }
+
   if (extra.childNodes.length) {
     row.appendChild(extra);
   }
@@ -20996,6 +23082,7 @@ function buildAnalyzeBaseSections(stream, stats) {
     ? inputs.map((input, index) => buildInputStatusRow(input, index, activeIndex))
     : ['No input stats yet.'];
   const activeInputLabel = getActiveInputLabel(inputs, activeIndex) || 'n/a';
+  const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
   let lastSwitch = 'n/a';
   if (stats.last_switch) {
     const from = stats.last_switch.from;
@@ -21015,6 +23102,38 @@ function buildAnalyzeBaseSections(stream, stats) {
         `Last switch: ${lastSwitch}`,
       ],
     },
+    (function() {
+      const health = activeInput && activeInput.health;
+      if (!health) return null;
+      const fmtState = (value) => {
+        if (!value) return 'n/a';
+        const upper = String(value).toUpperCase();
+        if (upper === 'ALERT' || upper === 'WARNING') return 'ALERT';
+        if (upper === 'OK') return 'OK';
+        return upper;
+      };
+      const items = [];
+      if (health.no_audio_state) items.push(`No audio: ${fmtState(health.no_audio_state)}`);
+      if (health.stop_video_state) {
+        const mode = health.stop_video_mode ? ` (${health.stop_video_mode})` : '';
+        items.push(`Stop video: ${fmtState(health.stop_video_state)}${mode}`);
+      }
+      if (health.av_desync_state) {
+        const ms = Number.isFinite(Number(health.av_desync_ms)) ? ` ${Math.round(Number(health.av_desync_ms))}ms` : '';
+        items.push(`AV desync: ${fmtState(health.av_desync_state)}${ms}`);
+      }
+      if (health.silence_state) {
+        const noise = Number.isFinite(Number(health.silence_noise_db)) ? ` ${health.silence_noise_db}dB` : '';
+        items.push(`Silence: ${fmtState(health.silence_state)}${noise}`);
+      }
+      if (health.audio_present !== undefined || health.video_present !== undefined) {
+        const audio = health.audio_present ? 'audio' : 'no audio';
+        const video = health.video_present ? 'video' : 'no video';
+        items.push(`A/V present: ${audio}, ${video}`);
+      }
+      if (!items.length) return null;
+      return { title: 'Quality detectors', items };
+    })(),
     {
       title: 'Inputs',
       items: inputItems,
@@ -22818,6 +24937,12 @@ function bindEvents() {
       loadObservability(true);
     });
   }
+  if (elements.observabilityNetIface) {
+    elements.observabilityNetIface.addEventListener('change', () => {
+      state.systemMetricsIface = elements.observabilityNetIface.value || '';
+      renderSystemMetrics();
+    });
+  }
   if (elements.settingsObservabilityOnDemand) {
     elements.settingsObservabilityOnDemand.addEventListener('change', () => {
       updateObservabilityOnDemandFields();
@@ -23838,49 +25963,12 @@ function bindEvents() {
       }
       updateTranscodeLadderToggle();
 
-      const ensurePublishFromLegacyOutputs = () => {
-        if (!elements.streamTranscodePublishJson) return false;
-        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
-        if (rawPublish) return false;
-        if (!Array.isArray(state.outputs) || state.outputs.length === 0) return false;
-
-        const publish = getLadderPresetPublish('3');
-        const firstProfile = getEditingProfileIds()[0] || 'HDHigh';
-
-        state.outputs.forEach((out) => {
-          const presetKey = getLegacyOutputPreset(out);
-          const outEnabled = !(out && out.enabled === false);
-          if (presetKey === 'hls_local') {
-            const entry = publish.find((e) => e && e.type === 'hls');
-            if (entry) entry.enabled = outEnabled;
-            return;
-          }
-          if (presetKey === 'http_ts_local') {
-            const entry = publish.find((e) => e && e.type === 'http-ts');
-            if (entry) entry.enabled = outEnabled;
-            return;
-          }
-          if (presetKey === 'udp_multicast' || presetKey === 'rtp_multicast') {
-            const proto = presetKey === 'rtp_multicast' ? 'rtp' : 'udp';
-            const url = formatUdpUrl(proto, out);
-            if (!url) return;
-            publish.push({
-              type: proto,
-              enabled: outEnabled,
-              variants: [firstProfile],
-              url,
-            });
-          }
-        });
-
-        elements.streamTranscodePublishJson.value = formatJson(publish);
-        return true;
-      };
-
-      const rawProfiles = String(elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value || '').trim();
-      if (!rawProfiles) {
-        // Ultra-minimal default: apply preset on first enable to create profiles + publish.
-        ensurePublishFromLegacyOutputs();
+      const hasProfiles = hasNonEmptyJsonArray(
+        elements.streamTranscodeProfilesJson && elements.streamTranscodeProfilesJson.value,
+        'Profiles (Transcode tab)',
+      );
+      if (!hasProfiles) {
+        // Ultra-minimal default: apply preset on first enable to create profiles.
         let presetKey = elements.streamTranscodePreset ? String(elements.streamTranscodePreset.value || '').trim() : '';
         if (!presetKey) {
           presetKey = 'cpu_720p';
@@ -23890,16 +25978,6 @@ function bindEvents() {
         }
         applyStreamTranscodePreset(presetKey);
         return;
-      }
-
-      // If profiles exist but publish is empty, default to HLS ON + HTTP-TS ON for all variants.
-      if (elements.streamTranscodePublishJson) {
-        const rawPublish = String(elements.streamTranscodePublishJson.value || '').trim();
-        if (!rawPublish) {
-          if (!ensurePublishFromLegacyOutputs()) {
-            elements.streamTranscodePublishJson.value = formatJson(getLadderPresetPublish('3'));
-          }
-        }
       }
       renderOutputList();
     });
@@ -24124,21 +26202,24 @@ function bindEvents() {
 
   elements.btnAddOutput.addEventListener('click', () => {
     if (isEditingLadderTranscodeStream()) {
-      const publish = parseEditingTranscodePublishJsonSafe();
-      publish.push({
-        type: 'hls',
-        enabled: true,
-        variants: [],
-      });
-      setEditingTranscodePublishJson(publish);
-      renderOutputList();
-      openPublishOutputModal(publish.length - 1);
+      openPublishOutputModal(null);
       return;
     }
-    state.outputs.push(defaultHlsOutput(elements.streamId.value || 'stream'));
-    renderOutputList();
-    openOutputModal(state.outputs.length - 1);
+    openOutputModal(null);
   });
+
+  if (elements.btnAddOutputInline) {
+    elements.btnAddOutputInline.addEventListener('click', () => {
+      const kind = isEditingLadderTranscodeStream() ? 'publish' : 'legacy';
+      if (!state.outputInlineDraft || state.outputInlineDraft.kind !== kind) {
+        const streamId = (elements.streamId && elements.streamId.value)
+          ? String(elements.streamId.value).trim()
+          : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+        state.outputInlineDraft = createOutputInlineDraft(kind, streamId);
+      }
+      renderOutputList();
+    });
+  }
 
   elements.outputList.addEventListener('click', (event) => {
     const action = event.target.closest('[data-action]');
@@ -24146,8 +26227,9 @@ function bindEvents() {
     const row = event.target.closest('.list-row');
     if (!row) return;
     const index = Number(row.dataset.index);
+    const kind = row.dataset.kind || (isEditingLadderTranscodeStream() ? 'publish' : 'legacy');
 
-    if (isEditingLadderTranscodeStream()) {
+    if (kind === 'publish') {
       const publish = parseEditingTranscodePublishJsonSafe();
       const entry = publish[index];
       const streamId = (elements.streamId && elements.streamId.value)
@@ -24162,6 +26244,11 @@ function bindEvents() {
         if (entry) openPublishOutputModal(index);
       }
       if (action.dataset.action === 'output-remove') {
+        const isEnabled = !entry || entry.enabled !== false;
+        if (isEnabled) {
+          const ok = window.confirm('Remove enabled output?');
+          if (!ok) return;
+        }
         publish.splice(index, 1);
         setEditingTranscodePublishJson(publish);
         renderOutputList();
@@ -24187,6 +26274,12 @@ function bindEvents() {
       openOutputModal(index);
     }
     if (action.dataset.action === 'output-remove') {
+      const target = state.outputs[index];
+      const isEnabled = !target || (typeof target === 'string') || target.enabled !== false;
+      if (isEnabled) {
+        const ok = window.confirm('Remove enabled output?');
+        if (!ok) return;
+      }
       state.outputs.splice(index, 1);
       renderOutputList();
     }
@@ -24340,7 +26433,9 @@ function bindEvents() {
 
     const output = readOutputForm();
     if (!output) return;
-    if (state.outputEditingIndex !== null) {
+    if (state.outputEditingIndex === null || state.outputEditingIndex === undefined) {
+      state.outputs.push(output);
+    } else {
       state.outputs[state.outputEditingIndex] = output;
     }
     renderOutputList();
@@ -24421,16 +26516,6 @@ function bindEvents() {
   }
   if (elements.streamTranscodeLadderEnabled) {
     elements.streamTranscodeLadderEnabled.addEventListener('change', updateTranscodeLadderToggle);
-  }
-  if (elements.streamTranscodeLadderPreset2) {
-    elements.streamTranscodeLadderPreset2.addEventListener('click', () => {
-      applyTranscodeLadderPreset('2');
-    });
-  }
-  if (elements.streamTranscodeLadderPreset3) {
-    elements.streamTranscodeLadderPreset3.addEventListener('click', () => {
-      applyTranscodeLadderPreset('3');
-    });
   }
   if (elements.btnAddTranscodeProfile) {
     elements.btnAddTranscodeProfile.addEventListener('click', () => {
@@ -24644,6 +26729,60 @@ function bindEvents() {
       setInputAdvancedFoldVisibility(type);
     });
   }
+  if (elements.inputQualityPreset) {
+    elements.inputQualityPreset.addEventListener('change', () => {
+      if (state.inputQualityPresetApplying) return;
+      const preset = elements.inputQualityPreset.value;
+      applyInputQualityPreset(preset);
+      if (preset === 'basic' || preset === 'full') {
+        elements.inputQualityPreset.value = 'custom';
+      }
+    });
+  }
+  if (elements.inputDetectorsFold) {
+    elements.inputDetectorsFold.addEventListener('click', (event) => {
+      const toggle = event.target.closest('.detector-details-toggle');
+      if (!toggle) return;
+      const targetId = toggle.dataset.target;
+      if (!targetId) return;
+      const panel = document.getElementById(targetId);
+      if (!panel) return;
+      const willOpen = panel.hasAttribute('hidden');
+      if (willOpen) {
+        panel.removeAttribute('hidden');
+      } else {
+        panel.setAttribute('hidden', 'hidden');
+      }
+      toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+  }
+  if (elements.inputRaw && elements.inputForm) {
+    elements.inputRaw.addEventListener('input', () => {
+      if (state.inputRawSyncing) return;
+      scheduleInputRawParse();
+    });
+    elements.inputForm.addEventListener('input', (event) => {
+      if (event.target === elements.inputRaw) return;
+      if (isDetectorInputTarget(event.target)) {
+        if (event.target !== elements.inputQualityPreset) {
+          markQualityPresetCustom();
+        }
+        validateInputDetectors();
+      }
+      scheduleInputRawSync();
+    });
+    elements.inputForm.addEventListener('change', (event) => {
+      if (event.target === elements.inputRaw) return;
+      if (isDetectorInputTarget(event.target)) {
+        if (event.target !== elements.inputQualityPreset) {
+          markQualityPresetCustom();
+        }
+        ensureDetectorDefaults();
+        validateInputDetectors();
+      }
+      scheduleInputRawSync();
+    });
+  }
   if (elements.inputNetProfile) {
     elements.inputNetProfile.addEventListener('change', () => {
       applyInputResiliencePrefill(elements.inputNetProfile.value);
@@ -24701,6 +26840,7 @@ function bindEvents() {
     elements.inputForm.addEventListener('submit', (event) => {
       event.preventDefault();
       try {
+        if (!validateInputDetectors()) return;
         const url = readInputForm();
         if (state.inputEditingIndex !== null) {
           state.inputs[state.inputEditingIndex] = url;

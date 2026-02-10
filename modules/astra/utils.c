@@ -42,6 +42,7 @@
 #   include <sys/socket.h>
 #   include <unistd.h>
 #   include <netinet/in.h>
+#   include <sys/statvfs.h>
 #   ifndef __ANDROID__
 #       include <ifaddrs.h>
 #   endif
@@ -188,6 +189,50 @@ static int utils_stat(lua_State *L)
     return 1;
 }
 
+static int utils_statvfs(lua_State *L)
+{
+#ifndef _WIN32
+    const char *path = luaL_checkstring(L, 1);
+
+    lua_newtable(L);
+
+    struct statvfs sv;
+    if(statvfs(path, &sv) != 0)
+    {
+        lua_pushstring(L, strerror(errno));
+        lua_setfield(L, -2, "error");
+        return 1;
+    }
+
+    const unsigned long long frsize = sv.f_frsize ? (unsigned long long)sv.f_frsize : (unsigned long long)sv.f_bsize;
+    const unsigned long long total = frsize * (unsigned long long)sv.f_blocks;
+    const unsigned long long free = frsize * (unsigned long long)sv.f_bfree;
+    const unsigned long long avail = frsize * (unsigned long long)sv.f_bavail;
+    const unsigned long long used = (total > free) ? (total - free) : 0ULL;
+
+    double used_percent = 0.0;
+    if(total > 0)
+        used_percent = ((double)used / (double)total) * 100.0;
+
+    lua_pushinteger(L, (lua_Integer)total);
+    lua_setfield(L, -2, "total_bytes");
+    lua_pushinteger(L, (lua_Integer)free);
+    lua_setfield(L, -2, "free_bytes");
+    lua_pushinteger(L, (lua_Integer)avail);
+    lua_setfield(L, -2, "avail_bytes");
+    lua_pushinteger(L, (lua_Integer)used);
+    lua_setfield(L, -2, "used_bytes");
+    lua_pushnumber(L, (lua_Number)used_percent);
+    lua_setfield(L, -2, "used_percent");
+
+    return 1;
+#else
+    lua_pushnil(L);
+    lua_pushstring(L, "statvfs is not supported on this platform");
+    return 2;
+#endif
+}
+
 static int utils_can_bind(lua_State *L)
 {
 #ifndef _WIN32
@@ -316,6 +361,7 @@ LUA_API int luaopen_utils(lua_State *L)
         { "ifaddrs", utils_ifaddrs },
 #endif
         { "stat", utils_stat },
+        { "statvfs", utils_statvfs },
         { "can_bind", utils_can_bind },
         { NULL, NULL }
     };

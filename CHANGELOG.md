@@ -10,6 +10,58 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-10
+- Changes:
+  - Input settings: detect Basic/Full quality preset when detector values match defaults.
+- Tests:
+  - `node --check web/app.js`
+### 2026-02-10
+- Changes:
+  - Input settings: add Quality preset selector and compact detector layout with Details toggles, defaults, and inline validation.
+  - Input settings: add CC limit toggle inside detectors and preserve detector values/unknown hash options on round-trip.
+  - Inputs list: restyle reorder controls as a compact stacked control.
+- Tests:
+  - `node --check web/app.js`
+### 2026-02-10
+- Changes:
+  - Inputs: add quality detector options (no-audio, stop-video/freeze, AV desync, silencedetect) with UI controls and input URL encoding.
+  - URL options: accept both `#k=v#k2=v2` and `#k=v&k2=v2` (extra `#` treated as separators) for input detector params.
+  - Runtime: expose detector health in input status and Analyze modal.
+  - Validation: validate detector options on stream save to avoid invalid configs.
+- Tests:
+  - `node --check web/app.js`
+  - `./astra scripts/tests/input_detectors_url_unit.lua`
+### 2026-02-10
+- Changes:
+  - OUTPUT LIST: stop auto-creating outputs when enabling transcoding or applying transcode presets.
+  - OUTPUT LIST: add inline “+” output row (type + URL) with lightweight validation; invalid rows can’t be saved.
+  - Transcode publish: validate push publish URLs for `udp/rtp/rtmp/rtsp` (required + no spaces + correct scheme).
+- Tests:
+  - `node --check web/app.js`
+### 2026-02-10
+- Changes:
+  - Observability: add lightweight server system metrics (CPU/Mem/Disk/Net) snapshot + optional in-memory rollup; show cards/graphs in Dashboard/Observability only when Observability is enabled.
+  - Modules: add `utils.statvfs()` for disk usage metrics.
+  - Observability: default `ai_logs_retention_days` to 0 (disabled) unless explicitly enabled via settings, to avoid hidden background activity.
+- Tests:
+  - `make`
+  - `node --check web/app.js`
+### 2026-02-10
+- Changes:
+  - Runtime: apply stream updates transactionally (build new pipeline first); keep old stream on failure and rollback file outputs.
+  - Transcode: keep the previous job when new ladder/publish config is invalid instead of stopping playback.
+  - Stability: guard Lua callbacks in C modules (HTTP server/upstream/downstream/websocket, timers, DVB/file inputs, Postgres, analyze) to avoid process crashes on handler errors.
+  - Ops: exit with `EX_CONFIG` (78) on startup config errors and document systemd guardrails for restart storms.
+  - Ops: harden `contrib/systemd/astral@.service` with `ExecStartPre` checks + `RestartPreventExitStatus=78`.
+- Tests:
+  - Not run (core C + Lua changes).
+### 2026-02-10
+- Changes:
+  - HTTP: enforce request line/header/body size limits and guard Lua handlers with protected calls.
+  - Config: validate output fields (ports/paths/URLs) before applying stream configs.
+  - Runtime: pass HTTP limit settings to all output servers.
+- Tests:
+  - `./configure.sh && make` (server 178.212.236.2)
 ### 2026-02-09
 - Changes:
   - Transcode: fix internal `/input/<id>` loopback for `stream://<id>` inputs by normalizing stream refs to `http://127.0.0.1:<http_port>/play/<id>?internal=1` when creating loop channels.
@@ -2684,3 +2736,22 @@
   - `contrib/ci/smoke_transcode_ladder_failover_hls_publish.sh`
   - `contrib/ci/smoke_transcode_ladder_economical_hls_publish.sh`
   - `contrib/ci/smoke_transcode_ladder_failover_hls_publish.sh`
+### 2026-02-10
+- Changes:
+  - Transcode loopback: split internal `/input/<id>` (raw stage for ffmpeg) vs `/play/<id>` (stream output). `/play` prefers transcoded output when available.
+  - Transcode: ffmpeg input URL now uses `/input/... ?internal=1` without `buf_kb/buf_fill_kb` query params (buffering is enforced server-side).
+  - Transcode inputs: treat absolute `http(s)://.../play/<id>` URLs as direct upstream inputs (do not rewrite to localhost `/play/<id>`), fixing external Astra/Astral `/play` sources.
+  - HTTP-TS publish: canonical `/live/<stream_id>~<profile_id>` endpoints are extensionless (backend still accepts legacy `.ts`).
+  - UI: ultra-minimal Transcode flow (Enable toggle in General + default CPU 720p preset on first enable); removed “Quick presets”.
+  - UI: OUTPUT LIST now provides full public URLs with auto/manual override, reset-to-auto, and variants tags for publish targets.
+  - Stability: wrap all HTTP route callbacks with `xpcall` so handler exceptions log + return 500 instead of crashing the whole instance.
+  - Ops guardrails: DEV/TEST only on `178.212.236.2`; `scripts/ops/deploy_rsync.sh` refuses deploy to PROD (`178.212.236.6`) unless explicitly allowed.
+  - Modules: harden base64 Lua bindings (handle empty inputs, allocation failures).
+- Tests:
+  - DEV `178.212.236.2`:
+  - `curl -sS --max-time 3 "http://127.0.0.1:9060/input/Flixsnip?internal=1" | head -c 188 | xxd -p -c 188`
+  - `curl -sS -H "Authorization: Bearer <token>" "http://127.0.0.1:9060/api/v1/transcode-status/tc_test" | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"ffmpeg_input_url\"])'` (verified `/input/... ?internal=1` and no `buf_*`)
+  - `curl -sS --max-time 3 "http://127.0.0.1:9060/input/tc_test?internal=1" | head -c 188 | xxd -p -c 188`
+  - `curl -sS --max-time 3 "http://127.0.0.1:9060/play/tc_test" | head -c 188 | xxd -p -c 188`
+  - `curl -sS --max-time 3 "http://127.0.0.1:9060/live/tc_test~HDHigh" | head -c 188 | xxd -p -c 188`
+  - `curl -sS --max-time 3 "http://127.0.0.1:9060/hls/tc_test/index.m3u8" | head`

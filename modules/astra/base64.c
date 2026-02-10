@@ -76,10 +76,26 @@ char * base64_encode(const void *in, size_t in_size, size_t *out_size)
 
 void * base64_decode(const char *in, size_t in_size, size_t *out_size)
 {
+    if(!in)
+        return NULL;
+
     if(in_size == 0)
     {
-        while(in[in_size])
-            ++in_size;
+        in_size = strlen(in);
+    }
+
+    if(in_size == 0)
+    {
+        /*
+         * base64("") is valid and should decode to empty payload.
+         * Keep a non-NULL pointer to simplify callers.
+         */
+        if(out_size)
+            *out_size = 0;
+        uint8_t *out = (uint8_t *)malloc(1);
+        if(out)
+            out[0] = 0;
+        return out;
     }
 
     if(in_size % 4 != 0)
@@ -93,6 +109,8 @@ void * base64_decode(const char *in, size_t in_size, size_t *out_size)
         size -= 1;
 
     uint8_t *out = (uint8_t *)malloc(size);
+    if(!out)
+        return NULL;
 
     for(size_t i = 0, j = 0; i < in_size;)
     {
@@ -124,11 +142,16 @@ void * base64_decode(const char *in, size_t in_size, size_t *out_size)
 static int lua_base64_encode(lua_State *L)
 {
     const char *data = luaL_checkstring(L, 1);
-    const int data_size = luaL_len(L, 1);
+    const size_t data_size = luaL_len(L, 1);
 
     size_t data_enc_size = 0;
-    const char *data_enc = base64_encode(data, data_size, &data_enc_size);
-    lua_pushlstring(lua, data_enc, data_enc_size);
+    char *data_enc = base64_encode(data, data_size, &data_enc_size);
+    if(!data_enc)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushlstring(L, data_enc, data_enc_size);
 
     free((void *)data_enc);
     return 1;
@@ -137,11 +160,16 @@ static int lua_base64_encode(lua_State *L)
 static int lua_base64_decode(lua_State *L)
 {
     const char *data = luaL_checkstring(L, 1);
-    int data_size = luaL_len(lua, 1);
+    const size_t data_size = luaL_len(L, 1);
 
     size_t data_dec_size = 0;
-    const char *data_dec = (char *)base64_decode(data, data_size, &data_dec_size);
-    lua_pushlstring(lua, data_dec, data_dec_size);
+    char *data_dec = (char *)base64_decode(data, data_size, &data_dec_size);
+    if(!data_dec)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushlstring(L, data_dec, data_dec_size);
 
     free((void *)data_dec);
     return 1;

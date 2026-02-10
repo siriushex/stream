@@ -20,6 +20,22 @@ ExecStart=/opt/astra/astra scripts/server.lua --config ${ASTRA_CONFIG} \
   -p ${ASTRA_HTTP_PORT} --data-dir ${ASTRA_DATA_DIR} --web-dir ${ASTRA_WEB_DIR}
 ```
 
+### Restart storms / config errors
+Astral exits with code `78` (`EX_CONFIG`) for startup config errors (bad port, missing web dir,
+failed import). Recommended systemd guardrails to avoid restart storms:
+```
+Restart=on-failure
+RestartPreventExitStatus=78
+StartLimitIntervalSec=60
+StartLimitBurst=3
+```
+
+Optional preflight (prevent a start with empty envs):
+```
+ExecStartPre=/bin/sh -lc 'test -n "$ASTRA_HTTP_PORT" && echo "$ASTRA_HTTP_PORT" | grep -Eq "^[0-9]+$"'
+ExecStartPre=/bin/sh -lc 'test -r "$ASTRA_CONFIG"'
+```
+
 ## Runtime Dependencies (Ubuntu/Debian)
 If you deploy a prebuilt binary to a clean server, you may be missing runtime
 libraries or external tools (for example `ffmpeg`).

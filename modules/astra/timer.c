@@ -37,12 +37,20 @@ struct module_data_t
     asc_timer_t *timer;
 };
 
+static int method_close(module_data_t *mod);
+
 static void timer_callback(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_callback);
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_self);
-    lua_call(lua, 1, 0);
+    if(lua_pcall(lua, 1, 0, 0) != 0)
+    {
+        const char *msg = lua_tostring(lua, -1);
+        asc_log_error("[timer] callback error: %s", msg ? msg : "unknown");
+        lua_pop(lua, 1);
+        method_close(mod);
+    }
 }
 
 static int method_close(module_data_t *mod)

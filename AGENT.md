@@ -1,9 +1,13 @@
 # AGENT
 
 ## Scope
-- Testing and final verification must run on the server in `/home/hex`.
-- Connect with: `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.6`
-- The server has no DVB support; do not test adapters or any DVB-related flows there.
+- Testing and final verification must run on the DEV/TEST server in `/home/hex`.
+- DEV/TEST (only): `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.2`
+- PROD: `178.212.236.6` is production. Do not use it for development/testing or deploys from Codex.
+- Test instances list must exclude `178.212.236.6`; use only `178.212.236.2` for dev/test.
+- Guardrail: `scripts/ops/deploy_rsync.sh` refuses to deploy to `178.212.236.6` unless `ASTRAL_ALLOW_PROD_DEPLOY=1` is set explicitly.
+- If you must touch PROD: logs/diagnostics only (read-only). Never run `git pull`, `rsync`, `./configure.sh`, `make`, or hot-edit files there from Codex.
+- The DEV/TEST server may have no DVB support; do not test adapters or any DVB-related flows there unless explicitly confirmed.
 - Do not add secrets to the repo. Do not commit `.env` files or keys.
 - Follow the strict team workflow in `docs/engineering/TEAM_WORKFLOW.md` and ownership in `.github/CODEOWNERS`.
 - Performance priority: minimize CPU/RAM/IO usage. Avoid background timers and frequent polling by default; prefer on‑demand or cached workflows unless explicitly required.
@@ -82,7 +86,7 @@
 ```sh
 rsync -az --delete --exclude '.git' --exclude 'astra' --exclude '*.o' --exclude '*.so' \
   -e "ssh -p 40242 -i ~/.ssh/root_blast" \
-  ./ root@178.212.236.6:/home/hex/astra/
+  ./ root@178.212.236.2:/home/hex/astra/
 ```
 
 ## Local sanity (optional)

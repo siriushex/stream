@@ -290,7 +290,10 @@ end
 
 local warned_disk_hls_storage = false
 
-local function ensure_auto_hls_output(channel_config)
+-- http_play_hls historically injected an implicit HLS output into stream configs.
+-- That mutation leaks into the UI (OUTPUT LIST) on any config update (including transcode),
+-- so we keep HLS behavior as a runtime-only output and never write it into channel_config.output.
+local function ensure_auto_hls_output(channel_config, output_list)
     if channel_config and channel_config.__disable_auto_hls then
         return
     end
@@ -307,17 +310,29 @@ local function ensure_auto_hls_output(channel_config)
         end
     end
 
-    if channel_config.output == nil then
-        channel_config.output = {}
+    if type(output_list) ~= "table" then
+        return
     end
 
-    for _, item in ipairs(channel_config.output) do
-        if item and item.format == "hls" then
+    for _, item in ipairs(output_list) do
+        local conf = nil
+        if type(item) == "table" then
+            conf = item.config or item
+        end
+        if conf and tostring(conf.format or ""):lower() == "hls" then
             return
         end
     end
 
-    table.insert(channel_config.output, { format = "hls", auto = true })
+    local idx = #output_list + 1
+    local label = tostring(channel_config and channel_config.name or "Stream")
+    table.insert(output_list, {
+        config = {
+            format = "hls",
+            auto = true,
+            name = label .. " output #" .. tostring(idx) .. " (auto hls)",
+        },
+    })
 end
 
 local function apply_stream_defaults(channel_config)
@@ -857,6 +872,157 @@ local function format_input_url(conf)
     return nil
 end
 
+local INPUT_NO_AUDIO_DEFAULT_SEC = 5
+local INPUT_STOP_VIDEO_DEFAULT_SEC = 5
+local INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT = 800
+local INPUT_AV_DESYNC_HOLD_SEC_DEFAULT = 3
+local INPUT_AV_DESYNC_STABLE_SEC_DEFAULT = 10
+local INPUT_AV_DESYNC_RESEND_SEC_DEFAULT = 60
+local INPUT_SILENCE_DURATION_DEFAULT = 20
+local INPUT_SILENCE_INTERVAL_DEFAULT = 10
+local INPUT_SILENCE_NOISE_DEFAULT = -30
+local INPUT_SILENCE_PROBE_MAX_DEFAULT = 2
+local INPUT_VIDEO_FREEZE_SEC_DEFAULT = 10
+
+local function is_truthy(value)
+    if value == true or value == 1 then
+        return true
+    end
+    if type(value) == "string" then
+        local v = value:lower()
+        return v == "1" or v == "true" or v == "yes" or v == "on"
+    end
+    return false
+end
+
+local function parse_number(value)
+    local n = tonumber(value)
+    if n == nil then
+        return nil
+    end
+    return n
+end
+
+local function normalize_silencedetect(conf)
+    if not conf then
+        return nil
+    end
+    local raw = conf.silencedetect
+    if raw == nil then
+        return nil
+    end
+    local duration = nil
+    local interval = nil
+    local noise = nil
+    if type(raw) == "string" and raw:find(",") then
+        local a, b, c = raw:match("^%s*([^,]+)%s*,%s*([^,]+)%s*,%s*([^,]+)%s*$")
+        duration = tonumber(a)
+        interval = tonumber(b)
+        noise = tonumber(c)
+    elseif is_truthy(raw) then
+        -- defaults
+    elseif tonumber(raw) then
+        duration = tonumber(raw)
+    end
+
+    duration = duration or parse_number(conf.silence_duration) or parse_number(conf.silencedetect_duration) or INPUT_SILENCE_DURATION_DEFAULT
+    interval = interval or parse_number(conf.silence_interval) or parse_number(conf.silencedetect_interval) or INPUT_SILENCE_INTERVAL_DEFAULT
+    noise = noise or parse_number(conf.silence_noise) or parse_number(conf.silencedetect_noise) or INPUT_SILENCE_NOISE_DEFAULT
+
+    if duration <= 0 then
+        return nil
+    end
+    if interval < 1 then
+        interval = INPUT_SILENCE_INTERVAL_DEFAULT
+    end
+    return {
+        enabled = true,
+        duration_sec = duration,
+        interval_sec = interval,
+        noise_db = noise,
+    }
+end
+
+local function normalize_input_detectors(conf)
+    if type(conf) ~= "table" then
+        return nil
+    end
+
+    local detectors = {}
+
+    local no_audio = conf.no_audio_on
+    if no_audio ~= nil then
+        local timeout = tonumber(no_audio)
+        if is_truthy(no_audio) or timeout == nil then
+            timeout = INPUT_NO_AUDIO_DEFAULT_SEC
+        end
+        if timeout and timeout > 0 then
+            detectors.no_audio = {
+                enabled = true,
+                timeout_sec = timeout,
+            }
+        end
+    end
+
+    local stop_video = conf.stop_video
+    if stop_video ~= nil then
+        local mode = "pts"
+        if type(stop_video) == "string" and stop_video:lower() == "freeze" then
+            mode = "freeze"
+        elseif not is_truthy(stop_video) then
+            mode = nil
+        end
+        if mode then
+            local timeout = tonumber(conf.stop_video_timeout_sec) or INPUT_STOP_VIDEO_DEFAULT_SEC
+            local freeze_sec = tonumber(conf.stop_video_freeze_sec) or INPUT_VIDEO_FREEZE_SEC_DEFAULT
+            detectors.stop_video = {
+                enabled = true,
+                mode = mode,
+                timeout_sec = timeout,
+                freeze_sec = freeze_sec,
+            }
+        end
+    end
+
+    local detect_av = conf.detect_av
+    if detect_av ~= nil and is_truthy(detect_av) then
+        detectors.av_desync = {
+            enabled = true,
+            threshold_ms = tonumber(conf.detect_av_threshold_ms or conf.av_threshold_ms) or INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT,
+            hold_sec = tonumber(conf.detect_av_hold_sec or conf.av_hold_sec) or INPUT_AV_DESYNC_HOLD_SEC_DEFAULT,
+            stable_sec = tonumber(conf.detect_av_stable_sec or conf.av_stable_sec) or INPUT_AV_DESYNC_STABLE_SEC_DEFAULT,
+            resend_interval_sec = tonumber(conf.detect_av_resend_interval_sec or conf.av_resend_interval_sec) or INPUT_AV_DESYNC_RESEND_SEC_DEFAULT,
+        }
+    end
+
+    local silence = normalize_silencedetect(conf)
+    if silence then
+        detectors.silence = silence
+    end
+
+    if next(detectors) == nil then
+        return nil
+    end
+    return detectors
+end
+
+local function get_silence_probe_limit()
+    local limit = tonumber(setting_number("silencedetect_max_probes", INPUT_SILENCE_PROBE_MAX_DEFAULT))
+    if not limit or limit < 1 then
+        limit = INPUT_SILENCE_PROBE_MAX_DEFAULT
+    end
+    return limit
+end
+
+local function build_local_input_url(stream_id, input_id)
+    local http_port = tonumber(config and config.get_setting and config.get_setting("http_port") or nil) or 8000
+    local suffix = ""
+    if input_id and tonumber(input_id) and tonumber(input_id) > 0 then
+        suffix = "~" .. tostring(input_id)
+    end
+    return "http://127.0.0.1:" .. tostring(http_port) .. "/input/" .. tostring(stream_id) .. suffix .. "?internal=1"
+end
+
 local AUDIO_FIX_TARGET_TYPE_DEFAULT = 0x0F
 local AUDIO_FIX_PROBE_INTERVAL_DEFAULT = 30
 local AUDIO_FIX_PROBE_DURATION_DEFAULT = 2
@@ -875,6 +1041,7 @@ local AUDIO_FIX_ANALYZE_MAX_DEFAULT = 4
 local AUDIO_FIX_PLAY_BUFFER_KB_DEFAULT = 512
 local AUDIO_FIX_PLAY_BUFFER_FILL_KB_DEFAULT = 16
 local audio_fix_analyze_active = 0
+local silence_probe_active = 0
 
 local function format_audio_type_hex(value)
     if not value then
@@ -1108,6 +1275,428 @@ local function consume_lines(target, buffer_key, chunk, handler)
     end
 end
 
+local function send_stream_event(channel_data, event, payload)
+    local endpoint = setting_string("event_request", "")
+    if endpoint == "" then
+        return
+    end
+    local parsed = parse_url(endpoint)
+    if not parsed or (parsed.format ~= "http" and parsed.format ~= "https") then
+        if channel_data and not channel_data.detector_event_warned then
+            log.warning("[stream " .. get_stream_label(channel_data) .. "] invalid event_request: " .. tostring(endpoint))
+            channel_data.detector_event_warned = true
+        end
+        return
+    end
+    if parsed.format == "https" and not (astra and astra.features and astra.features.ssl) then
+        if channel_data and not channel_data.detector_event_warned then
+            log.warning("[stream " .. get_stream_label(channel_data) .. "] https not supported for event_request")
+            channel_data.detector_event_warned = true
+        end
+        return
+    end
+
+    local port = parsed.port or (parsed.format == "https" and 443 or 80)
+    local path = parsed.path or "/"
+    local host_header = parsed.host or ""
+    if port then
+        host_header = host_header .. ":" .. tostring(port)
+    end
+
+    local base = {
+        event = event,
+        stream_id = channel_data and channel_data.config and channel_data.config.id or "",
+        ts = os.time(),
+    }
+    if payload then
+        for key, value in pairs(payload) do
+            base[key] = value
+        end
+    end
+    local body = json.encode(base)
+
+    http_request({
+        host = parsed.host,
+        port = port,
+        path = path,
+        method = "POST",
+        ssl = (parsed.format == "https"),
+        headers = {
+            "Content-Type: application/json",
+            "Content-Length: " .. tostring(#body),
+            "Host: " .. host_header,
+            "Connection: close",
+        },
+        content = body,
+        callback = function(self, response)
+            if not response then
+                return
+            end
+            if response.code and response.code >= 400 then
+                log.warning("[stream " .. get_stream_label(channel_data) .. "] event_request failed: " ..
+                    tostring(response.code))
+            end
+        end,
+    })
+end
+
+local function ensure_detector_state(input_data)
+    if not input_data.detector_state then
+        input_data.detector_state = {}
+    end
+    return input_data.detector_state
+end
+
+local function emit_detector_event(channel_data, input_id, input_data, detector_key, level, code, message, meta, now, resend_sec)
+    local state = ensure_detector_state(input_data)
+    state[detector_key] = state[detector_key] or {}
+    local det = state[detector_key]
+    local last = det.last_event_ts or 0
+    if resend_sec and resend_sec > 0 and last > 0 and (now - last) < resend_sec then
+        return
+    end
+    det.last_event_ts = now
+    local payload = meta or {}
+    payload.input_index = input_id and (input_id - 1) or nil
+    payload.input_url = input_data and input_data.source_url or nil
+    emit_stream_alert(channel_data, level, code, message, payload)
+    send_stream_event(channel_data, code:lower(), payload)
+end
+
+local function update_detector_state_entry(entry, state, now, extra)
+    entry.state = state
+    if state == "ALERT" then
+        if not entry.since then
+            entry.since = now
+        end
+    else
+        entry.since = nil
+    end
+    if extra then
+        for key, value in pairs(extra) do
+            entry[key] = value
+        end
+    end
+end
+
+local function stop_silence_probe(input_data)
+    if not input_data then
+        return
+    end
+    local probe = input_data.silence_probe
+    if not probe or not probe.proc then
+        input_data.silence_probe = nil
+        return
+    end
+    probe.proc:terminate()
+    probe.proc:kill()
+    probe.proc:close()
+    silence_probe_active = math.max(0, silence_probe_active - 1)
+    input_data.silence_probe = nil
+end
+
+local function tick_silence_probe(channel_data, input_id, input_data, det, now)
+    if not det or det.enabled ~= true then
+        return
+    end
+    if not process or type(process.spawn) ~= "function" then
+        det.last_error = "process module not available"
+        return
+    end
+    local probe = input_data.silence_probe
+    if probe and probe.proc then
+        local err_chunk = probe.proc:read_stderr()
+        if err_chunk then
+            consume_lines(probe, "stderr_buf", err_chunk, function(line)
+                if line:find("silence_start") then
+                    det.silence_active = true
+                    if det.state ~= "ALERT" then
+                        update_detector_state_entry(det, "ALERT", now, { noise_db = det.noise_db })
+                        emit_detector_event(channel_data, input_id, input_data, "silence", "WARNING",
+                            "AUDIO_SILENCE_DETECTED", "audio silence detected", {
+                                detector = "silence",
+                                noise_db = det.noise_db,
+                            }, now, det.resend_interval_sec)
+                    end
+                elseif line:find("silence_end") then
+                    det.silence_active = false
+                    if det.state == "ALERT" then
+                        update_detector_state_entry(det, "OK", now, { noise_db = det.noise_db })
+                        emit_detector_event(channel_data, input_id, input_data, "silence", "INFO",
+                            "AUDIO_SILENCE_END", "audio silence ended", {
+                                detector = "silence",
+                            }, now, nil)
+                    end
+                end
+            end)
+        end
+        local status = probe.proc:poll()
+        if status or (now - probe.start_ts) >= (probe.timeout_sec or det.duration_sec) then
+            if not status then
+                probe.proc:kill()
+            end
+            probe.proc:close()
+            silence_probe_active = math.max(0, silence_probe_active - 1)
+            input_data.silence_probe = nil
+            det.next_probe_ts = now + (det.interval_sec or INPUT_SILENCE_INTERVAL_DEFAULT)
+        end
+        return
+    end
+
+    if det.next_probe_ts and now < det.next_probe_ts then
+        return
+    end
+
+    local limit = get_silence_probe_limit()
+    if silence_probe_active >= limit then
+        det.last_error = "probe_limit"
+        det.next_probe_ts = now + (det.interval_sec or INPUT_SILENCE_INTERVAL_DEFAULT)
+        return
+    end
+
+    local stream_id = channel_data and channel_data.config and channel_data.config.id or ""
+    if stream_id == "" then
+        det.last_error = "stream_id_missing"
+        det.next_probe_ts = now + (det.interval_sec or INPUT_SILENCE_INTERVAL_DEFAULT)
+        return
+    end
+    local input_url = build_local_input_url(stream_id, input_id)
+    if not input_url or input_url == "" then
+        det.last_error = "input_url_missing"
+        det.next_probe_ts = now + (det.interval_sec or INPUT_SILENCE_INTERVAL_DEFAULT)
+        return
+    end
+
+    local ffmpeg_bin = resolve_tool_path("ffmpeg", {
+        setting_key = "ffmpeg_path",
+        env_key = "ASTRA_FFMPEG_PATH",
+    })
+    local args = {
+        ffmpeg_bin,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        "info",
+        "-i",
+        tostring(input_url),
+        "-vn",
+        "-af",
+        ("silencedetect=noise=%sdB:d=%s"):format(tostring(det.noise_db or INPUT_SILENCE_NOISE_DEFAULT),
+            tostring(det.duration_sec or INPUT_SILENCE_DURATION_DEFAULT)),
+        "-t",
+        tostring(det.duration_sec or INPUT_SILENCE_DURATION_DEFAULT),
+        "-f",
+        "null",
+        "-",
+    }
+    local ok, proc = pcall(process.spawn, args, { stderr = "pipe" })
+    if not ok or not proc then
+        det.last_error = "ffmpeg_spawn_failed"
+        det.next_probe_ts = now + (det.interval_sec or INPUT_SILENCE_INTERVAL_DEFAULT)
+        return
+    end
+    silence_probe_active = silence_probe_active + 1
+    det.last_error = nil
+    input_data.silence_probe = {
+        proc = proc,
+        stderr_buf = "",
+        start_ts = now,
+        timeout_sec = (det.duration_sec or INPUT_SILENCE_DURATION_DEFAULT) + 2,
+    }
+end
+
+local function update_input_detectors(channel_data, input_id, input_data, total, now)
+    if not input_data or type(total) ~= "table" then
+        return
+    end
+
+    local detectors = normalize_input_detectors(input_data.config)
+    input_data.detectors_config = detectors
+    if not detectors then
+        input_data.health = nil
+        return
+    end
+
+    local state = ensure_detector_state(input_data)
+    local health = input_data.health or {}
+    input_data.health = health
+    health.audio_present = total.audio_present == true
+    health.video_present = total.video_present == true
+    health.audio_bitrate = total.audio_bitrate
+    health.video_bitrate = total.video_bitrate
+
+    local active_only = (channel_data and channel_data.active_input_id and channel_data.active_input_id == input_id)
+    if not active_only then
+        return
+    end
+
+    -- NO AUDIO
+    if detectors.no_audio and detectors.no_audio.enabled then
+        local det = state.no_audio or {}
+        state.no_audio = det
+        det.timeout_sec = detectors.no_audio.timeout_sec
+        if total.audio_present == true then
+            input_data.last_audio_seen_ts = now
+        end
+        if total.audio_pts_ms and total.audio_pts_ms ~= input_data.last_audio_pts_ms then
+            input_data.last_audio_pts_ms = total.audio_pts_ms
+            input_data.last_audio_pts_change_ts = now
+        end
+        local last_activity = input_data.last_audio_pts_change_ts or input_data.last_audio_seen_ts
+        if not last_activity then
+            last_activity = now
+        end
+        if (now - last_activity) >= det.timeout_sec then
+            if det.state ~= "ALERT" then
+                update_detector_state_entry(det, "ALERT", now, {})
+                emit_detector_event(channel_data, input_id, input_data, "no_audio", "WARNING",
+                    "NO_AUDIO_DETECTED", "no audio detected", {
+                        detector = "no_audio",
+                        timeout_sec = det.timeout_sec,
+                    }, now, det.resend_interval_sec)
+            end
+        else
+            if det.state == "ALERT" then
+                update_detector_state_entry(det, "OK", now, {})
+                emit_detector_event(channel_data, input_id, input_data, "no_audio", "INFO",
+                    "NO_AUDIO_END", "audio recovered", {
+                        detector = "no_audio",
+                    }, now, nil)
+            end
+        end
+        health.no_audio_state = det.state or "OK"
+        health.no_audio_since = det.since
+    end
+
+    -- STOP VIDEO / FREEZE
+    if detectors.stop_video and detectors.stop_video.enabled then
+        local det = state.stop_video or {}
+        state.stop_video = det
+        det.mode = detectors.stop_video.mode
+        det.timeout_sec = detectors.stop_video.timeout_sec
+        det.freeze_sec = detectors.stop_video.freeze_sec
+        if total.video_present == true then
+            input_data.last_video_seen_ts = now
+        end
+        if total.video_pts_ms and total.video_pts_ms ~= input_data.last_video_pts_ms then
+            input_data.last_video_pts_ms = total.video_pts_ms
+            input_data.last_video_pts_change_ts = now
+        end
+        if det.mode == "freeze" and total.video_idr_hash then
+            if input_data.last_video_idr_hash ~= total.video_idr_hash then
+                input_data.last_video_idr_hash = total.video_idr_hash
+                input_data.last_video_idr_change_ts = now
+                if det.state == "ALERT" then
+                    update_detector_state_entry(det, "OK", now, {})
+                    emit_detector_event(channel_data, input_id, input_data, "stop_video", "INFO",
+                        "VIDEO_FREEZE_END", "video freeze ended", {
+                            detector = "video_freeze",
+                        }, now, nil)
+                end
+            end
+            local last_change = input_data.last_video_idr_change_ts or now
+            if (now - last_change) >= (det.freeze_sec or INPUT_VIDEO_FREEZE_SEC_DEFAULT) then
+                if det.state ~= "ALERT" then
+                    update_detector_state_entry(det, "ALERT", now, {})
+                    emit_detector_event(channel_data, input_id, input_data, "stop_video", "WARNING",
+                        "VIDEO_FREEZE_DETECTED", "video freeze detected", {
+                            detector = "video_freeze",
+                            freeze_sec = det.freeze_sec,
+                        }, now, det.resend_interval_sec)
+                end
+            end
+        else
+            local last_activity = input_data.last_video_pts_change_ts or input_data.last_video_seen_ts
+            if not last_activity then
+                last_activity = now
+            end
+            if (now - last_activity) >= det.timeout_sec then
+                if det.state ~= "ALERT" then
+                    update_detector_state_entry(det, "ALERT", now, {})
+                    emit_detector_event(channel_data, input_id, input_data, "stop_video", "WARNING",
+                        "VIDEO_STOP_DETECTED", "video stopped", {
+                            detector = "stop_video",
+                            timeout_sec = det.timeout_sec,
+                        }, now, det.resend_interval_sec)
+                end
+            else
+                if det.state == "ALERT" then
+                    update_detector_state_entry(det, "OK", now, {})
+                    emit_detector_event(channel_data, input_id, input_data, "stop_video", "INFO",
+                        "VIDEO_STOP_END", "video recovered", {
+                            detector = "stop_video",
+                        }, now, nil)
+                end
+            end
+        end
+        health.stop_video_state = det.state or "OK"
+        health.stop_video_since = det.since
+        health.stop_video_mode = det.mode
+    end
+
+    -- AV DESYNC
+    if detectors.av_desync and detectors.av_desync.enabled then
+        local det = state.av_desync or {}
+        state.av_desync = det
+        det.threshold_ms = detectors.av_desync.threshold_ms
+        det.hold_sec = detectors.av_desync.hold_sec
+        det.stable_sec = detectors.av_desync.stable_sec
+        det.resend_interval_sec = detectors.av_desync.resend_interval_sec
+        if total.audio_pts_ms and total.video_pts_ms then
+            local diff = math.abs(tonumber(total.video_pts_ms) - tonumber(total.audio_pts_ms))
+            det.current_ms = diff
+            if diff >= det.threshold_ms then
+                det.exceed_since = det.exceed_since or now
+                det.ok_since = nil
+                if det.state ~= "ALERT" and (now - det.exceed_since) >= det.hold_sec then
+                    update_detector_state_entry(det, "ALERT", now, { current_ms = diff })
+                    emit_detector_event(channel_data, input_id, input_data, "av_desync", "WARNING",
+                        "AV_DESYNC_DETECTED", "av desync detected", {
+                            detector = "av_desync",
+                            current_ms = diff,
+                            threshold_ms = det.threshold_ms,
+                        }, now, det.resend_interval_sec)
+                elseif det.state == "ALERT" and det.resend_interval_sec and det.resend_interval_sec > 0 then
+                    emit_detector_event(channel_data, input_id, input_data, "av_desync", "WARNING",
+                        "AV_DESYNC_DETECTED", "av desync detected", {
+                            detector = "av_desync",
+                            current_ms = diff,
+                            threshold_ms = det.threshold_ms,
+                        }, now, det.resend_interval_sec)
+                end
+            else
+                det.exceed_since = nil
+                det.ok_since = det.ok_since or now
+                if det.state == "ALERT" and (now - det.ok_since) >= det.stable_sec then
+                    update_detector_state_entry(det, "OK", now, { current_ms = diff })
+                    emit_detector_event(channel_data, input_id, input_data, "av_desync", "INFO",
+                        "AV_DESYNC_END", "av desync resolved", {
+                            detector = "av_desync",
+                            current_ms = diff,
+                        }, now, nil)
+                end
+            end
+        end
+        health.av_desync_state = det.state or "OK"
+        health.av_desync_since = det.since
+        health.av_desync_ms = det.current_ms
+    end
+
+    -- SILENCE DETECT (ffmpeg probe)
+    if detectors.silence and detectors.silence.enabled then
+        local det = state.silence or {}
+        state.silence = det
+        det.enabled = true
+        det.duration_sec = detectors.silence.duration_sec
+        det.interval_sec = detectors.silence.interval_sec
+        det.noise_db = detectors.silence.noise_db
+        tick_silence_probe(channel_data, input_id, input_data, det, now)
+        health.silence_state = det.state or "OK"
+        health.silence_since = det.since
+        health.silence_noise_db = det.noise_db
+    end
+end
+
 function on_analyze_spts(channel_data, input_id, data)
     local input_data = channel_data.input[input_id]
     local now = os.time()
@@ -1148,6 +1737,13 @@ function on_analyze_spts(channel_data, input_id, data)
             updated_at = os.time(),
         }
         input_data.last_seen_ts = now
+
+        local ok_det = pcall(function()
+            update_input_detectors(channel_data, input_id, input_data, total, now)
+        end)
+        if not ok_det then
+            log.warning("[" .. input_data.config.name .. "] detector update failed")
+        end
 
         if data.on_air ~= input_data.on_air then
             local analyze_message = "[" .. input_data.config.name .. "] Bitrate:" .. data.total.bitrate .. "Kbit/s"
@@ -1454,11 +2050,14 @@ local function channel_prepare_input(channel_data, input_id, opts)
     input_data.stats = nil
     input_data.fail_count = 0
 
+    local detectors = normalize_input_detectors(input_data.config)
+    input_data.detectors_config = detectors
+
     if input_data.config.no_analyze ~= true then
         -- Важно: если на входе включен carrier/playout (NULL stuffing), анализатор должен смотреть
         -- ДО него, иначе поток будет выглядеть "on_air" даже при полном отсутствии контента.
         local analyze_tail = input_data.input and (input_data.input.analyze_tail or input_data.input.tail) or nil
-        input_data.analyze = analyze({
+        local analyze_opts = {
             upstream = analyze_tail and analyze_tail:stream() or input_data.input.tail:stream(),
             name = input_data.config.name,
             cc_limit = input_data.config.cc_limit,
@@ -1466,7 +2065,12 @@ local function channel_prepare_input(channel_data, input_id, opts)
             callback = function(data)
                 on_analyze_spts(channel_data, input_id, data)
             end,
-        })
+        }
+        if detectors and detectors.stop_video and detectors.stop_video.mode == "freeze" then
+            analyze_opts.video_fingerprint = true
+            analyze_opts.video_fingerprint_bytes = 512
+        end
+        input_data.analyze = analyze(analyze_opts)
     else
         local now = os.time()
         input_data.analyze = nil
@@ -1539,6 +2143,9 @@ local function channel_activate_input(channel_data, input_id, reason)
         local now = os.time()
         local from_index = prev_id > 0 and (prev_id - 1) or -1
         local to_index = input_id - 1
+        if prev_id > 0 and channel_data.input and channel_data.input[prev_id] then
+            stop_silence_probe(channel_data.input[prev_id])
+        end
         local from_label = from_index >= 0 and tostring(from_index) or "none"
         log.info("[stream " .. get_stream_label(channel_data) .. "] switch input " ..
             from_label .. " -> " .. tostring(to_index) .. ", reason=" .. tostring(reason))
@@ -1569,6 +2176,7 @@ local function channel_activate_input(channel_data, input_id, reason)
     input_data.probing = nil
     input_data.warm = nil
     input_data.probe_until = nil
+    stop_silence_probe(input_data)
     return true
 end
 
@@ -2426,6 +3034,113 @@ local function check_http_output_port(output_config, opts)
     return true
 end
 
+local function check_port_range(port, label)
+    local value = tonumber(port)
+    if not value then
+        return nil, label .. " port is required"
+    end
+    if value < 1 or value > 65535 then
+        return nil, label .. " port must be between 1 and 65535"
+    end
+    return value
+end
+
+local function require_output_path(path, label)
+    if not path or path == "" then
+        return nil, label .. " path is required"
+    end
+    return true
+end
+
+local function validate_output_entry(output_config, stream_config, opts)
+    local format = tostring(output_config.format or ""):lower()
+    if format == "http" then
+        local ok, err = check_http_output_port(output_config, opts)
+        if not ok then
+            return nil, err
+        end
+        ok, err = check_port_range(output_config.port, "http output")
+        if not ok then
+            return nil, err
+        end
+        ok, err = require_output_path(output_config.path, "http output")
+        if not ok then
+            return nil, err
+        end
+        return true
+    end
+    if format == "udp" or format == "rtp" then
+        local addr = output_config.addr or output_config.host
+        if not addr or addr == "" then
+            return nil, format .. " output addr is required"
+        end
+        local ok, err = check_port_range(output_config.port, format .. " output")
+        if not ok then
+            return nil, err
+        end
+        return true
+    end
+    if format == "srt" then
+        local ok, err = check_port_range(output_config.bridge_port, "srt bridge")
+        if not ok then
+            return nil, err
+        end
+        local srt_url = build_srt_url(output_config)
+        if not srt_url then
+            return nil, "srt url is required"
+        end
+        return true
+    end
+    if format == "file" then
+        local filename = output_config.filename or output_config.path
+        if not filename or tostring(filename) == "" then
+            return nil, "file output filename is required"
+        end
+        return true
+    end
+    if format == "np" then
+        local host = output_config.host or output_config.addr
+        if not host or host == "" then
+            return nil, "np output host is required"
+        end
+        local ok, err = check_port_range(output_config.port, "np output")
+        if not ok then
+            return nil, err
+        end
+        ok, err = require_output_path(output_config.path, "np output")
+        if not ok then
+            return nil, err
+        end
+        return true
+    end
+    if format == "hls" then
+        local storage = output_config.storage
+        if storage == nil or storage == "" then
+            storage = setting_string("hls_storage", "disk")
+        end
+        if storage ~= "memfd" and (not output_config.path or output_config.path == "") then
+            local stream_id = tostring(stream_config.id or stream_config.name or "")
+            local hls_dir = setting_string("hls_dir", "")
+            if hls_dir == "" or stream_id == "" then
+                return nil, "hls output requires path or hls_dir"
+            end
+        end
+        return true
+    end
+    return true
+end
+
+local function validate_string_list(value, label)
+    if value == nil then
+        return true
+    end
+    local t = type(value)
+    if t == "string" or t == "table" then
+        return true
+    end
+    return nil, label .. " must be string or array"
+end
+
 local function softcam_is_truthy(value)
     return value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on"
 end
@@ -2564,9 +3279,134 @@ local function validate_input_softcam(items)
     return true
 end
 
+local function truthy_input_option(value)
+    if value == true then
+        return true
+    end
+    if value == false then
+        return false
+    end
+    if value == 1 or value == "1" then
+        return true
+    end
+    if value == 0 or value == "0" then
+        return false
+    end
+    local s = tostring(value or ""):lower()
+    if s == "" then
+        return false
+    end
+    if s == "true" or s == "yes" or s == "on" then
+        return true
+    end
+    if s == "false" or s == "no" or s == "off" then
+        return false
+    end
+    return nil
+end
+
+local function validate_input_detectors(parsed, idx)
+    if type(parsed) ~= "table" then
+        return true
+    end
+    local function fail(msg)
+        return nil, "input #" .. tostring(idx) .. " " .. msg
+    end
+
+    local no_audio = parsed.no_audio_on
+    if no_audio ~= nil then
+        if no_audio == true then
+            -- ok, default timeout
+        else
+            local timeout = tonumber(no_audio)
+            if not timeout or timeout < 1 then
+                return fail("no_audio_on must be >= 1")
+            end
+        end
+    end
+
+    local stop_video = parsed.stop_video
+    if stop_video ~= nil then
+        local mode = tostring(stop_video):lower()
+        local truth = truthy_input_option(stop_video)
+        if mode ~= "freeze" and truth == nil then
+            return fail("stop_video must be on/off/freeze")
+        end
+        local timeout = tonumber(parsed.stop_video_timeout_sec or parsed.stop_video_timeout)
+        if timeout ~= nil and timeout < 1 then
+            return fail("stop_video_timeout_sec must be >= 1")
+        end
+        local freeze = tonumber(parsed.stop_video_freeze_sec)
+        if mode == "freeze" and freeze ~= nil and freeze < 1 then
+            return fail("stop_video_freeze_sec must be >= 1")
+        end
+    end
+
+    local detect_av = parsed.detect_av
+    if detect_av ~= nil then
+        local truth = truthy_input_option(detect_av)
+        if truth == nil then
+            return fail("detect_av must be on/off")
+        end
+        local threshold = tonumber(parsed.detect_av_threshold_ms)
+        if threshold ~= nil and threshold < 1 then
+            return fail("detect_av_threshold_ms must be >= 1")
+        end
+        local hold = tonumber(parsed.detect_av_hold_sec)
+        if hold ~= nil and hold < 1 then
+            return fail("detect_av_hold_sec must be >= 1")
+        end
+        local stable = tonumber(parsed.detect_av_stable_sec)
+        if stable ~= nil and stable < 1 then
+            return fail("detect_av_stable_sec must be >= 1")
+        end
+        local resend = tonumber(parsed.detect_av_resend_interval_sec)
+        if resend ~= nil and resend < 1 then
+            return fail("detect_av_resend_interval_sec must be >= 1")
+        end
+    end
+
+    local silence = parsed.silencedetect
+    local silence_duration = tonumber(parsed.silencedetect_duration or parsed.silence_duration)
+    local silence_interval = tonumber(parsed.silencedetect_interval or parsed.silence_interval)
+    local silence_noise = tonumber(parsed.silencedetect_noise or parsed.silence_noise)
+    if silence ~= nil or silence_duration ~= nil or silence_interval ~= nil or silence_noise ~= nil then
+        if silence ~= nil then
+            local truth = truthy_input_option(silence)
+            if truth == nil then
+                return fail("silencedetect must be on/off")
+            end
+        end
+        if silence_duration ~= nil and silence_duration < 1 then
+            return fail("silencedetect_duration must be >= 1")
+        end
+        if silence_interval ~= nil and silence_interval < 1 then
+            return fail("silencedetect_interval must be >= 1")
+        end
+        if silence_noise ~= nil and (silence_noise > 0 or silence_noise < -120) then
+            return fail("silencedetect_noise must be between -120 and 0")
+        end
+    end
+
+    return true
+end
+
 function validate_stream_config(cfg, opts)
     if type(cfg) ~= "table" then
         return nil, "stream config is required"
+    end
+
+    local ok, err = validate_string_list(cfg.map, "map")
+    if not ok then
+        return nil, err
+    end
+    ok, err = validate_string_list(cfg.filter, "filter")
+    if not ok then
+        return nil, err
+    end
+    ok, err = validate_string_list(cfg["filter~"], "filter~")
+    if not ok then
+        return nil, err
     end
 
     local is_transcode = is_transcode_stream(cfg)
@@ -2631,6 +3471,10 @@ function validate_stream_config(cfg, opts)
             if not resolved or not resolved.format then
                 return nil, "invalid MPTS service #" .. idx .. " input format"
             end
+            local ok_det, det_err = validate_input_detectors(resolved, idx)
+            if not ok_det then
+                return nil, det_err
+            end
             if resolved.format == "stream" then
                 local stream_id = resolved.stream_id or resolved.addr or resolved.id
                 if not stream_id or stream_id == "" then
@@ -2651,6 +3495,10 @@ function validate_stream_config(cfg, opts)
             local resolved = resolve_io_config(entry, true)
             if not resolved or not resolved.format then
                 return nil, "invalid input #" .. idx .. " format"
+            end
+            local ok_det, det_err = validate_input_detectors(resolved, idx)
+            if not ok_det then
+                return nil, det_err
             end
             if resolved.format == "stream" then
                 if not is_transcode then
@@ -2712,10 +3560,9 @@ function validate_stream_config(cfg, opts)
     if is_transcode then
         local tc = cfg.transcode or {}
         local has_outputs = type(tc.outputs) == "table" and #tc.outputs > 0
-        local has_publish = type(tc.profiles) == "table" and #tc.profiles > 0
-            and type(tc.publish) == "table" and #tc.publish > 0
-        if not has_outputs and not has_publish then
-            return nil, "transcode outputs or publish profiles are required"
+        local has_profiles = type(tc.profiles) == "table" and #tc.profiles > 0
+        if not has_outputs and not has_profiles then
+            return nil, "transcode.outputs or transcode.profiles is required"
         end
         return true
     end
@@ -2727,11 +3574,9 @@ function validate_stream_config(cfg, opts)
             if not resolved or not resolved.format or not init_output_module[resolved.format] then
                 return nil, "invalid output #" .. idx .. " format"
             end
-            if resolved.format == "http" then
-                local ok, err = check_http_output_port(resolved, opts)
-                if not ok then
-                    return nil, err
-                end
+            local ok, err = validate_output_entry(resolved, cfg, opts)
+            if not ok then
+                return nil, "output #" .. idx .. " " .. tostring(err)
             end
         end
     end
@@ -3136,6 +3981,10 @@ init_output_module.http = function(channel_data, output_id)
     local instance = http_output_instance_list[instance_id]
 
     if not instance then
+        local http_request_line_max = setting_number("http_request_line_max", 4096)
+        local http_headers_max = setting_number("http_headers_max", 12288)
+        local http_header_max = setting_number("http_header_max", 4096)
+        local http_content_length_max = setting_number("http_content_length_max", 8 * 1024 * 1024)
         instance = http_server({
             addr = output_data.config.host,
             port = output_data.config.port,
@@ -3144,6 +3993,10 @@ init_output_module.http = function(channel_data, output_id)
                 { "/*", http_upstream({ callback = http_output_on_request }) },
             },
             channel_list = {},
+            request_line_max = http_request_line_max,
+            headers_max = http_headers_max,
+            header_max = http_header_max,
+            content_length_max = http_content_length_max,
         })
         http_output_instance_list[instance_id] = instance
     end
@@ -4951,7 +5804,6 @@ local function make_mpts_channel(channel_config)
     end
 
     if channel_config.output == nil then channel_config.output = {} end
-    ensure_auto_hls_output(channel_config)
     apply_stream_defaults(channel_config)
     if channel_config.timeout == nil then channel_config.timeout = 0 end
     if channel_config.enable == nil then channel_config.enable = true end
@@ -5005,6 +5857,7 @@ local function make_mpts_channel(channel_config)
     if not check_output_list() then
         return nil
     end
+    ensure_auto_hls_output(channel_config, channel_data.output)
 
     local mux_opts = build_mpts_mux_options(channel_config)
     channel_data.mpts_mux = mpts_mux(mux_opts)
@@ -5184,7 +6037,6 @@ function make_channel(channel_config)
     end
 
     if channel_config.output == nil then channel_config.output = {} end
-    ensure_auto_hls_output(channel_config)
     apply_stream_defaults(channel_config)
     apply_mpts_config(channel_config)
     if channel_config.timeout == nil then channel_config.timeout = 0 end
@@ -5244,6 +6096,7 @@ function make_channel(channel_config)
 
     if not check_url_format("input") then return nil end
     if not check_url_format("output") then return nil end
+    ensure_auto_hls_output(channel_config, channel_data.output)
 
     local has_backups = #channel_data.input > 1
     local backup_type = normalize_backup_type(channel_config.backup_type, has_backups)

@@ -319,7 +319,12 @@ static void on_thread_close(void *arg)
     if(mod->is_eof && mod->idx_callback)
     {
         lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_callback);
-        lua_call(lua, 0, 0);
+        if(lua_pcall(lua, 0, 0, 0) != 0)
+        {
+            const char *msg = lua_tostring(lua, -1);
+            asc_log_error("[file_input] callback error: %s", msg ? msg : "unknown");
+            lua_pop(lua, 1);
+        }
     }
 }
 

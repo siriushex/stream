@@ -145,7 +145,12 @@ static int module_call(module_data_t *mod)
             lua_pushvalue(lua, 2);
             lua_pushvalue(lua, 3);
             lua_pushvalue(lua, 4);
-            lua_call(lua, 3, 0);
+            if(lua_pcall(lua, 3, 0, 0) != 0)
+            {
+                const char *msg = lua_tostring(lua, -1);
+                asc_log_error("[http_downstream] callback error: %s", msg ? msg : "unknown");
+                lua_pop(lua, 1);
+            }
 
             module_stream_destroy(client->response);
 
@@ -174,7 +179,17 @@ static int module_call(module_data_t *mod)
     lua_pushvalue(lua, 2);
     lua_pushvalue(lua, 3);
     lua_pushvalue(lua, 4);
-    lua_call(lua, 3, 0);
+    if(lua_pcall(lua, 3, 0, 0) != 0)
+    {
+        const char *msg = lua_tostring(lua, -1);
+        asc_log_error("[http_downstream] callback error: %s", msg ? msg : "unknown");
+        lua_pop(lua, 1);
+        http_client_abort(client, 500, "handler error");
+        module_stream_destroy(client->response);
+        free(client->response);
+        client->response = NULL;
+        return 0;
+    }
 
     return 0;
 }

@@ -391,12 +391,10 @@ local function extract_play_id_from_input(entry)
     if id and id ~= "" then
         return id
     end
-    -- Accept explicit /play/<id> URLs as stream references (normalize to loopback /play later).
-    -- This avoids accidentally pulling from an external host when a user pasted the public /play URL.
-    local play_id = text:match("^https?://[^/]+/play/([^?#/]+)") or text:match("^https?://[^/]+/stream/([^?#/]+)")
-    if not play_id then
-        play_id = text:match("^/play/([^?#/]+)") or text:match("^/stream/([^?#/]+)")
-    end
+    -- Treat only explicit stream refs as refs (stream://id, /play/id, /stream/id, or bare id).
+    -- Full http(s) URLs are treated as direct inputs even if they contain "/play/<id>" so that
+    -- external Astra/Astral instances can be used as upstream sources without being rewritten to localhost.
+    local play_id = text:match("^/play/([^?#/]+)") or text:match("^/stream/([^?#/]+)")
     if play_id == "playlist.m3u8" or play_id == "playlist.xspf" then
         play_id = nil
     end
@@ -438,21 +436,39 @@ function transcode.ensure_loop_channel(job, input_id)
     if not cfg or type(cfg.input) ~= "table" or #cfg.input == 0 then
         return false
     end
-    local entry = pick_input_entry(cfg, idx, true)
-    if not entry then
-        return false
-    end
-    -- Loop channels are "raw input" fanout channels (no transcode). Base stream channels support
-    -- stream:// references only in MPTS mode, so normalize stream refs (and bare ids) to a localhost /play/* URL.
-    local loop_entry = entry
-    local play_id = extract_play_id_from_input(entry)
-    if play_id and play_id ~= "" then
-        local play_url = build_transcode_play_url(play_id)
-        if play_url and play_url ~= "" then
-            loop_entry = play_url
-        end
-    end
-    local loop_cfg = {}
+	    local entry = pick_input_entry(cfg, idx, true)
+	    if not entry then
+	        return false
+	    end
+	    -- Loop channels are "raw input" fanout channels (no transcode). Base stream channels support
+	    -- stream:// references only in MPTS mode, so normalize stream refs (and bare ids) to a localhost /play/* URL.
+	    local loop_entry = entry
+	    local play_id = extract_play_id_from_input(entry)
+	    if play_id and play_id ~= "" then
+	        local play_url = build_transcode_play_url(play_id)
+	        if play_url and play_url ~= "" then
+	            -- /play fanout defaults to relatively large buffering. For low-bitrate sources this can delay
+	            -- first payload for a long time (ffmpeg NO_PROGRESS). Keep the URL stable and shrink buffering
+	            -- only for internal loopback consumers.
+		            play_url = append_play_buffer(play_url, 128)
+		            play_url = append_play_buffer_fill(play_url, 1)
+		            -- For localhost /play pulls we must disable http_request sync mode, otherwise it buffers a large
+		            -- PCR window before emitting any TS and /input can hang with an empty body.
+		            -- Use Astra URL opts (#k=v) so they don't get sent to /play as HTTP query params.
+		            play_url = tostring(play_url) .. "#sync=0&buffer_size=64"
+		            if type(entry) == "table" then
+		                local loop_http = {}
+		                for k, v in pairs(entry) do
+		                    loop_http[k] = v
+		                end
+		                loop_http.url = play_url
+		                loop_entry = loop_http
+		            else
+		                loop_entry = play_url
+		            end
+		        end
+		    end
+	    local loop_cfg = {}
     for k, v in pairs(cfg) do
         loop_cfg[k] = v
     end
@@ -494,40 +510,35 @@ function transcode.stop_loop_channel(job)
     end
     job.loop_channels = nil
     job.loop_channel = nil
-end
+	end
 
-local function resolve_job_input_url(job)
-	    if not job or not job.config then
+	local function resolve_job_input_url(job)
+		    if not job or not job.config then
+		        return nil
+		    end
+		    local tc = job.config.transcode or {}
+		    local allow_direct = normalize_bool(tc.input_allow_direct, true)
+		    local input_id = job.active_input_id
+		    if not input_id or tonumber(input_id) == nil then
+		        input_id = 1
+		    end
+
+	    -- ffmpeg must always consume via /input (raw stage) so the main input URL is stable and internal-only.
+	    local input_url = nil
+	    if transcode.ensure_loop_channel(job, input_id) then
+	        input_url = build_transcode_play_url(job.id, input_id, { path = "/input/" })
+	    end
+	    if input_url then
+	        return input_url
+	    end
+	    if allow_direct == false then
+	        log.error("[transcode " .. tostring(job.id) .. "] loopback input unavailable; direct inputs are disabled")
 	        return nil
 	    end
-	    local tc = job.config.transcode or {}
-	    local allow_direct = normalize_bool(tc.input_allow_direct, true)
-	    local use_play = normalize_bool(tc.input_use_play, true)
-	    if allow_direct == false then
-	        use_play = true
-	    end
-    -- Loopback input buffer sizing is enforced server-side for /input. Do not append buf_* params to the URL.
-    local play_url = nil
-    if use_play then
-        local play_id = resolve_transcode_play_id(job.config, job.active_input_id, job.failover and job.failover.enabled)
-        if play_id then
-            play_url = build_transcode_play_url(play_id)
-        end
-        if not play_url and transcode.ensure_loop_channel(job, job.active_input_id) then
-            play_url = build_transcode_play_url(job.id, job.active_input_id, { path = "/input/" })
-        end
-        if play_url then
-            return play_url
-        end
-	        if allow_direct == false then
-	            log.error("[transcode " .. tostring(job.id) .. "] loopback input unavailable; direct inputs are disabled")
-	            return nil
-	        end
-	        log.warning("[transcode " .. tostring(job.id) .. "] loopback input unavailable; using configured input")
-	    end
-	    local raw = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
-	    return raw
-	end
+	    log.warning("[transcode " .. tostring(job.id) .. "] loopback input unavailable; using configured input")
+		    local raw = get_active_input_url(job.config, job.active_input_id, job.failover and job.failover.enabled)
+		    return raw
+		end
 
 local function is_udp_url(url)
     if not url or url == "" then
@@ -1307,6 +1318,21 @@ local function normalize_publish_config(tc, profiles)
         end
         return out
     end
+    local function validate_publish_url(idx, kind, url)
+        if url == nil or url == "" then
+            push_err("publish[" .. tostring(idx) .. "].url: required")
+            return
+        end
+        local lower = tostring(url):lower()
+        if lower:find("%s") then
+            push_err("publish[" .. tostring(idx) .. "].url: must not contain spaces")
+            return
+        end
+        local expected = tostring(kind):lower() .. "://"
+        if lower:sub(1, #expected) ~= expected then
+            push_err("publish[" .. tostring(idx) .. "].url: must start with " .. expected)
+        end
+    end
     for idx, raw in ipairs(publish) do
         if type(raw) ~= "table" then
             push_err("publish[" .. tostring(idx) .. "]: must be an object")
@@ -1347,6 +1373,9 @@ local function normalize_publish_config(tc, profiles)
                 if #entry.variants == 0 then
                     entry.variants = nil
                 end
+            end
+            if t == "udp" or t == "rtp" or t == "rtmp" or t == "rtsp" then
+                validate_publish_url(idx, t, entry.url)
             end
             table.insert(out, entry)
         end
@@ -7189,9 +7218,7 @@ function transcode.upsert(id, row, force)
         return job
     end
 
-    if job then
-        transcode.stop(job)
-    end
+    local existing = job
 
     job = {
         id = id,
@@ -7262,15 +7289,24 @@ function transcode.upsert(id, row, force)
     else
         job.active_input_id = prev_active_input_id or 1
     end
-    transcode.jobs[id] = job
-
     if job.profiles_error or job.publish_error then
         job.state = "ERROR"
         record_alert(job, "TRANSCODE_CONFIG_ERROR", "invalid ladder/publish config", {
             profiles_error = job.profiles_error,
             publish_error = job.publish_error,
         })
+        if existing then
+            log.error("[transcode " .. tostring(job.id) .. "] invalid config; keeping previous job")
+            return nil, "invalid ladder/publish config"
+        end
+        transcode.jobs[id] = job
+        return job
     end
+
+    if existing then
+        transcode.stop(existing)
+    end
+    transcode.jobs[id] = job
 
     if enabled and job.state ~= "ERROR" then
         if transcode.defer_start == true then

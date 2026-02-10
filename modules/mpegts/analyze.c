@@ -40,6 +40,7 @@
 typedef struct
 {
     mpegts_packet_type_t type;
+    uint8_t stream_type_id;
 
     uint8_t cc;
 
@@ -49,6 +50,11 @@ typedef struct
     uint32_t cc_error;  // Continuity Counter
     uint32_t sc_error;  // Scrambled
     uint32_t pes_error; // PES header
+
+    uint64_t last_pts_ms;
+    uint64_t last_pts_wall_ms;
+    uint32_t last_idr_hash;
+    uint64_t last_idr_wall_ms;
 } analyze_item_t;
 
 typedef struct
@@ -100,6 +106,20 @@ struct module_data_t
     uint32_t pcr_jitter_max_us;
     uint64_t pcr_jitter_sum_us;
     uint32_t pcr_jitter_count;
+
+    uint16_t primary_audio_pid;
+    uint16_t primary_video_pid;
+    uint8_t primary_audio_type_id;
+    uint8_t primary_video_type_id;
+    uint64_t last_audio_pts_ms;
+    uint64_t last_video_pts_ms;
+    uint64_t last_audio_wall_ms;
+    uint64_t last_video_wall_ms;
+    uint32_t last_video_idr_hash;
+    uint64_t last_video_idr_wall_ms;
+    bool video_idr_seen;
+    bool enable_video_fingerprint;
+    uint32_t video_fingerprint_bytes;
 
     // rate_stat
     uint64_t last_ts;
@@ -204,9 +224,125 @@ static void callback(module_data_t *mod)
 
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_callback);
     lua_pushvalue(lua, -2);
-    lua_call(lua, 1, 0);
+    if(lua_pcall(lua, 1, 0, 0) != 0)
+    {
+        const char *msg = lua_tostring(lua, -1);
+        asc_log_error("[analyze] callback error: %s", msg ? msg : "unknown");
+        lua_pop(lua, 1);
+        if(mod->idx_callback)
+        {
+            luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_callback);
+            mod->idx_callback = 0;
+        }
+    }
 
     lua_pop(lua, 1); // data
+}
+
+static bool parse_pes_pts_ms(const uint8_t *payload, size_t payload_len, uint64_t *pts_ms_out)
+{
+    if(!payload || payload_len < 14)
+        return false;
+    if(PES_BUFFER_GET_HEADER(payload) != 0x000001)
+        return false;
+    if(payload_len < 9)
+        return false;
+    const uint8_t flags = payload[7];
+    const uint8_t header_len = payload[8];
+    if(!(flags & 0x80))
+        return false;
+    if(header_len < 5)
+        return false;
+    if(payload_len < (size_t)(9 + header_len))
+        return false;
+
+    const uint8_t *p = &payload[9];
+    const uint64_t pts =
+        ((uint64_t)(p[0] & 0x0E) << 29) |
+        ((uint64_t)p[1] << 22) |
+        ((uint64_t)(p[2] & 0xFE) << 14) |
+        ((uint64_t)p[3] << 7) |
+        ((uint64_t)(p[4] & 0xFE) >> 1);
+    if(pts_ms_out)
+        *pts_ms_out = (pts * 1000ULL) / 90000ULL;
+    return true;
+}
+
+static uint32_t fnv1a_hash(const uint8_t *data, size_t len)
+{
+    uint32_t hash = 2166136261u;
+    for(size_t i = 0; i < len; ++i)
+    {
+        hash ^= data[i];
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
+static bool is_h264_type(uint8_t type_id)
+{
+    return type_id == 0x1B;
+}
+
+static bool is_h265_type(uint8_t type_id)
+{
+    return type_id == 0x24;
+}
+
+static bool detect_idr_hash(const uint8_t *payload, size_t payload_len, uint8_t type_id,
+                            uint32_t max_bytes, uint32_t *hash_out)
+{
+    if(!payload || payload_len < 16 || !hash_out)
+        return false;
+    if(PES_BUFFER_GET_HEADER(payload) != 0x000001)
+        return false;
+    if(payload_len < 9)
+        return false;
+    const uint8_t header_len = payload[8];
+    if(payload_len < (size_t)(9 + header_len))
+        return false;
+    const uint8_t *data = payload + 9 + header_len;
+    size_t data_len = payload_len - (size_t)(9 + header_len);
+    if(data_len < 6)
+        return false;
+
+    const size_t scan_len = (max_bytes > 0 && (size_t)max_bytes < data_len) ? (size_t)max_bytes : data_len;
+    for(size_t i = 0; i + 5 < scan_len; ++i)
+    {
+        size_t start_len = 0;
+        if(data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x01)
+            start_len = 3;
+        else if(i + 4 < scan_len && data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x00 && data[i + 3] == 0x01)
+            start_len = 4;
+        if(!start_len)
+            continue;
+
+        const uint8_t nal_header = data[i + start_len];
+        if(is_h264_type(type_id))
+        {
+            const uint8_t nal_type = nal_header & 0x1F;
+            if(nal_type != 5)
+                continue;
+        }
+        else if(is_h265_type(type_id))
+        {
+            const uint8_t nal_type = (nal_header >> 1) & 0x3F;
+            if(nal_type != 19 && nal_type != 20)
+                continue;
+        }
+        else
+        {
+            return false;
+        }
+
+        size_t hash_len = data_len - (i + start_len);
+        if(max_bytes > 0 && hash_len > (size_t)max_bytes)
+            hash_len = (size_t)max_bytes;
+        *hash_out = fnv1a_hash(&data[i + start_len], hash_len);
+        return true;
+    }
+
+    return false;
 }
 
 /*
@@ -695,6 +831,10 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     }
 
     mod->video_check = false;
+    mod->primary_audio_pid = 0;
+    mod->primary_video_pid = 0;
+    mod->primary_audio_type_id = 0;
+    mod->primary_video_type_id = 0;
 
     lua_newtable(lua);
 
@@ -745,6 +885,7 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
             mod->stream[pid] = (analyze_item_t *)calloc(1, sizeof(analyze_item_t));
 
         mod->stream[pid]->type = mpegts_pes_type(type);
+        mod->stream[pid]->stream_type_id = type;
 
         lua_pushnumber(lua, pid);
         lua_setfield(lua, -2, __pid);
@@ -785,6 +926,16 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
 
         if(mod->stream[pid]->type == MPEGTS_PACKET_VIDEO)
             mod->video_check = true;
+        if(mod->stream[pid]->type == MPEGTS_PACKET_AUDIO && mod->primary_audio_pid == 0)
+        {
+            mod->primary_audio_pid = pid;
+            mod->primary_audio_type_id = type;
+        }
+        if(mod->stream[pid]->type == MPEGTS_PACKET_VIDEO && mod->primary_video_pid == 0)
+        {
+            mod->primary_video_pid = pid;
+            mod->primary_video_type_id = type;
+        }
     }
     lua_setfield(lua, -2, "streams");
 
@@ -1108,11 +1259,43 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
     if(!(item->type & MPEGTS_PACKET_PES))
         return;
 
-    if(item->type == MPEGTS_PACKET_VIDEO && TS_IS_PAYLOAD_START(ts))
+    if((item->type == MPEGTS_PACKET_VIDEO || item->type == MPEGTS_PACKET_AUDIO) && TS_IS_PAYLOAD_START(ts))
     {
         const uint8_t *payload = TS_GET_PAYLOAD(ts);
-        if(payload && PES_BUFFER_GET_HEADER(payload) != 0x000001)
-            ++item->pes_error;
+        if(payload)
+        {
+            const size_t payload_len = (size_t)(TS_PACKET_SIZE - (payload - ts));
+            if(PES_BUFFER_GET_HEADER(payload) != 0x000001)
+                ++item->pes_error;
+
+            const uint64_t now_ms = asc_utime() / 1000;
+            uint64_t pts_ms = 0;
+            const bool has_pts = parse_pes_pts_ms(payload, payload_len, &pts_ms);
+
+            if(item->type == MPEGTS_PACKET_AUDIO && pid == mod->primary_audio_pid)
+            {
+                mod->last_audio_wall_ms = now_ms;
+                if(has_pts)
+                    mod->last_audio_pts_ms = pts_ms;
+            }
+            if(item->type == MPEGTS_PACKET_VIDEO && pid == mod->primary_video_pid)
+            {
+                mod->last_video_wall_ms = now_ms;
+                if(has_pts)
+                    mod->last_video_pts_ms = pts_ms;
+                if(mod->enable_video_fingerprint)
+                {
+                    uint32_t hash = 0;
+                    if(detect_idr_hash(payload, payload_len, item->stream_type_id,
+                                       mod->video_fingerprint_bytes, &hash))
+                    {
+                        mod->last_video_idr_hash = hash;
+                        mod->last_video_idr_wall_ms = now_ms;
+                        mod->video_idr_seen = true;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1138,6 +1321,8 @@ static void on_check_stat(void *arg)
     uint32_t cc_errors = 0;
     uint32_t pes_errors = 0;
     bool scrambled = false;
+    uint32_t audio_bitrate = 0;
+    uint32_t video_bitrate = 0;
 
     const uint32_t bitrate_limit = (mod->bitrate_limit > 0)
                                  ? ((uint32_t)mod->bitrate_limit)
@@ -1175,6 +1360,11 @@ static void on_check_stat(void *arg)
 
         cc_errors += item->cc_error;
         pes_errors += item->pes_error;
+
+        if(item->type == MPEGTS_PACKET_AUDIO)
+            audio_bitrate += item_bitrate;
+        if(item->type == MPEGTS_PACKET_VIDEO)
+            video_bitrate += item_bitrate;
 
         if(item->type == MPEGTS_PACKET_VIDEO || item->type == MPEGTS_PACKET_AUDIO)
         {
@@ -1214,12 +1404,49 @@ static void on_check_stat(void *arg)
     {
         lua_pushnumber(lua, bitrate);
         lua_setfield(lua, -2, "bitrate");
+        lua_pushnumber(lua, audio_bitrate);
+        lua_setfield(lua, -2, "audio_bitrate");
+        lua_pushnumber(lua, video_bitrate);
+        lua_setfield(lua, -2, "video_bitrate");
         lua_pushnumber(lua, cc_errors);
         lua_setfield(lua, -2, "cc_errors");
         lua_pushnumber(lua, pes_errors);
         lua_setfield(lua, -2, "pes_errors");
         lua_pushboolean(lua, scrambled);
         lua_setfield(lua, -2, "scrambled");
+
+        const uint64_t now_ms = asc_utime() / 1000;
+        const bool audio_present = (mod->primary_audio_pid > 0)
+            && (mod->last_audio_wall_ms > 0)
+            && ((now_ms > mod->last_audio_wall_ms) ? ((now_ms - mod->last_audio_wall_ms) <= 2000) : true);
+        const bool video_present = (mod->primary_video_pid > 0)
+            && (mod->last_video_wall_ms > 0)
+            && ((now_ms > mod->last_video_wall_ms) ? ((now_ms - mod->last_video_wall_ms) <= 2000) : true);
+        lua_pushboolean(lua, audio_present);
+        lua_setfield(lua, -2, "audio_present");
+        lua_pushboolean(lua, video_present);
+        lua_setfield(lua, -2, "video_present");
+        lua_pushnumber(lua, mod->primary_audio_pid);
+        lua_setfield(lua, -2, "audio_pid");
+        lua_pushnumber(lua, mod->primary_video_pid);
+        lua_setfield(lua, -2, "video_pid");
+        if(mod->last_audio_pts_ms > 0)
+        {
+            lua_pushnumber(lua, (lua_Number)mod->last_audio_pts_ms);
+            lua_setfield(lua, -2, "audio_pts_ms");
+        }
+        if(mod->last_video_pts_ms > 0)
+        {
+            lua_pushnumber(lua, (lua_Number)mod->last_video_pts_ms);
+            lua_setfield(lua, -2, "video_pts_ms");
+        }
+        if(mod->video_idr_seen)
+        {
+            lua_pushnumber(lua, mod->last_video_idr_hash);
+            lua_setfield(lua, -2, "video_idr_hash");
+            lua_pushnumber(lua, (lua_Number)mod->last_video_idr_wall_ms);
+            lua_setfield(lua, -2, "video_idr_wall_ms");
+        }
     }
     lua_setfield(lua, -2, "total");
 
@@ -1266,6 +1493,17 @@ static void module_init(module_data_t *mod)
     module_option_number("cc_limit", &mod->cc_limit);
     module_option_number("bitrate_limit", &mod->bitrate_limit);
     module_option_boolean("join_pid", &mod->join_pid);
+    module_option_boolean("video_fingerprint", &mod->enable_video_fingerprint);
+    if(mod->enable_video_fingerprint)
+    {
+        int fingerprint_bytes = 0;
+        module_option_number("video_fingerprint_bytes", &fingerprint_bytes);
+        if(fingerprint_bytes < 64)
+            fingerprint_bytes = 512;
+        if(fingerprint_bytes > 4096)
+            fingerprint_bytes = 4096;
+        mod->video_fingerprint_bytes = (uint32_t)fingerprint_bytes;
+    }
 
     module_stream_init(mod, on_ts);
     if(mod->join_pid)

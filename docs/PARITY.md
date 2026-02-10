@@ -1,6 +1,6 @@
 # Astral Parity Matrix
 
-Last updated: 2026-02-05
+Last updated: 2026-02-10
 
 Legend: DONE, PARTIAL, TODO
 
@@ -52,6 +52,7 @@ Legend: DONE, PARTIAL, TODO
 | Service/Remap/EPG tabs (basic) | DONE | DONE | DONE | DONE | manual | |
 | MPTS config runtime apply (best-effort) | DONE | DONE | DONE | DONE | manual | Maps codepage/provider/tsid/pass_sdt/eit; other fields ignored |
 | Advanced input options parity | DONE | DONE | DONE | DONE | manual | |
+| Input quality detectors (no-audio/stop-video/AV/silence) | DONE | DONE | DONE | DONE | manual | |
 | Output modal parity (HLS/SRT/SCTP/NP/BISS) | DONE | DONE | DONE | DONE | manual | |
 | Stream groups tab | DONE | DONE | DONE | DONE | manual | |
 | Analyze details (PSI/PID/codec) | DONE | DONE | DONE | DONE | manual | On-demand analyze API + UI modal |
@@ -91,6 +92,10 @@ Legend: DONE, PARTIAL, TODO
 | --- | --- | --- | --- | --- | --- | --- |
 | Validate/reload/config history | DONE | DONE | DONE | DONE | manual | |
 | Import/export | DONE | DONE | DONE | DONE | manual | |
+| HTTP request/header limits + safe handlers | DONE | N/A | DONE | DONE | manual | |
+| Output config validation (ports/paths/URLs) | DONE | N/A | DONE | DONE | manual | |
+| Stream apply transactional (swap on success) | DONE | N/A | DONE | DONE | manual | Keeps prior stream running if new config fails; file outputs roll back. |
+| Lua callback safety in C modules | DONE | N/A | DONE | DONE | manual | Protects event handlers; logs and aborts without crashing. |
 
 ## Deviations vs Cesbo Docs
 - Backup mode default is PASSIVE in Astral (Cesbo doc default is active backup). This is a deliberate safety choice.
