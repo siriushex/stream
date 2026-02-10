@@ -1810,20 +1810,27 @@ function main()
                 client_data.auth_session_id = session.session_id
             end
 
-            local upstream = transcode_upstream
-            if channel then
-                local channel_data = channel
-                if channel_data.keep_timer then
-                    channel_data.keep_timer:close()
-                    channel_data.keep_timer = nil
-                end
-                channel_data.clients = channel_data.clients + 1
+	            local upstream = transcode_upstream
+	            if channel then
+	                local channel_data = channel
+	                if channel_data.keep_timer then
+	                    channel_data.keep_timer:close()
+	                    channel_data.keep_timer = nil
+	                end
+	                local cur_clients = tonumber(channel_data.clients or 0) or 0
+	                channel_data.clients = cur_clients + 1
 
-                if not channel_data.input[1].input then
-                    channel_init_input(channel_data, 1)
-                end
-                upstream = channel_data.tail:stream()
-            end
+	                local inputs = channel_data.input
+	                if type(inputs) ~= "table" or not inputs[1] then
+	                    channel_data.clients = cur_clients
+	                    server:abort(client, 503)
+	                    return nil
+	                end
+	                if not inputs[1].input then
+	                    channel_init_input(channel_data, 1)
+	                end
+	                upstream = channel_data.tail:stream()
+	            end
 
             local buffer_size = math.max(128, http_play_buffer_kb)
             -- Prevent very large buffers from producing bursty /play delivery (drain -> long refill cycles).
@@ -2040,19 +2047,26 @@ function main()
                 client_data.output_data = { channel_data = channel }
                 http_output_client(server, client, request, client_data.output_data)
 
-                local channel_data = channel
-                if channel_data.keep_timer then
-                    channel_data.keep_timer:close()
-                    channel_data.keep_timer = nil
-                end
-                channel_data.clients = channel_data.clients + 1
+	                local channel_data = channel
+	                if channel_data.keep_timer then
+	                    channel_data.keep_timer:close()
+	                    channel_data.keep_timer = nil
+	                end
+	                local cur_clients = tonumber(channel_data.clients or 0) or 0
+	                channel_data.clients = cur_clients + 1
 
-                if not channel_data.input[1].input then
-                    channel_init_input(channel_data, 1)
-                end
-                -- Internal loop channels are created with no outputs, so their active input is not started
-                -- until a client connects. For /input we must explicitly activate the upstream to avoid
-                -- returning 200 with an empty body (NO_PROGRESS in ffmpeg).
+	                local inputs = channel_data.input
+	                if type(inputs) ~= "table" or not inputs[1] then
+	                    channel_data.clients = cur_clients
+	                    server:abort(client, 503)
+	                    return nil
+	                end
+	                if not inputs[1].input then
+	                    channel_init_input(channel_data, 1)
+	                end
+	                -- Internal loop channels are created with no outputs, so their active input is not started
+	                -- until a client connects. For /input we must explicitly activate the upstream to avoid
+	                -- returning 200 with an empty body (NO_PROGRESS in ffmpeg).
                 if (channel_data.active_input_id or 0) == 0
                     and channel_data.transmit
                     and channel_data.input
