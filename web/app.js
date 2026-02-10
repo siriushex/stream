@@ -8679,7 +8679,13 @@ function getPublishOutputPublicUrl(entry, streamId) {
       // Canonical HTTP-TS endpoints are extensionless. Backend still accepts legacy ".ts".
       return joinPath(base, `/live/${id}~${encodeURIComponent(variants[0])}`);
     }
-    // Template-like preview for "all" or multiple variants.
+    // When "all" (or multiple variants) is configured, expose a concrete playable URL in the UI
+    // (pick the first known profile id when available).
+    const fallback = getEditingProfileIds()[0] || '';
+    if (fallback) {
+      return joinPath(base, `/live/${id}~${encodeURIComponent(fallback)}`);
+    }
+    // Fallback to a template-like preview when profile ids are unknown.
     return joinPath(base, `/live/${id}~<profile>`);
   }
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
