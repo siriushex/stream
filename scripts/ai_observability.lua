@@ -13,6 +13,7 @@ ai_observability.state = {
 ai_observability.cache = ai_observability.cache or {
     metrics = {},
 }
+ai_observability.stream_samples = ai_observability.stream_samples or {}
 
 ai_observability.timer_rollup = nil
 ai_observability.timer_cleanup = nil
@@ -273,6 +274,52 @@ function ai_observability.ingest_alert(entry)
         message = message,
         fingerprint = fingerprint,
         tags = entry.meta,
+    })
+end
+
+function ai_observability.ingest_stream_sample(stream_id, sample)
+    if not ai_observability.state.enabled then
+        return
+    end
+    if ai_observability.state.logs_retention_days <= 0 then
+        return
+    end
+    if not config or not config.add_ai_log_event then
+        return
+    end
+    if not stream_id or stream_id == "" then
+        return
+    end
+    if type(sample) ~= "table" then
+        return
+    end
+
+    local interval = sanitize_interval(setting_number("ai_stream_sample_interval_sec",
+        ai_observability.state.rollup_interval_sec or 60))
+    local ts = tonumber(sample.ts) or os.time()
+    local bucket = calc_bucket(ts, interval)
+    local sid = tostring(stream_id)
+
+    if ai_observability.stream_samples[sid] == bucket then
+        return
+    end
+    ai_observability.stream_samples[sid] = bucket
+
+    local tags = {
+        bitrate_kbps = tonumber(sample.bitrate_kbps) or tonumber(sample.bitrate) or 0,
+        cc_errors = tonumber(sample.cc_errors) or 0,
+        pes_errors = tonumber(sample.pes_errors) or 0,
+        on_air = sample.on_air == true and 1 or 0,
+    }
+    local fingerprint = string.lower(string.hex(string.md5("STREAM_SAMPLE|" .. sid .. "|" .. tostring(bucket))))
+    config.add_ai_log_event({
+        ts = bucket,
+        level = "INFO",
+        stream_id = sid,
+        component = "STREAM_SAMPLE",
+        message = "runtime sample",
+        fingerprint = fingerprint,
+        tags = tags,
     })
 end
 
