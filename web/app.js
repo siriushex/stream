@@ -28202,10 +28202,12 @@ function bindEvents() {
     const publishEntry = hasPublish ? publish[publishIndex] : null;
 
     if (action.dataset.action === 'output-toggle') {
+      const currentEnabled = (legacy ? (legacy.enabled !== false) : false)
+        || (publishEntry ? (publishEntry.enabled !== false) : false);
       const changed = setOutputRowEnabled({
         legacyIndex: hasLegacy ? legacyIndex : null,
         publishIndex: hasPublish ? publishIndex : null,
-      }, !(legacy ? (legacy.enabled !== false) : (publishEntry ? publishEntry.enabled !== false : false)));
+      }, !currentEnabled);
       if (changed) {
         renderOutputList();
       }
