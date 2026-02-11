@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260211a" />
-  <script defer src="/app.js?v=20260211a"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260211b" />
+  <script defer src="/app.js?v=20260211b"></script>
 </head>
 <body>
   <div class="app">
@@ -35,7 +35,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260209a</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260211b</div>
       </div>
     </header>
 
@@ -1507,37 +1507,54 @@
         <div class="panel">
           <div class="panel-title">Help</div>
           <div class="panel-body">
-            <div class="help-intro">
-              <p class="muted">AstralAI Chat: нажмите на подсказку или напишите свой запрос. Справка: <code>/help</code>.</p>
-            </div>
-            <div class="help-bubbles" id="help-bubbles">
-              <div class="help-bubble">help</div>
-              <div class="help-bubble">error ch</div>
-              <div class="help-bubble">make mpts</div>
-              <div class="help-bubble">delete all disable channel</div>
-              <div class="help-bubble">transcode all stream</div>
-              <div class="help-bubble">update channel names</div>
+            <div class="help-guide-card" id="help-guide-card">
+              <div class="help-guide-title">Что такое Astral</div>
+              <div class="help-guide-short" id="help-guide-short"></div>
+              <div class="help-guide-actions">
+                <button class="btn ghost" type="button" id="help-guide-toggle">Показать полную справку</button>
+              </div>
+              <div class="help-guide-long" id="help-guide-long" hidden></div>
             </div>
 
-            <h4>AstralAI Chat</h4>
-            <div class="ai-chat" id="ai-chat">
-              <div class="ai-chat-log" id="ai-chat-log"></div>
-              <label class="field">
-                <span>Message</span>
-                <textarea id="ai-chat-input" rows="3" placeholder="Describe the task or ask for analysis..."></textarea>
-              </label>
-              <div class="ai-chat-attachments">
-                <label class="btn ghost ai-chat-file-btn">
-                  <input type="file" id="ai-chat-files" accept="image/*" multiple />
-                  <span>Attach images</span>
+            <details class="help-ai-details" id="help-ai-details">
+              <summary>AstralAI Chat (опционально)</summary>
+              <div class="help-intro">
+                <p class="muted">Нажмите на подсказку или напишите запрос. Справка: <code>/help</code>.</p>
+              </div>
+              <div class="help-bubbles" id="help-bubbles">
+                <div class="help-bubble">help</div>
+                <div class="help-bubble">error ch</div>
+                <div class="help-bubble">make mpts</div>
+                <div class="help-bubble">delete all disable channel</div>
+                <div class="help-bubble">transcode all stream</div>
+                <div class="help-bubble">update channel names</div>
+              </div>
+              <div class="ai-chat" id="ai-chat">
+                <div class="ai-chat-log" id="ai-chat-log"></div>
+                <label class="field">
+                  <span>Message</span>
+                  <textarea id="ai-chat-input" rows="3" placeholder="Describe the task or ask for analysis..."></textarea>
                 </label>
-                <div class="ai-chat-files" id="ai-chat-files-label">No attachments</div>
+                <div class="ai-chat-attachments">
+                  <label class="btn ghost ai-chat-file-btn">
+                    <input type="file" id="ai-chat-files" accept="image/*" multiple />
+                    <span>Attach images</span>
+                  </label>
+                  <div class="ai-chat-files" id="ai-chat-files-label">No attachments</div>
+                </div>
+                <div class="ai-chat-file-previews" id="ai-chat-file-previews"></div>
+                <div class="ai-chat-actions">
+                  <button class="btn" type="button" id="ai-chat-send">Send</button>
+                </div>
+                <div class="form-note" id="ai-chat-status"></div>
               </div>
-              <div class="ai-chat-file-previews" id="ai-chat-file-previews"></div>
-              <div class="ai-chat-actions">
-                <button class="btn" type="button" id="ai-chat-send">Send</button>
+              <div class="help-ai-disabled" id="help-ai-disabled" hidden>
+                AstralAI выключен в Settings → General. Блок чата недоступен.
               </div>
-              <div class="form-note" id="ai-chat-status"></div>
+            </details>
+
+            <div class="help-guide-footer">
+              Если вы только начинаете: создайте Stream, добавьте Input, включите Output, нажмите Analyze.
             </div>
           </div>
         </div>
@@ -3013,21 +3030,8 @@
       </div>
       <form id="input-form">
         <div class="modal-body-scroll">
-        <div class="form-subsection">
-          <div class="form-grid">
-            <label class="field">
-              <span>Preset</span>
-              <select id="input-preset">
-                <option value="">Custom</option>
-                <option value="udp_multicast">UDP Multicast</option>
-                <option value="rtp_multicast">RTP Multicast</option>
-                <option value="http_ts">HTTP MPEG-TS</option>
-                <option value="hls_m3u8">HLS (m3u8)</option>
-                <option value="srt_caller">SRT Caller</option>
-                <option value="rtsp_tcp">RTSP (TCP)</option>
-                <option value="file_loop">MPEG-TS File (loop)</option>
-              </select>
-            </label>
+        <div class="input-basic-section">
+          <div class="form-grid input-basic-main-grid">
             <label class="field">
               <span>Type</span>
               <select id="input-type">
@@ -3043,499 +3047,559 @@
                 <option value="file">MPEG-TS File</option>
               </select>
             </label>
-            <div class="field">
-              <span>Apply</span>
-              <button class="btn ghost" type="button" id="input-preset-apply">Apply</button>
-            </div>
-          </div>
-          <div class="form-hint">Applies common input fields and options.</div>
-        </div>
-        <label class="field">
-          <span>Input URL / Raw string</span>
-          <input type="text" id="input-raw" placeholder="udp://239.0.0.1:1234#cc_limit=1" />
-          <div class="form-hint input-raw-error" id="input-raw-error"></div>
-        </label>
-
-        <div class="input-group" data-group="dvb">
-          <label class="field">
-            <span>DVB adapter id</span>
-            <input type="text" id="input-dvb-id" placeholder="adapter_0" />
-          </label>
-        </div>
-
-        <div class="input-group" data-group="udp">
-          <label class="field">
-            <span>Interface</span>
-            <input type="text" id="input-udp-iface" placeholder="eth0" />
-          </label>
-          <label class="field">
-            <span>Address</span>
-            <input type="text" id="input-udp-addr" placeholder="239.0.0.1" />
-          </label>
-          <label class="field">
-            <span>Port</span>
-            <input type="number" id="input-udp-port" placeholder="1234" />
-          </label>
-          <label class="field">
-            <span>Socket size (bytes)</span>
-            <input type="number" id="input-udp-socket" placeholder="0" />
-          </label>
-        </div>
-
-        <div class="input-group" data-group="http">
-          <label class="field">
-            <span>Login</span>
-            <input type="text" id="input-http-login" placeholder="user" />
-          </label>
-          <label class="field">
-            <span>Password</span>
-            <input type="password" id="input-http-pass" placeholder="••••" />
-          </label>
-          <label class="field">
-            <span>Host</span>
-            <input type="text" id="input-http-host" placeholder="example.com" />
-          </label>
-          <label class="field">
-            <span>Port</span>
-            <input type="number" id="input-http-port" placeholder="80" />
-          </label>
-          <label class="field">
-            <span>Path</span>
-            <input type="text" id="input-http-path" placeholder="/stream" />
-          </label>
-          <label class="field">
-            <span>User-Agent</span>
-            <input type="text" id="input-http-ua" placeholder="Astra" />
-          </label>
-          <label class="field">
-            <span>Timeout (sec)</span>
-            <input type="number" id="input-http-timeout" placeholder="10" />
-          </label>
-          <label class="field">
-            <span>Buffer size (KB)</span>
-            <input type="number" id="input-http-buffer" placeholder="1024" />
-          </label>
-          <label class="field">
-            <span>Network profile</span>
-            <select id="input-net-profile">
-              <option value="">Auto (default)</option>
-              <option value="dc">dc (datacenter)</option>
-              <option value="wan">wan (WAN)</option>
-              <option value="bad">bad (unstable)</option>
-              <option value="max">max (aggressive)</option>
-              <option value="superbad">superbad (extreme)</option>
-            </select>
-          </label>
-          <div class="field">
-            <span>Profile preset</span>
-            <button class="btn ghost" type="button" id="input-net-profile-apply">Apply preset</button>
-          </div>
-          <label class="field">
-            <span>Jitter buffer (ms)</span>
-            <input type="number" id="input-jitter-ms" placeholder="0" />
-          </label>
-          <label class="checkline">
-            <input type="checkbox" id="input-playout-enabled" />
-            <span>Paced playout (anti-jitter)</span>
-          </label>
-        </div>
-
-        <div class="input-group" data-group="bridge">
-          <label class="field">
-            <span>URL</span>
-            <input type="text" id="input-bridge-url" placeholder="srt://host:port?mode=caller" />
-          </label>
-          <label class="field">
-            <span>Bridge port (UDP)</span>
-            <input type="number" id="input-bridge-port" placeholder="14000" />
-          </label>
-          <div class="form-hint">
-            Requires ffmpeg; Astra reads via ffmpeg and injects into a local UDP port.
-          </div>
-        </div>
-
-        <div class="input-group" data-group="file">
-          <label class="field">
-            <span>Filename</span>
-            <input type="text" id="input-file-name" placeholder="/mnt/raid0/file.ts" />
-          </label>
-          <label class="checkline">
-            <input type="checkbox" id="input-file-loop" />
-            <span>Loop</span>
-          </label>
-        </div>
-
-        <div class="input-group" data-group="stream">
-          <label class="field">
-            <span>Stream ID</span>
-            <input type="text" id="input-stream-id" placeholder="stream_1" />
-          </label>
-          <div class="form-hint">Uses another stream as input: <code>stream://&lt;id&gt;</code></div>
-        </div>
-
-        <details class="fold" id="input-net-fold" hidden>
-          <summary class="fold-summary">Network resilience (advanced)</summary>
-          <div class="fold-body form-grid">
-            <label class="field">
-              <span>Connect timeout (ms)</span>
-              <input type="number" id="input-net-connect" placeholder="3000" />
+            <label class="field input-basic-http-only" id="input-basic-timeout-field">
+              <span>Timeout (sec)</span>
+              <input type="number" id="input-http-timeout" placeholder="10" />
             </label>
-            <label class="field">
-              <span>Read timeout (ms)</span>
-              <input type="number" id="input-net-read" placeholder="8000" />
-            </label>
-            <label class="field">
-              <span>Stall timeout (ms)</span>
-              <input type="number" id="input-net-stall" placeholder="5000" />
-            </label>
-            <label class="field">
-              <span>Max retries</span>
-              <input type="number" id="input-net-max-retries" placeholder="10" />
-            </label>
-            <label class="field">
-              <span>Backoff min (ms)</span>
-              <input type="number" id="input-net-backoff-min" placeholder="500" />
-            </label>
-            <label class="field">
-              <span>Backoff max (ms)</span>
-              <input type="number" id="input-net-backoff-max" placeholder="10000" />
-            </label>
-            <label class="field">
-              <span>Backoff jitter (%)</span>
-              <input type="number" id="input-net-backoff-jitter" placeholder="20" />
-            </label>
-            <label class="field">
-              <span>Low speed (B/s)</span>
-              <input type="number" id="input-net-low-speed" placeholder="1024" />
-            </label>
-            <label class="field">
-              <span>Low speed window (sec)</span>
-              <input type="number" id="input-net-low-speed-time" placeholder="5" />
-            </label>
-            <label class="field">
-              <span>DNS cache TTL (sec)</span>
-              <input type="number" id="input-net-dns-ttl" placeholder="0" />
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="input-net-keepalive" />
-              <span>HTTP keepalive</span>
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="input-net-auto" />
-              <span>Adaptive auto-tune (unstable networks)</span>
-            </label>
-            <label class="field">
-              <span>Auto max level</span>
-              <input type="number" id="input-net-auto-max-level" placeholder="3" />
-            </label>
-            <label class="field">
-              <span>Auto relax (sec)</span>
-              <input type="number" id="input-net-auto-relax-sec" placeholder="120" />
-            </label>
-            <label class="field">
-              <span>Auto error window (sec)</span>
-              <input type="number" id="input-net-auto-window-sec" placeholder="30" />
-            </label>
-            <label class="field">
-              <span>Auto min interval (sec)</span>
-              <input type="number" id="input-net-auto-min-interval" placeholder="5" />
-            </label>
-            <label class="field">
-              <span>Auto burst threshold (errors)</span>
-              <input type="number" id="input-net-auto-burst" placeholder="2" />
-            </label>
-            <label class="field">
-              <span>Jitter max (MB)</span>
-              <input type="number" id="input-jitter-max-mb" placeholder="4" />
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="input-net-tune" />
-              <span>Scheduled optimizer (3-5 min test)</span>
+            <label class="field input-basic-http-only" id="input-basic-buffer-field">
+              <span>Buffer size (KB)</span>
+              <input type="number" id="input-http-buffer" placeholder="1024" />
             </label>
           </div>
-          <div class="form-hint">Overrides global defaults for this input only.</div>
-        </details>
 
-        <details class="fold" id="input-hls-fold" hidden>
-          <summary class="fold-summary">HLS ingest (advanced)</summary>
-          <div class="fold-body form-grid">
-            <label class="field">
-              <span>Ring buffer segments</span>
-              <input type="number" id="input-hls-max-segments" placeholder="10" />
+          <label class="field">
+            <span>Input URL / Raw string</span>
+            <input type="text" id="input-raw" placeholder="udp://239.0.0.1:1234#cc_limit=1" />
+            <div class="form-hint input-raw-error" id="input-raw-error"></div>
+          </label>
+
+          <div class="form-grid input-basic-auth-grid">
+            <label class="field input-basic-http-only" id="input-basic-login-field">
+              <span>Login</span>
+              <input type="text" id="input-http-login" placeholder="user" />
             </label>
-            <label class="field">
-              <span>Max gap segments</span>
-              <input type="number" id="input-hls-max-gap" placeholder="3" />
-            </label>
-            <label class="field">
-              <span>Segment retries</span>
-              <input type="number" id="input-hls-seg-retries" placeholder="3" />
-            </label>
-            <label class="field">
-              <span>Segment parallelism</span>
-              <input type="number" id="input-hls-max-parallel" placeholder="1" />
+            <label class="field input-basic-http-only" id="input-basic-pass-field">
+              <span>Password</span>
+              <input type="password" id="input-http-pass" placeholder="••••" />
             </label>
           </div>
-          <div class="form-hint">Applies only to HLS inputs. Blank fields use defaults.</div>
-        </details>
 
-        <details class="fold" id="input-playout-fold" hidden>
-          <summary class="fold-summary">Playout pacer (advanced)</summary>
-          <div class="fold-body form-grid">
-            <label class="field">
-              <span>Mode</span>
-              <select id="input-playout-mode">
-                <option value="auto">auto</option>
-                <option value="cbr">cbr</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Target bitrate (kbps)</span>
-              <input type="text" id="input-playout-target-kbps" placeholder="auto" />
-            </label>
-            <label class="field">
-              <span>Tick (ms)</span>
-              <input type="number" id="input-playout-tick-ms" placeholder="10" />
-            </label>
-            <label class="checkline">
-              <input type="checkbox" id="input-playout-null" />
-              <span>NULL stuffing</span>
-            </label>
-            <label class="field">
-              <span>Min fill (ms)</span>
-              <input type="number" id="input-playout-min-fill-ms" placeholder="0" />
-            </label>
-            <label class="field">
-              <span>Target fill (ms)</span>
-              <input type="number" id="input-playout-target-fill-ms" placeholder="0" />
-            </label>
-            <label class="field">
-              <span>Max buffer (MB)</span>
-              <input type="number" id="input-playout-max-mb" placeholder="16" />
-            </label>
-          </div>
-          <div class="form-hint">Applies only when playout is enabled. Blank fields use defaults.</div>
-        </details>
-
-        <div class="divider"></div>
-
-        <div class="form-grid">
-          <label class="field">
-            <span>PNR</span>
-            <input type="number" id="input-pnr" placeholder="Service ID" />
-          </label>
-          <label class="field">
-            <span>Set PNR</span>
-            <input type="number" id="input-set-pnr" placeholder="New PNR" />
-          </label>
-          <label class="field">
-            <span>Set TSID</span>
-            <input type="number" id="input-set-tsid" placeholder="Transport Stream ID" />
-          </label>
-          <label class="field">
-            <span>BISS key</span>
-            <input type="text" id="input-biss" placeholder="1122330044556600" />
-          </label>
-          <label class="field">
-            <span>SoftCAM id</span>
-            <select id="input-cam-id">
-              <option value="">None</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>SoftCAM backup id</span>
-            <select id="input-cam-backup-id">
-              <option value="">None</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>ECM PID</span>
-            <input type="number" id="input-ecm-pid" placeholder="0" />
-          </label>
-          <label class="field">
-            <span>Shift (Mbit)</span>
-            <input type="number" id="input-shift" placeholder="0" />
-          </label>
-          <label class="field">
-            <span>PID map</span>
-            <input type="text" id="input-map" placeholder="pmt=100,video=101" />
-          </label>
-          <label class="field">
-            <span>Filter</span>
-            <input type="text" id="input-filter" placeholder="pid,pid" />
-          </label>
-          <label class="field">
-            <span>Filter~</span>
-            <input type="text" id="input-filter-not" placeholder="pid,pid" />
-          </label>
-          <label class="field">
-            <span>Bitrate limit (Kbit/s)</span>
-            <input type="number" id="input-bitrate-limit" placeholder="0" />
-          </label>
+          <button class="btn ghost input-advanced-toggle" type="button" id="input-advanced-toggle" aria-controls="input-advanced-root" aria-expanded="false">
+            Advanced ▾
+          </button>
         </div>
 
-        <details class="fold" id="input-detectors-fold">
-          <summary class="fold-summary">Quality detectors (advanced)</summary>
-          <div class="fold-body">
-            <label class="field detector-preset">
-              <span>Quality preset</span>
-              <select id="input-quality-preset">
-                <option value="off">Off</option>
-                <option value="basic">Basic</option>
-                <option value="full">Full</option>
-                <option value="custom">Custom</option>
-              </select>
-            </label>
-
-            <div class="detectors-list">
-              <div class="detector-group">
-                <div class="detector-row">
-                  <label class="checkline detector-toggle">
-                    <input type="checkbox" id="input-cc-limit-enabled" />
-                    <span>CC errors limit</span>
+        <div class="input-advanced-root" id="input-advanced-root" hidden>
+          <details class="fold" id="input-connection-fold">
+            <summary class="fold-summary">Connection (advanced)</summary>
+            <div class="fold-body">
+              <div class="form-subsection">
+                <div class="form-grid input-preset-grid">
+                  <label class="field">
+                    <span>Preset</span>
+                    <select id="input-preset">
+                      <option value="">Custom</option>
+                      <option value="udp_multicast">UDP Multicast</option>
+                      <option value="rtp_multicast">RTP Multicast</option>
+                      <option value="http_ts">HTTP MPEG-TS</option>
+                      <option value="hls_m3u8">HLS (m3u8)</option>
+                      <option value="srt_caller">SRT Caller</option>
+                      <option value="rtsp_tcp">RTSP (TCP)</option>
+                      <option value="file_loop">MPEG-TS File (loop)</option>
+                    </select>
                   </label>
-                  <label class="field detector-field">
-                    <span>Limit</span>
-                    <input type="number" id="input-cc-limit" placeholder="1" />
-                  </label>
-                </div>
-              </div>
-
-              <div class="detector-group">
-                <div class="detector-row">
-                  <label class="checkline detector-toggle">
-                    <input type="checkbox" id="input-no-audio-enabled" />
-                    <span>No audio detection</span>
-                  </label>
-                  <label class="field detector-field">
-                    <span>Timeout (sec)</span>
-                    <input type="number" id="input-no-audio-timeout" placeholder="5" />
-                  </label>
-                  <div class="detector-hint">Cheap, no decoding</div>
-                </div>
-              </div>
-
-              <div class="detector-group">
-                <div class="detector-row">
-                  <label class="checkline detector-toggle">
-                    <input type="checkbox" id="input-stop-video-enabled" />
-                    <span>Stop video detection</span>
-                  </label>
-                  <label class="field detector-field">
-                    <span>Timeout (sec)</span>
-                    <input type="number" id="input-stop-video-timeout" placeholder="5" />
-                  </label>
-                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-stop-video-details" aria-expanded="false">
-                    Details
-                  </button>
-                </div>
-                <div class="detector-details" id="detector-stop-video-details" hidden>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Mode</span>
-                      <select id="input-stop-video-mode">
-                        <option value="pts">PTS / no video</option>
-                        <option value="freeze">Freeze (IDR hash)</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>Freeze window (sec)</span>
-                      <input type="number" id="input-stop-video-freeze" placeholder="10" />
-                    </label>
+                  <div class="field">
+                    <span>Apply</span>
+                    <button class="btn ghost" type="button" id="input-preset-apply">Apply</button>
                   </div>
                 </div>
+                <div class="form-hint">Applies common input fields and options.</div>
               </div>
 
-              <div class="detector-group">
-                <div class="detector-row">
-                  <label class="checkline detector-toggle">
-                    <input type="checkbox" id="input-detect-av-enabled" />
-                    <span>Detect AV desync</span>
-                  </label>
-                  <label class="field detector-field">
-                    <span>Threshold (ms)</span>
-                    <input type="number" id="input-detect-av-threshold" placeholder="800" />
-                  </label>
-                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-av-details" aria-expanded="false">
-                    Details
-                  </button>
-                </div>
-                <div class="detector-details" id="detector-av-details" hidden>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Hold (sec)</span>
-                      <input type="number" id="input-detect-av-hold" placeholder="3" />
-                    </label>
-                    <label class="field">
-                      <span>Stable (sec)</span>
-                      <input type="number" id="input-detect-av-stable" placeholder="10" />
-                    </label>
-                    <label class="field">
-                      <span>Resend (sec)</span>
-                      <input type="number" id="input-detect-av-resend" placeholder="60" />
-                    </label>
-                  </div>
+              <div class="input-group" data-group="dvb">
+                <label class="field">
+                  <span>DVB adapter id</span>
+                  <input type="text" id="input-dvb-id" placeholder="adapter_0" />
+                </label>
+              </div>
+
+              <div class="input-group" data-group="udp">
+                <label class="field">
+                  <span>Interface</span>
+                  <input type="text" id="input-udp-iface" placeholder="eth0" />
+                </label>
+                <label class="field">
+                  <span>Address</span>
+                  <input type="text" id="input-udp-addr" placeholder="239.0.0.1" />
+                </label>
+                <label class="field">
+                  <span>Port</span>
+                  <input type="number" id="input-udp-port" placeholder="1234" />
+                </label>
+                <label class="field">
+                  <span>Socket size (bytes)</span>
+                  <input type="number" id="input-udp-socket" placeholder="0" />
+                </label>
+              </div>
+
+              <div class="input-group" data-group="http">
+                <label class="field">
+                  <span>Host</span>
+                  <input type="text" id="input-http-host" placeholder="example.com" />
+                </label>
+                <label class="field">
+                  <span>Port</span>
+                  <input type="number" id="input-http-port" placeholder="80" />
+                </label>
+                <label class="field">
+                  <span>Path</span>
+                  <input type="text" id="input-http-path" placeholder="/stream" />
+                </label>
+                <label class="field">
+                  <span>User-Agent</span>
+                  <input type="text" id="input-http-ua" placeholder="Astra" />
+                </label>
+              </div>
+
+              <div class="input-group" data-group="bridge">
+                <label class="field">
+                  <span>URL</span>
+                  <input type="text" id="input-bridge-url" placeholder="srt://host:port?mode=caller" />
+                </label>
+                <label class="field">
+                  <span>Bridge port (UDP)</span>
+                  <input type="number" id="input-bridge-port" placeholder="14000" />
+                </label>
+                <div class="form-hint">
+                  Requires ffmpeg; Astra reads via ffmpeg and injects into a local UDP port.
                 </div>
               </div>
 
-              <div class="detector-group">
-                <div class="detector-row">
-                  <label class="checkline detector-toggle">
-                    <input type="checkbox" id="input-silence-enabled" />
-                    <span>Silence detect (ffmpeg probe)</span>
-                  </label>
-                  <label class="field detector-field">
-                    <span>Duration (sec)</span>
-                    <input type="number" id="input-silence-duration" placeholder="20" />
-                  </label>
-                  <button class="btn ghost detector-details-toggle" type="button" data-target="detector-silence-details" aria-expanded="false">
-                    Details
-                  </button>
-                </div>
-                <div class="detector-details" id="detector-silence-details" hidden>
-                  <div class="form-grid">
-                    <label class="field">
-                      <span>Interval (sec)</span>
-                      <input type="number" id="input-silence-interval" placeholder="10" />
-                    </label>
-                    <label class="field">
-                      <span>Noise (dB)</span>
-                      <input type="number" id="input-silence-noise" placeholder="-30" />
-                    </label>
-                  </div>
-                </div>
+              <div class="input-group" data-group="file">
+                <label class="field">
+                  <span>Filename</span>
+                  <input type="text" id="input-file-name" placeholder="/mnt/raid0/file.ts" />
+                </label>
+                <label class="checkline">
+                  <input type="checkbox" id="input-file-loop" />
+                  <span>Loop</span>
+                </label>
+              </div>
+
+              <div class="input-group" data-group="stream">
+                <label class="field">
+                  <span>Stream ID</span>
+                  <input type="text" id="input-stream-id" placeholder="stream_1" />
+                </label>
+                <div class="form-hint">Uses another stream as input: <code>stream://&lt;id&gt;</code></div>
               </div>
             </div>
+          </details>
 
-            <div class="form-error" id="input-detectors-error"></div>
-          </div>
-          <div class="form-hint">Detectors run only on the active input. Silence detect uses a short ffmpeg probe.</div>
-        </details>
+          <details class="fold" id="input-buffering-fold">
+            <summary class="fold-summary">Buffering &amp; pacing (advanced)</summary>
+            <div class="fold-body">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Network profile</span>
+                  <select id="input-net-profile">
+                    <option value="">Auto (default)</option>
+                    <option value="dc">dc (datacenter)</option>
+                    <option value="wan">wan (WAN)</option>
+                    <option value="bad">bad (unstable)</option>
+                    <option value="max">max (aggressive)</option>
+                    <option value="superbad">superbad (extreme)</option>
+                  </select>
+                </label>
+                <div class="field">
+                  <span>Profile preset</span>
+                  <button class="btn ghost" type="button" id="input-net-profile-apply">Apply preset</button>
+                </div>
+                <label class="field">
+                  <span>Jitter buffer (ms)</span>
+                  <input type="number" id="input-jitter-ms" placeholder="0" />
+                </label>
+                <label class="checkline">
+                  <input type="checkbox" id="input-playout-enabled" />
+                  <span>Paced playout (anti-jitter)</span>
+                </label>
+              </div>
 
-        <label class="checkline">
-          <input type="checkbox" id="input-cam" />
-          <span>Use DVB-CI (cam)</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="input-cas" />
-          <span>Pass CA tables (cas)</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="input-pass-sdt" />
-          <span>Pass SDT</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="input-pass-eit" />
-          <span>Pass EIT</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="input-no-reload" />
-          <span>No reload</span>
-        </label>
-        <label class="checkline">
-          <input type="checkbox" id="input-no-analyze" />
-          <span>Disable analyze</span>
-        </label>
+              <details class="fold" id="input-net-fold" hidden>
+                <summary class="fold-summary">Network resilience (advanced)</summary>
+                <div class="fold-body form-grid">
+                  <label class="field">
+                    <span>Connect timeout (ms)</span>
+                    <input type="number" id="input-net-connect" placeholder="3000" />
+                  </label>
+                  <label class="field">
+                    <span>Read timeout (ms)</span>
+                    <input type="number" id="input-net-read" placeholder="8000" />
+                  </label>
+                  <label class="field">
+                    <span>Stall timeout (ms)</span>
+                    <input type="number" id="input-net-stall" placeholder="5000" />
+                  </label>
+                  <label class="field">
+                    <span>Max retries</span>
+                    <input type="number" id="input-net-max-retries" placeholder="10" />
+                  </label>
+                  <label class="field">
+                    <span>Backoff min (ms)</span>
+                    <input type="number" id="input-net-backoff-min" placeholder="500" />
+                  </label>
+                  <label class="field">
+                    <span>Backoff max (ms)</span>
+                    <input type="number" id="input-net-backoff-max" placeholder="10000" />
+                  </label>
+                  <label class="field">
+                    <span>Backoff jitter (%)</span>
+                    <input type="number" id="input-net-backoff-jitter" placeholder="20" />
+                  </label>
+                  <label class="field">
+                    <span>Low speed (B/s)</span>
+                    <input type="number" id="input-net-low-speed" placeholder="1024" />
+                  </label>
+                  <label class="field">
+                    <span>Low speed window (sec)</span>
+                    <input type="number" id="input-net-low-speed-time" placeholder="5" />
+                  </label>
+                  <label class="field">
+                    <span>DNS cache TTL (sec)</span>
+                    <input type="number" id="input-net-dns-ttl" placeholder="0" />
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="input-net-keepalive" />
+                    <span>HTTP keepalive</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="input-net-auto" />
+                    <span>Adaptive auto-tune (unstable networks)</span>
+                  </label>
+                  <label class="field">
+                    <span>Auto max level</span>
+                    <input type="number" id="input-net-auto-max-level" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Auto relax (sec)</span>
+                    <input type="number" id="input-net-auto-relax-sec" placeholder="120" />
+                  </label>
+                  <label class="field">
+                    <span>Auto error window (sec)</span>
+                    <input type="number" id="input-net-auto-window-sec" placeholder="30" />
+                  </label>
+                  <label class="field">
+                    <span>Auto min interval (sec)</span>
+                    <input type="number" id="input-net-auto-min-interval" placeholder="5" />
+                  </label>
+                  <label class="field">
+                    <span>Auto burst threshold (errors)</span>
+                    <input type="number" id="input-net-auto-burst" placeholder="2" />
+                  </label>
+                  <label class="field">
+                    <span>Jitter max (MB)</span>
+                    <input type="number" id="input-jitter-max-mb" placeholder="4" />
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="input-net-tune" />
+                    <span>Scheduled optimizer (3-5 min test)</span>
+                  </label>
+                </div>
+                <div class="form-hint">Overrides global defaults for this input only.</div>
+              </details>
+
+              <details class="fold" id="input-hls-fold" hidden>
+                <summary class="fold-summary">HLS ingest (advanced)</summary>
+                <div class="fold-body form-grid">
+                  <label class="field">
+                    <span>Ring buffer segments</span>
+                    <input type="number" id="input-hls-max-segments" placeholder="10" />
+                  </label>
+                  <label class="field">
+                    <span>Max gap segments</span>
+                    <input type="number" id="input-hls-max-gap" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Segment retries</span>
+                    <input type="number" id="input-hls-seg-retries" placeholder="3" />
+                  </label>
+                  <label class="field">
+                    <span>Segment parallelism</span>
+                    <input type="number" id="input-hls-max-parallel" placeholder="1" />
+                  </label>
+                </div>
+                <div class="form-hint">Applies only to HLS inputs. Blank fields use defaults.</div>
+              </details>
+
+              <details class="fold" id="input-playout-fold" hidden>
+                <summary class="fold-summary">Playout pacer (advanced)</summary>
+                <div class="fold-body form-grid">
+                  <label class="field">
+                    <span>Mode</span>
+                    <select id="input-playout-mode">
+                      <option value="auto">auto</option>
+                      <option value="cbr">cbr</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Target bitrate (kbps)</span>
+                    <input type="text" id="input-playout-target-kbps" placeholder="auto" />
+                  </label>
+                  <label class="field">
+                    <span>Tick (ms)</span>
+                    <input type="number" id="input-playout-tick-ms" placeholder="10" />
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="input-playout-null" />
+                    <span>NULL stuffing</span>
+                  </label>
+                  <label class="field">
+                    <span>Min fill (ms)</span>
+                    <input type="number" id="input-playout-min-fill-ms" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>Target fill (ms)</span>
+                    <input type="number" id="input-playout-target-fill-ms" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>Max buffer (MB)</span>
+                    <input type="number" id="input-playout-max-mb" placeholder="16" />
+                  </label>
+                </div>
+                <div class="form-hint">Applies only when playout is enabled. Blank fields use defaults.</div>
+              </details>
+            </div>
+          </details>
+
+          <details class="fold" id="input-ts-fold">
+            <summary class="fold-summary">TS / Service selection (advanced)</summary>
+            <div class="fold-body form-grid">
+              <label class="field">
+                <span>PNR</span>
+                <input type="number" id="input-pnr" placeholder="Service ID" />
+              </label>
+              <label class="field">
+                <span>Set PNR</span>
+                <input type="number" id="input-set-pnr" placeholder="New PNR" />
+              </label>
+              <label class="field">
+                <span>Set TSID</span>
+                <input type="number" id="input-set-tsid" placeholder="Transport Stream ID" />
+              </label>
+              <label class="field">
+                <span>PID map</span>
+                <input type="text" id="input-map" placeholder="pmt=100,video=101" />
+              </label>
+              <label class="field">
+                <span>Filter</span>
+                <input type="text" id="input-filter" placeholder="pid,pid" />
+              </label>
+              <label class="field">
+                <span>Filter~</span>
+                <input type="text" id="input-filter-not" placeholder="pid,pid" />
+              </label>
+              <label class="field">
+                <span>Bitrate limit (Kbit/s)</span>
+                <input type="number" id="input-bitrate-limit" placeholder="0" />
+              </label>
+            </div>
+          </details>
+
+          <details class="fold" id="input-cas-fold">
+            <summary class="fold-summary">CAS / Keys (advanced)</summary>
+            <div class="fold-body form-grid">
+              <label class="field">
+                <span>BISS key</span>
+                <input type="text" id="input-biss" placeholder="1122330044556600" />
+              </label>
+              <label class="field">
+                <span>SoftCAM id</span>
+                <select id="input-cam-id">
+                  <option value="">None</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>SoftCAM backup id</span>
+                <select id="input-cam-backup-id">
+                  <option value="">None</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>ECM PID</span>
+                <input type="number" id="input-ecm-pid" placeholder="0" />
+              </label>
+              <label class="field">
+                <span>Shift (Mbit)</span>
+                <input type="number" id="input-shift" placeholder="0" />
+              </label>
+            </div>
+          </details>
+
+          <details class="fold" id="input-detectors-fold">
+            <summary class="fold-summary">Quality detectors (advanced)</summary>
+            <div class="fold-body">
+              <label class="checkline input-detectors-master-toggle">
+                <input type="checkbox" id="input-detectors-enabled" />
+                <span>Enable detectors</span>
+              </label>
+
+              <div class="input-detectors-body" id="input-detectors-body" hidden>
+                <label class="field detector-preset">
+                  <span>Quality preset</span>
+                  <select id="input-quality-preset">
+                    <option value="off">Off</option>
+                    <option value="basic">Basic</option>
+                    <option value="full">Full</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+
+                <div class="detectors-list">
+                  <div class="detector-group">
+                    <div class="detector-row">
+                      <label class="checkline detector-toggle">
+                        <input type="checkbox" id="input-cc-limit-enabled" />
+                        <span>CC errors limit</span>
+                      </label>
+                      <label class="field detector-field">
+                        <span>Limit</span>
+                        <input type="number" id="input-cc-limit" placeholder="1" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="detector-group">
+                    <div class="detector-row">
+                      <label class="checkline detector-toggle">
+                        <input type="checkbox" id="input-no-audio-enabled" />
+                        <span>No audio detection</span>
+                      </label>
+                      <label class="field detector-field">
+                        <span>Timeout (sec)</span>
+                        <input type="number" id="input-no-audio-timeout" placeholder="5" />
+                      </label>
+                      <div class="detector-hint">Cheap, no decoding</div>
+                    </div>
+                  </div>
+
+                  <div class="detector-group">
+                    <div class="detector-row">
+                      <label class="checkline detector-toggle">
+                        <input type="checkbox" id="input-stop-video-enabled" />
+                        <span>Stop video detection</span>
+                      </label>
+                      <label class="field detector-field">
+                        <span>Timeout (sec)</span>
+                        <input type="number" id="input-stop-video-timeout" placeholder="5" />
+                      </label>
+                      <button class="btn ghost detector-details-toggle" type="button" data-target="detector-stop-video-details" aria-expanded="false">
+                        Details
+                      </button>
+                    </div>
+                    <div class="detector-details" id="detector-stop-video-details" hidden>
+                      <div class="form-grid">
+                        <label class="field">
+                          <span>Mode</span>
+                          <select id="input-stop-video-mode">
+                            <option value="pts">PTS / no video</option>
+                            <option value="freeze">Freeze (IDR hash)</option>
+                          </select>
+                        </label>
+                        <label class="field">
+                          <span>Freeze window (sec)</span>
+                          <input type="number" id="input-stop-video-freeze" placeholder="10" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="detector-group">
+                    <div class="detector-row">
+                      <label class="checkline detector-toggle">
+                        <input type="checkbox" id="input-detect-av-enabled" />
+                        <span>Detect AV desync</span>
+                      </label>
+                      <label class="field detector-field">
+                        <span>Threshold (ms)</span>
+                        <input type="number" id="input-detect-av-threshold" placeholder="800" />
+                      </label>
+                      <button class="btn ghost detector-details-toggle" type="button" data-target="detector-av-details" aria-expanded="false">
+                        Details
+                      </button>
+                    </div>
+                    <div class="detector-details" id="detector-av-details" hidden>
+                      <div class="form-grid">
+                        <label class="field">
+                          <span>Hold (sec)</span>
+                          <input type="number" id="input-detect-av-hold" placeholder="3" />
+                        </label>
+                        <label class="field">
+                          <span>Stable (sec)</span>
+                          <input type="number" id="input-detect-av-stable" placeholder="10" />
+                        </label>
+                        <label class="field">
+                          <span>Resend (sec)</span>
+                          <input type="number" id="input-detect-av-resend" placeholder="60" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="detector-group">
+                    <div class="detector-row">
+                      <label class="checkline detector-toggle">
+                        <input type="checkbox" id="input-silence-enabled" />
+                        <span>Silence detect (ffmpeg probe)</span>
+                      </label>
+                      <label class="field detector-field">
+                        <span>Duration (sec)</span>
+                        <input type="number" id="input-silence-duration" placeholder="20" />
+                      </label>
+                      <button class="btn ghost detector-details-toggle" type="button" data-target="detector-silence-details" aria-expanded="false">
+                        Details
+                      </button>
+                    </div>
+                    <div class="detector-details" id="detector-silence-details" hidden>
+                      <div class="form-grid">
+                        <label class="field">
+                          <span>Interval (sec)</span>
+                          <input type="number" id="input-silence-interval" placeholder="10" />
+                        </label>
+                        <label class="field">
+                          <span>Noise (dB)</span>
+                          <input type="number" id="input-silence-noise" placeholder="-30" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-error" id="input-detectors-error"></div>
+              </div>
+            </div>
+            <div class="form-hint">Detectors run only on the active input. Silence detect uses a short ffmpeg probe.</div>
+          </details>
+
+          <details class="fold" id="input-misc-fold">
+            <summary class="fold-summary">Misc (advanced)</summary>
+            <div class="fold-body input-misc-grid">
+              <label class="checkline">
+                <input type="checkbox" id="input-cam" />
+                <span>Use DVB-CI (cam)</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="input-cas" />
+                <span>Pass CA tables (cas)</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="input-pass-sdt" />
+                <span>Pass SDT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="input-pass-eit" />
+                <span>Pass EIT</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="input-no-reload" />
+                <span>No reload</span>
+              </label>
+              <label class="checkline">
+                <input type="checkbox" id="input-no-analyze" />
+                <span>Disable analyze</span>
+              </label>
+            </div>
+          </details>
+        </div>
         </div>
 
         <div class="modal-footer">
