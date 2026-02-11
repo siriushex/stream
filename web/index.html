@@ -1657,24 +1657,21 @@
             <span>Create Multi Program Stream</span>
           </label>
 
-          <div class="form-subsection" id="stream-transcode-general">
-            <div class="form-grid">
-              <label class="switchline span-6">
+          <div class="form-subsection stream-transcode-setting" id="stream-transcode-general">
+            <div class="stream-transcode-setting-main">
+              <div class="stream-transcode-setting-title">Transcoding</div>
+            </div>
+            <div class="stream-transcode-setting-controls">
+              <label class="stream-transcode-toggle" for="stream-transcode-enabled">
                 <span class="switch-text">Enable transcoding</span>
                 <span class="switch">
-                  <input type="checkbox" id="stream-transcode-enabled" />
+                  <input type="checkbox" id="stream-transcode-enabled" role="switch" aria-label="Enable transcoding"
+                    aria-checked="false" />
                   <span class="switch-slider"></span>
                 </span>
               </label>
-              <div class="field span-6">
-                <span>Status</span>
-                <div class="pill-row">
-                  <span class="pill" id="stream-transcode-status-pill">OFF</span>
-                </div>
-              </div>
-            </div>
-            <div class="form-hint">
-              Ultra-minimal: enable transcoding to apply the default preset (CPU 720p). You can change the preset on the Transcode tab. Publish outputs are configured in the OUTPUT LIST.
+              <span class="pill stream-transcode-status-pill is-disabled" id="stream-transcode-status-pill"
+                aria-live="polite">Disabled</span>
             </div>
           </div>
 
