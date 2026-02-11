@@ -19594,23 +19594,23 @@ function renderObservabilityCharts(items, scope) {
     const bitrateSeries = [
       {
         color: accent,
-        points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+        points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints),
       },
     ];
     const streamsSeries = [
       {
         color: warning,
-        points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+        points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints),
       },
       {
         color: danger,
-        points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+        points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints),
       },
     ];
     const switchesSeries = [
       {
         color: warning,
-        points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+        points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints),
       },
     ];
 
