@@ -17764,9 +17764,7 @@ async function loadStreamStatus() {
     updateEditorTranscodeOutputStatus();
     updateEditorOutputStatus();
     updateEditorMptsStatus();
-    if (state.currentView === 'dashboard') {
-      loadSystemMetricsSnapshot(false).catch(() => {});
-    }
+    // System metrics are shown only in Observability.
   } catch (err) {
   }
 }
@@ -19996,11 +19994,8 @@ function renderSystemMetrics() {
     }
   }
   if (elements.dashboardSystem) {
-    const show = enabled && state.currentView === 'dashboard' && snapshot && snapshot.enabled === true;
-    elements.dashboardSystem.hidden = !show;
-    if (show) {
-      renderSystemMetricsCards(elements.dashboardSystemCards, snapshot, iface, timeseries, flags);
-    }
+    // Keep system graphs only in Observability (not on Streams/Dashboard tab).
+    elements.dashboardSystem.hidden = true;
   }
 
   if (elements.observabilitySystemTimeseries) {
