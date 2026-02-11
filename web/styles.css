@@ -316,7 +316,7 @@ select {
 
 .stream-table-grid th,
 .stream-table-grid td {
-  padding: 10px 8px;
+  padding: 7px 8px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
@@ -352,7 +352,8 @@ select {
 .stream-cell-sub {
   color: var(--muted);
   font-size: 11px;
-  margin-top: 4px;
+  margin-top: 2px;
+  line-height: 1.3;
 }
 
 .stream-status-badge {
@@ -414,15 +415,37 @@ select {
   min-width: 0;
 }
 
+.stream-output-summary {
+  flex: 1 1 auto;
+}
+
+.stream-output-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
 .stream-actions {
   display: inline-flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 6px;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: nowrap;
+  margin-top: 0;
+  flex: 0 0 auto;
 }
 
 .stream-actions .btn {
-  padding: 2px 8px;
+  padding: 2px 6px;
+  font-size: 11px;
+  min-height: 24px;
+}
+
+.stream-actions .icon-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
   font-size: 11px;
 }
 
@@ -2804,6 +2827,26 @@ details.fold[open] > .fold-summary::after {
 
 .output-row {
   grid-template-columns: 36px 1fr auto;
+}
+
+.output-row.is-inactive {
+  opacity: 0.78;
+}
+
+.output-unified-main {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.output-unified-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.output-unified-meta.is-active {
+  color: var(--success);
 }
 
 .output-inline-row .list-input {

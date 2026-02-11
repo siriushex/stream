@@ -7785,10 +7785,17 @@ function transcode.get_status(id)
     local gpu_sessions = selected_gpu_stats and selected_gpu_stats.session_count or nil
     local gpu_sessions_limit = tonumber(tc.gpu_session_limit or tc.nvidia_session_limit)
 
+    local uptime_sec = nil
+    if job.start_ts and (job.state == "RUNNING" or job.state == "STARTING" or job.state == "RESTARTING") then
+        uptime_sec = math.max(0, now - job.start_ts)
+    end
+
     return {
         id = job.id,
         name = job.name,
         state = job.state,
+        start_ts = job.start_ts,
+        uptime_sec = uptime_sec,
         pid = job.pid,
         process_per_output = job.process_per_output == true,
         seamless_udp_proxy = job.seamless_udp_proxy == true,
