@@ -17358,13 +17358,15 @@ function formatWorkerCutoverHint(cutover) {
 
 function updateEditorTranscodeStatus() {
   if (!elements.streamTranscodeStatus) return;
+  const enabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+  if (elements.streamTranscodeEnabled) {
+    elements.streamTranscodeEnabled.setAttribute('aria-checked', enabled ? 'true' : 'false');
+  }
   if (elements.streamTranscodeStatusPill) {
-    elements.streamTranscodeStatusPill.textContent = (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked)
-      ? 'ON'
-      : 'OFF';
-    elements.streamTranscodeStatusPill.classList.toggle('is-ok', false);
-    elements.streamTranscodeStatusPill.classList.toggle('is-warn', false);
-    elements.streamTranscodeStatusPill.classList.toggle('is-error', false);
+    elements.streamTranscodeStatusPill.textContent = enabled ? 'Enabled' : 'Disabled';
+    elements.streamTranscodeStatusPill.classList.toggle('is-enabled', enabled);
+    elements.streamTranscodeStatusPill.classList.toggle('is-disabled', !enabled);
+    elements.streamTranscodeStatusPill.classList.remove('is-ok', 'is-warn', 'is-error');
   }
   if (elements.streamTranscodeInputUrl) {
     elements.streamTranscodeInputUrl.textContent = '';
@@ -17400,15 +17402,6 @@ function updateEditorTranscodeStatus() {
   const stats = state.stats[stream.id] || {};
   const transcode = stats.transcode || {};
   const transcodeState = stats.transcode_state || transcode.state;
-
-  if (elements.streamTranscodeStatusPill) {
-    const pill = elements.streamTranscodeStatusPill;
-    const stateText = transcodeState ? String(transcodeState).toUpperCase() : (elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked ? 'ON' : 'OFF');
-    pill.textContent = stateText;
-    pill.classList.toggle('is-ok', stateText === 'RUNNING');
-    pill.classList.toggle('is-warn', stateText === 'RESTARTING' || stateText === 'STARTING');
-    pill.classList.toggle('is-error', stateText === 'ERROR');
-  }
 
   const renderLadderLinks = () => {
     if (!elements.streamTranscodeLadderLinks || !elements.streamTranscodeLadderLinksFold) return;
@@ -26632,6 +26625,7 @@ function bindEvents() {
       const enabled = elements.streamTranscodeEnabled.checked;
       setTranscodeMode(enabled);
       updateTranscodeGeneralControls();
+      updateEditorTranscodeStatus();
       if (!enabled) {
         renderOutputList();
         return;
