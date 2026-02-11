@@ -1042,7 +1042,10 @@ static void reject_new_connection(module_data_t *mod, http_client_t *client, con
     ++mod->rejected_connections;
     if(client->sock)
     {
-        (void)asc_socket_send(client->sock, response, sizeof(response) - 1);
+        if(asc_socket_send(client->sock, response, sizeof(response) - 1) < 0)
+        {
+            /* соединение может быть уже закрыто клиентом */
+        }
         asc_socket_close(client->sock);
         client->sock = NULL;
     }
