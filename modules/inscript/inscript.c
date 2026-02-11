@@ -22,6 +22,7 @@
 
 #include <astra.h>
 #include "inscript.h"
+#include "core/embedded_fs.h"
 #include <limits.h>
 #include <unistd.h>
 
@@ -108,6 +109,14 @@ static bool is_server_app_option(const char *value)
 
 static bool resolve_server_script(char *out, size_t out_len)
 {
+    if(embedded_fs_exists("scripts/server.lua"))
+    {
+        if(out_len < sizeof("scripts/server.lua"))
+            return false;
+        memcpy(out, "scripts/server.lua", sizeof("scripts/server.lua"));
+        return true;
+    }
+
     if(access("scripts/server.lua", R_OK) == 0)
     {
         if(out_len < sizeof("scripts/server.lua"))
@@ -140,6 +149,38 @@ static bool resolve_server_script(char *out, size_t out_len)
     return false;
 }
 
+static int lua_dofile_disk_or_embedded(lua_State *L, const char *script)
+{
+    if(!script || script[0] == '\0')
+    {
+        lua_pushstring(L, "cannot open ");
+        return LUA_ERRFILE;
+    }
+
+    if(access(script, R_OK) == 0)
+        return luaL_dofile(L, script);
+
+    const uint8_t *data = NULL;
+    size_t size = 0;
+    const bool has_embedded = embedded_fs_get(script, &data, &size);
+    if(has_embedded)
+    {
+        char chunk_name[PATH_MAX];
+        snprintf(chunk_name, sizeof(chunk_name), "@%s", script);
+
+        int ret = luaL_loadbuffer(L, (const char *)data, size, chunk_name);
+        if(ret != 0)
+            return ret;
+        ret = lua_pcall(L, 0, LUA_MULTRET, 0);
+        if(ret != 0)
+            return ret;
+        return ret;
+    }
+
+    lua_pushfstring(L, "cannot open %s", script);
+    return LUA_ERRFILE;
+}
+
 static int fn_inscript_callback(lua_State *L)
 {
     __uarg(L);
@@ -165,6 +206,8 @@ static int fn_inscript_callback(lua_State *L)
 
     int argv_idx = 1;
     bool rewritten = false;
+    char server_script[PATH_MAX];
+    server_script[0] = '\0';
 
     lua_rawgeti(lua, -1, 1);
     const char *script = luaL_checkstring(lua, -1);
@@ -175,7 +218,6 @@ static int fn_inscript_callback(lua_State *L)
 
     if(config_path || server_opts)
     {
-        char server_script[PATH_MAX];
         if(!resolve_server_script(server_script, sizeof(server_script)))
         {
             luaL_error(lua, "[main] server.lua isn't found (scripts/server.lua)");
@@ -253,10 +295,10 @@ static int fn_inscript_callback(lua_State *L)
         load = load_inscript((const char *)femon, sizeof(femon), app);
         argv_idx += 1;
     }
-    else if(!access(script, R_OK))
+    else
     {
-        load = luaL_dofile(lua, script);
-        if(!rewritten)
+        load = lua_dofile_disk_or_embedded(lua, script);
+        if(load == 0 && !rewritten)
             argv_idx += 1;
     }
     if(load != 0)

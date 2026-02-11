@@ -22,6 +22,124 @@ local function script_path(name)
     return script_dir .. name
 end
 
+local native_loadfile = loadfile
+local native_dofile = dofile
+
+local function is_absolute_path(path)
+    if path:sub(1, 1) == "/" then
+        return true
+    end
+    if path:match("^%a:[/\\]") then
+        return true
+    end
+    if path:sub(1, 2) == "\\\\" then
+        return true
+    end
+    return false
+end
+
+local function normalize_embed_path(path)
+    if type(path) ~= "string" then
+        return nil
+    end
+    local normalized = path:gsub("\\", "/")
+    normalized = normalized:gsub("^@", "")
+    normalized = normalized:gsub("^%./", "")
+    normalized = normalized:gsub("^/+", "")
+    if normalized == "" then
+        return nil
+    end
+    if normalized:find("%.%.", 1, true) then
+        return nil
+    end
+    return normalized
+end
+
+local function read_embedded_file(path)
+    if not utils or type(utils.embedded_read) ~= "function" then
+        return nil, nil
+    end
+    local normalized = normalize_embed_path(path)
+    if not normalized then
+        return nil, nil
+    end
+    if normalized:sub(1, 8) ~= "scripts/" and normalized:sub(1, 4) ~= "web/" then
+        return nil, normalized
+    end
+    return utils.embedded_read(normalized), normalized
+end
+
+local function disk_file_exists(path)
+    if type(path) ~= "string" then
+        return false
+    end
+    if not utils or type(utils.stat) ~= "function" then
+        return false
+    end
+    local stat = utils.stat(path)
+    return stat and stat.type == "file"
+end
+
+function astra_loadfile(path, mode, env)
+    if path == nil then
+        return native_loadfile(path, mode, env)
+    end
+    if type(path) ~= "string" then
+        return nil, "bad argument #1 to 'loadfile' (string expected)"
+    end
+
+    if is_absolute_path(path) or disk_file_exists(path) then
+        return native_loadfile(path, mode, env)
+    end
+
+    local content, normalized = read_embedded_file(path)
+    if content ~= nil then
+        local loader, err = load(content, "@" .. tostring(normalized), mode or "t", env or _G)
+        if not loader then
+            return nil, err
+        end
+        return loader
+    end
+
+    return native_loadfile(path, mode, env)
+end
+
+function astra_dofile(path)
+    local chunk, err = astra_loadfile(path, "t", _G)
+    if not chunk then
+        error(err, 0)
+    end
+    return chunk()
+end
+
+loadfile = astra_loadfile
+dofile = astra_dofile
+
+local function astra_package_searcher(modname)
+    if type(modname) ~= "string" or modname == "" then
+        return "\n\tinvalid module name"
+    end
+    local rel = modname:gsub("%.", "/")
+    local candidates = {
+        "scripts/" .. rel .. ".lua",
+        "scripts/" .. rel .. "/init.lua",
+    }
+    for _, candidate in ipairs(candidates) do
+        local loader = astra_loadfile(candidate, "t", _G)
+        if type(loader) == "function" then
+            return loader, "@" .. candidate
+        end
+    end
+    return "\n\tno module in embedded scripts: " .. modname
+end
+
+if package then
+    local searchers = package.searchers or package.loaders
+    if type(searchers) == "table" then
+        table.insert(searchers, 1, astra_package_searcher)
+    end
+end
+
 dofile(script_path("base.lua"))
 dofile(script_path("auth.lua"))
 dofile(script_path("stream.lua"))
@@ -1222,10 +1340,16 @@ function main()
     end
     opt.hls_route = normalize_route(opt.hls_route)
 
+    local web_embedded = false
     local web_stat = utils.stat(opt.web_dir)
     if web_stat.type ~= "directory" then
-        log.error("[server] web directory not found: " .. opt.web_dir)
-        os.exit(78)
+        if utils and type(utils.embedded_exists) == "function" and utils.embedded_exists("web/index.html") then
+            web_embedded = true
+            log.info("[server] web assets: embedded bundle")
+        else
+            log.error("[server] web directory not found: " .. opt.web_dir)
+            os.exit(78)
+        end
     end
 
     config.set_setting("hls_dir", hls_dir)
@@ -1394,10 +1518,57 @@ function main()
             ts_mime = hls_ts_mime,
         })
     end
-    local web_static = http_static({
-        path = opt.web_dir,
-        headers = { "Cache-Control: no-cache" },
-    })
+    local web_static = nil
+    if not web_embedded then
+        web_static = http_static({
+            path = opt.web_dir,
+            headers = { "Cache-Control: no-cache" },
+        })
+    else
+        web_static = function(server, client, request)
+            if not request then
+                return nil
+            end
+            if request.method ~= "GET" and request.method ~= "HEAD" then
+                server:abort(client, 405)
+                return nil
+            end
+            local path = request.path or "/"
+            path = path:match("^([^?]+)") or path
+            if path == "/" or path == "" then
+                path = "/index.html"
+            end
+            if path:find("%.%.", 1, true) then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local rel = path:gsub("^/+", "")
+            rel = rel:gsub("\\", "/")
+            if rel == "" then
+                rel = "index.html"
+            end
+
+            local embedded_path = "web/" .. rel
+            local body = (utils and utils.embedded_read) and utils.embedded_read(embedded_path) or nil
+            if body == nil then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local ext = rel:match("%.([%w]+)$") or "html"
+            local response = {
+                code = 200,
+                headers = {
+                    "Cache-Control: no-cache",
+                    "Connection: close",
+                },
+                content = request.method == "HEAD" and "" or body,
+            }
+            server:send(client, response, mime[ext] or "application/octet-stream")
+            return nil
+        end
+    end
     web_static_handler = web_static
     local hls_memfd_timer = nil
     -- Всегда запускаем sweep, если доступен memfd handler:

@@ -33,6 +33,7 @@
  */
 
 #include <astra.h>
+#include "core/embedded_fs.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -302,6 +303,34 @@ static int utils_can_bind(lua_State *L)
 #endif
 }
 
+static int utils_embedded_enabled(lua_State *L)
+{
+    lua_pushboolean(L, embedded_fs_enabled());
+    return 1;
+}
+
+static int utils_embedded_exists(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    lua_pushboolean(L, embedded_fs_exists(path));
+    return 1;
+}
+
+static int utils_embedded_read(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    const uint8_t *data = NULL;
+    size_t size = 0;
+    if(!embedded_fs_get(path, &data, &size))
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushlstring(L, (const char *)data, size);
+    return 1;
+}
+
 /* readdir */
 
 static const char __utils_readdir[] = "__utils_readdir";
@@ -363,6 +392,9 @@ LUA_API int luaopen_utils(lua_State *L)
         { "stat", utils_stat },
         { "statvfs", utils_statvfs },
         { "can_bind", utils_can_bind },
+        { "embedded_enabled", utils_embedded_enabled },
+        { "embedded_exists", utils_embedded_exists },
+        { "embedded_read", utils_embedded_read },
         { NULL, NULL }
     };
 
