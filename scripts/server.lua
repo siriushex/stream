@@ -1276,6 +1276,9 @@ function main()
     if runtime and runtime.configure_influx then
         runtime.configure_influx()
     end
+    if runtime and runtime.configure_gc then
+        runtime.configure_gc()
+    end
     if telegram and telegram.configure then
         telegram.configure()
     end
@@ -1630,6 +1633,9 @@ function main()
     local http_headers_max = setting_number("http_headers_max", 12288)
     local http_header_max = setting_number("http_header_max", 4096)
     local http_content_length_max = setting_number("http_content_length_max", 8 * 1024 * 1024)
+    local http_max_clients = math.max(0, math.floor(setting_number("http_max_clients", 0) or 0))
+    local http_max_clients_per_ip = math.max(0, math.floor(setting_number("http_max_clients_per_ip", 0) or 0))
+    local http_accept_backoff_ms = math.max(10, math.min(5000, math.floor(setting_number("http_accept_backoff_ms", 100) or 100)))
 
     if buffer and buffer.refresh then
         buffer.refresh({
@@ -3144,6 +3150,9 @@ function main()
         headers_max = http_headers_max,
         header_max = http_header_max,
         content_length_max = http_content_length_max,
+        max_clients = http_max_clients,
+        max_clients_per_ip = http_max_clients_per_ip,
+        accept_backoff_ms = http_accept_backoff_ms,
     })
 
     if http_play_enabled and http_play_port ~= opt.port then
@@ -3156,6 +3165,9 @@ function main()
             headers_max = http_headers_max,
             header_max = http_header_max,
             content_length_max = http_content_length_max,
+            max_clients = http_max_clients,
+            max_clients_per_ip = http_max_clients_per_ip,
+            accept_backoff_ms = http_accept_backoff_ms,
         })
         log.info("[server] http play on " .. opt.addr .. ":" .. http_play_port)
     end

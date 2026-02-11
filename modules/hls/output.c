@@ -826,6 +826,12 @@ static void hls_finish_segment(module_data_t *mod)
     }
 
     hls_memfd_segment_t *seg = (hls_memfd_segment_t *)calloc(1, sizeof(*seg));
+    if(!seg)
+    {
+        asc_log_error(MSG("segment metadata alloc failed"));
+        hls_abort_segment(mod);
+        return;
+    }
     seg->seq = mod->seq;
     double duration = (double)mod->segment_elapsed_us / 1000000.0;
     if(mod->round_duration)

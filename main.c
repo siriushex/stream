@@ -30,6 +30,29 @@
 
 bool is_sighup = false;
 
+static unsigned int clamp_uint(unsigned int value, unsigned int min_value, unsigned int max_value)
+{
+    if(value < min_value)
+        return min_value;
+    if(value > max_value)
+        return max_value;
+    return value;
+}
+
+static unsigned int lua_read_global_uint(const char *name, unsigned int fallback)
+{
+    unsigned int value = fallback;
+    lua_getglobal(lua, name);
+    if(lua_isnumber(lua, -1))
+    {
+        const lua_Number raw = lua_tonumber(lua, -1);
+        if(raw >= 0)
+            value = (unsigned int)raw;
+    }
+    lua_pop(lua, 1);
+    return value;
+}
+
 #ifndef _WIN32
 static void signal_handler(int signum)
 {
@@ -138,10 +161,18 @@ astra_reload_entry:
     }
     lua_setglobal(lua, "argv");
 
-#define GC_TIMEOUT (1 * 1000 * 1000)
+#define GC_FULL_COLLECT_DEFAULT_US (1 * 1000 * 1000)
+#define GC_TUNE_REFRESH_US (2 * 1000 * 1000)
+#define GC_STEP_DEFAULT_US (250 * 1000)
+#define GC_STEP_DEFAULT_UNITS 0
 
     uint64_t current_time = asc_utime();
-    volatile uint64_t gc_check_timeout = current_time;
+    volatile uint64_t gc_full_collect_timeout = current_time;
+    volatile uint64_t gc_step_timeout = current_time;
+    volatile uint64_t gc_tune_timeout = current_time;
+    volatile uint64_t gc_full_collect_interval = GC_FULL_COLLECT_DEFAULT_US;
+    volatile uint64_t gc_step_interval = GC_STEP_DEFAULT_US;
+    volatile unsigned int gc_step_units = GC_STEP_DEFAULT_UNITS;
 
     /* start */
     const int main_loop_status = setjmp(main_loop);
@@ -201,12 +232,35 @@ astra_reload_entry:
                     lua_pop(lua, 1);
             }
 
+            current_time = asc_utime();
+            if((current_time - gc_tune_timeout) >= GC_TUNE_REFRESH_US)
+            {
+                gc_tune_timeout = current_time;
+
+                unsigned int full_ms = lua_read_global_uint("__astra_gc_full_collect_interval_ms", 1000);
+                unsigned int step_ms = lua_read_global_uint("__astra_gc_step_interval_ms", 250);
+                unsigned int step_units = lua_read_global_uint("__astra_gc_step_units", 0);
+
+                full_ms = clamp_uint(full_ms, 100, 60000);
+                step_ms = clamp_uint(step_ms, 50, 10000);
+                step_units = clamp_uint(step_units, 0, 10000);
+
+                gc_full_collect_interval = (uint64_t)full_ms * 1000;
+                gc_step_interval = (uint64_t)step_ms * 1000;
+                gc_step_units = step_units;
+            }
+
+            if(gc_step_units > 0 && (current_time - gc_step_timeout) >= gc_step_interval)
+            {
+                gc_step_timeout = current_time;
+                lua_gc(lua, LUA_GCSTEP, (int)gc_step_units);
+            }
+
             if(is_main_loop_idle)
             {
-                current_time = asc_utime();
-                if((current_time - gc_check_timeout) >= GC_TIMEOUT)
+                if((current_time - gc_full_collect_timeout) >= gc_full_collect_interval)
                 {
-                    gc_check_timeout = current_time;
+                    gc_full_collect_timeout = current_time;
                     lua_gc(lua, LUA_GCCOLLECT, 0);
                 }
 

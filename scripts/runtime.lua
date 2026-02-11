@@ -48,6 +48,26 @@ local function setting_string(key, fallback)
     return tostring(value)
 end
 
+local function clamp_number(value, min_value, max_value)
+    if value < min_value then
+        return min_value
+    end
+    if value > max_value then
+        return max_value
+    end
+    return value
+end
+
+local GC_FULL_COLLECT_INTERVAL_MS_DEFAULT = 1000
+local GC_STEP_INTERVAL_MS_DEFAULT = 250
+local GC_STEP_UNITS_DEFAULT = 0
+local GC_FULL_COLLECT_INTERVAL_MS_MIN = 100
+local GC_FULL_COLLECT_INTERVAL_MS_MAX = 60000
+local GC_STEP_INTERVAL_MS_MIN = 50
+local GC_STEP_INTERVAL_MS_MAX = 10000
+local GC_STEP_UNITS_MIN = 0
+local GC_STEP_UNITS_MAX = 10000
+
 local function copy_table(value, seen)
     if type(value) ~= "table" then
         return value
@@ -364,6 +384,21 @@ function runtime.configure_influx()
         end,
     })
     influx_send_snapshot()
+end
+
+function runtime.configure_gc()
+    local full_collect_ms = setting_number("lua_gc_full_collect_interval_ms", GC_FULL_COLLECT_INTERVAL_MS_DEFAULT)
+    local step_interval_ms = setting_number("lua_gc_step_interval_ms", GC_STEP_INTERVAL_MS_DEFAULT)
+    local step_units = setting_number("lua_gc_step_units", GC_STEP_UNITS_DEFAULT)
+
+    full_collect_ms = math.floor(clamp_number(full_collect_ms, GC_FULL_COLLECT_INTERVAL_MS_MIN, GC_FULL_COLLECT_INTERVAL_MS_MAX))
+    step_interval_ms = math.floor(clamp_number(step_interval_ms, GC_STEP_INTERVAL_MS_MIN, GC_STEP_INTERVAL_MS_MAX))
+    step_units = math.floor(clamp_number(step_units, GC_STEP_UNITS_MIN, GC_STEP_UNITS_MAX))
+
+    -- Эти глобальные значения читает основной цикл в main.c раз в пару секунд.
+    rawset(_G, "__astra_gc_full_collect_interval_ms", full_collect_ms)
+    rawset(_G, "__astra_gc_step_interval_ms", step_interval_ms)
+    rawset(_G, "__astra_gc_step_units", step_units)
 end
 
 local function clock_ms()
@@ -1307,97 +1342,18 @@ function runtime.get_adapter_status(id)
     return runtime.adapter_status and runtime.adapter_status[id]
 end
 
-function runtime.list_status()
-    local start_ms = clock_ms()
-    local status = {}
-    local clients_index = get_stream_clients_index()
-    for id, stream in pairs(runtime.streams) do
-        local clients_count = tonumber(clients_index[id]) or 0
-        if stream.kind == "transcode" and transcode then
-            local tc_status = transcode.get_status(id)
-            if tc_status then
-                status[id] = {
-                    on_air = tc_status.state == "RUNNING",
-                    transcode_state = tc_status.state,
-                    transcode = tc_status,
-                    uptime_sec = tc_status.uptime_sec,
-                    clients_count = clients_count,
-                    clients = clients_count,
-                    updated_at = tc_status.updated_at,
-                }
-            end
-        else
-            local stats = pick_stats(stream.channel)
-            local entry = normalize_stats(stats)
-            entry.active_input_id = stream.channel and stream.channel.active_input_id or nil
-            if entry.active_input_id and entry.active_input_id > 0 then
-                entry.active_input_index = entry.active_input_id - 1
-            else
-                entry.active_input_index = nil
-            end
-            entry.active_input_url = get_active_input_url(stream.channel)
-            entry.inputs = collect_input_stats(stream.channel)
-            if type(entry.inputs) == "table" then
-                local active = nil
-                if entry.active_input_id and entry.active_input_id > 0 then
-                    active = entry.inputs[entry.active_input_id]
-                end
-                if not active then
-                    for _, input in ipairs(entry.inputs) do
-                        if input and input.active == true then
-                            active = input
-                            break
-                        end
-                    end
-                end
-                if active and active.uptime_sec ~= nil then
-                    entry.uptime_sec = tonumber(active.uptime_sec) or nil
-                end
-            end
-            entry.last_switch = stream.channel and stream.channel.failover and stream.channel.failover.last_switch or nil
-            local fo = stream.channel and stream.channel.failover or nil
-            entry.backup_type = fo and fo.mode or nil
-            entry.global_state = fo and fo.global_state or "RUNNING"
-            entry.inputs_status = entry.inputs
-            entry.outputs_status = collect_output_status(stream.channel)
-            entry.clients_count = clients_count
-            entry.clients = clients_count
-            attach_hls_totals(entry)
-            if stream.channel and stream.channel.is_mpts and stream.channel.mpts_mux
-                and stream.channel.mpts_mux.stats then
-                local ok, stats = pcall(function()
-                    return stream.channel.mpts_mux:stats()
-                end)
-                if ok and type(stats) == "table" then
-                    entry.mpts_stats = stats
-                end
-            end
-            status[id] = entry
-        end
-    end
-    runtime.perf.last_status_ms = math.floor((clock_ms() - start_ms) + 0.5)
-    runtime.perf.last_status_ts = os.time()
-    return status
-end
-
-function runtime.get_stream_status(id)
-    local start_ms = clock_ms()
-    local function record_perf()
-        runtime.perf.last_status_one_ms = math.floor((clock_ms() - start_ms) + 0.5)
-        runtime.perf.last_status_one_ts = os.time()
-    end
-    local stream = runtime.streams[id]
-    if not stream then
-        return nil
-    end
-    local clients_index = get_stream_clients_index()
-    local clients_count = tonumber(clients_index[id]) or 0
+local function build_stream_status_entry(id, stream, clients_count, lite)
     if stream.kind == "transcode" and transcode then
-        local tc_status = transcode.get_status(id)
+        local tc_status = nil
+        if lite and transcode.get_status_lite then
+            tc_status = transcode.get_status_lite(id)
+        elseif transcode.get_status then
+            tc_status = transcode.get_status(id)
+        end
         if not tc_status then
             return nil
         end
-        local result = {
+        return {
             on_air = tc_status.state == "RUNNING",
             transcode_state = tc_status.state,
             transcode = tc_status,
@@ -1406,19 +1362,19 @@ function runtime.get_stream_status(id)
             clients = clients_count,
             updated_at = tc_status.updated_at,
         }
-        record_perf()
-        return result
     end
-    local stats = pick_stats(stream.channel)
+
+    local channel = stream.channel
+    local stats = pick_stats(channel)
     local entry = normalize_stats(stats)
-    entry.active_input_id = stream.channel and stream.channel.active_input_id or nil
+    entry.active_input_id = channel and channel.active_input_id or nil
     if entry.active_input_id and entry.active_input_id > 0 then
         entry.active_input_index = entry.active_input_id - 1
     else
         entry.active_input_index = nil
     end
-    entry.active_input_url = get_active_input_url(stream.channel)
-    entry.inputs = collect_input_stats(stream.channel)
+    entry.active_input_url = get_active_input_url(channel)
+    entry.inputs = collect_input_stats(channel)
     if type(entry.inputs) == "table" then
         local active = nil
         if entry.active_input_id and entry.active_input_id > 0 then
@@ -1436,17 +1392,86 @@ function runtime.get_stream_status(id)
             entry.uptime_sec = tonumber(active.uptime_sec) or nil
         end
     end
-    entry.last_switch = stream.channel and stream.channel.failover and stream.channel.failover.last_switch or nil
-    local fo = stream.channel and stream.channel.failover or nil
+    entry.last_switch = channel and channel.failover and channel.failover.last_switch or nil
+    local fo = channel and channel.failover or nil
     entry.backup_type = fo and fo.mode or nil
     entry.global_state = fo and fo.global_state or "RUNNING"
     entry.inputs_status = entry.inputs
-    entry.outputs_status = collect_output_status(stream.channel)
+    if not lite then
+        entry.outputs_status = collect_output_status(channel)
+        attach_hls_totals(entry)
+        if channel and channel.is_mpts and channel.mpts_mux and channel.mpts_mux.stats then
+            local ok, mpts_stats = pcall(function()
+                return channel.mpts_mux:stats()
+            end)
+            if ok and type(mpts_stats) == "table" then
+                entry.mpts_stats = mpts_stats
+            end
+        end
+    end
     entry.clients_count = clients_count
     entry.clients = clients_count
-    attach_hls_totals(entry)
+    return entry
+end
+
+local function list_status_common(lite)
+    local start_ms = clock_ms()
+    local status = {}
+    local clients_index = get_stream_clients_index()
+    for id, stream in pairs(runtime.streams) do
+        local clients_count = tonumber(clients_index[id]) or 0
+        local entry = build_stream_status_entry(id, stream, clients_count, lite)
+        if entry then
+            status[id] = entry
+        end
+    end
+    runtime.perf.last_status_ms = math.floor((clock_ms() - start_ms) + 0.5)
+    runtime.perf.last_status_ts = os.time()
+    if lite then
+        runtime.perf.last_status_lite_ms = runtime.perf.last_status_ms
+        runtime.perf.last_status_lite_ts = runtime.perf.last_status_ts
+    end
+    return status
+end
+
+function runtime.list_status()
+    return list_status_common(false)
+end
+
+function runtime.list_status_lite()
+    return list_status_common(true)
+end
+
+local function get_stream_status_common(id, lite)
+    local start_ms = clock_ms()
+    local function record_perf()
+        runtime.perf.last_status_one_ms = math.floor((clock_ms() - start_ms) + 0.5)
+        runtime.perf.last_status_one_ts = os.time()
+        if lite then
+            runtime.perf.last_status_one_lite_ms = runtime.perf.last_status_one_ms
+            runtime.perf.last_status_one_lite_ts = runtime.perf.last_status_one_ts
+        end
+    end
+    local stream = runtime.streams[id]
+    if not stream then
+        return nil
+    end
+    local clients_index = get_stream_clients_index()
+    local clients_count = tonumber(clients_index[id]) or 0
+    local entry = build_stream_status_entry(id, stream, clients_count, lite)
+    if not entry then
+        return nil
+    end
     record_perf()
     return entry
+end
+
+function runtime.get_stream_status(id)
+    return get_stream_status_common(id, false)
+end
+
+function runtime.get_stream_status_lite(id)
+    return get_stream_status_common(id, true)
 end
 
 function runtime.list_transcode_status()

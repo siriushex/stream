@@ -312,6 +312,13 @@ static int module_call(module_data_t *mod)
     const bool is_playlist = ends_with(file, ".m3u8") || ends_with(file, ".m3u");
 
     http_response_t *response = (http_response_t *)calloc(1, sizeof(http_response_t));
+    if(!response)
+    {
+        free(stream_id);
+        http_client_abort(client, 500, NULL);
+        lua_pushboolean(lua, true);
+        return 1;
+    }
     response->mod = mod;
     response->sock_fd = asc_socket_fd(client->sock);
 

@@ -328,7 +328,12 @@ local function count_from_logs(range_sec, scope, scope_id, interval)
         return {}
     end
     local since_ts = os.time() - (range_sec or 86400)
-    local limit = math.max(2000, math.min(50000, math.floor((range_sec or 86400) / 30)))
+    local span = math.max(1, tonumber(range_sec) or 86400)
+    local step = math.max(1, tonumber(interval) or 60)
+    local target_points = math.floor(span / step)
+    local burst = (scope == "stream" and 8 or 4)
+    local hard_cap = (scope == "stream" and 20000 or 50000)
+    local limit = math.max(2000, math.min(hard_cap, target_points * burst))
     local query = {
         since = since_ts,
         ["until"] = nil,
@@ -590,18 +595,28 @@ function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec, r
         local on_air = entry.on_air == true or entry.transcode_state == "RUNNING"
         local cc_errors = tonumber(entry.cc_errors) or 0
         local pes_errors = tonumber(entry.pes_errors) or 0
-        -- For per-stream mode we keep a single runtime snapshot point.
-        -- Historical series should come from logs to avoid synthetic flat lines.
-        push_point("bitrate_kbps", bitrate, bucket)
-        push_point("on_air", on_air and 1 or 0, bucket)
-        push_point("cc_errors", cc_errors, bucket)
-        push_point("pes_errors", pes_errors, bucket)
+        -- Для stream scope всегда отдаем не одну точку, а короткую серию по текущему range.
+        -- Это убирает "single point" на графиках, когда в логах нет истории.
+        push_series("bitrate_kbps", bitrate)
+        push_series("on_air", on_air and 1 or 0)
+        push_series("cc_errors", cc_errors)
+        push_series("pes_errors", pes_errors)
+
+        local switch_count = 0
+        if entry.last_switch and tonumber(entry.last_switch) then
+            local ts = tonumber(entry.last_switch)
+            if ts >= (bucket - sample_range) and ts <= bucket then
+                switch_count = 1
+                local switch_bucket = calc_bucket(ts, interval)
+                push_point("input_switch", 1, switch_bucket)
+            end
+        end
         return {
             bucket = bucket,
             summary = {
                 bitrate_kbps = bitrate,
                 on_air = on_air,
-                input_switch = 0,
+                input_switch = switch_count,
                 cc_errors = cc_errors,
                 pes_errors = pes_errors,
             },
