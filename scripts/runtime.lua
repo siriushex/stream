@@ -414,6 +414,61 @@ local function get_active_input_url(channel)
     return nil
 end
 
+local function get_stream_clients_index()
+    local now = os.time()
+    local cache = runtime._stream_clients_cache
+    if cache and type(cache.index) == "table" and (now - (tonumber(cache.ts) or 0)) < 2 then
+        return cache.index
+    end
+
+    local index = {}
+    if type(http_output_client_list) == "table" then
+        for _, item in pairs(http_output_client_list) do
+            local stream_id = item and item.stream_id or nil
+            if stream_id ~= nil and stream_id ~= "" then
+                local key = tostring(stream_id)
+                index[key] = (tonumber(index[key]) or 0) + 1
+            end
+        end
+    end
+
+    local hls_timeout = 60
+    if config and config.get_setting then
+        hls_timeout = tonumber(config.get_setting("hls_session_timeout")) or hls_timeout
+    end
+    if type(hls_session_list) == "table" then
+        local stale = nil
+        for sid, item in pairs(hls_session_list) do
+            local last_seen = tonumber(item and item.last_seen)
+            if last_seen and (now - last_seen) > hls_timeout then
+                stale = stale or {}
+                stale[#stale + 1] = sid
+            else
+                local stream_id = item and item.stream_id or nil
+                if stream_id ~= nil and stream_id ~= "" then
+                    local key = tostring(stream_id)
+                    index[key] = (tonumber(index[key]) or 0) + 1
+                end
+            end
+        end
+        if stale then
+            for _, sid in ipairs(stale) do
+                local entry = hls_session_list[sid]
+                hls_session_list[sid] = nil
+                if hls_session_index and entry and entry.key then
+                    hls_session_index[entry.key] = nil
+                end
+            end
+        end
+    end
+
+    runtime._stream_clients_cache = {
+        ts = now,
+        index = index,
+    }
+    return index
+end
+
 local function normalize_stats(stats)
     local src = stats or {}
     return {
@@ -481,6 +536,7 @@ local function collect_input_stats(channel)
     end
 
     local inputs = {}
+    local now = os.time()
     local active_id = channel.active_input_id
     local resilience_global = get_input_resilience_setting()
 
@@ -571,6 +627,14 @@ local function collect_input_stats(channel)
             entry.updated_at = normalized.updated_at
         else
             entry.on_air = input_data and input_data.on_air == true
+        end
+
+        if input_data and input_data.ok_since and entry.on_air == true then
+            local ok_since = tonumber(input_data.ok_since)
+            if ok_since then
+                entry.started_at = ok_since
+                entry.uptime_sec = math.max(0, now - ok_since)
+            end
         end
 
         if input_data and input_data.health then
@@ -1246,7 +1310,9 @@ end
 function runtime.list_status()
     local start_ms = clock_ms()
     local status = {}
+    local clients_index = get_stream_clients_index()
     for id, stream in pairs(runtime.streams) do
+        local clients_count = tonumber(clients_index[id]) or 0
         if stream.kind == "transcode" and transcode then
             local tc_status = transcode.get_status(id)
             if tc_status then
@@ -1254,6 +1320,9 @@ function runtime.list_status()
                     on_air = tc_status.state == "RUNNING",
                     transcode_state = tc_status.state,
                     transcode = tc_status,
+                    uptime_sec = tc_status.uptime_sec,
+                    clients_count = clients_count,
+                    clients = clients_count,
                     updated_at = tc_status.updated_at,
                 }
             end
@@ -1268,12 +1337,31 @@ function runtime.list_status()
             end
             entry.active_input_url = get_active_input_url(stream.channel)
             entry.inputs = collect_input_stats(stream.channel)
+            if type(entry.inputs) == "table" then
+                local active = nil
+                if entry.active_input_id and entry.active_input_id > 0 then
+                    active = entry.inputs[entry.active_input_id]
+                end
+                if not active then
+                    for _, input in ipairs(entry.inputs) do
+                        if input and input.active == true then
+                            active = input
+                            break
+                        end
+                    end
+                end
+                if active and active.uptime_sec ~= nil then
+                    entry.uptime_sec = tonumber(active.uptime_sec) or nil
+                end
+            end
             entry.last_switch = stream.channel and stream.channel.failover and stream.channel.failover.last_switch or nil
             local fo = stream.channel and stream.channel.failover or nil
             entry.backup_type = fo and fo.mode or nil
             entry.global_state = fo and fo.global_state or "RUNNING"
             entry.inputs_status = entry.inputs
             entry.outputs_status = collect_output_status(stream.channel)
+            entry.clients_count = clients_count
+            entry.clients = clients_count
             attach_hls_totals(entry)
             if stream.channel and stream.channel.is_mpts and stream.channel.mpts_mux
                 and stream.channel.mpts_mux.stats then
@@ -1302,6 +1390,8 @@ function runtime.get_stream_status(id)
     if not stream then
         return nil
     end
+    local clients_index = get_stream_clients_index()
+    local clients_count = tonumber(clients_index[id]) or 0
     if stream.kind == "transcode" and transcode then
         local tc_status = transcode.get_status(id)
         if not tc_status then
@@ -1311,6 +1401,9 @@ function runtime.get_stream_status(id)
             on_air = tc_status.state == "RUNNING",
             transcode_state = tc_status.state,
             transcode = tc_status,
+            uptime_sec = tc_status.uptime_sec,
+            clients_count = clients_count,
+            clients = clients_count,
             updated_at = tc_status.updated_at,
         }
         record_perf()
@@ -1326,12 +1419,31 @@ function runtime.get_stream_status(id)
     end
     entry.active_input_url = get_active_input_url(stream.channel)
     entry.inputs = collect_input_stats(stream.channel)
+    if type(entry.inputs) == "table" then
+        local active = nil
+        if entry.active_input_id and entry.active_input_id > 0 then
+            active = entry.inputs[entry.active_input_id]
+        end
+        if not active then
+            for _, input in ipairs(entry.inputs) do
+                if input and input.active == true then
+                    active = input
+                    break
+                end
+            end
+        end
+        if active and active.uptime_sec ~= nil then
+            entry.uptime_sec = tonumber(active.uptime_sec) or nil
+        end
+    end
     entry.last_switch = stream.channel and stream.channel.failover and stream.channel.failover.last_switch or nil
     local fo = stream.channel and stream.channel.failover or nil
     entry.backup_type = fo and fo.mode or nil
     entry.global_state = fo and fo.global_state or "RUNNING"
     entry.inputs_status = entry.inputs
     entry.outputs_status = collect_output_status(stream.channel)
+    entry.clients_count = clients_count
+    entry.clients = clients_count
     attach_hls_totals(entry)
     record_perf()
     return entry
@@ -1476,6 +1588,7 @@ function runtime.close_session(id)
             if hls_session_index and entry.key then
                 hls_session_index[entry.key] = nil
             end
+            runtime._stream_clients_cache = nil
             return true
         end
         return false
@@ -1488,6 +1601,7 @@ function runtime.close_session(id)
             item.server:close(item.client)
         end
         http_output_client_list[key] = nil
+        runtime._stream_clients_cache = nil
         return true
     end
 end

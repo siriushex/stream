@@ -444,9 +444,11 @@ const state = {
   streamIndex: {},
   streamTableRows: {},
   streamCompactRows: {},
+  streamUptimeTimer: null,
 };
 
 const POLL_STATUS_DEFAULT_MS = 4000;
+const STREAM_UPTIME_TICK_MS = 1000;
 const POLL_STATUS_WARMUP_MS = 2000;
 const POLL_STATUS_WARMUP_WINDOW_MS = 30000;
 const POLL_STATUS_RAMP_WINDOW_MS = 20000;
@@ -9333,6 +9335,209 @@ function formatLegacyOutputLabel(output, streamId) {
   return `${title} (${enabled}) · ${url || 'n/a'}`;
 }
 
+function getLegacyBridgeType(output) {
+  if (!output || typeof output !== 'object') return '';
+  const format = String(output.format || '').toLowerCase();
+  if (format === 'udp' || format === 'rtp') return format;
+  return '';
+}
+
+function getLegacyBridgeKey(output) {
+  const type = getLegacyBridgeType(output);
+  if (!type) return '';
+  const url = formatUdpUrl(type, output, output.url);
+  if (!url) return '';
+  const key = normalizeOutputUrlKey(url);
+  return key ? `${type}|${key}` : '';
+}
+
+function getPublishBridgeType(entry) {
+  if (!entry || typeof entry !== 'object') return '';
+  const type = String(entry.type || '').toLowerCase();
+  if (type === 'udp' || type === 'rtp') return type;
+  return '';
+}
+
+function getPublishBridgeKey(entry) {
+  const type = getPublishBridgeType(entry);
+  if (!type) return '';
+  const url = String(entry.url || '').trim();
+  if (!url) return '';
+  const key = normalizeOutputUrlKey(url);
+  return key ? `${type}|${key}` : '';
+}
+
+function buildPublishFromLegacyBridge(output, defaultProfileId) {
+  const type = getLegacyBridgeType(output);
+  if (!type) return null;
+  const url = formatUdpUrl(type, output, output.url);
+  if (!url) return null;
+  const entry = {
+    type,
+    enabled: output.enabled !== false,
+    url,
+    variants: [],
+  };
+  if (defaultProfileId) {
+    entry.variants = [defaultProfileId];
+  }
+  return entry;
+}
+
+function buildLegacyFromPublishBridge(entry) {
+  const type = getPublishBridgeType(entry);
+  if (!type) return null;
+  const rawUrl = String(entry.url || '').trim();
+  if (!rawUrl) return null;
+  const parsed = parseOutputInlineValue(rawUrl, { format: type });
+  const output = (parsed && parsed.output && typeof parsed.output === 'object') ? { ...parsed.output } : null;
+  if (!output) return null;
+  if (!output.addr || !Number.isFinite(Number(output.port))) return null;
+  output.format = type;
+  output.enabled = entry.enabled !== false;
+  return output;
+}
+
+function supportsPassthroughByType(type) {
+  const t = String(type || '').toLowerCase();
+  return t === 'udp' || t === 'rtp';
+}
+
+function supportsTranscodeByLegacy(output) {
+  return supportsPassthroughByType(getLegacyBridgeType(output));
+}
+
+function buildUnifiedOutputRows(streamId) {
+  const rows = [];
+  const mergeIndex = new Map();
+  const transcodeEnabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+  const publish = parseEditingTranscodePublishJsonSafe();
+
+  state.outputs.forEach((output, index) => {
+    const row = {
+      legacyIndex: index,
+      publishIndex: null,
+      legacy: output,
+      publish: null,
+    };
+    const key = getLegacyBridgeKey(output);
+    if (key) {
+      mergeIndex.set(key, row);
+    }
+    rows.push(row);
+  });
+
+  publish.forEach((entry, index) => {
+    if (!entry || typeof entry !== 'object') return;
+    const key = getPublishBridgeKey(entry);
+    if (key && mergeIndex.has(key)) {
+      const row = mergeIndex.get(key);
+      row.publish = entry;
+      row.publishIndex = index;
+      return;
+    }
+    const row = {
+      legacyIndex: null,
+      publishIndex: index,
+      legacy: null,
+      publish: entry,
+    };
+    if (key) {
+      mergeIndex.set(key, row);
+    }
+    rows.push(row);
+  });
+
+  return rows.map((row, displayIndex) => {
+    const legacy = row.legacy;
+    const publishEntry = row.publish;
+    const legacyEnabled = legacy ? legacy.enabled !== false : false;
+    const publishEnabled = publishEntry ? publishEntry.enabled !== false : false;
+    const publishType = publishEntry ? String(publishEntry.type || '').toLowerCase() : '';
+    const bridgeType = getLegacyBridgeType(legacy) || getPublishBridgeType(publishEntry);
+
+    const supports_passthrough = Boolean(legacy) || supportsPassthroughByType(publishType);
+    const supports_transcode = Boolean(publishEntry) || supportsTranscodeByLegacy(legacy);
+
+    const enabled = (legacyEnabled || publishEnabled);
+    const modeSupported = transcodeEnabled ? supports_transcode : supports_passthrough;
+    const active_now = enabled && modeSupported;
+
+    let main = '';
+    if (legacy && publishEntry && bridgeType) {
+      const mergedUrl = String(publishEntry.url || '').trim() || formatUdpUrl(bridgeType, legacy, legacy.url) || '';
+      main = `${bridgeType.toUpperCase()} (${enabled ? 'ON' : 'OFF'}) · ${mergedUrl || 'n/a'}`;
+    } else if (publishEntry) {
+      main = formatPublishOutputLabel(publishEntry, streamId);
+    } else if (legacy) {
+      main = formatLegacyOutputLabel(legacy, streamId);
+    } else {
+      main = 'OUTPUT';
+    }
+
+    let modeText = '';
+    if (supports_passthrough && supports_transcode) {
+      modeText = 'Modes: passthrough + transcoding';
+    } else if (supports_transcode && !supports_passthrough) {
+      modeText = 'Requires Transcoding';
+    } else {
+      modeText = 'Mode: passthrough';
+    }
+
+    const stateText = active_now ? 'ACTIVE' : 'INACTIVE';
+    const meta = `${stateText} · ${modeText}`;
+
+    return {
+      ...row,
+      displayIndex: displayIndex + 1,
+      supports_passthrough,
+      supports_transcode,
+      active_now,
+      enabled,
+      main,
+      meta,
+      isMergedBridge: Boolean(legacy && publishEntry && bridgeType),
+    };
+  });
+}
+
+function syncBridgeOutputsAcrossModes(legacyOutputs, publishEntries, defaultProfileId) {
+  const outputs = Array.isArray(legacyOutputs) ? legacyOutputs : [];
+  const publish = Array.isArray(publishEntries) ? publishEntries : [];
+
+  const publishByKey = new Set();
+  publish.forEach((entry) => {
+    const key = getPublishBridgeKey(entry);
+    if (key) publishByKey.add(key);
+  });
+
+  outputs.forEach((output) => {
+    const key = getLegacyBridgeKey(output);
+    if (!key || publishByKey.has(key)) return;
+    const generated = buildPublishFromLegacyBridge(output, defaultProfileId);
+    if (!generated) return;
+    publish.push(generated);
+    publishByKey.add(key);
+  });
+
+  const legacyByKey = new Set();
+  outputs.forEach((output) => {
+    const key = getLegacyBridgeKey(output);
+    if (key) legacyByKey.add(key);
+  });
+
+  publish.forEach((entry) => {
+    const key = getPublishBridgeKey(entry);
+    if (!key || legacyByKey.has(key)) return;
+    const generated = buildLegacyFromPublishBridge(entry);
+    if (!generated) return;
+    outputs.push(generated);
+    legacyByKey.add(key);
+  });
+
+  return { outputs, publish };
+}
+
 function normalizeOutputUrlKey(value) {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -9977,56 +10182,64 @@ function renderPublishOutputList() {
 }
 
 function renderOutputList() {
-  const ladder = isEditingLadderTranscodeStream();
-  ensureOutputInlineDraftKind(ladder ? 'publish' : 'legacy');
-  if (ladder) {
-    renderPublishOutputList();
-  } else {
-    elements.outputList.innerHTML = '';
-  }
+  const transcodeEnabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+  const addKind = transcodeEnabled ? 'publish' : 'legacy';
+  ensureOutputInlineDraftKind(addKind);
+  elements.outputList.innerHTML = '';
   const streamId = (elements.streamId && elements.streamId.value)
     ? String(elements.streamId.value)
     : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
-  const showInline = state.outputInlineDraft && state.outputInlineDraft.kind === 'legacy';
-  const visible = state.outputs.map((output, index) => ({ output, index }));
+  const showInline = Boolean(state.outputInlineDraft && state.outputInlineDraft.kind === addKind);
+  const rows = buildUnifiedOutputRows(streamId);
 
-  if (!ladder) {
-    if (visible.length === 0 && !showInline) {
-      const empty = document.createElement('div');
-      empty.className = 'panel subtle';
-      empty.textContent = 'No outputs configured.';
-      elements.outputList.appendChild(empty);
-    }
-
-    if (showInline) {
-      renderOutputInlineRow(elements.outputList, state.outputInlineDraft, streamId);
-    }
-  } else if (visible.length > 0) {
-    const heading = document.createElement('div');
-    heading.className = 'output-section-heading';
-    heading.textContent = 'Saved outputs (inactive while Transcoding is enabled)';
-    elements.outputList.appendChild(heading);
+  if (rows.length === 0 && !showInline) {
+    const empty = document.createElement('div');
+    empty.className = 'panel subtle';
+    empty.textContent = 'No outputs configured.';
+    elements.outputList.appendChild(empty);
   }
 
-  visible.forEach(({ output, index }, displayIndex) => {
+  if (showInline) {
+    renderOutputInlineRow(elements.outputList, state.outputInlineDraft, streamId);
+  }
+
+  rows.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'list-row output-row';
-    row.dataset.index = String(index);
-    row.dataset.kind = 'legacy';
+    if (!item.active_now) {
+      row.classList.add('is-inactive');
+    }
+    row.dataset.kind = item.isMergedBridge ? 'merged' : (item.publish ? 'publish' : 'legacy');
+    if (item.legacyIndex !== null && item.legacyIndex !== undefined) {
+      row.dataset.legacyIndex = String(item.legacyIndex);
+    }
+    if (item.publishIndex !== null && item.publishIndex !== undefined) {
+      row.dataset.publishIndex = String(item.publishIndex);
+    }
 
     const idx = document.createElement('div');
     idx.className = 'list-index';
-    idx.textContent = `#${displayIndex + 1}`;
+    idx.textContent = `#${item.displayIndex}`;
 
     const label = document.createElement('div');
     label.className = 'list-input';
-    label.textContent = formatLegacyOutputLabel(output, streamId);
+    const main = document.createElement('div');
+    main.className = 'output-unified-main';
+    main.textContent = item.main;
+    const meta = document.createElement('div');
+    meta.className = `output-unified-meta${item.active_now ? ' is-active' : ' is-inactive'}`;
+    meta.textContent = item.meta;
+    label.appendChild(main);
+    label.appendChild(meta);
 
-    const isUdp = String(output.format || '').toLowerCase() === 'udp';
+    const legacy = item.legacyIndex !== null && item.legacyIndex !== undefined
+      ? state.outputs[item.legacyIndex]
+      : null;
+    const isUdp = legacy && String(legacy.format || '').toLowerCase() === 'udp';
     let audioFixMeta = null;
     if (isUdp) {
-      const status = getEditingOutputStatus(index);
-      audioFixMeta = getOutputAudioFixMeta(output, status);
+      const status = getEditingOutputStatus(item.legacyIndex);
+      audioFixMeta = getOutputAudioFixMeta(legacy, status);
     }
 
     const actions = document.createElement('div');
@@ -10059,7 +10272,7 @@ function renderOutputList() {
     row.appendChild(idx);
     row.appendChild(label);
     if (isUdp) {
-      const audioFix = audioFixMeta ? audioFixMeta.config : normalizeOutputAudioFix(output.audio_fix);
+      const audioFix = audioFixMeta ? audioFixMeta.config : normalizeOutputAudioFix(legacy.audio_fix);
       const audioToggle = document.createElement('button');
       audioToggle.type = 'button';
       audioToggle.className = `output-audio-toggle ${audioFix.enabled ? 'is-on' : 'is-off'}`;
@@ -16081,7 +16294,7 @@ function openEditor(stream, isNew) {
       }
       if (elements.streamTranscodePublishJson) {
         const publish = Array.isArray(tc.publish) ? tc.publish : [];
-        elements.streamTranscodePublishJson.value = ladderEnabled && publish.length ? formatJson(publish) : '';
+        elements.streamTranscodePublishJson.value = publish.length ? formatJson(publish) : '';
       }
       state.transcodeProfiles = ladderEnabled ? (tc.profiles || []) : [];
       renderTranscodeProfileList();
@@ -16632,11 +16845,11 @@ function readStreamForm() {
     throw new Error('Stop if all inactive must be >= 5 seconds (Backup tab)');
   }
 
-  if (isTranscode) {
+  {
     const transcode = {};
     // Enable transcoding without changing the stream type. This keeps /play/<id> semantics stable:
     // /play is always the stream output, /input is internal-only raw stage for ffmpeg loopback.
-    transcode.enabled = true;
+    transcode.enabled = isTranscode;
     if (elements.streamTranscodeEngine) {
       const engine = elements.streamTranscodeEngine.value.trim();
       if (engine) transcode.engine = engine;
@@ -16823,12 +17036,21 @@ function readStreamForm() {
       }
     }
 
-    config.transcode = transcode;
-  }
+    // Keep dual-mode bridge outputs (UDP/RTP) in sync between legacy cfg.output and transcode.publish.
+    const defaultProfileId = Array.isArray(transcode.profiles) && transcode.profiles.length
+      ? String(transcode.profiles[0].id || '').trim()
+      : '';
+    const synced = syncBridgeOutputsAcrossModes(outputs, Array.isArray(transcode.publish) ? transcode.publish : [], defaultProfileId);
+    if (synced.publish.length) {
+      transcode.publish = synced.publish;
+    }
 
-  }
+	    config.transcode = transcode;
+	  }
 
-  return { id, enabled, config };
+	  }
+
+	  return { id, enabled, config };
 }
 
 const TILE_INPUTS_DEFAULT_LIMIT = 5;
@@ -17830,8 +18052,146 @@ function stopStatusPolling() {
     clearTimeout(state.statusTimer);
     state.statusTimer = null;
   }
+  stopStreamUptimeTicker();
   state.statusPollStartMs = 0;
   state.statusPollInFlight = false;
+}
+
+function formatStreamUptime(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const hms = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  return days > 0 ? `${days}d ${hms}` : hms;
+}
+
+function computeLiveUptimeSec(baseSec, updatedAtSec, live) {
+  let value = Math.max(0, Number(baseSec) || 0);
+  if (live && Number.isFinite(updatedAtSec) && updatedAtSec > 0) {
+    const drift = Math.floor((Date.now() / 1000) - updatedAtSec);
+    if (drift > 0) {
+      value += drift;
+    }
+  }
+  return value;
+}
+
+function resolveModelInputUptime(stats, activeInput) {
+  let baseSec = null;
+  let updatedAtSec = null;
+  let live = false;
+
+  if (activeInput && Number.isFinite(activeInput.uptime_sec)) {
+    baseSec = Number(activeInput.uptime_sec);
+    live = activeInput.on_air === true;
+  } else if (Number.isFinite(stats && stats.uptime_sec)) {
+    baseSec = Number(stats.uptime_sec);
+  }
+
+  const activeUpdated = Number(activeInput && activeInput.updated_at);
+  if (Number.isFinite(activeUpdated) && activeUpdated > 0) {
+    updatedAtSec = activeUpdated;
+  } else {
+    const topUpdated = Number(stats && stats.updated_at);
+    if (Number.isFinite(topUpdated) && topUpdated > 0) {
+      updatedAtSec = topUpdated;
+    } else {
+      const tcUpdated = Number(stats && stats.transcode && stats.transcode.updated_at);
+      if (Number.isFinite(tcUpdated) && tcUpdated > 0) {
+        updatedAtSec = tcUpdated;
+      }
+    }
+  }
+
+  if (!live) {
+    const tcState = String((stats && stats.transcode_state) || '').toUpperCase();
+    live = stats && stats.on_air === true;
+    if (!live && (tcState === 'RUNNING' || tcState === 'STARTING' || tcState === 'RESTARTING')) {
+      live = true;
+    }
+  }
+
+  if (!Number.isFinite(baseSec)) {
+    return {
+      text: '-',
+      baseSec: null,
+      updatedAtSec: null,
+      live: false,
+    };
+  }
+
+  return {
+    text: formatStreamUptime(computeLiveUptimeSec(baseSec, updatedAtSec, live)),
+    baseSec: baseSec,
+    updatedAtSec: Number.isFinite(updatedAtSec) ? updatedAtSec : null,
+    live: live === true,
+  };
+}
+
+function formatTableInputMetaLine(label, uptime, bitrate) {
+  const safeLabel = label || 'n/a';
+  const safeUptime = uptime || '-';
+  const safeBitrate = bitrate || '-';
+  return `In ${safeLabel} • Up ${safeUptime} • ${safeBitrate}`;
+}
+
+function formatTableOutputMetaLine(outputs, clients) {
+  const safeOutputs = outputs || '-';
+  const safeClients = Number.isFinite(Number(clients)) ? Number(clients) : 0;
+  return `Out ${safeOutputs} • Clients ${safeClients}`;
+}
+
+function applyTableRowUptimeDataset(row, model) {
+  if (!row) return;
+  row.dataset.inputLabel = model.inputLabel || 'n/a';
+  row.dataset.inputBitrate = model.inputBitrate || '-';
+  row.dataset.inputUptimeBase = Number.isFinite(model.inputUptimeBaseSec) ? String(model.inputUptimeBaseSec) : '';
+  row.dataset.inputUptimeUpdated = Number.isFinite(model.inputUptimeUpdatedAtSec) ? String(model.inputUptimeUpdatedAtSec) : '';
+  row.dataset.inputUptimeLive = model.inputUptimeLive ? '1' : '0';
+}
+
+function updateTableRowUptimeText(row) {
+  if (!row) return;
+  const inputMeta = row.querySelector('[data-role="stream-input-meta"]');
+  if (!inputMeta) return;
+
+  const rawBase = row.dataset.inputUptimeBase;
+  if (rawBase === undefined || rawBase === null || rawBase === '') return;
+  const baseSec = Number(rawBase);
+  if (!Number.isFinite(baseSec)) return;
+  const updatedAtSec = Number(row.dataset.inputUptimeUpdated);
+  const live = row.dataset.inputUptimeLive === '1';
+  const label = row.dataset.inputLabel || 'n/a';
+  const bitrate = row.dataset.inputBitrate || '-';
+  const uptime = formatStreamUptime(computeLiveUptimeSec(baseSec, Number.isFinite(updatedAtSec) ? updatedAtSec : null, live));
+  const text = formatTableInputMetaLine(label, uptime, bitrate);
+  if (inputMeta.textContent !== text) {
+    inputMeta.textContent = text;
+  }
+}
+
+function updateStreamTableUptimeRows() {
+  if (state.currentView !== 'dashboard' || state.viewMode !== 'table') return;
+  Object.keys(state.streamTableRows || {}).forEach((id) => {
+    const row = state.streamTableRows[id];
+    if (!row) return;
+    updateTableRowUptimeText(row);
+  });
+}
+
+function startStreamUptimeTicker() {
+  if (state.streamUptimeTimer) return;
+  state.streamUptimeTimer = setInterval(() => {
+    updateStreamTableUptimeRows();
+  }, STREAM_UPTIME_TICK_MS);
+}
+
+function stopStreamUptimeTicker() {
+  if (!state.streamUptimeTimer) return;
+  clearInterval(state.streamUptimeTimer);
+  state.streamUptimeTimer = null;
 }
 
 function buildStreamModel(stream) {
@@ -17853,20 +18213,21 @@ function buildStreamModel(stream) {
     }
   }
   const inputBitrate = formatMaybeBitrate(inputBitrateValue);
-  const inputUptime = (activeInput && Number.isFinite(activeInput.uptime_sec))
-    ? formatUptime(activeInput.uptime_sec)
-    : '-';
+  const uptime = resolveModelInputUptime(stats, activeInput);
+  const inputUptime = uptime.text;
 
   const transcodeState = stats.transcode_state || '';
   const transcode = stats.transcode || {};
-  const transcodeStatus = transcodeState ? transcodeState : 'DISABLED';
-  const transcodeRates = transcodeState ? formatTranscodeBitrates(transcode) : 'In - / Out -';
+  const transcodeStatus = transcodeState ? transcodeState : 'OFF';
+  const transcodeRates = transcodeState ? formatTranscodeBitrates(transcode) : '';
   const transcodeError = transcodeState === 'ERROR'
     ? (formatTranscodeAlert(transcode.last_alert) || transcode.last_error || '')
     : '';
 
   const outputSummary = getOutputSummary(stream);
-  const clients = Number.isFinite(stats.clients) ? stats.clients : null;
+  const clients = Number.isFinite(stats.clients_count)
+    ? Number(stats.clients_count)
+    : (Number.isFinite(stats.clients) ? Number(stats.clients) : 0);
   const enabled = stream.enabled !== false;
 
   return {
@@ -17877,6 +18238,9 @@ function buildStreamModel(stream) {
     inputLabel,
     inputBitrate,
     inputUptime,
+    inputUptimeBaseSec: uptime.baseSec,
+    inputUptimeUpdatedAtSec: uptime.updatedAtSec,
+    inputUptimeLive: uptime.live,
     transcodeStatus,
     transcodeRates,
     transcodeError,
@@ -17927,7 +18291,7 @@ function buildStreamTableRow(stream) {
   if (model.inputUrl) inputUrl.title = model.inputUrl;
   const inputMeta = createEl('div', 'stream-cell-sub');
   inputMeta.dataset.role = 'stream-input-meta';
-  inputMeta.textContent = `Active: ${model.inputLabel} • Uptime: ${model.inputUptime} • Bitrate: ${model.inputBitrate}`;
+  inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
   inputCell.appendChild(inputUrl);
   inputCell.appendChild(inputMeta);
 
@@ -17938,6 +18302,7 @@ function buildStreamTableRow(stream) {
   const tcMeta = createEl('div', 'stream-cell-sub');
   tcMeta.dataset.role = 'stream-transcode-meta';
   tcMeta.textContent = model.transcodeRates;
+  tcMeta.hidden = !model.transcodeRates;
   if (model.transcodeError) {
     tcMeta.title = model.transcodeError;
   }
@@ -17945,37 +18310,42 @@ function buildStreamTableRow(stream) {
   tcCell.appendChild(tcMeta);
 
   const dvrCell = createEl('td', 'col-dvr');
-  const dvrMeta = createEl('div', 'stream-cell-sub', 'Archive: disabled');
+  const dvrMeta = createEl('div', 'stream-cell-sub', 'DVR: off');
   dvrCell.appendChild(dvrMeta);
 
   const outputCell = createEl('td', 'col-output');
-  const outputSummary = createEl('div', 'stream-output-summary');
-  outputSummary.dataset.role = 'stream-output-summary';
-  outputSummary.textContent = `Outputs: ${model.outputSummary}`;
-  const outputMeta = createEl('div', 'stream-cell-sub');
+  const outputTop = createEl('div', 'stream-output-top');
+  const outputMeta = createEl('div', 'stream-output-summary');
   outputMeta.dataset.role = 'stream-output-meta';
-  outputMeta.textContent = `Clients: ${model.clients !== null ? model.clients : '-'}`;
+  outputMeta.textContent = formatTableOutputMetaLine(model.outputSummary, model.clients);
 
   const actions = createEl('div', 'stream-actions');
-  const previewBtn = createEl('button', 'btn ghost', 'Play');
+  const previewBtn = createEl('button', 'btn ghost icon-btn', '▶');
   previewBtn.dataset.action = 'play';
-  const analyzeBtn = createEl('button', 'btn ghost', 'Analyze');
+  previewBtn.title = 'Play stream';
+  previewBtn.setAttribute('aria-label', 'Play stream');
+  const analyzeBtn = createEl('button', 'btn ghost icon-btn', 'A');
   analyzeBtn.dataset.action = 'analyze';
-  const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
+  analyzeBtn.title = 'Analyze stream';
+  analyzeBtn.setAttribute('aria-label', 'Analyze stream');
+  const toggleBtn = createEl('button', 'btn ghost icon-btn', '⏻');
   toggleBtn.dataset.action = 'toggle';
+  toggleBtn.title = model.enabled ? 'Disable stream' : 'Enable stream';
+  toggleBtn.setAttribute('aria-label', model.enabled ? 'Disable stream' : 'Enable stream');
   actions.appendChild(previewBtn);
   actions.appendChild(analyzeBtn);
   actions.appendChild(toggleBtn);
 
-  outputCell.appendChild(outputSummary);
-  outputCell.appendChild(outputMeta);
-  outputCell.appendChild(actions);
+  outputTop.appendChild(outputMeta);
+  outputTop.appendChild(actions);
+  outputCell.appendChild(outputTop);
 
   row.appendChild(streamCell);
   row.appendChild(inputCell);
   row.appendChild(tcCell);
   row.appendChild(dvrCell);
   row.appendChild(outputCell);
+  applyTableRowUptimeDataset(row, model);
 
   return row;
 }
@@ -17999,7 +18369,7 @@ function updateStreamTableRow(row, stream) {
   }
   const inputMeta = row.querySelector('[data-role="stream-input-meta"]');
   if (inputMeta) {
-    inputMeta.textContent = `Active: ${model.inputLabel} • Uptime: ${model.inputUptime} • Bitrate: ${model.inputBitrate}`;
+    inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
   }
   const tcSummary = row.querySelector('[data-role="stream-transcode-summary"]');
   if (tcSummary) {
@@ -18008,15 +18378,12 @@ function updateStreamTableRow(row, stream) {
   const tcMeta = row.querySelector('[data-role="stream-transcode-meta"]');
   if (tcMeta) {
     tcMeta.textContent = model.transcodeRates;
+    tcMeta.hidden = !model.transcodeRates;
     tcMeta.title = model.transcodeError || '';
-  }
-  const outputSummary = row.querySelector('[data-role="stream-output-summary"]');
-  if (outputSummary) {
-    outputSummary.textContent = `Outputs: ${model.outputSummary}`;
   }
   const outputMeta = row.querySelector('[data-role="stream-output-meta"]');
   if (outputMeta) {
-    outputMeta.textContent = `Clients: ${model.clients !== null ? model.clients : '-'}`;
+    outputMeta.textContent = formatTableOutputMetaLine(model.outputSummary, model.clients);
   }
   const previewBtn = row.querySelector('[data-action="play"]');
   if (previewBtn) {
@@ -18024,8 +18391,11 @@ function updateStreamTableRow(row, stream) {
   }
   const toggleBtn = row.querySelector('[data-action="toggle"]');
   if (toggleBtn) {
-    toggleBtn.textContent = model.enabled ? 'Disable' : 'Enable';
+    toggleBtn.title = model.enabled ? 'Disable stream' : 'Enable stream';
+    toggleBtn.setAttribute('aria-label', model.enabled ? 'Disable stream' : 'Enable stream');
   }
+  applyTableRowUptimeDataset(row, model);
+  updateTableRowUptimeText(row);
 }
 
 function renderStreamTable(list) {
@@ -18054,6 +18424,7 @@ function updateStreamTableRows() {
     if (!stream || !row) return;
     updateStreamTableRow(row, stream);
   });
+  updateStreamTableUptimeRows();
 }
 
 function buildStreamCompactRow(stream) {
@@ -18073,7 +18444,7 @@ function buildStreamCompactRow(stream) {
   const nameBtn = createEl('button', 'stream-compact-name', model.name);
   nameBtn.dataset.action = 'edit';
   const rate = createEl('div', 'stream-compact-rate', model.inputBitrate);
-  const clients = createEl('div', 'stream-compact-clients', `Clients: ${model.clients !== null ? model.clients : '-'}`);
+  const clients = createEl('div', 'stream-compact-clients', `Clients: ${model.clients}`);
   const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
   toggleBtn.dataset.action = 'toggle';
 
@@ -18124,7 +18495,7 @@ function updateStreamCompactRows() {
     const rate = row.querySelector('.stream-compact-rate');
     if (rate) rate.textContent = model.inputBitrate;
     const clients = row.querySelector('.stream-compact-clients');
-    if (clients) clients.textContent = `Clients: ${model.clients !== null ? model.clients : '-'}`;
+    if (clients) clients.textContent = `Clients: ${model.clients}`;
     const toggleBtn = row.querySelector('[data-action="toggle"]');
     if (toggleBtn) toggleBtn.textContent = model.enabled ? 'Disable' : 'Enable';
   });
@@ -18140,8 +18511,11 @@ function renderStreams() {
 
   if (state.viewMode === 'table') {
     renderStreamTable(filtered);
+    startStreamUptimeTicker();
+    updateStreamTableUptimeRows();
     return;
   }
+  stopStreamUptimeTicker();
   if (state.viewMode === 'compact') {
     renderStreamCompact(filtered);
     return;
@@ -20391,6 +20765,11 @@ function syncPollingForView() {
   } else {
     stopStatusPolling();
   }
+  if (state.currentView === 'dashboard' && state.viewMode === 'table') {
+    startStreamUptimeTicker();
+  } else {
+    stopStreamUptimeTicker();
+  }
   if (state.currentView === 'sessions') {
     startSessionPolling();
   } else {
@@ -20430,6 +20809,7 @@ function syncPollingForView() {
 
 function pauseAllPolling() {
   stopStatusPolling();
+  stopStreamUptimeTicker();
   stopAdapterPolling();
   stopDvbPolling();
   stopSplitterPolling();
@@ -27015,61 +27395,71 @@ function bindEvents() {
     if (!action) return;
     const row = event.target.closest('.list-row');
     if (!row) return;
-    const index = Number(row.dataset.index);
-    const kind = row.dataset.kind || (isEditingLadderTranscodeStream() ? 'publish' : 'legacy');
+    const legacyIndexRaw = row.dataset.legacyIndex;
+    const publishIndexRaw = row.dataset.publishIndex;
+    const legacyIndex = legacyIndexRaw === undefined ? null : Number(legacyIndexRaw);
+    const publishIndex = publishIndexRaw === undefined ? null : Number(publishIndexRaw);
+    const hasLegacy = Number.isFinite(legacyIndex);
+    const hasPublish = Number.isFinite(publishIndex);
+    const transcodeEnabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
+    const streamId = (elements.streamId && elements.streamId.value)
+      ? String(elements.streamId.value)
+      : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
 
-    if (kind === 'publish') {
-      const publish = parseEditingTranscodePublishJsonSafe();
-      const entry = publish[index];
-      const streamId = (elements.streamId && elements.streamId.value)
-        ? String(elements.streamId.value)
-        : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
-
-      if (action.dataset.action === 'output-copy') {
-        const url = entry ? getPublishOutputPublicUrl(entry, streamId) : '';
-        if (url) copyText(url);
-      }
-      if (action.dataset.action === 'output-options') {
-        if (entry) openPublishOutputModal(index);
-      }
-      if (action.dataset.action === 'output-remove') {
-        const isEnabled = !entry || entry.enabled !== false;
-        if (isEnabled) {
-          const ok = window.confirm('Remove enabled output?');
-          if (!ok) return;
-        }
-        publish.splice(index, 1);
-        setEditingTranscodePublishJson(publish);
-        renderOutputList();
-      }
-      return;
-    }
+    const publish = parseEditingTranscodePublishJsonSafe();
+    const legacy = hasLegacy ? state.outputs[legacyIndex] : null;
+    const publishEntry = hasPublish ? publish[publishIndex] : null;
 
     if (action.dataset.action === 'output-copy') {
-      const streamId = (elements.streamId && elements.streamId.value)
-        ? String(elements.streamId.value)
-        : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
-      const output = state.outputs[index];
-      const presetKey = getLegacyOutputPreset(output);
-      const url = getLegacyOutputCopyValue(output, presetKey, streamId);
+      let url = '';
+      if (transcodeEnabled && publishEntry) {
+        url = getPublishOutputPublicUrl(publishEntry, streamId);
+      } else if (legacy) {
+        const presetKey = getLegacyOutputPreset(legacy);
+        url = getLegacyOutputCopyValue(legacy, presetKey, streamId);
+      } else if (publishEntry) {
+        url = getPublishOutputPublicUrl(publishEntry, streamId);
+      }
       if (url) copyText(url);
       return;
     }
+
     if (action.dataset.action === 'output-audio-fix') {
-      toggleOutputAudioFix(index);
+      if (hasLegacy) {
+        toggleOutputAudioFix(legacyIndex);
+      }
       return;
     }
+
     if (action.dataset.action === 'output-options') {
-      openOutputModal(index);
+      if (transcodeEnabled && hasPublish) {
+        openPublishOutputModal(publishIndex);
+        return;
+      }
+      if (hasLegacy) {
+        openOutputModal(legacyIndex);
+        return;
+      }
+      if (hasPublish) {
+        openPublishOutputModal(publishIndex);
+      }
+      return;
     }
+
     if (action.dataset.action === 'output-remove') {
-      const target = state.outputs[index];
-      const isEnabled = !target || (typeof target === 'string') || target.enabled !== false;
-      if (isEnabled) {
+      const legacyEnabled = legacy ? (typeof legacy === 'string' ? true : legacy.enabled !== false) : false;
+      const publishEnabled = publishEntry ? publishEntry.enabled !== false : false;
+      if (legacyEnabled || publishEnabled) {
         const ok = window.confirm('Remove enabled output?');
         if (!ok) return;
       }
-      state.outputs.splice(index, 1);
+      if (hasPublish) {
+        publish.splice(publishIndex, 1);
+        setEditingTranscodePublishJson(publish);
+      }
+      if (hasLegacy) {
+        state.outputs.splice(legacyIndex, 1);
+      }
       renderOutputList();
     }
   });
@@ -27485,10 +27875,8 @@ function bindEvents() {
   }
   if (elements.streamTranscodePublishJson) {
     elements.streamTranscodePublishJson.addEventListener('input', () => {
-      // Keep OUTPUT LIST in sync with manual JSON edits.
-      if (isEditingLadderTranscodeStream()) {
-        renderOutputList();
-      }
+      // Keep unified OUTPUT LIST in sync with manual JSON edits.
+      renderOutputList();
     });
   }
 
