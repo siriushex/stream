@@ -2827,10 +2827,119 @@ details.fold[open] > .fold-summary::after {
 
 .output-row {
   grid-template-columns: 36px 1fr auto;
+  align-items: start;
 }
 
 .output-row.is-inactive {
   opacity: 0.78;
+}
+
+.output-inline-editor {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.output-inline-main {
+  display: grid;
+  grid-template-columns: auto auto minmax(220px, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.output-toggle-btn {
+  min-width: 44px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.output-toggle-btn.is-on {
+  border-color: rgba(47, 158, 108, 0.45);
+  background: rgba(47, 158, 108, 0.16);
+  color: var(--success);
+}
+
+.output-toggle-btn.is-off {
+  border-color: var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+}
+
+.output-toggle-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.output-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.output-type-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 70px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.output-inline-destination {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.output-inline-destination:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
+}
+
+.output-profile-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.output-profile-caption {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.output-profile-select {
+  min-width: 118px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 8px;
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.output-profile-select:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: 1px;
 }
 
 .output-unified-main {
@@ -2915,8 +3024,31 @@ details.fold[open] > .fold-summary::after {
 
 .output-actions {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
+}
+
+@media (max-width: 1280px) {
+  .output-inline-main {
+    grid-template-columns: auto auto minmax(160px, 1fr);
+  }
+  .output-profile-field {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 900px) {
+  .output-row {
+    grid-template-columns: 30px 1fr;
+    gap: 8px;
+  }
+  .output-actions {
+    grid-column: 2 / 3;
+    justify-self: start;
+  }
+  .output-inline-main {
+    grid-template-columns: auto auto minmax(120px, 1fr);
+  }
 }
 
 .input-row {
@@ -2947,12 +3079,6 @@ details.fold[open] > .fold-summary::after {
 
 .input-gear {
   font-size: 12px;
-}
-
-.output-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
 }
 
 .icon-btn.is-danger {
@@ -3023,6 +3149,63 @@ details.fold[open] > .fold-summary::after {
   outline-offset: 2px;
 }
 
+.input-basic-section {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  margin-bottom: 12px;
+}
+
+.input-basic-main-grid {
+  align-items: end;
+}
+
+.input-basic-auth-grid {
+  align-items: end;
+}
+
+.input-advanced-toggle {
+  justify-self: start;
+}
+
+.input-advanced-root {
+  display: grid;
+  gap: 10px;
+}
+
+.input-advanced-root[hidden] {
+  display: none;
+}
+
+.input-advanced-root details.fold {
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
+}
+
+.input-preset-grid {
+  align-items: end;
+}
+
+.input-preset-grid .btn {
+  width: 100%;
+}
+
+.input-detectors-master-toggle {
+  margin: 0 0 6px;
+}
+
+.input-detectors-body[hidden] {
+  display: none;
+}
+
+.input-misc-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 12px;
+}
+
 .input-raw-error {
   color: var(--danger);
 }
@@ -3086,6 +3269,15 @@ details.fold[open] > .fold-summary::after {
 }
 
 @media (max-width: 700px) {
+  .input-basic-section {
+    padding: 10px;
+    gap: 10px;
+  }
+  .input-basic-main-grid,
+  .input-basic-auth-grid,
+  .input-preset-grid {
+    grid-template-columns: 1fr;
+  }
   .detector-row {
     grid-template-columns: 1fr;
   }
@@ -4729,6 +4921,92 @@ details.fold[open] > .fold-summary::after {
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+
+.help-guide-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.help-guide-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.help-guide-short {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.help-guide-short p,
+.help-guide-long p {
+  margin: 0 0 8px;
+}
+
+.help-guide-short ul,
+.help-guide-long ul {
+  margin: 0 0 10px;
+  padding-left: 18px;
+}
+
+.help-guide-actions {
+  margin-top: 10px;
+}
+
+.help-guide-long {
+  margin-top: 10px;
+  border-top: 1px dashed var(--border);
+  padding-top: 10px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.help-guide-long h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.help-guide-footer {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.help-ai-details {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 10px 12px;
+}
+
+.help-ai-details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.help-ai-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.help-ai-details > summary::after {
+  content: '▾';
+  margin-left: 8px;
+  font-size: 11px;
+}
+
+.help-ai-details:not([open]) > summary::after {
+  content: '▸';
+}
+
+.help-ai-disabled {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .help-intro {
