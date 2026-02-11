@@ -19478,7 +19478,7 @@ function groupMetrics(items) {
   return map;
 }
 
-function renderObservabilitySummary(summary, scope, streamId) {
+function renderObservabilitySummary(summary, scope, streamId, systemSnapshot) {
   if (!elements.observabilitySummary) return;
   elements.observabilitySummary.innerHTML = '';
   const cards = [];
@@ -19496,7 +19496,15 @@ function renderObservabilitySummary(summary, scope, streamId) {
     addCard('PES errors', Number(summary.pes_errors || 0));
     addCard('Input switch', Number(summary.input_switch || 0));
   } else {
-    addCard('Total bitrate', formatBitrate(Number(summary.total_bitrate_kbps) || 0));
+    const totals = getSystemNetTotalsBps(systemSnapshot || state.systemMetricsSnapshot);
+    const rxKbps = Number.isFinite(Number(summary.total_rx_kbps))
+      ? Number(summary.total_rx_kbps)
+      : bytesPerSecToKbit(totals.rx_bps);
+    const txKbps = Number.isFinite(Number(summary.total_tx_kbps))
+      ? Number(summary.total_tx_kbps)
+      : bytesPerSecToKbit(totals.tx_bps);
+    addCard('Total RX', formatMbitPerSecFromKbit(rxKbps));
+    addCard('Total TX', formatMbitPerSecFromKbit(txKbps));
     addCard('Streams on air', Number(summary.streams_on_air || 0));
     addCard('Streams down', Number(summary.streams_down || 0));
     addCard('Input switch', Number(summary.input_switch || 0));
@@ -19662,7 +19670,7 @@ function renderObservabilityCharts(items, scope) {
     )) visibleCharts += 1;
   } else {
     if (elements.observabilityChartTitleBitrate) {
-      elements.observabilityChartTitleBitrate.textContent = 'Total bitrate (Kbit/s)';
+      elements.observabilityChartTitleBitrate.textContent = 'Total traffic RX / TX (Mbit/s)';
     }
     if (elements.observabilityChartTitleStreams) {
       elements.observabilityChartTitleStreams.textContent = 'Streams on air / down (count)';
@@ -19670,7 +19678,10 @@ function renderObservabilityCharts(items, scope) {
     if (elements.observabilityChartTitleSwitches) {
       elements.observabilityChartTitleSwitches.textContent = 'Input switches / alerts (count)';
     }
-    setChartLegend(elements.observabilityChartLegendBitrate, [{ label: 'TOTAL', color: accent }]);
+    setChartLegend(elements.observabilityChartLegendBitrate, [
+      { label: 'RX', color: accent },
+      { label: 'TX', color: danger },
+    ]);
     setChartLegend(elements.observabilityChartLegendStreams, [
       { label: 'ON AIR', color: success },
       { label: 'DOWN', color: danger },
@@ -19680,8 +19691,66 @@ function renderObservabilityCharts(items, scope) {
       { label: 'ALERTS', color: danger },
     ]);
 
+    const systemSnapshot = state.systemMetricsSnapshot || null;
+    const systemTs = (state.systemMetricsTimeseries && typeof state.systemMetricsTimeseries === 'object')
+      ? state.systemMetricsTimeseries
+      : {};
+    const systemTotals = getSystemNetTotalsBps(systemSnapshot);
+    const aggregateSystemNet = (mapObj) => {
+      if (!mapObj || typeof mapObj !== 'object') return [];
+      const sumByTs = new Map();
+      Object.keys(mapObj).forEach((iface) => {
+        const rows = mapObj[iface];
+        if (!Array.isArray(rows)) return;
+        rows.forEach((row) => {
+          if (!Array.isArray(row) || row.length < 2) return;
+          const x = Number(row[0]);
+          const y = Number(row[1]);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+          const prev = sumByTs.get(x) || 0;
+          sumByTs.set(x, prev + y);
+        });
+      });
+      return Array.from(sumByTs.entries())
+        .map(([x, y]) => ({ x: Number(x), y: bytesPerSecToMbit(y) }))
+        .sort((a, b) => a.x - b.x);
+    };
+    const toMbitPointsFromKbps = (rows) => (Array.isArray(rows) ? rows : [])
+      .map((pt) => ({ x: Number(pt && pt.x), y: kbitToMbit(Number(pt && pt.y)) }))
+      .filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y));
+    const buildFlatNetSeries = (mbitValue) => {
+      if (!Number.isFinite(mbitValue)) return [];
+      return [
+        { x: fromMs, y: mbitValue },
+        { x: nowMs, y: mbitValue },
+      ];
+    };
+    const rxMetricPoints = toMbitPointsFromKbps(seriesMap.total_rx_kbps || []);
+    const txMetricPoints = toMbitPointsFromKbps(seriesMap.total_tx_kbps || []);
+    const rxSystemPoints = aggregateSystemNet(systemTs.net_rx_bps);
+    const txSystemPoints = aggregateSystemNet(systemTs.net_tx_bps);
+    const rxFlat = buildFlatNetSeries(bytesPerSecToMbit(systemTotals.rx_bps));
+    const txFlat = buildFlatNetSeries(bytesPerSecToMbit(systemTotals.tx_bps));
+
     const bitrateSeries = [
-      { color: accent, points: prepareObservabilityPoints(seriesMap.total_bitrate_kbps || [], fromMs, nowMs, maxPoints) },
+      {
+        color: accent,
+        points: prepareObservabilityPoints(
+          rxMetricPoints.length ? rxMetricPoints : (rxSystemPoints.length ? rxSystemPoints : rxFlat),
+          fromMs,
+          nowMs,
+          maxPoints,
+        ),
+      },
+      {
+        color: danger,
+        points: prepareObservabilityPoints(
+          txMetricPoints.length ? txMetricPoints : (txSystemPoints.length ? txSystemPoints : txFlat),
+          fromMs,
+          nowMs,
+          maxPoints,
+        ),
+      },
     ];
     const streamsSeries = [
       { color: success, points: prepareObservabilityPoints(seriesMap.streams_on_air || [], fromMs, nowMs, maxPoints) },
@@ -19700,7 +19769,7 @@ function renderObservabilityCharts(items, scope) {
         showAxes: true,
         xDomain,
         range,
-        yFormatter: formatBitrateAxisLabel,
+        yFormatter: formatMbitAxisLabel,
         yTickCount: 5,
         xTickCount: 6,
       },
@@ -19798,10 +19867,54 @@ function renderObservabilityAiSummary(payload) {
   }
 }
 
-function formatBytesPerSec(value) {
+function bytesPerSecToKbit(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  return (num * 8) / 1000;
+}
+
+function bytesPerSecToMbit(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  return (num * 8) / 1000000;
+}
+
+function kbitToMbit(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return undefined;
+  return num / 1000;
+}
+
+function formatMbitPerSec(value) {
   const num = Number(value);
   if (!Number.isFinite(num)) return '-';
-  return `${formatBytes(num)}/s`;
+  const abs = Math.abs(num);
+  const fixed = abs >= 100 ? 0 : (abs >= 10 ? 1 : 2);
+  return `${trimTrailingZeros(num.toFixed(fixed))}Mbit/s`;
+}
+
+function formatMbitPerSecFromBytes(value) {
+  return formatMbitPerSec(bytesPerSecToMbit(value));
+}
+
+function formatMbitPerSecFromKbit(value) {
+  return formatMbitPerSec(kbitToMbit(value));
+}
+
+function formatMbitAxisLabel(value) {
+  return formatMbitPerSec(value);
+}
+
+function getSystemNetTotalsBps(snapshot) {
+  const totals = { rx_bps: 0, tx_bps: 0 };
+  const net = snapshot && Array.isArray(snapshot.net) ? snapshot.net : [];
+  net.forEach((row) => {
+    const rx = Number(row && row.rx_bps);
+    const tx = Number(row && row.tx_bps);
+    if (Number.isFinite(rx)) totals.rx_bps += rx;
+    if (Number.isFinite(tx)) totals.tx_bps += tx;
+  });
+  return totals;
 }
 
 function pickDefaultSystemIface(snapshot) {
@@ -19957,8 +20070,8 @@ function renderSystemMetricsCards(container, snapshot, iface, timeseries, flags)
   });
 
   const ifaceLabel = pickedIface ? `Net (${pickedIface})` : 'Net';
-  const rxText = `RX ${picked ? formatBytesPerSec(picked.rx_bps) : '—'}`;
-  const txText = `TX ${picked ? formatBytesPerSec(picked.tx_bps) : '—'}`;
+  const rxText = `RX ${picked ? formatMbitPerSecFromBytes(picked.rx_bps) : '—'}`;
+  const txText = `TX ${picked ? formatMbitPerSecFromBytes(picked.tx_bps) : '—'}`;
   const netTooltip = pickedIface && picked
     ? `${pickedIface}: RX ${formatBytes(picked.rx_bytes)} • TX ${formatBytes(picked.tx_bytes)}`
     : '';
@@ -20234,8 +20347,15 @@ async function loadObservability(showStatus) {
       }
     });
     if (scope === 'global') {
+      const netTotals = getSystemNetTotalsBps(state.systemMetricsSnapshot);
       summary = {
         total_bitrate_kbps: latest.total_bitrate_kbps || 0,
+        total_rx_kbps: Number.isFinite(Number(latest.total_rx_kbps))
+          ? Number(latest.total_rx_kbps)
+          : bytesPerSecToKbit(netTotals.rx_bps),
+        total_tx_kbps: Number.isFinite(Number(latest.total_tx_kbps))
+          ? Number(latest.total_tx_kbps)
+          : bytesPerSecToKbit(netTotals.tx_bps),
         streams_on_air: latest.streams_on_air || 0,
         streams_down: latest.streams_down || 0,
         streams_total: latest.streams_total || 0,
@@ -20256,7 +20376,7 @@ async function loadObservability(showStatus) {
     state.observabilityLastScope = scope;
     state.observabilityLastStreamId = streamId || '';
     state.observabilityLastRange = range;
-    renderObservabilitySummary(summary, scope, streamId);
+    renderObservabilitySummary(summary, scope, streamId, state.systemMetricsSnapshot);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
   } catch (err) {
