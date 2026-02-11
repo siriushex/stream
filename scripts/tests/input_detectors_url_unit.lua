@@ -1,7 +1,10 @@
 log.set({ debug = true })
 
 dofile("scripts/base.lua")
+dofile("scripts/config.lua")
 dofile("scripts/stream.lua")
+
+config.init({ data_dir = "/tmp/input_detectors_url_unit_data", db_path = "/tmp/input_detectors_url_unit_data/input_detectors_url_unit.db" })
 
 local function assert_true(v, msg)
   if not v then
@@ -93,6 +96,33 @@ end
 do
   local p = parse_url("udp://239.0.0.1:1234#no_audio_on")
   assert_true(p.no_audio_on == true, "no_audio_on should parse as true")
+end
+
+-- SoftCAM backup options parsing and validation.
+do
+  config.set_setting("softcam", {
+    { id = "dummy_softcam_for_validation" },
+  })
+
+  local p = parse_url(
+    "udp://239.0.0.1:1234"
+      .. "#cam=sh"
+      .. "#cam_backup=sh_4"
+      .. "#cam_backup_mode=hedge"
+      .. "#cam_backup_hedge_ms=80"
+      .. "#cam_prefer_primary_ms=30")
+  assert_true(p and tostring(p.cam_backup_mode) == "hedge", "cam_backup_mode should be hedge")
+  assert_true(tostring(p.cam_backup_hedge_ms) == "80", "cam_backup_hedge_ms should be 80")
+  assert_true(tostring(p.cam_prefer_primary_ms) == "30", "cam_prefer_primary_ms should be 30")
+
+  local ok, err = validate_stream_config({
+    id = "unit-cam",
+    name = "unit-cam",
+    enable = true,
+    input = { "udp://239.0.0.1:1234#cam_backup_mode=invalid" },
+    output = {},
+  })
+  assert_true(ok == nil and tostring(err):find("cam_backup_mode"), "invalid cam_backup_mode must fail validation")
 end
 
 print("input_detectors_url_unit: ok")
