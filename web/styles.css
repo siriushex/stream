@@ -3491,6 +3491,14 @@ details.fold[open] > .fold-summary::after {
   min-height: 96px;
 }
 
+.stream-general-row {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 12px;
+  align-items: start;
+  margin-top: 12px;
+}
+
 @media (max-width: 900px) {
   .stream-general-grid {
     grid-template-columns: 1fr;
@@ -3499,6 +3507,9 @@ details.fold[open] > .fold-summary::after {
   .stream-general-grid .span-6,
   .stream-general-grid .span-3 {
     grid-column: auto;
+  }
+  .stream-general-row {
+    grid-template-columns: 1fr;
   }
 }
 

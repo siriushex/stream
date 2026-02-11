@@ -1645,8 +1645,28 @@
               <span>ID</span>
               <input type="text" id="stream-id" required />
             </label>
+          </div>
 
-            <label class="field span-12 stream-desc-field">
+          <div class="stream-general-row">
+            <div class="form-subsection stream-transcode-setting" id="stream-transcode-general">
+              <div class="stream-transcode-setting-main">
+                <div class="stream-transcode-setting-title">Transcoding</div>
+              </div>
+              <div class="stream-transcode-setting-controls">
+                <label class="stream-transcode-toggle" for="stream-transcode-enabled">
+                  <span class="switch-text">Enable transcoding</span>
+                  <span class="switch">
+                    <input type="checkbox" id="stream-transcode-enabled" role="switch" aria-label="Enable transcoding"
+                      aria-checked="false" />
+                    <span class="switch-slider"></span>
+                  </span>
+                </label>
+                <span class="pill stream-transcode-status-pill is-disabled" id="stream-transcode-status-pill"
+                  aria-live="polite">Disabled</span>
+              </div>
+            </div>
+
+            <label class="field stream-desc-field">
               <span>Description</span>
               <textarea id="stream-desc" class="textarea-grow" rows="1"></textarea>
             </label>
@@ -1656,24 +1676,6 @@
             <input type="checkbox" id="stream-mpts" />
             <span>Create Multi Program Stream</span>
           </label>
-
-          <div class="form-subsection stream-transcode-setting" id="stream-transcode-general">
-            <div class="stream-transcode-setting-main">
-              <div class="stream-transcode-setting-title">Transcoding</div>
-            </div>
-            <div class="stream-transcode-setting-controls">
-              <label class="stream-transcode-toggle" for="stream-transcode-enabled">
-                <span class="switch-text">Enable transcoding</span>
-                <span class="switch">
-                  <input type="checkbox" id="stream-transcode-enabled" role="switch" aria-label="Enable transcoding"
-                    aria-checked="false" />
-                  <span class="switch-slider"></span>
-                </span>
-              </label>
-              <span class="pill stream-transcode-status-pill is-disabled" id="stream-transcode-status-pill"
-                aria-live="polite">Disabled</span>
-            </div>
-          </div>
 
           <div class="list-block" id="stream-input-block">
             <div class="list-header">
