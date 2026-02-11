@@ -3491,6 +3491,12 @@ details.fold[open] > .fold-summary::after {
   min-height: 96px;
 }
 
+.stream-desc-field {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 6px;
+}
+
 .stream-general-row {
   display: grid;
   grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
