@@ -4,6 +4,9 @@ transcode = {
     jobs = {},
     analyze_active = 0,
     defer_start = false,
+    housekeeping_timer = nil,
+    reap_queue = {},
+    reap_timer = nil,
 }
 
 local error_patterns = {
@@ -67,14 +70,34 @@ local function normalize_truthy(value)
 end
 
 function transcode.is_transcode_config(cfg)
+    local tc = cfg and cfg.transcode or nil
+    if type(tc) == "table" and tc.enabled ~= nil then
+        -- Explicit flag always wins (needed for disabling legacy type=transcode streams).
+        return normalize_truthy(tc.enabled)
+    end
+
     local t = normalize_stream_type(cfg)
     if t == "transcode" or t == "ffmpeg" then
         return true
     end
-    -- Backward-compatible: allow enabling transcoding on regular streams via config.transcode.enabled.
-    local tc = cfg and cfg.transcode or nil
+
+    -- Backward-compatible: allow legacy configs with implicit transcode table.
     if type(tc) == "table" then
-        return normalize_truthy(tc.enabled)
+        if normalize_truthy(tc.enabled) then
+            return true
+        end
+        if tc.engine or tc.ffmpeg_path or tc.ffmpeg_bin then
+            return true
+        end
+        if type(tc.profiles) == "table" and #tc.profiles > 0 then
+            return true
+        end
+        if type(tc.outputs) == "table" and #tc.outputs > 0 then
+            return true
+        end
+        if type(tc.publish) == "table" and #tc.publish > 0 then
+            return true
+        end
     end
     return false
 end
@@ -1447,6 +1470,8 @@ local function normalize_failover_config(cfg, enabled)
         "backup_switch_warmup_stable_sec", "backup_switch_warmup_stable") or 1
     local switch_warmup_probe_sec = read_number_opt(cfg, "backup_switch_warmup_probe_sec") or 2
     local switch_warmup_probe_timeout = read_number_opt(cfg, "backup_switch_warmup_probe_timeout_sec") or 6
+    local stall_switch_cooldown_sec = read_number_opt(cfg, "backup_stall_switch_cooldown_sec") or 10
+    local switch_on_no_progress = normalize_bool(cfg.backup_switch_on_no_progress, true)
     local stop_if_all_inactive_sec = read_number_opt(cfg,
         "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec") or 20
     local warm_max = tonumber(cfg.backup_active_warm_max)
@@ -1469,6 +1494,7 @@ local function normalize_failover_config(cfg, enabled)
     if switch_warmup_stable_sec < 0 then switch_warmup_stable_sec = 0 end
     if switch_warmup_probe_sec < 0 then switch_warmup_probe_sec = 0 end
     if switch_warmup_probe_timeout < 0 then switch_warmup_probe_timeout = 0 end
+    if stall_switch_cooldown_sec < 0 then stall_switch_cooldown_sec = 0 end
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
 
     return {
@@ -1485,6 +1511,8 @@ local function normalize_failover_config(cfg, enabled)
         switch_warmup_stable_sec = switch_warmup_stable_sec,
         switch_warmup_probe_sec = switch_warmup_probe_sec,
         switch_warmup_probe_timeout_sec = switch_warmup_probe_timeout,
+        stall_switch_cooldown_sec = stall_switch_cooldown_sec,
+        switch_on_no_progress = switch_on_no_progress,
         no_data_timeout = no_data_timeout,
         probe_interval = probe_interval,
         stable_ok = stable_ok,
@@ -2843,6 +2871,42 @@ local function activate_next_available_input(job, active_id, reason)
     return false
 end
 
+try_failover_on_no_progress = function(job, timeout_sec, now)
+    local fo = job and job.failover or nil
+    if not fo or fo.enabled ~= true or fo.switch_on_no_progress == false then
+        return false
+    end
+    if type(fo.inputs) ~= "table" or #fo.inputs < 2 then
+        return false
+    end
+    local active_id = job.active_input_id or 0
+    if active_id <= 0 or active_id > #fo.inputs then
+        return false
+    end
+    local cooldown = tonumber(fo.stall_switch_cooldown_sec) or 0
+    local last_ts = tonumber(fo.stall_last_switch_ts) or 0
+    if cooldown > 0 and last_ts > 0 and (now - last_ts) < cooldown then
+        return false
+    end
+    local active = fo.inputs[active_id]
+    if active then
+        active.is_ok = false
+        active.fail_since = active.fail_since or now
+        active.last_error = "no_progress"
+        active.last_error_ts = now
+    end
+    local switched = activate_next_available_input(job, active_id, "no progress")
+    if not switched then
+        return false
+    end
+    fo.stall_last_switch_ts = now
+    record_alert(job, "INPUT_NO_PROGRESS", "active input has no progress, failover switch requested", {
+        input_index = active_id - 1,
+        timeout_sec = timeout_sec,
+    })
+    return true
+end
+
 local function transcode_failover_tick(job, now)
     local fo = job.failover
     if not fo or fo.paused or not job.enabled or not fo.inputs or job.state == "ERROR" then
@@ -3661,6 +3725,88 @@ request_stop = function(job)
     end
     job.kill_due_ts = job.term_sent_ts + stop_timeout
     job.kill_attempts = 0
+end
+
+stop_process_immediate = function(holder)
+    if not holder or not holder.proc then
+        return
+    end
+
+    if type(holder.proc.kill_tree) == "function" then
+        local ok = pcall(holder.proc.kill_tree, holder.proc)
+        if not ok and type(holder.proc.kill) == "function" then
+            pcall(holder.proc.kill, holder.proc)
+        end
+    elseif type(holder.proc.kill) == "function" then
+        pcall(holder.proc.kill, holder.proc)
+    end
+
+    local status = nil
+    if type(holder.proc.poll) == "function" then
+        local ok, polled = pcall(holder.proc.poll, holder.proc)
+        if ok then
+            status = polled
+        end
+    end
+
+    if type(holder.proc.close) == "function" then
+        pcall(holder.proc.close, holder.proc)
+    end
+
+    if not status and holder.proc then
+        transcode.reap_queue = transcode.reap_queue or {}
+        table.insert(transcode.reap_queue, holder.proc)
+        transcode.ensure_reap_timer()
+    end
+
+    holder.proc = nil
+    holder.pid = nil
+    holder.term_sent_ts = nil
+    holder.kill_due_ts = nil
+    holder.kill_attempts = nil
+end
+
+function transcode.ensure_reap_timer()
+    if transcode.reap_timer then
+        return
+    end
+    transcode.reap_timer = timer({
+        interval = 1,
+        callback = function(self)
+            local queue = transcode.reap_queue or {}
+            if #queue == 0 then
+                self:close()
+                transcode.reap_timer = nil
+                return
+            end
+
+            local next_queue = {}
+            for _, proc in ipairs(queue) do
+                if proc then
+                    local status = nil
+                    if type(proc.poll) == "function" then
+                        local ok, polled = pcall(proc.poll, proc)
+                        if ok then
+                            status = polled
+                        end
+                    end
+                    if status then
+                        if type(proc.close) == "function" then
+                            pcall(proc.close, proc)
+                        end
+                    else
+                        table.insert(next_queue, proc)
+                    end
+                end
+            end
+
+            transcode.reap_queue = next_queue
+            if #next_queue == 0 then
+                self:close()
+                transcode.reap_timer = nil
+            end
+        end,
+    })
 end
 
 extract_exit_info = function(status)
@@ -4511,9 +4657,12 @@ local function tick_job(job)
                     if wd.no_progress_timeout_sec > 0 then
                         local last_ts = job.last_out_time_ts or job.last_progress_ts or job.start_ts
                         if last_ts and now - last_ts >= wd.no_progress_timeout_sec then
-                            schedule_restart(job, output_state, "NO_PROGRESS", "no progress detected", {
-                                timeout_sec = wd.no_progress_timeout_sec,
-                            })
+                            local switched = try_failover_on_no_progress(job, wd.no_progress_timeout_sec, now)
+                            if not switched then
+                                schedule_restart(job, output_state, "NO_PROGRESS", "no progress detected", {
+                                    timeout_sec = wd.no_progress_timeout_sec,
+                                })
+                            end
                         end
                     end
 
@@ -4689,7 +4838,51 @@ local function job_has_any_proc(job)
     return false
 end
 
+function transcode.ensure_housekeeping_timer()
+    if transcode.housekeeping_timer then
+        return
+    end
+    transcode.housekeeping_timer = timer({
+        interval = 1,
+        callback = function(self)
+            local any = false
+            for _, job in pairs(transcode.jobs or {}) do
+                if job and job.timer == "global" then
+                    any = true
+                    tick_job(job)
+                    if job.state == "STOPPED" and not job_has_any_proc(job) then
+                        job.timer = nil
+                    end
+                end
+            end
+            if not any then
+                self:close()
+                transcode.housekeeping_timer = nil
+            end
+        end,
+    })
+end
+
 local function ensure_timer(job)
+    local aggregate_timers = normalize_setting_bool(
+        config and config.get_setting and config.get_setting("performance_aggregate_transcode_timers"),
+        false
+    )
+    if aggregate_timers then
+        if job.timer == "global" then
+            transcode.ensure_housekeeping_timer()
+            return
+        end
+        if job.timer and type(job.timer) == "table" and job.timer.close then
+            job.timer:close()
+        end
+        job.timer = "global"
+        transcode.ensure_housekeeping_timer()
+        return
+    end
+    if job.timer == "global" then
+        job.timer = nil
+    end
     if job.timer then
         return
     end
@@ -4707,6 +4900,49 @@ local function ensure_timer(job)
             end
         end,
     })
+end
+
+function transcode.reconfigure_timer_mode()
+    local aggregate = normalize_setting_bool(
+        config and config.get_setting and config.get_setting("performance_aggregate_transcode_timers"),
+        false
+    )
+
+    if aggregate then
+        local any = false
+        for _, job in pairs(transcode.jobs or {}) do
+            if job then
+                if job.timer and type(job.timer) == "table" and job.timer.close then
+                    job.timer:close()
+                end
+                job.timer = "global"
+                any = true
+            end
+        end
+        if any then
+            transcode.ensure_housekeeping_timer()
+        elseif transcode.housekeeping_timer then
+            transcode.housekeeping_timer:close()
+            transcode.housekeeping_timer = nil
+        end
+        return
+    end
+
+    if transcode.housekeeping_timer then
+        transcode.housekeeping_timer:close()
+        transcode.housekeeping_timer = nil
+    end
+
+    for _, job in pairs(transcode.jobs or {}) do
+        if job then
+            if job.timer == "global" then
+                job.timer = nil
+            end
+            if job.state ~= "STOPPED" or job_has_any_proc(job) then
+                ensure_timer(job)
+            end
+        end
+    end
 end
 
 local function reset_output_monitor_state(output_state, now)
@@ -5163,6 +5399,7 @@ local function ensure_ladder_publish(job)
     local variants = {}
     local storage = nil
     local udp_targets = {}
+    local udp_target_seen = {}
     for _, pub in ipairs(job.publish) do
         if pub and pub.enabled == true then
             local t = tostring(pub.type or ""):lower()
@@ -5192,7 +5429,15 @@ local function ensure_ladder_publish(job)
                 end
                 local url = pub.url
                 if pid and pid ~= "" and url and url ~= "" then
-                    udp_targets[pid] = url
+                    local key = tostring(t) .. "|" .. tostring(pid) .. "|" .. tostring(url)
+                    if not udp_target_seen[key] then
+                        udp_target_seen[key] = true
+                        udp_targets[#udp_targets + 1] = {
+                            key = key,
+                            profile_id = pid,
+                            url = url,
+                        }
+                    end
                 end
             end
         end
@@ -5201,8 +5446,12 @@ local function ensure_ladder_publish(job)
     -- UDP/RTP publish from per-profile bus.
     if udp_output and udp_switch then
         job.publish_udp_outputs = job.publish_udp_outputs or {}
-        for pid, url in pairs(udp_targets) do
-            if not job.publish_udp_outputs[pid] then
+        local desired_udp_keys = {}
+        for _, target in ipairs(udp_targets) do
+            local pid = target.profile_id
+            local url = target.url
+            desired_udp_keys[target.key] = true
+            if not job.publish_udp_outputs[target.key] then
                 local bus = job.profile_buses and job.profile_buses[pid] or nil
                 local parsed = parse_udp_output_url(url)
                 if not bus or not bus.switch then
@@ -5237,7 +5486,7 @@ local function ensure_ladder_publish(job)
                     end
                     local ok_out, out = pcall(udp_output, opts)
                     if ok_out and out then
-                        job.publish_udp_outputs[pid] = out
+                        job.publish_udp_outputs[target.key] = out
                     else
                         record_alert(job, "PUBLISH_FAILED", "udp_output init failed", {
                             type = parsed.scheme,
@@ -5246,6 +5495,11 @@ local function ensure_ladder_publish(job)
                         })
                     end
                 end
+            end
+        end
+        for key, _ in pairs(job.publish_udp_outputs) do
+            if not desired_udp_keys[key] then
+                job.publish_udp_outputs[key] = nil
             end
         end
     elseif next(udp_targets) ~= nil then
@@ -5851,11 +6105,25 @@ parse_udp_output_url = function(url)
         return nil
     end
 
+    local query_parts = {}
+    local hash_at = rest:find("#", 1, true)
+    if hash_at then
+        local fragment = rest:sub(hash_at + 1)
+        rest = rest:sub(1, hash_at - 1)
+        if fragment and fragment ~= "" then
+            local cleaned_fragment = tostring(fragment):gsub("#", "&")
+            table.insert(query_parts, cleaned_fragment)
+        end
+    end
+
     local base, query = rest:match("^(.-)%?(.*)$")
     if base then
         rest = base
     else
-        query = ""
+        query = nil
+    end
+    if query and query ~= "" then
+        table.insert(query_parts, query)
     end
     local slash = rest:find("/", 1, true)
     if slash then
@@ -5881,12 +6149,27 @@ parse_udp_output_url = function(url)
         return nil
     end
 
+    if localaddr and localaddr ~= "" and ifaddr_list then
+        local ifaddr = ifaddr_list[localaddr]
+        if ifaddr and ifaddr.ipv4 and ifaddr.ipv4[1] then
+            localaddr = ifaddr.ipv4[1]
+        end
+    end
+    if localaddr == "" then
+        localaddr = nil
+    end
+    if localaddr and not tostring(localaddr):match("^%d+%.%d+%.%d+%.%d+$") then
+        localaddr = nil
+    end
+
+    local merged_query = table.concat(query_parts, "&")
+
     return {
         scheme = scheme,
         addr = addr,
         port = port,
         localaddr = localaddr,
-        query = parse_query_params(query),
+        query = parse_query_params(merged_query),
     }
 end
 
@@ -7028,7 +7311,8 @@ function transcode.start(job, opts)
     return true
 end
 
-function transcode.stop(job)
+function transcode.stop(job, force)
+    local hard_stop = (force == true)
     if job.ladder_enabled == true then
         ensure_profile_workers(job)
         if job.ladder_single_process == true then
@@ -7049,7 +7333,11 @@ function transcode.stop(job)
                 end
                 enc.retire = nil
                 if enc.proc then
-                    request_stop(enc)
+                    if hard_stop then
+                        stop_process_immediate(enc)
+                    else
+                        request_stop(enc)
+                    end
                 end
             end
         end
@@ -7068,7 +7356,11 @@ function transcode.stop(job)
             end
             worker.retire = nil
             if worker.proc then
-                request_stop(worker)
+                if hard_stop then
+                    stop_process_immediate(worker)
+                else
+                    request_stop(worker)
+                end
             end
         end
         -- Drop publish outputs so memfd streams are released.
@@ -7079,7 +7371,11 @@ function transcode.stop(job)
                 pub.restart_due_ts = nil
                 pub.state = "STOPPED"
                 if pub.proc then
-                    request_stop(pub)
+                    if hard_stop then
+                        stop_process_immediate(pub)
+                    else
+                        request_stop(pub)
+                    end
                 end
             end
         end
@@ -7100,11 +7396,19 @@ function transcode.stop(job)
             end
             worker.retire = nil
             if worker.proc then
-                request_stop(worker)
+                if hard_stop then
+                    stop_process_immediate(worker)
+                else
+                    request_stop(worker)
+                end
             end
         end
     elseif job.proc then
-        request_stop(job)
+        if hard_stop then
+            stop_process_immediate(job)
+        else
+            request_stop(job)
+        end
     end
     if job.failover then
         stop_switch_warmup(job, "stop")
@@ -7120,8 +7424,7 @@ function transcode.stop(job)
         stop_output_monitor(output_state)
     end
     if job.input_probe and job.input_probe.proc then
-        job.input_probe.proc:kill()
-        job.input_probe.proc:close()
+        stop_process_immediate(job.input_probe)
     end
     job.input_probe = nil
     job.input_probe_inflight = false
@@ -7304,7 +7607,7 @@ function transcode.upsert(id, row, force)
     end
 
     if existing then
-        transcode.stop(existing)
+        transcode.stop(existing, true)
     end
     transcode.jobs[id] = job
 
@@ -7324,7 +7627,8 @@ function transcode.delete(id)
     if not job then
         return
     end
-    transcode.stop(job)
+    transcode.stop(job, true)
+    job.timer = nil
     transcode.jobs[id] = nil
 end
 
@@ -7340,6 +7644,65 @@ function transcode.start_deferred()
         end
     end
     return started
+end
+
+function transcode.list_status_lite()
+    local out = {}
+    for id, job in pairs(transcode.jobs) do
+        out[id] = transcode.get_status_lite(id)
+    end
+    return out
+end
+
+function transcode.get_status_lite(id)
+    local job = transcode.jobs[id]
+    if not job then
+        return nil
+    end
+    local now = os.time()
+    local uptime_sec = nil
+    if job.start_ts and (job.state == "RUNNING" or job.state == "STARTING" or job.state == "RESTARTING") then
+        uptime_sec = math.max(0, now - job.start_ts)
+    end
+    local active_input_url = nil
+    local fo = job.failover
+    if fo and type(fo.inputs) == "table" and job.active_input_id and job.active_input_id > 0 then
+        local active = fo.inputs[job.active_input_id]
+        if active and active.url then
+            active_input_url = tostring(active.url)
+        end
+    end
+    if not active_input_url and job.input_url then
+        active_input_url = tostring(job.input_url)
+    end
+    return {
+        id = job.id,
+        name = job.name,
+        state = job.state,
+        start_ts = job.start_ts,
+        uptime_sec = uptime_sec,
+        last_progress = job.last_progress,
+        last_progress_ts = job.last_progress_ts,
+        last_error = job.last_error_line,
+        last_error_ts = job.last_error_ts,
+        last_alert = job.last_alert,
+        ffmpeg_exit_code = job.ffmpeg_exit_code,
+        ffmpeg_exit_signal = job.ffmpeg_exit_signal,
+        input_bitrate_kbps = job.input_bitrate_kbps,
+        output_bitrate_kbps = job.output_bitrate_kbps,
+        input_last_ok_ts = job.input_last_ok_ts,
+        output_last_ok_ts = job.output_last_ok_ts,
+        input_last_error = job.input_last_error,
+        output_last_error = job.output_last_error,
+        active_input_id = job.active_input_id,
+        active_input_index = job.active_input_id and job.active_input_id > 0 and (job.active_input_id - 1) or nil,
+        active_input_url = active_input_url,
+        restart_reason_code = job.restart_reason_code,
+        restart_reason_meta = job.restart_reason_meta,
+        gpu_overload_active = job.gpu_overload_active or false,
+        gpu_overload_reason = job.gpu_overload_reason,
+        updated_at = job.last_progress_ts or job.start_ts,
+    }
 end
 
 function transcode.list_status()
@@ -7547,7 +7910,13 @@ function transcode.get_status(id)
                     end
                     local state = "STOPPED"
                     if enabled then
-                        state = (type(job.publish_udp_outputs) == "table" and pid and job.publish_udp_outputs[pid]) and "RUNNING" or "STOPPED"
+                        local key = tostring(t) .. "|" .. tostring(pid or "") .. "|" .. tostring(pub.url or "")
+                        local has_output = (type(job.publish_udp_outputs) == "table" and job.publish_udp_outputs[key]) and true or false
+                        if not has_output and type(job.publish_udp_outputs) == "table" and pid then
+                            -- Backward compatibility for older in-memory keying by profile_id.
+                            has_output = job.publish_udp_outputs[pid] ~= nil
+                        end
+                        state = has_output and "RUNNING" or "STOPPED"
                     end
                     push({
                         type = t,
