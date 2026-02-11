@@ -366,14 +366,54 @@ local function extract_entry_bitrate(entry)
     return tonumber(entry.bitrate) or 0
 end
 
-function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec)
+function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec, range_sec)
     if not runtime or not runtime.list_status then
         return nil
     end
     local interval = sanitize_interval(interval_sec or ai_observability.state.rollup_interval_sec)
+    local sample_range = interval
+    if type(range_sec) == "number" and range_sec > 0 then
+        sample_range = math.max(interval, math.floor(range_sec))
+    end
     local bucket = calc_bucket(os.time(), interval)
     local status = runtime.list_status() or {}
     local items = {}
+    local function push_series(metric_key, value)
+        local v = tonumber(value) or 0
+        local total_steps = math.max(0, math.floor(sample_range / interval))
+        local slots = math.max(2, math.min(60, total_steps + 1))
+        local stride = math.max(1, math.floor(total_steps / math.max(1, (slots - 1))))
+        local start_bucket = bucket - (total_steps * interval)
+        local seen = {}
+
+        local function push(ts_bucket)
+            if not ts_bucket or seen[ts_bucket] then
+                return
+            end
+            seen[ts_bucket] = true
+            table.insert(items, {
+                ts_bucket = ts_bucket,
+                scope = scope or "global",
+                scope_id = scope_id or "",
+                metric_key = metric_key,
+                value = v,
+            })
+        end
+
+        if total_steps <= 0 then
+            push(bucket - interval)
+            push(bucket)
+            return
+        end
+
+        local step = 0
+        while step <= total_steps do
+            push(start_bucket + (step * interval))
+            step = step + stride
+        end
+        push(bucket)
+    end
+
     if scope == "stream" and scope_id and scope_id ~= "" then
         local entry = status[scope_id]
         if not entry then
@@ -381,26 +421,20 @@ function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec)
         end
         local bitrate = extract_entry_bitrate(entry)
         local on_air = entry.on_air == true or entry.transcode_state == "RUNNING"
-        table.insert(items, {
-            ts_bucket = bucket,
-            scope = "stream",
-            scope_id = tostring(scope_id),
-            metric_key = "bitrate_kbps",
-            value = bitrate,
-        })
-        table.insert(items, {
-            ts_bucket = bucket,
-            scope = "stream",
-            scope_id = tostring(scope_id),
-            metric_key = "on_air",
-            value = on_air and 1 or 0,
-        })
+        local cc_errors = tonumber(entry.cc_errors) or 0
+        local pes_errors = tonumber(entry.pes_errors) or 0
+        push_series("bitrate_kbps", bitrate)
+        push_series("on_air", on_air and 1 or 0)
+        push_series("cc_errors", cc_errors)
+        push_series("pes_errors", pes_errors)
         return {
             bucket = bucket,
             summary = {
                 bitrate_kbps = bitrate,
                 on_air = on_air,
                 input_switch = 0,
+                cc_errors = cc_errors,
+                pes_errors = pes_errors,
             },
             items = items,
         }
@@ -420,34 +454,10 @@ function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec)
         end
         total_bitrate = total_bitrate + extract_entry_bitrate(entry)
     end
-    table.insert(items, {
-        ts_bucket = bucket,
-        scope = "global",
-        scope_id = "",
-        metric_key = "total_bitrate_kbps",
-        value = total_bitrate,
-    })
-    table.insert(items, {
-        ts_bucket = bucket,
-        scope = "global",
-        scope_id = "",
-        metric_key = "streams_on_air",
-        value = streams_on_air,
-    })
-    table.insert(items, {
-        ts_bucket = bucket,
-        scope = "global",
-        scope_id = "",
-        metric_key = "streams_down",
-        value = streams_down,
-    })
-    table.insert(items, {
-        ts_bucket = bucket,
-        scope = "global",
-        scope_id = "",
-        metric_key = "streams_total",
-        value = streams_total,
-    })
+    push_series("total_bitrate_kbps", total_bitrate)
+    push_series("streams_on_air", streams_on_air)
+    push_series("streams_down", streams_down)
+    push_series("streams_total", streams_total)
     return {
         bucket = bucket,
         summary = {
@@ -488,7 +498,7 @@ function ai_observability.get_on_demand_metrics(range_sec, interval_sec, scope, 
 
     local interval = sanitize_interval(interval_sec or ai_observability.state.rollup_interval_sec)
     local items = ai_observability.build_metrics_from_logs(range_sec, interval, scope, scope_id)
-    local snapshot = ai_observability.build_runtime_metrics(scope, scope_id, interval)
+    local snapshot = ai_observability.build_runtime_metrics(scope, scope_id, interval, range_sec)
     if snapshot and snapshot.items then
         for _, item in ipairs(snapshot.items) do
             table.insert(items, item)

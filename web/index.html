@@ -7,8 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260209a" />
-  <script defer src="/app.js?v=20260209a"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260211a" />
+  <script defer src="/app.js?v=20260211a"></script>
 </head>
 <body>
   <div class="app">
@@ -392,6 +392,7 @@
             </div>
             <div class="splitter-list" id="splitter-list"></div>
             <div class="splitter-list-empty muted" id="splitter-list-empty">No instances yet.</div>
+            <div id="splitter-sidebar-help"></div>
           </div>
 
           <div class="panel splitter-editor" id="splitter-editor">
@@ -507,6 +508,7 @@
             </div>
             <div class="buffer-list" id="buffer-list"></div>
             <div class="buffer-list-empty muted" id="buffer-list-empty">No resources yet.</div>
+            <div id="buffer-sidebar-help"></div>
           </div>
 
           <div class="panel buffer-editor" id="buffer-editor">
@@ -932,18 +934,28 @@
           <div class="observability-summary" id="obs-summary"></div>
 
           <div class="observability-charts" id="obs-charts">
-            <div class="chart-card">
-              <div class="chart-title">Bitrate</div>
+            <div class="chart-card" id="obs-chart-card-bitrate">
+              <div class="chart-title-row">
+                <div class="chart-title" id="obs-chart-title-bitrate">Bitrate</div>
+                <div class="chart-legend" id="obs-chart-legend-bitrate"></div>
+              </div>
               <canvas id="obs-chart-bitrate"></canvas>
             </div>
-            <div class="chart-card">
-              <div class="chart-title">Streams</div>
+            <div class="chart-card" id="obs-chart-card-streams">
+              <div class="chart-title-row">
+                <div class="chart-title" id="obs-chart-title-streams">Streams</div>
+                <div class="chart-legend" id="obs-chart-legend-streams"></div>
+              </div>
               <canvas id="obs-chart-streams"></canvas>
             </div>
-            <div class="chart-card">
-              <div class="chart-title">Switches / Alerts</div>
+            <div class="chart-card" id="obs-chart-card-switches">
+              <div class="chart-title-row">
+                <div class="chart-title" id="obs-chart-title-switches">Switches / Alerts</div>
+                <div class="chart-legend" id="obs-chart-legend-switches"></div>
+              </div>
               <canvas id="obs-chart-switches"></canvas>
             </div>
+            <div class="chart-empty-note muted" id="obs-charts-empty" hidden>No data for selected range.</div>
           </div>
 
           <div class="observability-logs" id="obs-errors">

@@ -3682,7 +3682,10 @@ local function ai_metrics(server, client, request)
         on_demand = true
     end
     if on_demand and ai_observability and ai_observability.build_metrics_from_logs then
-        local interval = setting_number("ai_rollup_interval_sec", 60)
+        local base_interval = setting_number("ai_rollup_interval_sec", 60)
+        local target_points = 240
+        local adaptive = math.floor(range / target_points)
+        local interval = math.max(base_interval, adaptive > 0 and adaptive or base_interval)
         local result = ai_observability.get_on_demand_metrics
             and ai_observability.get_on_demand_metrics(range, interval, scope, scope_id)
             or { items = ai_observability.build_metrics_from_logs(range, interval, scope, scope_id), mode = "on_demand" }
@@ -3862,7 +3865,10 @@ local function ai_summary(server, client, request)
     local last_bucket = 0
     local metrics = {}
     if on_demand and ai_observability and ai_observability.build_metrics_from_logs then
-        local interval = setting_number("ai_rollup_interval_sec", 60)
+        local base_interval = setting_number("ai_rollup_interval_sec", 60)
+        local target_points = 240
+        local adaptive = math.floor(range / target_points)
+        local interval = math.max(base_interval, adaptive > 0 and adaptive or base_interval)
         local result = ai_observability.get_on_demand_metrics
             and ai_observability.get_on_demand_metrics(range, interval, "global", "")
             or nil
