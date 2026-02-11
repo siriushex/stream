@@ -7593,10 +7593,6 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
 function updateTranscodeLadderToggle() {
   if (!elements.streamTranscodeLadderEnabled) return;
   const enabled = elements.streamTranscodeLadderEnabled.checked;
-  if (enabled && elements.streamTranscodeEnabled && !elements.streamTranscodeEnabled.checked) {
-    elements.streamTranscodeEnabled.checked = true;
-    setTranscodeMode(true);
-  }
   if (elements.streamTranscodeLadderBlock) {
     elements.streamTranscodeLadderBlock.hidden = !enabled;
   }
@@ -8692,21 +8688,13 @@ function parseOutputInlineValue(value, existing) {
       next.filename = rest;
     }
   } else if (scheme === 'udp' || scheme === 'rtp') {
-    format = scheme;
-    let addrPart = rest;
-    const queryIdx = addrPart.indexOf('?');
-    if (queryIdx >= 0) addrPart = addrPart.slice(0, queryIdx);
-    const atIdx = addrPart.indexOf('@');
-    if (atIdx >= 0) {
-      next.localaddr = addrPart.slice(0, atIdx);
-      addrPart = addrPart.slice(atIdx + 1);
-    }
-    const colonIdx = addrPart.lastIndexOf(':');
-    if (colonIdx >= 0) {
-      next.addr = addrPart.slice(0, colonIdx);
-      next.port = toNumber(addrPart.slice(colonIdx + 1));
-    } else {
-      next.addr = addrPart;
+    const parsed = parseUdpLikeUrl(text, scheme);
+    if (parsed) {
+      format = parsed.format;
+      next.localaddr = parsed.localaddr;
+      next.addr = parsed.addr;
+      next.port = parsed.port;
+      applyUdpOutputOptions(next, parsed.options);
     }
   } else if (scheme === 'srt' || scheme === 'rtsp' || scheme === 'rtmp') {
     format = scheme;
@@ -8744,21 +8732,13 @@ function parseOutputInlineValue(value, existing) {
       next.port = toNumber(parsed.port);
       next.path = parsed.path;
     } else if (existingFormat === 'udp' || existingFormat === 'rtp') {
-      format = existingFormat || 'udp';
-      let addrPart = text;
-      const queryIdx = addrPart.indexOf('?');
-      if (queryIdx >= 0) addrPart = addrPart.slice(0, queryIdx);
-      const atIdx = addrPart.indexOf('@');
-      if (atIdx >= 0) {
-        next.localaddr = addrPart.slice(0, atIdx);
-        addrPart = addrPart.slice(atIdx + 1);
-      }
-      const colonIdx = addrPart.lastIndexOf(':');
-      if (colonIdx >= 0) {
-        next.addr = addrPart.slice(0, colonIdx);
-        next.port = toNumber(addrPart.slice(colonIdx + 1));
-      } else {
-        next.addr = addrPart;
+      const parsed = parseUdpLikeUrl(text, existingFormat || 'udp');
+      if (parsed) {
+        format = parsed.format;
+        next.localaddr = parsed.localaddr;
+        next.addr = parsed.addr;
+        next.port = parsed.port;
+        applyUdpOutputOptions(next, parsed.options);
       }
     }
   }
@@ -8848,6 +8828,33 @@ function syncOutputInlineValues() {
   });
 }
 
+function flushOutputInlineDraftOnMainSave(streamId) {
+  const draft = state.outputInlineDraft;
+  if (!draft) return;
+
+  const type = String(draft.type || '').trim();
+  const url = String(draft.url || '').trim();
+  if (!type && !url) {
+    state.outputInlineDraft = null;
+    return;
+  }
+
+  const result = validateInlineOutputDraft(draft, streamId);
+  if (!result || !result.ok) {
+    throw new Error(`OUTPUT LIST: ${(result && result.error) ? result.error : 'invalid output draft'}`);
+  }
+
+  if (draft.kind === 'publish') {
+    const publish = parseEditingTranscodePublishJsonSafe();
+    publish.push(result.entry);
+    setEditingTranscodePublishJson(publish);
+  } else {
+    state.outputs.push(result.output);
+  }
+
+  state.outputInlineDraft = null;
+}
+
 function transcodeOutputSummary(output, index) {
   const name = output && output.name ? output.name : `Output #${index + 1}`;
   const url = output && output.url ? shortInputLabel(output.url) : 'missing URL';
@@ -8911,6 +8918,80 @@ function parseOptionsString(optionString) {
   return options;
 }
 
+function parseUdpLikeUrl(value, fallbackFormat) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  let format = String(fallbackFormat || 'udp').toLowerCase();
+  let rest = raw;
+  const schemeMatch = rest.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//);
+  if (schemeMatch) {
+    format = schemeMatch[1].toLowerCase();
+    rest = rest.slice(schemeMatch[0].length);
+  }
+  if (format !== 'udp' && format !== 'rtp') return null;
+
+  let optionString = '';
+  const hashIdx = rest.indexOf('#');
+  if (hashIdx >= 0) {
+    optionString = rest.slice(hashIdx + 1).replace(/#/g, '&');
+    rest = rest.slice(0, hashIdx);
+  }
+  const queryIdx = rest.indexOf('?');
+  if (queryIdx >= 0) {
+    const query = rest.slice(queryIdx + 1);
+    rest = rest.slice(0, queryIdx);
+    optionString = optionString ? `${optionString}&${query}` : query;
+  }
+  const slashIdx = rest.indexOf('/');
+  if (slashIdx >= 0) {
+    rest = rest.slice(0, slashIdx);
+  }
+
+  let localaddr = '';
+  const atIdx = rest.indexOf('@');
+  if (atIdx >= 0) {
+    localaddr = rest.slice(0, atIdx);
+    rest = rest.slice(atIdx + 1);
+  }
+
+  let addr = rest;
+  let port = 1234;
+  const colonIdx = rest.lastIndexOf(':');
+  if (colonIdx >= 0) {
+    addr = rest.slice(0, colonIdx);
+    port = toNumber(rest.slice(colonIdx + 1));
+  }
+
+  return {
+    format,
+    localaddr: localaddr || '',
+    addr: addr || '',
+    port,
+    options: parseOptionsString(optionString),
+  };
+}
+
+function applyUdpOutputOptions(target, options) {
+  if (!target || !options || typeof options !== 'object') return;
+  if (Object.prototype.hasOwnProperty.call(options, 'sync')) {
+    const rawSync = options.sync;
+    if (rawSync === true || rawSync === '' || rawSync === 'on') {
+      target.sync = 1;
+    } else {
+      const sync = toNumber(rawSync);
+      if (sync !== undefined) target.sync = sync;
+    }
+  }
+  ['ttl', 'socket_size', 'cbr'].forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(options, key)) return;
+    const value = toNumber(options[key]);
+    if (value !== undefined) {
+      target[key] = value;
+    }
+  });
+}
+
 function parseInputUrl(url) {
   const out = {
     format: '',
@@ -8939,17 +9020,25 @@ function parseInputUrl(url) {
   let rest = base.slice(schemeIndex + 3);
 
   if (out.format === 'udp' || out.format === 'rtp') {
-    const atIdx = rest.indexOf('@');
-    if (atIdx >= 0) {
-      out.iface = rest.slice(0, atIdx);
-      rest = rest.slice(atIdx + 1);
-    }
-    const colon = rest.lastIndexOf(':');
-    if (colon >= 0) {
-      out.addr = rest.slice(0, colon);
-      out.port = rest.slice(colon + 1);
+    const parsed = parseUdpLikeUrl(url, out.format);
+    if (parsed) {
+      out.options = parsed.options || {};
+      out.iface = parsed.localaddr || '';
+      out.addr = parsed.addr || '';
+      out.port = parsed.port !== undefined && parsed.port !== null ? String(parsed.port) : '';
     } else {
-      out.addr = rest;
+      const atIdx = rest.indexOf('@');
+      if (atIdx >= 0) {
+        out.iface = rest.slice(0, atIdx);
+        rest = rest.slice(atIdx + 1);
+      }
+      const colon = rest.lastIndexOf(':');
+      if (colon >= 0) {
+        out.addr = rest.slice(0, colon);
+        out.port = rest.slice(colon + 1);
+      } else {
+        out.addr = rest;
+      }
     }
     return out;
   }
@@ -9591,6 +9680,18 @@ function getLegacyBridgeKey(output) {
   return key ? `${type}|${key}` : '';
 }
 
+function getLegacyBridgeEndpointKey(output) {
+  const type = getLegacyBridgeType(output);
+  if (!type) return '';
+  const url = formatUdpUrl(type, output, output.url);
+  if (!url) return '';
+  const parsed = parseUdpLikeUrl(url, type);
+  const addr = parsed && parsed.addr ? String(parsed.addr).toLowerCase() : '';
+  const port = parsed && Number.isFinite(Number(parsed.port)) ? Number(parsed.port) : 0;
+  if (!addr || !port) return '';
+  return `${type}|${addr}:${port}`;
+}
+
 function getPublishBridgeType(entry) {
   if (!entry || typeof entry !== 'object') return '';
   const type = String(entry.type || '').toLowerCase();
@@ -9605,6 +9706,18 @@ function getPublishBridgeKey(entry) {
   if (!url) return '';
   const key = normalizeOutputUrlKey(url);
   return key ? `${type}|${key}` : '';
+}
+
+function getPublishBridgeEndpointKey(entry) {
+  const type = getPublishBridgeType(entry);
+  if (!type) return '';
+  const url = String(entry.url || '').trim();
+  if (!url) return '';
+  const parsed = parseUdpLikeUrl(url, type);
+  const addr = parsed && parsed.addr ? String(parsed.addr).toLowerCase() : '';
+  const port = parsed && Number.isFinite(Number(parsed.port)) ? Number(parsed.port) : 0;
+  if (!addr || !port) return '';
+  return `${type}|${addr}:${port}`;
 }
 
 function buildPublishFromLegacyBridge(output, defaultProfileId) {
@@ -9629,6 +9742,20 @@ function buildLegacyFromPublishBridge(entry) {
   if (!type) return null;
   const rawUrl = String(entry.url || '').trim();
   if (!rawUrl) return null;
+  const parsedUrl = parseUdpLikeUrl(rawUrl, type);
+  if (parsedUrl && parsedUrl.addr && Number.isFinite(Number(parsedUrl.port))) {
+    const output = {
+      format: parsedUrl.format,
+      addr: parsedUrl.addr,
+      port: Number(parsedUrl.port),
+      enabled: entry.enabled !== false,
+    };
+    if (parsedUrl.localaddr) {
+      output.localaddr = parsedUrl.localaddr;
+    }
+    applyUdpOutputOptions(output, parsedUrl.options);
+    return output;
+  }
   const parsed = parseOutputInlineValue(rawUrl, { format: type });
   const output = (parsed && parsed.output && typeof parsed.output === 'object') ? { ...parsed.output } : null;
   if (!output) return null;
@@ -9650,6 +9777,7 @@ function supportsTranscodeByLegacy(output) {
 function buildUnifiedOutputRows(streamId) {
   const rows = [];
   const mergeIndex = new Map();
+  const mergeByEndpoint = new Map();
   const transcodeEnabled = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
   const publish = parseEditingTranscodePublishJsonSafe();
 
@@ -9664,28 +9792,41 @@ function buildUnifiedOutputRows(streamId) {
     if (key) {
       mergeIndex.set(key, row);
     }
+    const endpointKey = getLegacyBridgeEndpointKey(output);
+    if (endpointKey) {
+      mergeByEndpoint.set(endpointKey, row);
+    }
     rows.push(row);
   });
 
   publish.forEach((entry, index) => {
     if (!entry || typeof entry !== 'object') return;
     const key = getPublishBridgeKey(entry);
+    const endpointKey = getPublishBridgeEndpointKey(entry);
+    let row = null;
     if (key && mergeIndex.has(key)) {
-      const row = mergeIndex.get(key);
+      row = mergeIndex.get(key);
+    } else if (endpointKey && mergeByEndpoint.has(endpointKey)) {
+      row = mergeByEndpoint.get(endpointKey);
+    }
+    if (row && !row.publish) {
       row.publish = entry;
       row.publishIndex = index;
       return;
     }
-    const row = {
+    const nextRow = {
       legacyIndex: null,
       publishIndex: index,
       legacy: null,
       publish: entry,
     };
     if (key) {
-      mergeIndex.set(key, row);
+      mergeIndex.set(key, nextRow);
     }
-    rows.push(row);
+    if (endpointKey) {
+      mergeByEndpoint.set(endpointKey, nextRow);
+    }
+    rows.push(nextRow);
   });
 
   return rows.map((row, displayIndex) => {
@@ -9698,9 +9839,11 @@ function buildUnifiedOutputRows(streamId) {
 
     const supports_passthrough = Boolean(legacy) || supportsPassthroughByType(publishType);
     const supports_transcode = Boolean(publishEntry) || supportsTranscodeByLegacy(legacy);
+    const has_passthrough_binding = Boolean(legacy);
+    const has_transcode_binding = Boolean(publishEntry);
 
     const enabled = (legacyEnabled || publishEnabled);
-    const modeSupported = transcodeEnabled ? supports_transcode : supports_passthrough;
+    const modeSupported = transcodeEnabled ? has_transcode_binding : has_passthrough_binding;
     const active_now = enabled && modeSupported;
 
     let main = '';
@@ -9970,33 +10113,65 @@ function syncBridgeOutputsAcrossModes(legacyOutputs, publishEntries, defaultProf
   const publish = Array.isArray(publishEntries) ? publishEntries : [];
 
   const publishByKey = new Set();
-  publish.forEach((entry) => {
+  const publishByEndpoint = new Map();
+  publish.forEach((entry, index) => {
     const key = getPublishBridgeKey(entry);
     if (key) publishByKey.add(key);
+    const endpointKey = getPublishBridgeEndpointKey(entry);
+    if (endpointKey && !publishByEndpoint.has(endpointKey)) {
+      publishByEndpoint.set(endpointKey, index);
+    }
   });
 
   outputs.forEach((output) => {
     const key = getLegacyBridgeKey(output);
-    if (!key || publishByKey.has(key)) return;
+    const endpointKey = getLegacyBridgeEndpointKey(output);
+    if (!key) return;
+    if (publishByKey.has(key)) return;
+    if (endpointKey && publishByEndpoint.has(endpointKey)) {
+      const idx = publishByEndpoint.get(endpointKey);
+      const current = publish[idx];
+      const type = getLegacyBridgeType(output);
+      const currentUrl = current && current.url ? String(current.url).trim() : '';
+      const parsedCurrent = parseUdpLikeUrl(currentUrl, type);
+      const hasLocaladdr = parsedCurrent && parsedCurrent.localaddr && String(parsedCurrent.localaddr).trim() !== '';
+      const legacyLocaladdr = output && output.localaddr ? String(output.localaddr).trim() : '';
+      if (!hasLocaladdr && legacyLocaladdr && current && typeof current === 'object') {
+        current.url = formatUdpUrl(type, output, currentUrl) || currentUrl;
+      }
+      return;
+    }
     const generated = buildPublishFromLegacyBridge(output, defaultProfileId);
     if (!generated) return;
     publish.push(generated);
     publishByKey.add(key);
+    const generatedEndpoint = getPublishBridgeEndpointKey(generated);
+    if (generatedEndpoint && !publishByEndpoint.has(generatedEndpoint)) {
+      publishByEndpoint.set(generatedEndpoint, publish.length - 1);
+    }
   });
 
   const legacyByKey = new Set();
+  const legacyByEndpoint = new Set();
   outputs.forEach((output) => {
     const key = getLegacyBridgeKey(output);
     if (key) legacyByKey.add(key);
+    const endpointKey = getLegacyBridgeEndpointKey(output);
+    if (endpointKey) legacyByEndpoint.add(endpointKey);
   });
 
   publish.forEach((entry) => {
     const key = getPublishBridgeKey(entry);
-    if (!key || legacyByKey.has(key)) return;
+    const endpointKey = getPublishBridgeEndpointKey(entry);
+    if (!key) return;
+    if (legacyByKey.has(key)) return;
+    if (endpointKey && legacyByEndpoint.has(endpointKey)) return;
     const generated = buildLegacyFromPublishBridge(entry);
     if (!generated) return;
     outputs.push(generated);
     legacyByKey.add(key);
+    const generatedEndpoint = getLegacyBridgeEndpointKey(generated);
+    if (generatedEndpoint) legacyByEndpoint.add(generatedEndpoint);
   });
 
   return { outputs, publish };
@@ -10496,7 +10671,8 @@ function renderOutputInlineRow(container, draft, streamId) {
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.className = 'icon-btn';
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = 'X';
+  cancelBtn.setAttribute('aria-label', 'Cancel inline output');
 
   const moreBtn = document.createElement('button');
   moreBtn.type = 'button';
@@ -16692,8 +16868,13 @@ function openEditor(stream, isNew) {
       const text = String(value || '').toLowerCase();
       return text === 'true' || text === 'yes' || text === 'on';
     };
-    // Enable is explicit: config.type=transcode/ffmpeg (legacy) or config.transcode.enabled=true (new).
-    const hasTranscode = (stype === 'transcode' || stype === 'ffmpeg') || truthy(tc && tc.enabled);
+    // Explicit transcode.enabled always wins; legacy type=transcode is fallback only.
+    let hasTranscode = false;
+    if (tc && Object.prototype.hasOwnProperty.call(tc, 'enabled')) {
+      hasTranscode = truthy(tc.enabled);
+    } else {
+      hasTranscode = (stype === 'transcode' || stype === 'ffmpeg') || truthy(tc && tc.enabled);
+    }
     elements.streamTranscodeEnabled.checked = Boolean(hasTranscode);
     setTranscodeMode(Boolean(hasTranscode));
     updateTranscodeGeneralControls();
@@ -17139,14 +17320,15 @@ function readStreamForm() {
   const description = elements.streamDesc.value.trim();
   const isTranscode = Boolean(elements.streamTranscodeEnabled && elements.streamTranscodeEnabled.checked);
 
-  syncOutputInlineValues();
-
   if (!id) {
     throw new Error('Stream id is required (General tab)');
   }
   if (!name) {
     throw new Error('Stream name is required (General tab)');
   }
+
+  flushOutputInlineDraftOnMainSave(id);
+  syncOutputInlineValues();
   let mptsServices = [];
   if (mptsEnabled) {
     mptsServices = collectMptsServices();
@@ -17769,6 +17951,14 @@ function readStreamForm() {
     const synced = syncBridgeOutputsAcrossModes(outputs, Array.isArray(transcode.publish) ? transcode.publish : [], defaultProfileId);
     if (synced.publish.length) {
       transcode.publish = synced.publish;
+    }
+    // Важно: config.output заполняется выше только если outputs не пустой в тот момент.
+    // После syncBridgeOutputs массив outputs может стать непустым (publish -> legacy bridge),
+    // поэтому нужно повторно синхронизировать config.output перед сохранением.
+    if (synced.outputs.length) {
+      config.output = synced.outputs;
+    } else {
+      delete config.output;
     }
 
 	    config.transcode = transcode;
@@ -27722,6 +27912,17 @@ function bindEvents() {
     if (!tile) return;
     const stream = state.streams.find((s) => s.id === tile.dataset.id);
     if (!stream) return;
+    const toggleTileExpanded = () => {
+      const expanded = isTileExpanded(stream.id);
+      const nextExpanded = !expanded;
+      setTileExpanded(stream.id, nextExpanded);
+      if (nextExpanded) {
+        const refs = getTileRefs(tile);
+        const stats = state.stats[stream.id] || {};
+        updateTileInputs(refs && refs.inputsContainer, stats);
+        updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
+      }
+    };
 
     const menuButton = event.target.closest('[data-action="menu"]');
     if (menuButton) {
@@ -27733,15 +27934,14 @@ function bindEvents() {
 
     const toggleButton = event.target.closest('[data-action="tile-toggle"]');
     if (toggleButton) {
-      const expanded = isTileExpanded(stream.id);
-      const nextExpanded = !expanded;
-      setTileExpanded(stream.id, nextExpanded);
-      if (nextExpanded) {
-        const refs = getTileRefs(tile);
-        const stats = state.stats[stream.id] || {};
-        updateTileInputs(refs && refs.inputsContainer, stats);
-        updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
-      }
+      toggleTileExpanded();
+      return;
+    }
+
+    // Раскрытие карточки — только по имени стрима (title) или отдельной кнопке-стрелке.
+    const titleToggle = event.target.closest('.tile-title');
+    if (titleToggle) {
+      toggleTileExpanded();
       return;
     }
 
@@ -27749,20 +27949,6 @@ function bindEvents() {
     if (action) {
       handleStreamAction(stream, action.dataset.action);
       closeTileMenus();
-      return;
-    }
-
-    const header = event.target.closest('.tile-header');
-    if (header) {
-      const expanded = isTileExpanded(stream.id);
-      const nextExpanded = !expanded;
-      setTileExpanded(stream.id, nextExpanded);
-      if (nextExpanded) {
-        const refs = getTileRefs(tile);
-        const stats = state.stats[stream.id] || {};
-        updateTileInputs(refs && refs.inputsContainer, stats);
-        updateTileMptsMeta(refs && refs.mptsMeta, stream, stats);
-      }
       return;
     }
 

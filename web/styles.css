@@ -580,6 +580,11 @@ select {
   text-overflow: ellipsis;
   min-width: 0;
   flex: 1;
+  cursor: pointer;
+}
+
+.tile-title:hover {
+  color: var(--link);
 }
 
 .tile-rate {

@@ -1052,11 +1052,23 @@ end
 
 local function resolve_output_localaddr(conf)
     local localaddr = conf and conf.localaddr or nil
+    if type(localaddr) == "string" then
+        localaddr = localaddr:match("^%s*(.-)%s*$")
+        if localaddr == "" then
+            return nil
+        end
+    end
     if localaddr and ifaddr_list then
         local ifaddr = ifaddr_list[localaddr]
         if ifaddr and ifaddr.ipv4 then
             localaddr = ifaddr.ipv4[1]
         end
+    end
+    if type(localaddr) ~= "string" or localaddr == "" then
+        return nil
+    end
+    if not localaddr:match("^%d+%.%d+%.%d+%.%d+$") then
+        return nil
     end
     return localaddr
 end
@@ -2652,8 +2664,44 @@ local function channel_failover_tick(channel_data)
     maybe_emit_stream_state(channel_data)
 end
 
+local failover_housekeeping_timer = nil
+
+local function use_aggregated_stream_timers()
+    return setting_bool("performance_aggregate_stream_timers", false)
+end
+
+local function ensure_failover_housekeeping_timer()
+    if failover_housekeeping_timer then
+        return
+    end
+    failover_housekeeping_timer = timer({
+        interval = 1,
+        callback = function(self)
+            local any = false
+            for _, channel_data in pairs(channel_list or {}) do
+                if channel_data and channel_data.__need_failover_tick then
+                    any = true
+                    channel_failover_tick(channel_data)
+                end
+            end
+            if not any then
+                self:close()
+                failover_housekeeping_timer = nil
+            end
+        end,
+    })
+end
+
 local function ensure_failover_timer(channel_data)
-    if not channel_data.failover or channel_data.failover_timer then
+    if not channel_data.failover then
+        return
+    end
+    if use_aggregated_stream_timers() then
+        channel_data.__need_failover_tick = true
+        ensure_failover_housekeeping_timer()
+        return
+    end
+    if channel_data.failover_timer then
         return
     end
     channel_data.failover_timer = timer({
@@ -2670,6 +2718,7 @@ local function channel_pause_failover(channel_data)
     end
     channel_data.failover.paused = true
     channel_data.failover.return_pending = nil
+    channel_data.__need_failover_tick = nil
 end
 
 local function channel_resume_failover(channel_data)
@@ -2781,11 +2830,7 @@ end
 
 init_output_module.udp = function(channel_data, output_id)
     local output_data = channel_data.output[output_id]
-    local localaddr = output_data.config.localaddr
-    if localaddr and ifaddr_list then
-        local ifaddr = ifaddr_list[localaddr]
-        if ifaddr and ifaddr.ipv4 then localaddr = ifaddr.ipv4[1] end
-    end
+    local localaddr = resolve_output_localaddr(output_data.config)
     output_data.output = udp_output({
         upstream = channel_data.tail:stream(),
         addr = output_data.config.addr,
@@ -3585,6 +3630,7 @@ function validate_stream_config(cfg, opts)
     local return_delay = read_number_opt(cfg, "backup_return_delay_sec", "backup_return_delay")
     local stable_ok = read_number_opt(cfg, "stable_ok_sec")
     local probe_interval = read_number_opt(cfg, "probe_interval_sec")
+    local stall_switch_cooldown = read_number_opt(cfg, "backup_stall_switch_cooldown_sec")
     local no_data_timeout = read_number_opt(cfg, "no_data_timeout_sec")
     local stop_if_all_inactive = read_number_opt(cfg, "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec")
 
@@ -3597,6 +3643,8 @@ function validate_stream_config(cfg, opts)
     ok, err = check_nonneg(stable_ok, "stable_ok_sec")
     if not ok then return nil, err end
     ok, err = check_nonneg(probe_interval, "probe_interval_sec")
+    if not ok then return nil, err end
+    ok, err = check_nonneg(stall_switch_cooldown, "backup_stall_switch_cooldown_sec")
     if not ok then return nil, err end
     if no_data_timeout ~= nil and no_data_timeout < 1 then
         return nil, "no_data_timeout_sec must be >= 1"
@@ -3637,6 +3685,94 @@ function sanitize_stream_config(cfg)
     if type(cfg) ~= "table" then
         return cfg
     end
+    local function trim_text(value)
+        return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    local function bridge_output_key(resolved)
+        if type(resolved) ~= "table" then
+            return nil
+        end
+        local fmt = tostring(resolved.format or ""):lower()
+        if fmt ~= "udp" and fmt ~= "rtp" then
+            return nil
+        end
+        local addr = tostring(resolved.addr or ""):lower()
+        local port = tonumber(resolved.port)
+        if addr == "" or not port or port <= 0 then
+            return nil
+        end
+        local localaddr = tostring(resolved.localaddr or ""):lower()
+        local sync = tonumber(resolved.sync) or 0
+        return fmt .. "|" .. localaddr .. "|" .. addr .. ":" .. tostring(port) .. "|" .. tostring(sync)
+    end
+    local function bridge_output_endpoint_key(resolved)
+        if type(resolved) ~= "table" then
+            return nil
+        end
+        local fmt = tostring(resolved.format or ""):lower()
+        if fmt ~= "udp" and fmt ~= "rtp" then
+            return nil
+        end
+        local addr = tostring(resolved.addr or ""):lower()
+        local port = tonumber(resolved.port)
+        if addr == "" or not port or port <= 0 then
+            return nil
+        end
+        local sync = tonumber(resolved.sync) or 0
+        return fmt .. "|" .. addr .. ":" .. tostring(port) .. "|" .. tostring(sync)
+    end
+    local function sync_bridge_outputs()
+        local tc = cfg.transcode
+        if type(tc) ~= "table" then
+            return
+        end
+        local publish = tc.publish
+        if type(publish) ~= "table" or #publish == 0 then
+            return
+        end
+
+        local outputs = normalize_stream_list(cfg.output) or {}
+        local keys = {}
+        local endpoint_keys = {}
+        for _, entry in ipairs(outputs) do
+            local resolved = resolve_io_config(entry, false)
+            local key = bridge_output_key(resolved)
+            if key then
+                keys[key] = true
+            end
+            local endpoint_key = bridge_output_endpoint_key(resolved)
+            if endpoint_key then
+                endpoint_keys[endpoint_key] = true
+            end
+        end
+
+        local changed = false
+        for _, pub in ipairs(publish) do
+            if type(pub) == "table" then
+                local kind = tostring(pub.type or ""):lower()
+                if kind == "udp" or kind == "rtp" then
+                    local raw_url = trim_text(pub.url)
+                    if raw_url ~= "" then
+                        local resolved = resolve_io_config(raw_url, false)
+                        local key = bridge_output_key(resolved)
+                        local endpoint_key = bridge_output_endpoint_key(resolved)
+                        if key and not keys[key] and not (endpoint_key and endpoint_keys[endpoint_key]) then
+                            table.insert(outputs, raw_url)
+                            keys[key] = true
+                            if endpoint_key then
+                                endpoint_keys[endpoint_key] = true
+                            end
+                            changed = true
+                        end
+                    end
+                end
+            end
+        end
+
+        if changed and #outputs > 0 then
+            cfg.output = outputs
+        end
+    end
     local function unset_if_below(keys, min_value)
         for _, key in ipairs(keys) do
             local value = tonumber(cfg[key])
@@ -3656,6 +3792,10 @@ function sanitize_stream_config(cfg)
     unset_if_negative({ "backup_return_delay_sec", "backup_return_delay" })
     unset_if_negative({ "probe_interval_sec" })
     unset_if_negative({ "stable_ok_sec" })
+    unset_if_negative({ "backup_stall_switch_cooldown_sec" })
+    -- Сохраняем dual-mode bridge outputs (UDP/RTP) даже если редактирование шло через transcode.publish.
+    -- Это не меняет runtime pipeline, но предотвращает "пропажу" passthrough outputs при toggle transcoding.
+    sync_bridge_outputs()
     return cfg
 end
 
@@ -5671,9 +5811,41 @@ local function audio_fix_tick(channel_data)
         channel_data.audio_fix_timer:close()
         channel_data.audio_fix_timer = nil
     end
+    if not any_enabled then
+        channel_data.__need_audio_fix_tick = nil
+    end
+end
+
+local audio_fix_housekeeping_timer = nil
+
+local function ensure_audio_fix_housekeeping_timer()
+    if audio_fix_housekeeping_timer then
+        return
+    end
+    audio_fix_housekeeping_timer = timer({
+        interval = 1,
+        callback = function(self)
+            local any = false
+            for _, channel_data in pairs(channel_list or {}) do
+                if channel_data and channel_data.__need_audio_fix_tick then
+                    any = true
+                    audio_fix_tick(channel_data)
+                end
+            end
+            if not any then
+                self:close()
+                audio_fix_housekeeping_timer = nil
+            end
+        end,
+    })
 end
 
 local function ensure_audio_fix_timer(channel_data)
+    if use_aggregated_stream_timers() then
+        channel_data.__need_audio_fix_tick = true
+        ensure_audio_fix_housekeeping_timer()
+        return
+    end
     if channel_data.audio_fix_timer then
         return
     end
@@ -5683,6 +5855,74 @@ local function ensure_audio_fix_timer(channel_data)
             audio_fix_tick(channel_data)
         end,
     })
+end
+
+function stream_reconfigure_timer_mode()
+    local aggregate = use_aggregated_stream_timers()
+    local need_failover = false
+    local need_audio_fix = false
+
+    if aggregate then
+        for _, channel_data in pairs(channel_list or {}) do
+            if channel_data then
+                if channel_data.failover_timer then
+                    channel_data.failover_timer:close()
+                    channel_data.failover_timer = nil
+                end
+                if channel_data.failover and channel_data.failover.enabled and channel_data.failover.paused ~= true then
+                    channel_data.__need_failover_tick = true
+                    need_failover = true
+                end
+
+                if channel_data.audio_fix_timer then
+                    channel_data.audio_fix_timer:close()
+                    channel_data.audio_fix_timer = nil
+                end
+                for _, output_data in ipairs(channel_data.output or {}) do
+                    local audio_fix = output_data and output_data.audio_fix or nil
+                    if audio_fix and audio_fix.config and audio_fix.config.enabled then
+                        channel_data.__need_audio_fix_tick = true
+                        need_audio_fix = true
+                        break
+                    end
+                end
+            end
+        end
+        if need_failover then
+            ensure_failover_housekeeping_timer()
+        end
+        if need_audio_fix then
+            ensure_audio_fix_housekeeping_timer()
+        end
+        return
+    end
+
+    if failover_housekeeping_timer then
+        failover_housekeeping_timer:close()
+        failover_housekeeping_timer = nil
+    end
+    if audio_fix_housekeeping_timer then
+        audio_fix_housekeeping_timer:close()
+        audio_fix_housekeeping_timer = nil
+    end
+
+    for _, channel_data in pairs(channel_list or {}) do
+        if channel_data then
+            channel_data.__need_failover_tick = nil
+            if channel_data.failover and channel_data.failover.enabled and channel_data.failover.paused ~= true then
+                ensure_failover_timer(channel_data)
+            end
+
+            channel_data.__need_audio_fix_tick = nil
+            for _, output_data in ipairs(channel_data.output or {}) do
+                local audio_fix = output_data and output_data.audio_fix or nil
+                if audio_fix and audio_fix.config and audio_fix.config.enabled then
+                    ensure_audio_fix_timer(channel_data)
+                    break
+                end
+            end
+        end
+    end
 end
 
 local function channel_audio_fix_init(channel_data)
@@ -5725,10 +5965,13 @@ local function channel_audio_fix_init(channel_data)
     end
     if any_enabled then
         ensure_audio_fix_timer(channel_data)
+    else
+        channel_data.__need_audio_fix_tick = nil
     end
 end
 
 local function channel_audio_fix_cleanup(channel_data)
+    channel_data.__need_audio_fix_tick = nil
     if channel_data.audio_fix_timer then
         channel_data.audio_fix_timer:close()
         channel_data.audio_fix_timer = nil
@@ -6481,6 +6724,7 @@ function kill_channel(channel_data)
         channel_data.failover_timer:close()
         channel_data.failover_timer = nil
     end
+    channel_data.__need_failover_tick = nil
     channel_audio_fix_cleanup(channel_data)
 
     while #channel_data.input > 0 do

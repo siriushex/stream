@@ -20,7 +20,6 @@
 
 #include "clock.h"
 #include "timer.h"
-#include "list.h"
 #include "loopctl.h"
 
 struct asc_timer_t
@@ -30,74 +29,186 @@ struct asc_timer_t
 
     uint64_t interval;
     uint64_t next_shot;
+
+    size_t heap_index;
+    bool active;
+    bool in_callback;
+    bool free_after_callback;
 };
 
-static asc_list_t *timer_list = NULL;
+static asc_timer_t **timer_heap = NULL;
+static size_t timer_heap_size = 0;
+static size_t timer_heap_cap = 0;
+static uint64_t timer_next_due = 0;
+
+static void timer_update_next_due(void)
+{
+    timer_next_due = (timer_heap_size > 0) ? timer_heap[0]->next_shot : 0;
+}
+
+static void timer_heap_swap(size_t a, size_t b)
+{
+    asc_timer_t *left = timer_heap[a];
+    asc_timer_t *right = timer_heap[b];
+    timer_heap[a] = right;
+    timer_heap[b] = left;
+    right->heap_index = a;
+    left->heap_index = b;
+}
+
+static void timer_heap_sift_up(size_t index)
+{
+    while(index > 0)
+    {
+        const size_t parent = (index - 1) / 2;
+        if(timer_heap[parent]->next_shot <= timer_heap[index]->next_shot)
+            break;
+        timer_heap_swap(parent, index);
+        index = parent;
+    }
+}
+
+static void timer_heap_sift_down(size_t index)
+{
+    while(true)
+    {
+        size_t left = (index * 2) + 1;
+        size_t right = left + 1;
+        size_t next = index;
+
+        if(left < timer_heap_size && timer_heap[left]->next_shot < timer_heap[next]->next_shot)
+            next = left;
+        if(right < timer_heap_size && timer_heap[right]->next_shot < timer_heap[next]->next_shot)
+            next = right;
+        if(next == index)
+            break;
+
+        timer_heap_swap(index, next);
+        index = next;
+    }
+}
+
+static void timer_heap_reserve(size_t required)
+{
+    if(required <= timer_heap_cap)
+        return;
+
+    size_t next_cap = timer_heap_cap ? timer_heap_cap * 2 : 64;
+    while(next_cap < required)
+        next_cap *= 2;
+
+    asc_timer_t **next_heap = (asc_timer_t **)realloc(timer_heap, next_cap * sizeof(asc_timer_t *));
+    if(!next_heap)
+        astra_abort();
+
+    timer_heap = next_heap;
+    timer_heap_cap = next_cap;
+}
+
+static void timer_heap_push(asc_timer_t *timer)
+{
+    timer_heap_reserve(timer_heap_size + 1);
+    timer->heap_index = timer_heap_size;
+    timer->active = true;
+    timer_heap[timer_heap_size++] = timer;
+    timer_heap_sift_up(timer->heap_index);
+    timer_update_next_due();
+}
+
+static asc_timer_t *timer_heap_remove_at(size_t index)
+{
+    if(index >= timer_heap_size)
+        return NULL;
+
+    asc_timer_t *removed = timer_heap[index];
+    const size_t last = timer_heap_size - 1;
+
+    if(index != last)
+    {
+        timer_heap[index] = timer_heap[last];
+        timer_heap[index]->heap_index = index;
+    }
+    --timer_heap_size;
+
+    if(index < timer_heap_size)
+    {
+        if(index > 0 && timer_heap[index]->next_shot < timer_heap[(index - 1) / 2]->next_shot)
+            timer_heap_sift_up(index);
+        else
+            timer_heap_sift_down(index);
+    }
+
+    removed->heap_index = 0;
+    removed->active = false;
+    timer_update_next_due();
+    return removed;
+}
 
 void asc_timer_core_init(void)
 {
-    timer_list = asc_list_init();
+    timer_heap = NULL;
+    timer_heap_size = 0;
+    timer_heap_cap = 0;
+    timer_next_due = 0;
 }
 
 void asc_timer_core_destroy(void)
 {
-    asc_list_first(timer_list);
-    while(!asc_list_eol(timer_list))
+    while(timer_heap_size > 0)
     {
-        free(asc_list_data(timer_list));
-        asc_list_remove_current(timer_list);
+        asc_timer_t *timer = timer_heap_remove_at(0);
+        if(timer)
+            free(timer);
     }
-    asc_list_destroy(timer_list);
-    timer_list = NULL;
+    free(timer_heap);
+    timer_heap = NULL;
+    timer_heap_cap = 0;
+    timer_next_due = 0;
 }
 
 void asc_timer_core_loop(void)
 {
-    int is_detached = 0;
+    const uint64_t cur = asc_utime();
+    if(timer_next_due != 0 && cur < timer_next_due)
+        return;
 
-    asc_list_for(timer_list)
+    while(timer_heap_size > 0)
     {
-        asc_timer_t *timer = (asc_timer_t *)asc_list_data(timer_list);
+        const uint64_t now = asc_utime();
+        asc_timer_t *timer = timer_heap[0];
+        if(now < timer->next_shot)
+            break;
+
+        timer = timer_heap_remove_at(0);
+        if(!timer)
+            continue;
+
         if(!timer->callback)
         {
-            ++is_detached;
+            free(timer);
             continue;
         }
 
-        const uint64_t cur = asc_utime();
-        if(cur >= timer->next_shot)
+        is_main_loop_idle = false;
+        timer->in_callback = true;
+
+        if(timer->interval == 0)
         {
-            if(timer->interval == 0)
-            {
-                // one shot timer
-                is_main_loop_idle = false;
-                timer->callback(timer->arg);
-                timer->callback = NULL;
-                ++is_detached;
-            }
-            else
-            {
-                is_main_loop_idle = false;
-                timer->next_shot = cur + timer->interval;
-                timer->callback(timer->arg);
-            }
+            // one shot timer
+            timer->callback(timer->arg);
+            timer->in_callback = false;
+            free(timer);
+            continue;
         }
-    }
 
-    if(!is_detached)
-        return;
+        timer->next_shot = now + timer->interval;
+        timer->callback(timer->arg);
+        timer->in_callback = false;
 
-    asc_list_first(timer_list);
-    while(!asc_list_eol(timer_list))
-    {
-        asc_timer_t *timer = (asc_timer_t *)asc_list_data(timer_list);
-        if(timer->callback)
-            asc_list_next(timer_list);
+        if(timer->free_after_callback || !timer->callback)
+            free(timer);
         else
-        {
-            free(asc_list_data(timer_list));
-            asc_list_remove_current(timer_list);
-        }
+            timer_heap_push(timer);
     }
 }
 
@@ -110,7 +221,7 @@ asc_timer_t * asc_timer_init(unsigned int ms, void (*callback)(void *), void *ar
 
     timer->next_shot = asc_utime() + timer->interval;
 
-    asc_list_insert_tail(timer_list, timer);
+    timer_heap_push(timer);
 
     return timer;
 }
@@ -129,4 +240,14 @@ void asc_timer_destroy(asc_timer_t *timer)
         return;
 
     timer->callback = NULL;
+    if(timer->active)
+        timer_heap_remove_at(timer->heap_index);
+
+    if(timer->in_callback)
+    {
+        timer->free_after_callback = true;
+        return;
+    }
+
+    free(timer);
 }

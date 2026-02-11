@@ -620,6 +620,58 @@ local function normalize_net_profile(value)
     return nil
 end
 
+local function get_performance_profile()
+    local value = read_setting("performance_profile")
+    if value == nil then
+        return "compat"
+    end
+    local profile = tostring(value or ""):lower()
+    if profile == "mass" or profile == "low_latency" or profile == "compat" then
+        return profile
+    end
+    return "compat"
+end
+
+local function profile_playout_max_buffer_default_mb()
+    local profile = get_performance_profile()
+    if profile == "mass" then
+        return 12
+    elseif profile == "low_latency" then
+        return 8
+    end
+    return 16
+end
+
+local function apply_performance_profile_input_resilience_defaults(out)
+    if type(out) ~= "table" then
+        return
+    end
+    local profile = get_performance_profile()
+    if profile == "compat" then
+        return
+    end
+    if type(out.hls_defaults) == "table" then
+        if profile == "mass" then
+            out.hls_defaults.max_segments = math.min(tonumber(out.hls_defaults.max_segments) or 10, 8)
+            out.hls_defaults.max_gap_segments = math.min(tonumber(out.hls_defaults.max_gap_segments) or 3, 2)
+            out.hls_defaults.segment_retries = math.min(tonumber(out.hls_defaults.segment_retries) or 3, 2)
+        elseif profile == "low_latency" then
+            out.hls_defaults.max_segments = math.min(tonumber(out.hls_defaults.max_segments) or 10, 6)
+            out.hls_defaults.max_gap_segments = math.min(tonumber(out.hls_defaults.max_gap_segments) or 3, 2)
+            out.hls_defaults.segment_retries = math.min(tonumber(out.hls_defaults.segment_retries) or 3, 1)
+        end
+        if tonumber(out.hls_defaults.max_parallel) == nil or tonumber(out.hls_defaults.max_parallel) < 1 then
+            out.hls_defaults.max_parallel = 1
+        end
+    end
+
+    if profile == "mass" then
+        out.jitter_max_auto_mb = math.min(tonumber(out.jitter_max_auto_mb) or 64, 32)
+    elseif profile == "low_latency" then
+        out.jitter_max_auto_mb = math.min(tonumber(out.jitter_max_auto_mb) or 64, 16)
+    end
+end
+
 local function get_input_resilience_settings()
     local raw = nil
     if config and config.get_setting then
@@ -652,6 +704,8 @@ local function get_input_resilience_settings()
 	        jitter_max_auto_mb = INPUT_RESILIENCE_DEFAULTS.jitter_max_auto_mb,
         max_active_resilient_inputs = INPUT_RESILIENCE_DEFAULTS.max_active_resilient_inputs,
     }
+
+    apply_performance_profile_input_resilience_defaults(out)
 
     if type(raw) ~= "table" then
         return out
@@ -1752,7 +1806,8 @@ function init_input(conf)
 
             local playout_max_mb = tonumber(conf.playout_max_buffer_mb)
             if not playout_max_mb or playout_max_mb <= 0 then
-                playout_max_mb = tonumber(conf.jitter_max_buffer_mb) or tonumber(conf.max_buffer_mb) or 16
+                playout_max_mb = tonumber(conf.jitter_max_buffer_mb) or tonumber(conf.max_buffer_mb)
+                    or profile_playout_max_buffer_default_mb()
             end
             if playout_max_mb < 4 then
                 playout_max_mb = 4
@@ -2831,6 +2886,21 @@ local HLS_INPUT_DEFAULTS = {
     max_parallel = 1,
 }
 
+local function profile_hls_input_defaults()
+    local defaults = copy_shallow(HLS_INPUT_DEFAULTS)
+    local profile = get_performance_profile()
+    if profile == "mass" then
+        defaults.max_segments = 8
+        defaults.max_gap_segments = 2
+        defaults.segment_retries = 2
+    elseif profile == "low_latency" then
+        defaults.max_segments = 6
+        defaults.max_gap_segments = 2
+        defaults.segment_retries = 1
+    end
+    return defaults
+end
+
 local function hls_cfg_number(conf, key, fallback)
     local v = conf[key]
     if v == nil or v == "" then
@@ -3249,11 +3319,11 @@ init_input_module.hls = function(conf)
             conf.user_agent = conf.ua
         end
         local res = resolve_input_resilience(conf)
-        local hls_defaults = HLS_INPUT_DEFAULTS
+        local hls_defaults = profile_hls_input_defaults()
         if res and res.enabled and type(res.hls_defaults) == "table" then
             -- В profile-mode используем input_resilience.hls_defaults как основу, но
             -- сохраняем совместимость: отсутствующие поля берём из старых дефолтов.
-            hls_defaults = copy_shallow(HLS_INPUT_DEFAULTS)
+            hls_defaults = profile_hls_input_defaults()
             for k, v in pairs(res.hls_defaults) do
                 hls_defaults[k] = v
             end

@@ -2676,20 +2676,52 @@ local function get_adapter_status(server, client, id)
     json_response(server, client, 200, status)
 end
 
-local stream_status_cache = { ts = 0, payload = nil }
+local stream_status_cache = {
+    full = { ts = 0, payload = nil },
+    lite = { ts = 0, payload = nil },
+}
 
-local function list_stream_status(server, client)
-    local now = os.time()
-    if stream_status_cache.payload and (now - (stream_status_cache.ts or 0)) <= 1 then
-        return json_response(server, client, 200, stream_status_cache.payload)
+local function query_truthy(value)
+    if value == true then
+        return true
     end
-    local status = runtime.list_status and runtime.list_status() or {}
-    stream_status_cache = { ts = now, payload = status }
+    if value == nil then
+        return false
+    end
+    local s = tostring(value):lower()
+    return s == "1" or s == "true" or s == "yes" or s == "on"
+end
+
+local function list_stream_status(server, client, request)
+    local now = os.time()
+    local query = request and request.query or {}
+    local lite = query_truthy(query and query.lite)
+    local cache_key = lite and "lite" or "full"
+    local cache = stream_status_cache[cache_key] or { ts = 0, payload = nil }
+
+    if cache.payload and (now - (cache.ts or 0)) <= 1 then
+        return json_response(server, client, 200, cache.payload)
+    end
+
+    local status = {}
+    if lite and runtime.list_status_lite then
+        status = runtime.list_status_lite() or {}
+    elseif runtime.list_status then
+        status = runtime.list_status() or {}
+    end
+    stream_status_cache[cache_key] = { ts = now, payload = status }
     json_response(server, client, 200, status)
 end
 
-local function get_stream_status(server, client, id)
-    local status = runtime.get_stream_status and runtime.get_stream_status(id)
+local function get_stream_status(server, client, request, id)
+    local query = request and request.query or {}
+    local lite = query_truthy(query and query.lite)
+    local status = nil
+    if lite and runtime.get_stream_status_lite then
+        status = runtime.get_stream_status_lite(id)
+    elseif runtime.get_stream_status then
+        status = runtime.get_stream_status(id)
+    end
     if not status then
         return error_response(server, client, 404, "stream not found")
     end
@@ -3665,6 +3697,23 @@ local function set_settings(server, client, request)
                     or body.influx_measurement ~= nil)
             then
                 runtime.configure_influx()
+            end
+            if runtime and runtime.configure_gc
+                and (body.lua_gc_full_collect_interval_ms ~= nil
+                    or body.lua_gc_step_interval_ms ~= nil
+                    or body.lua_gc_step_units ~= nil)
+            then
+                runtime.configure_gc()
+            end
+            if body.performance_aggregate_stream_timers ~= nil
+                and type(stream_reconfigure_timer_mode) == "function"
+            then
+                stream_reconfigure_timer_mode()
+            end
+            if body.performance_aggregate_transcode_timers ~= nil
+                and transcode and transcode.reconfigure_timer_mode
+            then
+                transcode.reconfigure_timer_mode()
             end
             if telegram and telegram.configure
                 and (body.telegram_enabled ~= nil or body.telegram_level ~= nil
@@ -6022,12 +6071,12 @@ function api.handle_request(server, client, request)
     end
 
     if path == "/api/v1/stream-status" and method == "GET" then
-        return list_stream_status(server, client)
+        return list_stream_status(server, client, request)
     end
 
     local status_id = path:match("^/api/v1/stream%-status/([%w%-%_]+)$")
     if status_id and method == "GET" then
-        return get_stream_status(server, client, status_id)
+        return get_stream_status(server, client, request, status_id)
     end
 
     if path == "/api/v1/users" and method == "GET" then
@@ -6205,6 +6254,9 @@ function api.start(opts)
     local http_headers_max = setting_number("http_headers_max", 12288)
     local http_header_max = setting_number("http_header_max", 4096)
     local http_content_length_max = setting_number("http_content_length_max", 8 * 1024 * 1024)
+    local http_max_clients = math.max(0, math.floor(setting_number("http_max_clients", 0) or 0))
+    local http_max_clients_per_ip = math.max(0, math.floor(setting_number("http_max_clients_per_ip", 0) or 0))
+    local http_accept_backoff_ms = math.max(10, math.min(5000, math.floor(setting_number("http_accept_backoff_ms", 100) or 100)))
 
     http_server({
         addr = addr,
@@ -6217,6 +6269,9 @@ function api.start(opts)
         headers_max = http_headers_max,
         header_max = http_header_max,
         content_length_max = http_content_length_max,
+        max_clients = http_max_clients,
+        max_clients_per_ip = http_max_clients_per_ip,
+        accept_backoff_ms = http_accept_backoff_ms,
     })
 
     log.info("[api] listening on " .. addr .. ":" .. port)
