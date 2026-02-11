@@ -4208,7 +4208,9 @@ function computeDirtyState(options = {}) {
     elements.settingsActionBar.classList.toggle('is-disabled', !dirty);
   }
   if (elements.settingsActionSave) {
-    elements.settingsActionSave.disabled = !dirty || !!error;
+    // Кнопка Save должна оставаться кликабельной при ошибке:
+    // по клику пользователь получает точную причину и может быстро исправить поле.
+    elements.settingsActionSave.disabled = !dirty;
   }
   if (elements.settingsActionCancel) {
     elements.settingsActionCancel.disabled = !dirty;
@@ -26845,6 +26847,7 @@ function bindEvents() {
         await saveSettings(collectGeneralSettings());
       } catch (err) {
         setStatus(err.message);
+        computeDirtyState();
       }
     });
   }
