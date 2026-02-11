@@ -3492,17 +3492,32 @@ details.fold[open] > .fold-summary::after {
 }
 
 .stream-desc-field {
-  display: flex;
-  flex-direction: column-reverse;
+  display: grid;
   gap: 6px;
+}
+
+.stream-desc-field textarea {
+  order: 1;
+}
+
+.stream-desc-field > span:first-child {
+  order: 2;
 }
 
 .stream-general-row {
   display: grid;
-  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
   margin-top: 12px;
+}
+
+.stream-general-row > #stream-transcode-general {
+  grid-column: span 6;
+}
+
+.stream-general-row > .stream-desc-field {
+  grid-column: span 6;
 }
 
 @media (max-width: 900px) {
@@ -3516,6 +3531,14 @@ details.fold[open] > .fold-summary::after {
   }
   .stream-general-row {
     grid-template-columns: 1fr;
+  }
+  .stream-general-row > .stream-desc-field {
+    order: 1;
+    grid-column: auto;
+  }
+  .stream-general-row > #stream-transcode-general {
+    order: 2;
+    grid-column: auto;
   }
 }
 
