@@ -1738,6 +1738,21 @@ function on_analyze_spts(channel_data, input_id, data)
         }
         input_data.last_seen_ts = now
 
+        -- Feed observability stream timeseries with lightweight throttled samples.
+        -- Write only for the active input to avoid duplicate points per stream bucket.
+        local active_id = channel_data.active_input_id or 0
+        if (active_id == 0 or active_id == input_id)
+            and ai_observability and ai_observability.ingest_stream_sample
+            and channel_data and channel_data.config and channel_data.config.id then
+            pcall(ai_observability.ingest_stream_sample, channel_data.config.id, {
+                ts = now,
+                bitrate_kbps = total.bitrate,
+                cc_errors = total.cc_errors,
+                pes_errors = total.pes_errors,
+                on_air = data.on_air == true,
+            })
+        end
+
         local ok_det = pcall(function()
             update_input_detectors(channel_data, input_id, input_data, total, now)
         end)
