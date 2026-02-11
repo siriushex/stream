@@ -3271,12 +3271,10 @@ local function validate_input_softcam(items)
         return true
     end
     local index = build_softcam_index()
-    if next(index) == nil then
-        return true
-    end
+    local has_index = (next(index) ~= nil)
     for idx, entry in ipairs(items) do
         local cam = extract_cam_value(entry, "cam")
-        if cam ~= nil and not softcam_is_truthy(cam) then
+        if has_index and cam ~= nil and not softcam_is_truthy(cam) then
             local cam_id = tostring(cam)
             local softcam_entry = index[cam_id]
             if not softcam_entry then
@@ -3288,7 +3286,7 @@ local function validate_input_softcam(items)
             end
         end
         local cam_backup = extract_cam_value(entry, "cam_backup")
-        if cam_backup ~= nil and not softcam_is_truthy(cam_backup) then
+        if has_index and cam_backup ~= nil and not softcam_is_truthy(cam_backup) then
             local cam_id = tostring(cam_backup)
             local softcam_entry = index[cam_id]
             if not softcam_entry then
@@ -3297,6 +3295,33 @@ local function validate_input_softcam(items)
             local ok, err = validate_softcam_entry(softcam_entry)
             if not ok then
                 return nil, "cam_backup \"" .. cam_id .. "\" invalid: " .. tostring(err)
+            end
+        end
+
+        local cam_backup_mode = extract_cam_value(entry, "cam_backup_mode")
+        if cam_backup_mode ~= nil and cam_backup_mode ~= true then
+            local mode = tostring(cam_backup_mode):lower()
+            if mode ~= "race" and mode ~= "hedge" and mode ~= "failover" then
+                return nil, "cam_backup_mode must be race|hedge|failover (input #" .. tostring(idx) .. ")"
+            end
+        end
+
+        local hedge = extract_cam_value(entry, "cam_backup_hedge_ms")
+        if hedge == nil then
+            hedge = extract_cam_value(entry, "dual_cam_hedge_ms")
+        end
+        if hedge ~= nil and hedge ~= true then
+            local n = tonumber(hedge)
+            if not n or n < 0 or n > 500 then
+                return nil, "cam_backup_hedge_ms must be in range 0..500 (input #" .. tostring(idx) .. ")"
+            end
+        end
+
+        local prefer_primary = extract_cam_value(entry, "cam_prefer_primary_ms")
+        if prefer_primary ~= nil and prefer_primary ~= true then
+            local n = tonumber(prefer_primary)
+            if not n or n < 0 or n > 500 then
+                return nil, "cam_prefer_primary_ms must be in range 0..500 (input #" .. tostring(idx) .. ")"
             end
         end
     end

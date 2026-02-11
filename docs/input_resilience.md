@@ -135,6 +135,27 @@ Recommended safe defaults (already set):
 ## Per-input overrides (URL options)
 Add options to the input URL with `#key=value`.
 
+### SoftCAM primary/backup strategy
+When input uses SoftCAM (`#cam=<id>`), you can configure backup behavior:
+
+- `cam_backup=<id>`: backup CAM id
+- `cam_backup_mode=race|hedge|failover`:
+  - `race`: ECM goes to both CAMs immediately (legacy behavior)
+  - `hedge`: ECM goes to primary immediately, backup after `cam_backup_hedge_ms` (default mode)
+  - `failover`: ECM goes to primary, backup only on timeout/not-ready path
+- `cam_backup_hedge_ms=0..500`: backup hedge delay in ms (default `80`)
+- `cam_prefer_primary_ms=0..500`: if backup CW arrives first, wait this window for primary CW
+
+Recommended resilient config:
+```
+udp://239.1.1.1:1234#cam=sh&cam_backup=sh_4&cam_backup_mode=hedge&cam_backup_hedge_ms=80&cam_prefer_primary_ms=30
+```
+
+Legacy race config:
+```
+udp://239.1.1.1:1234#cam=sh&cam_backup=sh_4&cam_backup_mode=race
+```
+
 ### Enable a profile per input
 HTTP-TS (bad network):
 ```

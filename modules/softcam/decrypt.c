@@ -27,6 +27,10 @@
  *      name        - string, channel name
  *      biss        - string, BISS key, 16 chars length. example: biss = "1122330044556600"
  *      cam         - object, cam instance returned by cam_module_instance:cam()
+ *      cam_backup  - object, optional backup cam instance
+ *      cam_backup_mode - string: race|hedge|failover
+ *      cam_backup_hedge_ms - number: backup ECM delay for hedge/failover
+ *      cam_prefer_primary_ms - number: hold backup CW waiting for primary
  *      cas_data    - string, additional paramters for CAS
  *      cas_pnr     - number, original PNR
  */
@@ -104,6 +108,14 @@ struct ca_stream_t
     uint16_t backup_ecm_len;
     bool backup_ecm_pending;
 
+    /* Prefer-primary hold (backup CW waits a short window) */
+    asc_timer_t *prefer_primary_timer;
+    cam_backup_timer_arg_t prefer_primary_timer_arg;
+    bool prefer_primary_pending;
+    uint8_t prefer_primary_mask;
+    uint8_t prefer_primary_key[16];
+    bool prefer_primary_checksum_ok;
+
     /* Arg wrappers to identify which CAM responded */
     cam_ecm_arg_t arg_primary;
     cam_ecm_arg_t arg_backup;
@@ -116,6 +128,7 @@ struct ca_stream_t
     bool cand_pending;
     uint8_t cand_mask;      /* 1=even, 2=odd, 3=both */
     uint8_t cand_key[16];
+    bool cand_from_backup;
     uint64_t cand_set_us;
     uint8_t cand_ok_count;
     uint8_t cand_fail_count;
@@ -142,8 +155,24 @@ struct ca_stream_t
 
     int new_key_id;  // 0 - not, 1 - first key, 2 - second key, 3 - both keys
     uint8_t new_key[16];
+    bool new_key_from_backup;
 
     uint64_t sendtime;
+
+    /* Per-CAM health and perf */
+    uint64_t stat_ecm_sent_primary;
+    uint64_t stat_ecm_sent_backup;
+    uint64_t stat_ecm_not_found_primary;
+    uint64_t stat_ecm_not_found_backup;
+    uint64_t stat_key_guard_reject_primary;
+    uint64_t stat_key_guard_reject_backup;
+    uint64_t stat_cw_applied_primary;
+    uint64_t stat_cw_applied_backup;
+    uint64_t stat_rtt_primary_ema_ms;
+    uint64_t stat_rtt_backup_ema_ms;
+    uint8_t backup_bad_streak;
+    uint64_t backup_suspend_until_us;
+    uint64_t backup_suspend_count;
 };
 
 typedef struct
@@ -165,8 +194,12 @@ struct module_data_t
     int ecm_pid;
     bool key_guard;
     bool dual_cam;
+    uint8_t cam_backup_mode;
     uint32_t cam_backup_hedge_ms;
     uint64_t cam_backup_hedge_us;
+    uint32_t cam_prefer_primary_ms;
+    uint64_t cam_prefer_primary_us;
+    bool cam_backup_hedge_warned;
     uint64_t backup_active_ms;
     uint64_t backup_active_since_us;
     bool backup_active;
@@ -211,6 +244,16 @@ struct module_data_t
 
 #define SHIFT_ASSUME_MBIT 10
 #define SHIFT_MAX_BYTES (4 * 1024 * 1024)
+
+#define CAM_BACKUP_MODE_RACE 0
+#define CAM_BACKUP_MODE_HEDGE 1
+#define CAM_BACKUP_MODE_FAILOVER 2
+
+#define CAM_BACKUP_HEDGE_MAX_MS 500
+#define CAM_PREFER_PRIMARY_MAX_MS 500
+#define CAM_FAILOVER_TIMEOUT_DEFAULT_MS 250
+#define CAM_BACKUP_SUSPEND_BAD_STREAK 3
+#define CAM_BACKUP_SUSPEND_MS 10000
 
 void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8_t *odd);
 
@@ -277,6 +320,8 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
     ca_stream->arg_backup.is_backup = true;
     ca_stream->backup_timer_arg.mod = mod;
     ca_stream->backup_timer_arg.stream = ca_stream;
+    ca_stream->prefer_primary_timer_arg.mod = mod;
+    ca_stream->prefer_primary_timer_arg.stream = ca_stream;
 
 #if FFDECSA == 1
 
@@ -302,6 +347,11 @@ void ca_stream_destroy(ca_stream_t *ca_stream)
     {
         asc_timer_destroy(ca_stream->backup_timer);
         ca_stream->backup_timer = NULL;
+    }
+    if(ca_stream->prefer_primary_timer)
+    {
+        asc_timer_destroy(ca_stream->prefer_primary_timer);
+        ca_stream->prefer_primary_timer = NULL;
     }
     if(ca_stream->backup_ecm_buf)
     {
@@ -381,6 +431,81 @@ static void ca_stream_stat_rtt(ca_stream_t *ca_stream, uint64_t ms)
         ca_stream->stat_rtt_hist[4] += 1;
 }
 
+static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial, bool from_backup);
+
+static inline const char *cam_backup_mode_name(uint8_t mode)
+{
+    switch(mode)
+    {
+        case CAM_BACKUP_MODE_RACE:
+            return "race";
+        case CAM_BACKUP_MODE_FAILOVER:
+            return "failover";
+        case CAM_BACKUP_MODE_HEDGE:
+        default:
+            return "hedge";
+    }
+}
+
+static uint8_t cam_backup_mode_parse(const char *mode)
+{
+    if(!mode || mode[0] == '\0')
+        return CAM_BACKUP_MODE_HEDGE;
+    if(!strcasecmp(mode, "race"))
+        return CAM_BACKUP_MODE_RACE;
+    if(!strcasecmp(mode, "failover"))
+        return CAM_BACKUP_MODE_FAILOVER;
+    if(!strcasecmp(mode, "hedge"))
+        return CAM_BACKUP_MODE_HEDGE;
+    return CAM_BACKUP_MODE_HEDGE;
+}
+
+static inline bool ca_stream_backup_is_suspended(ca_stream_t *ca_stream, uint64_t now_us)
+{
+    if(!ca_stream->backup_suspend_until_us)
+        return false;
+    if(now_us >= ca_stream->backup_suspend_until_us)
+    {
+        ca_stream->backup_suspend_until_us = 0;
+        ca_stream->backup_bad_streak = 0;
+        return false;
+    }
+    return true;
+}
+
+static inline void ca_stream_backup_mark_good(ca_stream_t *ca_stream)
+{
+    ca_stream->backup_bad_streak = 0;
+}
+
+static void ca_stream_backup_mark_bad(module_data_t *mod, ca_stream_t *ca_stream, const char *reason)
+{
+    if(!mod->dual_cam)
+        return;
+
+    if(ca_stream->backup_bad_streak < 255)
+        ca_stream->backup_bad_streak += 1;
+
+    if(ca_stream->backup_bad_streak < CAM_BACKUP_SUSPEND_BAD_STREAK)
+        return;
+
+    const uint64_t now_us = asc_utime();
+    ca_stream->backup_suspend_until_us = now_us + (uint64_t)CAM_BACKUP_SUSPEND_MS * 1000ULL;
+    ca_stream->backup_suspend_count += 1;
+    ca_stream->backup_bad_streak = 0;
+    asc_log_warning(MSG("cam_backup suspended for %dms (reason: %s)"),
+                    CAM_BACKUP_SUSPEND_MS, reason ? reason : "bad_response");
+}
+
+static inline void ca_stream_stat_rtt_cam(ca_stream_t *ca_stream, bool is_backup, uint64_t ms)
+{
+    uint64_t *ema = is_backup ? &ca_stream->stat_rtt_backup_ema_ms : &ca_stream->stat_rtt_primary_ema_ms;
+    if(*ema == 0)
+        *ema = ms;
+    else
+        *ema = ((*ema * 7ULL) + ms) / 8ULL;
+}
+
 static void module_backup_active_set(module_data_t *mod, bool active, uint64_t now_us)
 {
     if(active)
@@ -402,6 +527,83 @@ static void module_backup_active_set(module_data_t *mod, bool active, uint64_t n
     }
 }
 
+static void ca_stream_cancel_backup_send(ca_stream_t *ca_stream)
+{
+    if(ca_stream->backup_timer)
+    {
+        asc_timer_destroy(ca_stream->backup_timer);
+        ca_stream->backup_timer = NULL;
+    }
+    ca_stream->backup_ecm_pending = false;
+}
+
+static void ca_stream_cancel_prefer_primary(ca_stream_t *ca_stream)
+{
+    if(ca_stream->prefer_primary_timer)
+    {
+        asc_timer_destroy(ca_stream->prefer_primary_timer);
+        ca_stream->prefer_primary_timer = NULL;
+    }
+    ca_stream->prefer_primary_pending = false;
+    ca_stream->prefer_primary_mask = 0;
+}
+
+static void ca_stream_stage_new_key(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool from_backup)
+{
+    ca_stream->new_key_id = mask;
+    ca_stream->new_key_from_backup = from_backup;
+    if(mask & 0x01)
+        memcpy(&ca_stream->new_key[0], &key16[0], 8);
+    if(mask & 0x02)
+        memcpy(&ca_stream->new_key[8], &key16[8], 8);
+}
+
+static bool ca_stream_send_backup_pending(module_data_t *mod, ca_stream_t *ca_stream)
+{
+    if(!mod->cam_backup || !mod->cam_backup->is_ready)
+        return false;
+    if(ca_stream_backup_is_suspended(ca_stream, asc_utime()))
+        return false;
+    if(!ca_stream->backup_ecm_buf || ca_stream->backup_ecm_len == 0)
+        return false;
+
+    mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
+                             ca_stream->backup_ecm_buf, ca_stream->backup_ecm_len);
+    ca_stream->sendtime_backup = asc_utime();
+    ca_stream->stat_ecm_sent_backup += 1;
+    return true;
+}
+
+static void ca_stream_apply_keys_from_cam(module_data_t *mod, ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool is_backup, bool is_cw_checksum_ok)
+{
+    if(mask == 0)
+        mask = 3;
+
+    if(ca_stream->active_key_set && memcmp(key16, ca_stream->active_key, sizeof(ca_stream->active_key)) == 0)
+    {
+        /* Avoid staging/reapplying identical keys (common with redundant CAM responses). */
+        return;
+    }
+
+    if(!ca_stream->is_keys)
+        ca_stream->is_keys = true;
+
+    if(mod->key_guard && (mod->dual_cam || ca_stream->active_key_set))
+    {
+        /* Guarded switch: validate candidate keys on PES headers before applying. */
+        ca_stream_guard_set_candidate(ca_stream, key16, mask, mod->dual_cam, is_backup);
+        if(!is_cw_checksum_ok && asc_log_is_debug())
+            asc_log_debug(MSG("key_guard: candidate keys staged (checksum mismatch)"));
+    }
+    else
+    {
+        /* Immediate apply path (legacy behavior) */
+        ca_stream_stage_new_key(ca_stream, key16, mask, is_backup);
+        if(mask == 3 && ca_stream->active_key_set && asc_log_is_debug())
+            asc_log_debug(MSG("Both keys changed"));
+    }
+}
+
 static void on_cam_backup_hedge(void *arg)
 {
     cam_backup_timer_arg_t *ctx = (cam_backup_timer_arg_t *)arg;
@@ -414,26 +616,42 @@ static void on_cam_backup_hedge(void *arg)
     ca_stream->backup_timer = NULL;
     ca_stream->backup_ecm_pending = false;
 
-    if(!mod->cam_backup || !mod->cam_backup->is_ready)
-        return;
-    if(!ca_stream->backup_ecm_buf || ca_stream->backup_ecm_len == 0)
+    ca_stream_send_backup_pending(mod, ca_stream);
+}
+
+static void on_cam_prefer_primary(void *arg)
+{
+    cam_backup_timer_arg_t *ctx = (cam_backup_timer_arg_t *)arg;
+    if(!ctx || !ctx->mod || !ctx->stream)
         return;
 
-    mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
-                             ca_stream->backup_ecm_buf, ca_stream->backup_ecm_len);
-    ca_stream->sendtime_backup = asc_utime();
+    module_data_t *mod = ctx->mod;
+    ca_stream_t *ca_stream = ctx->stream;
+    ca_stream->prefer_primary_timer = NULL;
+
+    if(!ca_stream->prefer_primary_pending || ca_stream->prefer_primary_mask == 0)
+        return;
+
+    ca_stream->prefer_primary_pending = false;
+    ca_stream_apply_keys_from_cam(mod,
+                                  ca_stream,
+                                  ca_stream->prefer_primary_key,
+                                  ca_stream->prefer_primary_mask,
+                                  true,
+                                  ca_stream->prefer_primary_checksum_ok);
 }
 
 static void ca_stream_guard_clear(ca_stream_t *ca_stream)
 {
     ca_stream->cand_pending = false;
     ca_stream->cand_mask = 0;
+    ca_stream->cand_from_backup = false;
     ca_stream->cand_set_us = 0;
     ca_stream->cand_ok_count = 0;
     ca_stream->cand_fail_count = 0;
 }
 
-static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial)
+static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial, bool from_backup)
 {
     if(mask == 0)
         return;
@@ -471,6 +689,7 @@ static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t 
     ca_stream->cand_pending = true;
     ca_stream->cand_mask = cand_mask;
     ca_stream->cand_set_us = asc_utime();
+    ca_stream->cand_from_backup = from_backup;
     ca_stream->cand_ok_count = 0;
     ca_stream->cand_fail_count = 0;
 
@@ -1057,8 +1276,12 @@ static void on_em(void *arg, mpegts_psi_t *psi)
     }
 
     const bool is_ecm = (em_type == 0x80 || em_type == 0x81);
+    if(is_ecm && ca_stream->prefer_primary_pending)
+        ca_stream_cancel_prefer_primary(ca_stream);
+
     bool sent_primary = false;
     bool sent = false;
+    const uint64_t now_us = asc_utime();
     if(mod->cam_primary && mod->cam_primary->is_ready)
     {
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_primary->disable_emm)
@@ -1066,6 +1289,8 @@ static void on_em(void *arg, mpegts_psi_t *psi)
             mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, &ca_stream->arg_primary,
                                       psi->buffer, psi->buffer_size);
             ca_stream->sendtime_primary = asc_utime();
+            if(is_ecm)
+                ca_stream->stat_ecm_sent_primary += 1;
             sent_primary = true;
             sent = true;
         }
@@ -1074,32 +1299,71 @@ static void on_em(void *arg, mpegts_psi_t *psi)
     {
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_backup->disable_emm)
         {
-            if(is_ecm && mod->cam_backup_hedge_ms > 0 && sent_primary)
+            if(is_ecm && ca_stream_backup_is_suspended(ca_stream, now_us))
             {
-                if(ca_stream->backup_timer)
+                __uarg(sent);
+                return;
+            }
+
+            if(is_ecm)
+            {
+                if(mod->cam_backup_mode == CAM_BACKUP_MODE_FAILOVER && sent_primary)
                 {
-                    asc_timer_destroy(ca_stream->backup_timer);
-                    ca_stream->backup_timer = NULL;
+                    const uint32_t timeout_ms = (mod->cam_backup_hedge_ms > 0)
+                        ? mod->cam_backup_hedge_ms
+                        : CAM_FAILOVER_TIMEOUT_DEFAULT_MS;
+                    ca_stream_cancel_backup_send(ca_stream);
+                    ca_stream->backup_ecm_buf = realloc(ca_stream->backup_ecm_buf, psi->buffer_size);
+                    if(ca_stream->backup_ecm_buf)
+                    {
+                        memcpy(ca_stream->backup_ecm_buf, psi->buffer, psi->buffer_size);
+                        ca_stream->backup_ecm_len = psi->buffer_size;
+                        ca_stream->backup_ecm_pending = true;
+                        ca_stream->backup_timer = asc_timer_one_shot(timeout_ms,
+                                                                     on_cam_backup_hedge,
+                                                                     &ca_stream->backup_timer_arg);
+                        sent = true;
+                    }
+                    return;
                 }
-                ca_stream->backup_ecm_buf = realloc(ca_stream->backup_ecm_buf, psi->buffer_size);
-                if(ca_stream->backup_ecm_buf)
+
+                if(mod->cam_backup_mode == CAM_BACKUP_MODE_HEDGE && sent_primary)
                 {
-                    memcpy(ca_stream->backup_ecm_buf, psi->buffer, psi->buffer_size);
-                    ca_stream->backup_ecm_len = psi->buffer_size;
-                    ca_stream->backup_ecm_pending = true;
-                    ca_stream->backup_timer = asc_timer_one_shot(mod->cam_backup_hedge_ms,
-                                                                 on_cam_backup_hedge,
-                                                                 &ca_stream->backup_timer_arg);
-                    sent = true;
+                    if(mod->cam_backup_hedge_ms == 0 && !mod->cam_backup_hedge_warned)
+                    {
+                        mod->cam_backup_hedge_warned = true;
+                        asc_log_warning(MSG("cam_backup_mode=hedge with cam_backup_hedge_ms=0 behaves like race"));
+                    }
+
+                    if(mod->cam_backup_hedge_ms > 0)
+                    {
+                        ca_stream_cancel_backup_send(ca_stream);
+                        ca_stream->backup_ecm_buf = realloc(ca_stream->backup_ecm_buf, psi->buffer_size);
+                        if(ca_stream->backup_ecm_buf)
+                        {
+                            memcpy(ca_stream->backup_ecm_buf, psi->buffer, psi->buffer_size);
+                            ca_stream->backup_ecm_len = psi->buffer_size;
+                            ca_stream->backup_ecm_pending = true;
+                            ca_stream->backup_timer = asc_timer_one_shot(mod->cam_backup_hedge_ms,
+                                                                         on_cam_backup_hedge,
+                                                                         &ca_stream->backup_timer_arg);
+                            sent = true;
+                            return;
+                        }
+                    }
                 }
             }
-            else
-            {
-                mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
-                                         psi->buffer, psi->buffer_size);
-                ca_stream->sendtime_backup = asc_utime();
-                sent = true;
-            }
+
+            if(is_ecm && mod->cam_backup_mode == CAM_BACKUP_MODE_FAILOVER && sent_primary)
+                return;
+
+            ca_stream_cancel_backup_send(ca_stream);
+            mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
+                                     psi->buffer, psi->buffer_size);
+            ca_stream->sendtime_backup = asc_utime();
+            if(is_ecm)
+                ca_stream->stat_ecm_sent_backup += 1;
+            sent = true;
         }
     }
     __uarg(sent);
@@ -1146,6 +1410,8 @@ static void decrypt(module_data_t *mod)
         }
 
         // check new key
+        bool applied_key = false;
+        const bool applied_from_backup = ca_stream->new_key_from_backup;
         switch(ca_stream->new_key_id)
         {
             case 0:
@@ -1155,12 +1421,14 @@ static void decrypt(module_data_t *mod)
                 ca_stream_set_active_key(ca_stream, 1, ca_stream->new_key);
                 ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
+                applied_key = true;
                 break;
             case 2:
                 ca_stream_set_keys(ca_stream, NULL, &ca_stream->new_key[8]);
                 ca_stream_set_active_key(ca_stream, 2, ca_stream->new_key);
                 ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
+                applied_key = true;
                 break;
             case 3:
                 ca_stream_set_keys(  ca_stream
@@ -1169,7 +1437,24 @@ static void decrypt(module_data_t *mod)
                 ca_stream_set_active_key(ca_stream, 3, ca_stream->new_key);
                 ca_stream_guard_clear(ca_stream);
                 ca_stream->new_key_id = 0;
+                applied_key = true;
                 break;
+            default:
+                ca_stream->new_key_id = 0;
+                break;
+        }
+        if(applied_key)
+        {
+            if(applied_from_backup)
+            {
+                ca_stream->stat_cw_applied_backup += 1;
+                ca_stream_backup_mark_good(ca_stream);
+            }
+            else
+            {
+                ca_stream->stat_cw_applied_primary += 1;
+            }
+            ca_stream->new_key_from_backup = false;
         }
     }
 
@@ -1266,16 +1551,25 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
 
                     if(ca_stream->cand_ok_count >= 2)
                     {
-                        ca_stream->new_key_id = ca_stream->cand_mask;
-                        memcpy(ca_stream->new_key, ca_stream->cand_key, sizeof(ca_stream->new_key));
+                        ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
                         if(asc_log_is_debug())
                             asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
                         ca_stream_guard_clear(ca_stream);
                     }
                     else if(ca_stream->cand_fail_count >= 2)
                     {
+                        const bool cand_from_backup = ca_stream->cand_from_backup;
                         if(asc_log_is_debug())
                             asc_log_debug(MSG("key_guard: candidate keys rejected (mask:%u)"), (unsigned)ca_stream->cand_mask);
+                        if(cand_from_backup)
+                        {
+                            ca_stream->stat_key_guard_reject_backup += 1;
+                            ca_stream_backup_mark_bad(mod, ca_stream, "key_guard_reject");
+                        }
+                        else
+                        {
+                            ca_stream->stat_key_guard_reject_primary += 1;
+                        }
                         ca_stream_guard_clear(ca_stream);
                         ca_stream->last_ecm_ok = false;
                         ca_stream->last_ecm_send_us = 0;
@@ -1480,7 +1774,10 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         else
             ca_stream->stat_ecm_ok_primary += 1;
         if(sendtime)
+        {
             ca_stream_stat_rtt(ca_stream, responsetime);
+            ca_stream_stat_rtt_cam(ca_stream, is_backup, responsetime);
+        }
 
         ca_stream->last_ecm_ok = true;
         ca_stream->ecm_fail_count = 0;
@@ -1489,11 +1786,16 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
         if(mod->dual_cam)
             module_backup_active_set(mod, is_backup, now_us);
 
+        if(is_backup)
+            ca_stream_backup_mark_good(ca_stream);
+
         if(!is_backup && ca_stream->backup_timer)
         {
-            asc_timer_destroy(ca_stream->backup_timer);
-            ca_stream->backup_timer = NULL;
-            ca_stream->backup_ecm_pending = false;
+            ca_stream_cancel_backup_send(ca_stream);
+        }
+        if(!is_backup && ca_stream->prefer_primary_pending)
+        {
+            ca_stream_cancel_prefer_primary(ca_stream);
         }
 
         if(!is_cw_checksum_ok && asc_log_is_debug())
@@ -1520,26 +1822,20 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
                 mask = 2;
         }
 
-        if(!ca_stream->is_keys)
-            ca_stream->is_keys = true;
-
-        if(mod->key_guard && (mod->dual_cam || ca_stream->active_key_set))
+        if(is_backup && mod->cam_prefer_primary_ms > 0 && mod->cam_primary && mod->cam_primary->is_ready)
         {
-            /* Guarded switch: validate candidate keys on PES headers before applying. */
-            ca_stream_guard_set_candidate(ca_stream, key16, mask, mod->dual_cam);
-            if(!is_cw_checksum_ok && asc_log_is_debug())
-                asc_log_debug(MSG("key_guard: candidate keys staged (checksum mismatch)"));
+            ca_stream_cancel_prefer_primary(ca_stream);
+            memcpy(ca_stream->prefer_primary_key, key16, sizeof(ca_stream->prefer_primary_key));
+            ca_stream->prefer_primary_mask = mask;
+            ca_stream->prefer_primary_checksum_ok = is_cw_checksum_ok;
+            ca_stream->prefer_primary_pending = true;
+            ca_stream->prefer_primary_timer = asc_timer_one_shot(mod->cam_prefer_primary_ms,
+                                                                 on_cam_prefer_primary,
+                                                                 &ca_stream->prefer_primary_timer_arg);
         }
         else
         {
-            /* Immediate apply path (legacy behavior) */
-            ca_stream->new_key_id = mask;
-            if(mask & 0x01)
-                memcpy(&ca_stream->new_key[0], &key16[0], 8);
-            if(mask & 0x02)
-                memcpy(&ca_stream->new_key[8], &key16[8], 8);
-            if(mask == 3 && ca_stream->active_key_set && asc_log_is_debug())
-                asc_log_debug(MSG("Both keys changed"));
+            ca_stream_apply_keys_from_cam(mod, ca_stream, key16, mask, is_backup, is_cw_checksum_ok);
         }
 
         if(asc_log_is_debug())
@@ -1554,18 +1850,44 @@ void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
     }
     else
     {
+        if(!is_backup && ca_stream->prefer_primary_pending && ca_stream->prefer_primary_mask != 0)
+        {
+            uint8_t key16[16];
+            const uint8_t mask = ca_stream->prefer_primary_mask;
+            const bool checksum_ok = ca_stream->prefer_primary_checksum_ok;
+            memcpy(key16, ca_stream->prefer_primary_key, sizeof(key16));
+            ca_stream_cancel_prefer_primary(ca_stream);
+            ca_stream_apply_keys_from_cam(mod, ca_stream, key16, mask, true, checksum_ok);
+        }
+
         const uint64_t now_us = asc_utime();
         const uint64_t sendtime = is_backup ? ca_stream->sendtime_backup : ca_stream->sendtime_primary;
         const uint64_t responsetime = sendtime ? (now_us - sendtime) / 1000 : 0;
         ca_stream->stat_ecm_not_found += 1;
+        if(is_backup)
+            ca_stream->stat_ecm_not_found_backup += 1;
+        else
+            ca_stream->stat_ecm_not_found_primary += 1;
         if(sendtime)
+        {
             ca_stream_stat_rtt(ca_stream, responsetime);
+            ca_stream_stat_rtt_cam(ca_stream, is_backup, responsetime);
+        }
 
         if(mod->dual_cam && ca_stream->last_ecm_ok_us && (now_us - ca_stream->last_ecm_ok_us) < 500000ULL)
         {
             /* In dual-CAM mode one CAM can reply Not Found while the other already provided keys. */
             return;
         }
+
+        if(!is_backup && ca_stream->backup_ecm_pending)
+        {
+            ca_stream_cancel_backup_send(ca_stream);
+            ca_stream_send_backup_pending(mod, ca_stream);
+        }
+
+        if(is_backup)
+            ca_stream_backup_mark_bad(mod, ca_stream, "not_found");
 
         ca_stream->last_ecm_ok = false;
         if(ca_stream->ecm_fail_count != UINT32_MAX)
@@ -1603,6 +1925,38 @@ static void module_init(module_data_t *mod)
     asc_assert(mod->name != NULL, "[decrypt] option 'name' is required");
 
     module_option_boolean("key_guard", &mod->key_guard);
+
+    mod->cam_backup_mode = CAM_BACKUP_MODE_HEDGE;
+    const char *cam_backup_mode_opt = NULL;
+    module_option_string("cam_backup_mode", &cam_backup_mode_opt, NULL);
+    if(cam_backup_mode_opt)
+    {
+        mod->cam_backup_mode = cam_backup_mode_parse(cam_backup_mode_opt);
+        if(  strcasecmp(cam_backup_mode_opt, "race")
+          && strcasecmp(cam_backup_mode_opt, "hedge")
+          && strcasecmp(cam_backup_mode_opt, "failover"))
+        {
+            asc_log_warning(MSG("unknown cam_backup_mode '%s', fallback to 'hedge'"), cam_backup_mode_opt);
+        }
+    }
+
+    int cam_backup_hedge_ms = 80;
+    module_option_number("cam_backup_hedge_ms", &cam_backup_hedge_ms);
+    if(cam_backup_hedge_ms < 0)
+        cam_backup_hedge_ms = 0;
+    if(cam_backup_hedge_ms > CAM_BACKUP_HEDGE_MAX_MS)
+        cam_backup_hedge_ms = CAM_BACKUP_HEDGE_MAX_MS;
+    mod->cam_backup_hedge_ms = (uint32_t)cam_backup_hedge_ms;
+    mod->cam_backup_hedge_us = (uint64_t)mod->cam_backup_hedge_ms * 1000ULL;
+
+    int cam_prefer_primary_ms = 30;
+    module_option_number("cam_prefer_primary_ms", &cam_prefer_primary_ms);
+    if(cam_prefer_primary_ms < 0)
+        cam_prefer_primary_ms = 0;
+    if(cam_prefer_primary_ms > CAM_PREFER_PRIMARY_MAX_MS)
+        cam_prefer_primary_ms = CAM_PREFER_PRIMARY_MAX_MS;
+    mod->cam_prefer_primary_ms = (uint32_t)cam_prefer_primary_ms;
+    mod->cam_prefer_primary_us = (uint64_t)mod->cam_prefer_primary_ms * 1000ULL;
 
     mod->stream[0] = mpegts_psi_init(MPEGTS_PACKET_PAT, 0);
     mod->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, MAX_PID);
@@ -1689,8 +2043,18 @@ static void module_init(module_data_t *mod)
                 mod->key_guard = true;
             }
             module_cam_attach_decrypt(mod->cam_backup, &mod->__decrypt);
+            if(mod->cam_backup_mode == CAM_BACKUP_MODE_HEDGE && mod->cam_backup_hedge_ms == 0)
+            {
+                mod->cam_backup_hedge_warned = true;
+                asc_log_warning(MSG("cam_backup_mode=hedge with cam_backup_hedge_ms=0 behaves like race"));
+            }
             if(asc_log_is_debug())
-                asc_log_debug(MSG("dual CAM enabled (primary+backup)"));
+            {
+                asc_log_debug(MSG("dual CAM enabled (primary+backup) mode:%s hedge:%ums prefer_primary:%ums"),
+                              cam_backup_mode_name(mod->cam_backup_mode),
+                              (unsigned)mod->cam_backup_hedge_ms,
+                              (unsigned)mod->cam_prefer_primary_ms);
+            }
         }
     }
     lua_pop(lua, 1);
@@ -1807,6 +2171,12 @@ static int method_stats(module_data_t *mod)
     lua_pushinteger(lua, (lua_Integer)mod->cam_backup_hedge_ms);
     lua_setfield(lua, -2, "cam_backup_hedge_ms");
 
+    lua_pushstring(lua, cam_backup_mode_name(mod->cam_backup_mode));
+    lua_setfield(lua, -2, "cam_backup_mode");
+
+    lua_pushinteger(lua, (lua_Integer)mod->cam_prefer_primary_ms);
+    lua_setfield(lua, -2, "cam_prefer_primary_ms");
+
     const uint64_t now_us = asc_utime();
     uint64_t backup_ms = mod->backup_active_ms;
     if(mod->backup_active && mod->backup_active_since_us)
@@ -1840,9 +2210,39 @@ static int method_stats(module_data_t *mod)
     /* per-ECM PID stats */
     lua_newtable(lua);
     int idx = 1;
+    uint64_t stat_primary_ok = 0;
+    uint64_t stat_backup_ok = 0;
+    uint64_t stat_backup_bad = 0;
+    uint64_t stat_primary_rtt_sum = 0;
+    uint64_t stat_backup_rtt_sum = 0;
+    uint64_t stat_primary_rtt_count = 0;
+    uint64_t stat_backup_rtt_count = 0;
+    bool backup_suspended = false;
+    uint64_t backup_suspend_left_ms = 0;
     asc_list_for(mod->ca_list)
     {
         ca_stream_t *ca_stream = asc_list_data(mod->ca_list);
+
+        stat_primary_ok += ca_stream->stat_ecm_ok_primary;
+        stat_backup_ok += ca_stream->stat_ecm_ok_backup;
+        stat_backup_bad += ca_stream->stat_ecm_not_found_backup + ca_stream->stat_key_guard_reject_backup;
+        if(ca_stream->stat_rtt_primary_ema_ms)
+        {
+            stat_primary_rtt_sum += ca_stream->stat_rtt_primary_ema_ms;
+            stat_primary_rtt_count += 1;
+        }
+        if(ca_stream->stat_rtt_backup_ema_ms)
+        {
+            stat_backup_rtt_sum += ca_stream->stat_rtt_backup_ema_ms;
+            stat_backup_rtt_count += 1;
+        }
+        if(ca_stream->backup_suspend_until_us > now_us)
+        {
+            const uint64_t left_ms = (ca_stream->backup_suspend_until_us - now_us) / 1000ULL;
+            backup_suspended = true;
+            if(left_ms > backup_suspend_left_ms)
+                backup_suspend_left_ms = left_ms;
+        }
 
         lua_newtable(lua);
 
@@ -1876,6 +2276,10 @@ static int method_stats(module_data_t *mod)
         lua_newtable(lua);
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_sent);
         lua_setfield(lua, -2, "sent");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_sent_primary);
+        lua_setfield(lua, -2, "sent_primary");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_sent_backup);
+        lua_setfield(lua, -2, "sent_backup");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_retry);
         lua_setfield(lua, -2, "retry");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_ok);
@@ -1886,6 +2290,18 @@ static int method_stats(module_data_t *mod)
         lua_setfield(lua, -2, "ok_backup");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_not_found);
         lua_setfield(lua, -2, "not_found");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_not_found_primary);
+        lua_setfield(lua, -2, "not_found_primary");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_ecm_not_found_backup);
+        lua_setfield(lua, -2, "not_found_backup");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_key_guard_reject_primary);
+        lua_setfield(lua, -2, "key_guard_reject_primary");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_key_guard_reject_backup);
+        lua_setfield(lua, -2, "key_guard_reject_backup");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_cw_applied_primary);
+        lua_setfield(lua, -2, "cw_applied_primary");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_cw_applied_backup);
+        lua_setfield(lua, -2, "cw_applied_backup");
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_count);
         lua_setfield(lua, -2, "rtt_count");
         if(ca_stream->stat_rtt_count)
@@ -1902,6 +2318,26 @@ static int method_stats(module_data_t *mod)
         {
             lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_max_ms);
             lua_setfield(lua, -2, "rtt_max_ms");
+        }
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_primary_ema_ms);
+        lua_setfield(lua, -2, "primary_rtt_ms");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_backup_ema_ms);
+        lua_setfield(lua, -2, "backup_rtt_ms");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->backup_bad_streak);
+        lua_setfield(lua, -2, "backup_bad_streak");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->backup_suspend_count);
+        lua_setfield(lua, -2, "backup_suspend_count");
+        if(ca_stream->backup_suspend_until_us > now_us)
+        {
+            lua_pushboolean(lua, true);
+            lua_setfield(lua, -2, "backup_suspended");
+            lua_pushinteger(lua, (lua_Integer)((ca_stream->backup_suspend_until_us - now_us) / 1000ULL));
+            lua_setfield(lua, -2, "backup_suspend_left_ms");
+        }
+        else
+        {
+            lua_pushboolean(lua, false);
+            lua_setfield(lua, -2, "backup_suspended");
         }
         lua_newtable(lua);
         lua_pushinteger(lua, (lua_Integer)ca_stream->stat_rtt_hist[0]);
@@ -1937,6 +2373,27 @@ static int method_stats(module_data_t *mod)
         idx += 1;
     }
     lua_setfield(lua, -2, "ca_streams");
+
+    lua_pushinteger(lua, (lua_Integer)stat_primary_ok);
+    lua_setfield(lua, -2, "primary_ok");
+    lua_pushinteger(lua, (lua_Integer)stat_backup_ok);
+    lua_setfield(lua, -2, "backup_ok");
+    lua_pushinteger(lua, (lua_Integer)stat_backup_bad);
+    lua_setfield(lua, -2, "backup_bad");
+    if(stat_primary_rtt_count)
+    {
+        lua_pushinteger(lua, (lua_Integer)(stat_primary_rtt_sum / stat_primary_rtt_count));
+        lua_setfield(lua, -2, "primary_rtt_ms");
+    }
+    if(stat_backup_rtt_count)
+    {
+        lua_pushinteger(lua, (lua_Integer)(stat_backup_rtt_sum / stat_backup_rtt_count));
+        lua_setfield(lua, -2, "backup_rtt_ms");
+    }
+    lua_pushboolean(lua, backup_suspended);
+    lua_setfield(lua, -2, "backup_suspended");
+    lua_pushinteger(lua, (lua_Integer)backup_suspend_left_ms);
+    lua_setfield(lua, -2, "backup_suspend_left_ms");
 
     return 1;
 }

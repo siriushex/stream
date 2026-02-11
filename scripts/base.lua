@@ -1649,14 +1649,43 @@ function init_input(conf)
             end
 
             -- Optional dual-CAM hedge: send ECM to backup only after this delay (ms).
-            local cam_backup_hedge_ms = 0
+            local cam_backup_hedge_ms = tonumber(conf.cam_backup_hedge_ms or conf.dual_cam_hedge_ms)
             if opts and type(opts.raw_cfg) == "table" then
                 local raw = opts.raw_cfg
-                local hv = raw.cam_backup_hedge_ms or raw.dual_cam_hedge_ms or 0
-                cam_backup_hedge_ms = tonumber(hv) or 0
+                if cam_backup_hedge_ms == nil then
+                    local hv = raw.cam_backup_hedge_ms or raw.dual_cam_hedge_ms
+                    cam_backup_hedge_ms = tonumber(hv)
+                end
+            end
+            if cam_backup_hedge_ms == nil then
+                cam_backup_hedge_ms = 80
             end
             if cam_backup_hedge_ms < 0 then
                 cam_backup_hedge_ms = 0
+            end
+
+            -- Strategy for backup CAM: race / hedge / failover.
+            local cam_backup_mode = conf.cam_backup_mode
+            if cam_backup_mode == nil and opts and type(opts.raw_cfg) == "table" then
+                cam_backup_mode = opts.raw_cfg.cam_backup_mode
+            end
+            if cam_backup_mode ~= nil then
+                cam_backup_mode = tostring(cam_backup_mode):lower()
+                if cam_backup_mode ~= "race" and cam_backup_mode ~= "hedge" and cam_backup_mode ~= "failover" then
+                    cam_backup_mode = nil
+                end
+            end
+
+            -- Prefer primary CW in a short window when backup responds first.
+            local cam_prefer_primary_ms = tonumber(conf.cam_prefer_primary_ms)
+            if cam_prefer_primary_ms == nil and opts and type(opts.raw_cfg) == "table" then
+                cam_prefer_primary_ms = tonumber(opts.raw_cfg.cam_prefer_primary_ms)
+            end
+            if cam_prefer_primary_ms == nil then
+                cam_prefer_primary_ms = 30
+            end
+            if cam_prefer_primary_ms < 0 then
+                cam_prefer_primary_ms = 0
             end
 
             -- shift: if stream doesn't specify one, allow softcam entry to provide a default.
@@ -1683,6 +1712,8 @@ function init_input(conf)
                 shift = shift,
                 key_guard = key_guard,
                 cam_backup_hedge_ms = cam_backup_hedge_ms,
+                cam_backup_mode = cam_backup_mode,
+                cam_prefer_primary_ms = cam_prefer_primary_ms,
             })
             instance.tail = instance.decrypt
         end
