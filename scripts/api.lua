@@ -2089,6 +2089,24 @@ local function stream_analyze_finish(job, status, err)
         job.error = err
     end
     dvb_scan_build_channels(job)
+    do
+        local list = {}
+        for _, channel in ipairs(job.channels or {}) do
+            if type(channel) == "table" then
+                table.insert(list, {
+                    pnr = channel.pnr,
+                    pmt_pid = channel.pmt_pid,
+                    pcr = channel.pcr,
+                    name = channel.name,
+                    provider = channel.provider,
+                })
+            end
+        end
+        table.sort(list, function(a, b)
+            return (tonumber(a.pnr) or 0) < (tonumber(b.pnr) or 0)
+        end)
+        job.program_list = list
+    end
     local program_count = 0
     for _ in pairs(job.programs or {}) do
         program_count = program_count + 1
@@ -2141,6 +2159,139 @@ local function stream_analyze_payload(job)
         return nil
     end
     local include_scan_details = (job.status ~= "running")
+
+    local function copy_cas_rows(rows)
+        local out = {}
+        for _, row in ipairs(rows or {}) do
+            if type(row) == "table" then
+                table.insert(out, {
+                    caid = tonumber(row.caid),
+                    pid = tonumber(row.pid),
+                })
+            end
+        end
+        return out
+    end
+
+    local function copy_stream_rows(rows)
+        local out = {}
+        for _, row in ipairs(rows or {}) do
+            if type(row) == "table" then
+                table.insert(out, {
+                    pid = tonumber(row.pid),
+                    type_name = row.type,
+                    type_id = tonumber(row.type_id),
+                    lang = row.lang,
+                    cas = copy_cas_rows(row.cas),
+                })
+            end
+        end
+        return out
+    end
+
+    local channels = nil
+    local programs = nil
+    local program_list = nil
+    if include_scan_details then
+        channels = {}
+        programs = {}
+        program_list = {}
+        for _, channel in ipairs(job.channels or {}) do
+            if type(channel) == "table" then
+                local video = copy_stream_rows(channel.video)
+                local audio = copy_stream_rows(channel.audio)
+                local channel_copy = {
+                    pnr = tonumber(channel.pnr),
+                    name = channel.name,
+                    provider = channel.provider,
+                    pmt_pid = tonumber(channel.pmt_pid),
+                    pcr = tonumber(channel.pcr),
+                    cas = copy_cas_rows(channel.cas),
+                    video = video,
+                    audio = audio,
+                }
+                table.insert(channels, channel_copy)
+                table.insert(program_list, {
+                    pnr = channel_copy.pnr,
+                    pmt_pid = channel_copy.pmt_pid,
+                    pcr = channel_copy.pcr,
+                    name = channel_copy.name,
+                    provider = channel_copy.provider,
+                })
+
+                local streams = {}
+                for _, row in ipairs(video) do
+                    table.insert(streams, {
+                        pid = row.pid,
+                        type_name = row.type_name,
+                        type_id = row.type_id,
+                    })
+                end
+                for _, row in ipairs(audio) do
+                    table.insert(streams, {
+                        pid = row.pid,
+                        type_name = row.type_name,
+                        type_id = row.type_id,
+                        lang = row.lang,
+                    })
+                end
+                table.insert(programs, {
+                    pnr = channel_copy.pnr,
+                    pmt_pid = channel_copy.pmt_pid,
+                    pcr = channel_copy.pcr,
+                    name = channel_copy.name,
+                    provider = channel_copy.provider,
+                    cas = copy_cas_rows(channel.cas),
+                    streams = streams,
+                })
+            end
+        end
+        table.sort(channels, function(a, b)
+            return (a.pnr or 0) < (b.pnr or 0)
+        end)
+        table.sort(programs, function(a, b)
+            return (a.pnr or 0) < (b.pnr or 0)
+        end)
+        table.sort(program_list, function(a, b)
+            return (a.pnr or 0) < (b.pnr or 0)
+        end)
+    end
+
+    local pids = {}
+    for _, row in ipairs(job.pids or {}) do
+        if type(row) == "table" then
+            table.insert(pids, {
+                pid = tonumber(row.pid),
+                bitrate = tonumber(row.bitrate),
+                cc_error = tonumber(row.cc_error) or 0,
+                pes_error = tonumber(row.pes_error) or 0,
+                sc_error = tonumber(row.sc_error) or 0,
+            })
+        end
+    end
+
+    local totals = nil
+    if type(job.totals) == "table" then
+        totals = {
+            bitrate = tonumber(job.totals.bitrate) or 0,
+            cc_errors = tonumber(job.totals.cc_errors) or 0,
+            pes_errors = tonumber(job.totals.pes_errors) or 0,
+            scrambled = job.totals.scrambled == true,
+        }
+    end
+
+    local summary = nil
+    if type(job.summary) == "table" then
+        summary = {
+            programs = tonumber(job.summary.programs) or 0,
+            channels = tonumber(job.summary.channels) or 0,
+            bitrate = tonumber(job.summary.bitrate) or 0,
+            cc_errors = tonumber(job.summary.cc_errors) or 0,
+            pes_errors = tonumber(job.summary.pes_errors) or 0,
+            scrambled = job.summary.scrambled == true,
+        }
+    end
+
     return {
         id = job.id,
         status = job.status,
@@ -2151,12 +2302,12 @@ local function stream_analyze_payload(job)
         started_at = job.started_at,
         finished_at = job.finished_at,
         error = job.error,
-        totals = job.totals,
-        summary = job.summary,
-        pids = job.pids,
-        programs = include_scan_details and job.programs or nil,
-        program_list = include_scan_details and job.program_list or nil,
-        channels = include_scan_details and job.channels or nil,
+        totals = totals,
+        summary = summary,
+        pids = pids,
+        programs = programs,
+        program_list = program_list,
+        channels = channels,
         pat_tsid = job.pat_tsid,
         pat_crc32 = job.pat_crc32,
         sdt_tsid = job.sdt_tsid,
@@ -2372,9 +2523,6 @@ local function get_stream_analyze(server, client, request, id)
     local job = stream_analyze.jobs[id]
     if not job then
         return error_response(server, client, 404, "analyze job not found")
-    end
-    if job.status ~= "running" and not job.program_list then
-        dvb_scan_build_channels(job)
     end
     json_response(server, client, 200, stream_analyze_payload(job))
 end
