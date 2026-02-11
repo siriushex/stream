@@ -782,8 +782,34 @@ LDFLAGS     = $APP_LDFLAGS
 STRIP       = $APP_STRIP
 VERSION     = $VERSION
 BPATH       = $ARG_BPATH
+ASSETS_TAR  = assets.tar
+ASSETS_OBJ  = assets_tar.o
+ASSETS_BLOB_C = assets_tar_blob.c
+ASSETS_BLOB_OBJ = assets_tar_blob.o
 
-\$(APP): $APP_OBJS \$(CORE_OBJS) \$(MODS_OBJS)
+\$(ASSETS_TAR): tools/build_assets_tar.py
+	@echo "  TAR: \$@"
+	@python3 tools/build_assets_tar.py \$@ scripts web
+
+ifeq (\$(OS),darwin)
+\$(ASSETS_BLOB_C): tools/build_assets_blob_c.py \$(ASSETS_TAR)
+	@echo "  GEN: \$@"
+	@python3 tools/build_assets_blob_c.py \$(ASSETS_TAR) \$(ASSETS_BLOB_C)
+
+\$(ASSETS_BLOB_OBJ): \$(ASSETS_BLOB_C)
+	@echo "   CC: \$@"
+	@\$(CC) \$(CFLAGS) -DASTRA_EMBEDDED_ASSETS_BLOB=1 -o \$@ -c \$<
+
+EMBEDDED_ASSETS_DEP = \$(ASSETS_BLOB_OBJ)
+else
+\$(ASSETS_OBJ): \$(ASSETS_TAR)
+	@echo "   LD: \$@"
+	@ld -r -b binary \$(ASSETS_TAR) -o \$(ASSETS_OBJ)
+
+EMBEDDED_ASSETS_DEP = \$(ASSETS_OBJ)
+endif
+
+\$(APP): $APP_OBJS \$(CORE_OBJS) \$(MODS_OBJS) \$(EMBEDDED_ASSETS_DEP)
 	@echo "BUILD: \$@"
 	@\$(LD) \$^ -o \$@ \$(LDFLAGS)
 	@\$(STRIP) \$@
@@ -805,6 +831,7 @@ uninstall:
 	@rm -f \$(APP) $APP_OBJS
 	@rm -f \$(MODS_OBJS)
 	@rm -f \$(CORE_OBJS)
+	@rm -f \$(ASSETS_TAR) \$(ASSETS_OBJ) \$(ASSETS_BLOB_C) \$(ASSETS_BLOB_OBJ)
 EOF
 
 exec 5>&-
