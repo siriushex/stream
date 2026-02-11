@@ -278,6 +278,9 @@ static bool __asc_socket_check_event(asc_socket_t *sock)
 
 void asc_socket_set_on_read(asc_socket_t *sock, event_callback_t on_read)
 {
+    if(!sock)
+        return;
+
     if(sock->on_read == on_read)
         return;
 
@@ -293,6 +296,9 @@ void asc_socket_set_on_read(asc_socket_t *sock, event_callback_t on_read)
 
 void asc_socket_set_on_ready(asc_socket_t * sock, event_callback_t on_ready)
 {
+    if(!sock)
+        return;
+
     if(sock->on_ready == on_ready)
         return;
 
@@ -308,6 +314,9 @@ void asc_socket_set_on_ready(asc_socket_t * sock, event_callback_t on_ready)
 
 void asc_socket_set_on_close(asc_socket_t *sock, event_callback_t on_close)
 {
+    if(!sock)
+        return;
+
     if(sock->on_close == on_close)
         return;
 

@@ -31,6 +31,9 @@
  *      headers_max        - number, max headers bytes (default: 12288)
  *      header_max         - number, max single header line bytes (default: 4096)
  *      content_length_max - number, max request body bytes (default: 8388608)
+ *      max_clients        - number, hard limit of active clients (0 = unlimited)
+ *      max_clients_per_ip - number, hard limit per remote IP (0 = unlimited)
+ *      accept_backoff_ms  - number, temporary accept pause on transient errors (default: 100)
  *      sctp         - boolean, use sctp instead of tcp
  *      route        - list, format: { { "/path", callback }, ... }
  *
@@ -65,6 +68,17 @@ struct module_data_t
     int headers_max;
     int header_max;
     int content_length_max;
+    int max_clients;
+    int max_clients_per_ip;
+    int accept_backoff_ms;
+
+    uint64_t rejected_connections;
+    uint64_t accept_errors;
+    uint64_t accept_last_error_log_ts;
+    uint64_t accept_suppressed_errors;
+    bool accept_paused;
+    bool closing;
+    asc_timer_t *accept_resume_timer;
 
     asc_list_t *routes;
 
@@ -89,6 +103,9 @@ static const char __message[] = "message";
 
 static const char __content_length[] = "Content-Length: ";
 static const char __connection_close[] = "Connection: close";
+
+static void on_server_accept(void *arg);
+static void on_accept_resume(void *arg);
 
 static size_t find_line_end(const char *buf, size_t size)
 {
@@ -138,7 +155,17 @@ static void callback(http_client_t *client)
 static void on_client_close(void *arg)
 {
     http_client_t *client = (http_client_t *)arg;
+    if(!client)
+        return;
+
     module_data_t *mod = client->mod;
+    if(!mod)
+    {
+        if(client->sock)
+            asc_socket_close(client->sock);
+        free(client);
+        return;
+    }
 
     if(!client->sock)
         return;
@@ -179,7 +206,8 @@ static void on_client_close(void *arg)
         client->content = NULL;
     }
 
-    asc_list_remove_item(mod->clients, client);
+    if(mod->clients)
+        asc_list_remove_item(mod->clients, client);
     free(client);
 }
 
@@ -873,9 +901,25 @@ void http_client_redirect(http_client_t *client, int code, const char *location)
 static void on_server_close(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
+    if(!mod)
+        return;
+
+    if(mod->closing)
+        return;
+    mod->closing = true;
+
+    if(mod->accept_resume_timer)
+    {
+        asc_timer_destroy(mod->accept_resume_timer);
+        mod->accept_resume_timer = NULL;
+    }
+    mod->accept_paused = false;
 
     if(!mod->sock)
+    {
+        mod->closing = false;
         return;
+    }
 
     asc_socket_close(mod->sock);
     mod->sock = NULL;
@@ -920,21 +964,155 @@ static void on_server_close(void *arg)
         luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_self);
         mod->idx_self = 0;
     }
+    mod->closing = false;
+}
+
+static bool is_accept_error_transient(int err)
+{
+    switch(err)
+    {
+        case EAGAIN:
+#if defined(EWOULDBLOCK) && EWOULDBLOCK != EAGAIN
+        case EWOULDBLOCK:
+#endif
+        case ECONNABORTED:
+        case ENFILE:
+        case EMFILE:
+        case ENOBUFS:
+        case ENOMEM:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void log_accept_error(module_data_t *mod, int err)
+{
+    const uint64_t now = asc_utime();
+    if(mod->accept_last_error_log_ts == 0 || (now - mod->accept_last_error_log_ts) >= 1000000ULL)
+    {
+        if(mod->accept_suppressed_errors > 0)
+        {
+            asc_log_warning(MSG("accept failed: %s (%llu similar errors suppressed)"),
+                            strerror(err),
+                            (unsigned long long)mod->accept_suppressed_errors);
+            mod->accept_suppressed_errors = 0;
+        }
+        else
+        {
+            asc_log_warning(MSG("accept failed: %s"), strerror(err));
+        }
+        mod->accept_last_error_log_ts = now;
+    }
+    else
+    {
+        ++mod->accept_suppressed_errors;
+    }
+}
+
+static void on_accept_resume(void *arg)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    if(!mod)
+        return;
+    mod->accept_resume_timer = NULL;
+    if(mod->closing)
+        return;
+    if(!mod->sock)
+        return;
+    mod->accept_paused = false;
+    asc_socket_set_on_read(mod->sock, on_server_accept);
+}
+
+static void pause_accept_temporarily(module_data_t *mod)
+{
+    if(!mod || !mod->sock || mod->accept_paused)
+        return;
+    mod->accept_paused = true;
+    asc_socket_set_on_read(mod->sock, NULL);
+    mod->accept_resume_timer = asc_timer_one_shot((unsigned int)mod->accept_backoff_ms, on_accept_resume, mod);
+}
+
+static void reject_new_connection(module_data_t *mod, http_client_t *client, const char *reason)
+{
+    static const char response[] =
+        "HTTP/1.1 503 Service Unavailable\r\n"
+        "Content-Length: 0\r\n"
+        "Connection: close\r\n\r\n";
+    ++mod->rejected_connections;
+    if(client->sock)
+    {
+        (void)asc_socket_send(client->sock, response, sizeof(response) - 1);
+        asc_socket_close(client->sock);
+        client->sock = NULL;
+    }
+    free(client);
+    if(reason)
+        asc_log_debug(MSG("connection rejected: %s"), reason);
+}
+
+static size_t count_clients_by_ip(module_data_t *mod, const char *ip)
+{
+    if(!mod || !mod->clients || !ip || !ip[0])
+        return 0;
+    size_t count = 0;
+    asc_list_for(mod->clients)
+    {
+        http_client_t *item = (http_client_t *)asc_list_data(mod->clients);
+        if(!item || !item->sock)
+            continue;
+        const char *addr = asc_socket_addr(item->sock);
+        if(addr && strcmp(addr, ip) == 0)
+            ++count;
+    }
+    return count;
 }
 
 static void on_server_accept(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
+    if(!mod || !mod->sock || !mod->clients || mod->closing)
+        return;
 
     http_client_t *client = (http_client_t *)calloc(1, sizeof(http_client_t));
+    if(!client)
+    {
+        asc_log_error(MSG("accept failed: out of memory"));
+        pause_accept_temporarily(mod);
+        return;
+    }
     client->mod = mod;
     client->idx_server = mod->idx_self;
 
     if(!asc_socket_accept(mod->sock, &client->sock, client))
     {
+        const int err = errno;
+        ++mod->accept_errors;
         free(client);
-        on_server_close(mod);
-        astra_abort(); // TODO: try to restart server
+        log_accept_error(mod, err);
+        if(is_accept_error_transient(err))
+            pause_accept_temporarily(mod);
+        return;
+    }
+
+    if(mod->max_clients > 0 && asc_list_size(mod->clients) >= (size_t)mod->max_clients)
+    {
+        reject_new_connection(mod, client, "max_clients");
+        return;
+    }
+
+    if(mod->max_clients_per_ip > 0)
+    {
+        const char *client_ip = asc_socket_addr(client->sock);
+        if(client_ip && client_ip[0])
+        {
+            size_t current_ip = count_clients_by_ip(mod, client_ip);
+            if(current_ip >= (size_t)mod->max_clients_per_ip)
+            {
+                reject_new_connection(mod, client, "max_clients_per_ip");
+                return;
+            }
+        }
     }
 
     asc_list_insert_tail(mod->clients, client);
@@ -1008,6 +1186,22 @@ static int method_abort(module_data_t *mod)
     return 0;
 }
 
+static int method_stats(module_data_t *mod)
+{
+    lua_newtable(lua);
+    lua_pushinteger(lua, (lua_Integer)asc_list_size(mod->clients));
+    lua_setfield(lua, -2, "active_clients");
+    lua_pushinteger(lua, (lua_Integer)mod->rejected_connections);
+    lua_setfield(lua, -2, "rejected_connections");
+    lua_pushinteger(lua, (lua_Integer)mod->accept_errors);
+    lua_setfield(lua, -2, "accept_errors");
+    lua_pushinteger(lua, (lua_Integer)mod->max_clients);
+    lua_setfield(lua, -2, "max_clients");
+    lua_pushinteger(lua, (lua_Integer)mod->max_clients_per_ip);
+    lua_setfield(lua, -2, "max_clients_per_ip");
+    return 1;
+}
+
 static bool lua_is_call(int idx)
 {
     bool is_call = false;
@@ -1065,6 +1259,24 @@ static void module_init(module_data_t *mod)
     module_option_number("content_length_max", &mod->content_length_max);
     if(mod->content_length_max <= 0)
         mod->content_length_max = 8 * 1024 * 1024;
+
+    mod->max_clients = 0;
+    module_option_number("max_clients", &mod->max_clients);
+    if(mod->max_clients < 0)
+        mod->max_clients = 0;
+
+    mod->max_clients_per_ip = 0;
+    module_option_number("max_clients_per_ip", &mod->max_clients_per_ip);
+    if(mod->max_clients_per_ip < 0)
+        mod->max_clients_per_ip = 0;
+
+    mod->accept_backoff_ms = 100;
+    module_option_number("accept_backoff_ms", &mod->accept_backoff_ms);
+    if(mod->accept_backoff_ms < 10)
+        mod->accept_backoff_ms = 10;
+    if(mod->accept_backoff_ms > 5000)
+        mod->accept_backoff_ms = 5000;
+    mod->closing = false;
 
     // store routes in registry
     mod->routes = asc_list_init();
@@ -1136,7 +1348,8 @@ MODULE_LUA_METHODS()
     { "close", method_close },
     { "data", method_data },
     { "redirect", method_redirect },
-    { "abort", method_abort }
+    { "abort", method_abort },
+    { "stats", method_stats }
 };
 
 MODULE_LUA_REGISTER(http_server)
