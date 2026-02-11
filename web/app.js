@@ -19538,14 +19538,15 @@ function hasSeriesData(series) {
   return Array.isArray(series) && series.some((row) => Array.isArray(row.points) && row.points.length > 0);
 }
 
-function prepareObservabilityPoints(points, fromMs, toMs, maxPoints) {
+function prepareObservabilityPoints(points, fromMs, toMs, maxPoints, options) {
+  const opts = options || {};
   const normalized = normalizeTimeseries(points || [], {
     fromX: fromMs,
     toX: toMs,
-    expandSinglePoint: true,
-    syntheticPoints: 48,
+    expandSinglePoint: opts.expandSinglePoint !== false,
+    syntheticPoints: Number.isFinite(opts.syntheticPoints) ? Number(opts.syntheticPoints) : 48,
   });
-  return downsampleMinMax(normalized, maxPoints);
+  return downsampleMinMax(normalized, Number.isFinite(opts.maxPoints) ? Number(opts.maxPoints) : maxPoints);
 }
 
 function renderObservabilityCharts(items, scope) {
@@ -19584,10 +19585,10 @@ function renderObservabilityCharts(items, scope) {
 
   if (scope === 'stream') {
     if (elements.observabilityChartTitleBitrate) {
-      elements.observabilityChartTitleBitrate.textContent = 'Stream bitrate (Kbit/s)';
+      elements.observabilityChartTitleBitrate.textContent = 'Channel bitrate (Kbit/s)';
     }
     if (elements.observabilityChartTitleStreams) {
-      elements.observabilityChartTitleStreams.textContent = 'CC / PES errors (count)';
+      elements.observabilityChartTitleStreams.textContent = 'Channel CC / PES errors (count)';
     }
     if (elements.observabilityChartTitleSwitches) {
       elements.observabilityChartTitleSwitches.textContent = 'Input switches (count)';
@@ -19600,14 +19601,26 @@ function renderObservabilityCharts(items, scope) {
     setChartLegend(elements.observabilityChartLegendSwitches, [{ label: 'SWITCHES', color: warning }]);
 
     const bitrateSeries = [
-      { color: accent, points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints) },
+      {
+        color: accent,
+        points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+      },
     ];
     const streamsSeries = [
-      { color: warning, points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints) },
-      { color: danger, points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints) },
+      {
+        color: warning,
+        points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+      },
+      {
+        color: danger,
+        points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+      },
     ];
     const switchesSeries = [
-      { color: warning, points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints) },
+      {
+        color: warning,
+        points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints, { expandSinglePoint: false }),
+      },
     ];
 
     if (drawIfData(

@@ -291,13 +291,62 @@ local function count_from_logs(range_sec, scope, scope_id, interval)
         query.stream_id = tostring(scope_id)
     end
     local rows = config.list_ai_log_events(query) or {}
+    local function to_number(value)
+        if value == nil then
+            return nil
+        end
+        local num = tonumber(value)
+        if num ~= nil then
+            return num
+        end
+        if type(value) == "string" then
+            local token = value:match("(-?%d+%.?%d*)")
+            if token then
+                return tonumber(token)
+            end
+        end
+        return nil
+    end
+    local function parse_errors_from_message(message)
+        if type(message) ~= "string" then
+            return nil, nil
+        end
+        local pes = tonumber(message:match("[Pp][Ee][Ss]%s*[:=]%s*(%d+)"))
+        local cc = tonumber(message:match("[Cc][Cc]%s*[:=]%s*(%d+)"))
+        return cc, pes
+    end
+    local function parse_bitrate_from_message(message)
+        if type(message) ~= "string" then
+            return nil
+        end
+        local value, unit = message:match("[Bb]itrate%s*[:=]%s*(-?%d+%.?%d*)%s*([KkMmGg]?)")
+        local num = tonumber(value)
+        if not num then
+            return nil
+        end
+        unit = string.lower(unit or "")
+        if unit == "g" then
+            num = num * 1000 * 1000
+        elseif unit == "m" then
+            num = num * 1000
+        end
+        return num
+    end
     local buckets = {}
     for _, row in ipairs(rows) do
         local ts = tonumber(row.ts) or os.time()
         local bucket = calc_bucket(ts, interval)
         local stat = buckets[bucket]
         if not stat then
-            stat = { alerts_error = 0, input_switch = 0, streams_down = 0 }
+            stat = {
+                alerts_error = 0,
+                input_switch = 0,
+                streams_down = 0,
+                cc_errors = 0,
+                pes_errors = 0,
+                bitrate_sum = 0,
+                bitrate_samples = 0,
+            }
             buckets[bucket] = stat
         end
         local level = tostring(row.level or "")
@@ -309,6 +358,35 @@ local function count_from_logs(range_sec, scope, scope_id, interval)
             stat.input_switch = stat.input_switch + 1
         elseif code == "STREAM_DOWN" then
             stat.streams_down = stat.streams_down + 1
+        end
+
+        local tags = type(row.tags) == "table" and row.tags or nil
+        local cc = tags and to_number(tags.cc_errors) or nil
+        local pes = tags and to_number(tags.pes_errors) or nil
+        local bitrate = tags and (to_number(tags.bitrate_kbps) or to_number(tags.bitrate)) or nil
+
+        if cc == nil or pes == nil then
+            local msg_cc, msg_pes = parse_errors_from_message(row.message)
+            if cc == nil then
+                cc = msg_cc
+            end
+            if pes == nil then
+                pes = msg_pes
+            end
+        end
+        if bitrate == nil then
+            bitrate = parse_bitrate_from_message(row.message)
+        end
+
+        if cc and cc > 0 then
+            stat.cc_errors = stat.cc_errors + cc
+        end
+        if pes and pes > 0 then
+            stat.pes_errors = stat.pes_errors + pes
+        end
+        if bitrate and bitrate > 0 then
+            stat.bitrate_sum = stat.bitrate_sum + bitrate
+            stat.bitrate_samples = stat.bitrate_samples + 1
         end
     end
     return buckets
@@ -346,6 +424,35 @@ function ai_observability.build_metrics_from_logs(range_sec, interval_sec, scope
                 value = stat.streams_down,
             })
         end
+        if scope == "stream" and scope_id and scope_id ~= "" then
+            if stat.cc_errors and stat.cc_errors > 0 then
+                table.insert(items, {
+                    ts_bucket = bucket,
+                    scope = "stream",
+                    scope_id = scope_id,
+                    metric_key = "cc_errors",
+                    value = stat.cc_errors,
+                })
+            end
+            if stat.pes_errors and stat.pes_errors > 0 then
+                table.insert(items, {
+                    ts_bucket = bucket,
+                    scope = "stream",
+                    scope_id = scope_id,
+                    metric_key = "pes_errors",
+                    value = stat.pes_errors,
+                })
+            end
+            if stat.bitrate_samples and stat.bitrate_samples > 0 then
+                table.insert(items, {
+                    ts_bucket = bucket,
+                    scope = "stream",
+                    scope_id = scope_id,
+                    metric_key = "bitrate_kbps",
+                    value = stat.bitrate_sum / stat.bitrate_samples,
+                })
+            end
+        end
     end
     table.sort(items, function(a, b)
         if a.ts_bucket == b.ts_bucket then
@@ -378,6 +485,19 @@ function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec, r
     local bucket = calc_bucket(os.time(), interval)
     local status = runtime.list_status() or {}
     local items = {}
+    local function push_point(metric_key, value, ts_bucket)
+        local v = tonumber(value)
+        if not v then
+            return
+        end
+        table.insert(items, {
+            ts_bucket = ts_bucket or bucket,
+            scope = scope or "global",
+            scope_id = scope_id or "",
+            metric_key = metric_key,
+            value = v,
+        })
+    end
     local function push_series(metric_key, value)
         local v = tonumber(value) or 0
         local total_steps = math.max(0, math.floor(sample_range / interval))
@@ -423,10 +543,12 @@ function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec, r
         local on_air = entry.on_air == true or entry.transcode_state == "RUNNING"
         local cc_errors = tonumber(entry.cc_errors) or 0
         local pes_errors = tonumber(entry.pes_errors) or 0
-        push_series("bitrate_kbps", bitrate)
-        push_series("on_air", on_air and 1 or 0)
-        push_series("cc_errors", cc_errors)
-        push_series("pes_errors", pes_errors)
+        -- For per-stream mode we keep a single runtime snapshot point.
+        -- Historical series should come from logs to avoid synthetic flat lines.
+        push_point("bitrate_kbps", bitrate, bucket)
+        push_point("on_air", on_air and 1 or 0, bucket)
+        push_point("cc_errors", cc_errors, bucket)
+        push_point("pes_errors", pes_errors, bucket)
         return {
             bucket = bucket,
             summary = {
@@ -499,9 +621,17 @@ function ai_observability.get_on_demand_metrics(range_sec, interval_sec, scope, 
     local interval = sanitize_interval(interval_sec or ai_observability.state.rollup_interval_sec)
     local items = ai_observability.build_metrics_from_logs(range_sec, interval, scope, scope_id)
     local snapshot = ai_observability.build_runtime_metrics(scope, scope_id, interval, range_sec)
+    local dedup = {}
+    for _, item in ipairs(items) do
+        dedup[(tostring(item.ts_bucket or "") .. "|" .. tostring(item.metric_key or ""))] = true
+    end
     if snapshot and snapshot.items then
         for _, item in ipairs(snapshot.items) do
-            table.insert(items, item)
+            local key = tostring(item.ts_bucket or "") .. "|" .. tostring(item.metric_key or "")
+            if not dedup[key] then
+                dedup[key] = true
+                table.insert(items, item)
+            end
         end
     end
 

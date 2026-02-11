@@ -1866,10 +1866,14 @@ local function maybe_emit_input_down(channel_data, input_id, input_data)
     end
     input_data.alert_state = new_state
     if new_state == "DOWN" and input_id == (channel_data.active_input_id or 0) then
+        local stats = input_data.stats or {}
         emit_stream_alert(channel_data, "WARNING", "INPUT_DOWN", "active input down", {
             input_index = input_id - 1,
             reason = input_data.last_error or "",
             active_input_url = input_data.source_url,
+            bitrate_kbps = stats.bitrate,
+            cc_errors = stats.cc_errors,
+            pes_errors = stats.pes_errors,
         })
     end
 end
@@ -1893,10 +1897,15 @@ local function maybe_emit_stream_state(channel_data)
     end
     channel_data.alert_stream_state = state
     if state == "DOWN" then
+        local stats = active_input and active_input.stats or nil
         emit_stream_alert(channel_data, "CRITICAL", "STREAM_DOWN", "no data", {
             active_input_index = active_id > 0 and (active_id - 1) or nil,
             active_input_url = active_input and active_input.source_url or nil,
             no_data_timeout_sec = fo and fo.no_data_timeout or channel_data.config.no_data_timeout_sec,
+            bitrate_kbps = stats and stats.bitrate or nil,
+            cc_errors = stats and stats.cc_errors or nil,
+            pes_errors = stats and stats.pes_errors or nil,
+            reason = active_input and active_input.last_error or nil,
         })
     else
         emit_stream_alert(channel_data, "INFO", "STREAM_UP", "recovered", {
