@@ -2140,6 +2140,7 @@ local function stream_analyze_payload(job)
     if not job then
         return nil
     end
+    local include_scan_details = (job.status ~= "running")
     return {
         id = job.id,
         status = job.status,
@@ -2153,9 +2154,9 @@ local function stream_analyze_payload(job)
         totals = job.totals,
         summary = job.summary,
         pids = job.pids,
-        programs = job.programs,
-        program_list = job.program_list,
-        channels = job.channels,
+        programs = include_scan_details and job.programs or nil,
+        program_list = include_scan_details and job.program_list or nil,
+        channels = include_scan_details and job.channels or nil,
         pat_tsid = job.pat_tsid,
         pat_crc32 = job.pat_crc32,
         sdt_tsid = job.sdt_tsid,
@@ -2318,7 +2319,14 @@ local function start_stream_analyze(server, client, request, stream_id_override)
             elseif data.psi == "sdt" then
                 dvb_scan_add_sdt(job, data)
             elseif data.analyze and data.total then
-                job.totals = data.total
+                local total = data.total or {}
+                -- Keep a plain snapshot table to avoid json.encode races on mutable analyzer internals.
+                job.totals = {
+                    bitrate = tonumber(total.bitrate) or 0,
+                    cc_errors = tonumber(total.cc_errors) or 0,
+                    pes_errors = tonumber(total.pes_errors) or 0,
+                    scrambled = total.scrambled == true,
+                }
                 job.last_update = os.time()
                 if type(data.analyze) == "table" then
                     local list = {}
