@@ -7,11 +7,131 @@ const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
 const SETTINGS_DENSITY_KEY = 'astral.settings.density';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
+const SIDEBAR_HELP_KEYS = {
+  hlssplitter: 'sidebarHelp.hlssplitter',
+  buffer: 'sidebarHelp.buffer',
+};
+
+const SIDEBAR_HELP_TEXTS = {
+  hlssplitter: {
+    heading: 'Что это?',
+    sections: [
+      {
+        title: 'Что это',
+        text: 'HLSSplitter поднимает локальный сервис, который раздаёт HLS/HTTP-потоки из добавленных links и позволяет контролировать доступ через allow rules.',
+      },
+      {
+        title: 'Когда использовать',
+        bullets: [
+          'Нужно отдать один или несколько upstream-потоков через единый локальный порт.',
+          'Нужны отдельные правила доступа для клиентов.',
+          'Нужно стабильное логирование и конфиг XML для внешней диагностики.',
+        ],
+      },
+      {
+        title: 'Быстрый старт',
+        bullets: [
+          'Нажмите NEW INSTANCE, задайте ID и Port, затем Save.',
+          'Добавьте минимум один Link (NEW LINK) с URL входа.',
+          'Проверьте Client URL template и запустите Start/Apply config.',
+          'Убедитесь, что ссылка отдаётся по нужному пути и порту.',
+        ],
+      },
+      {
+        title: 'Ключевые поля',
+        bullets: [
+          'Port: порт сервиса HLSSplitter.',
+          'In interface / Out interface: входной и выходной сетевой интерфейс.',
+          'Log type / Log path: куда писать логи (stderr/file/syslog).',
+          'Config path: путь к XML-конфигу инстанса.',
+          'Presets + Apply: быстрые дефолты порта/логов/конфига.',
+          'Allow rules: список разрешений клиентов.',
+          'Links: источники, которые отдаются через инстанс.',
+        ],
+      },
+      {
+        title: 'Типовые ошибки',
+        bullets: [
+          'Port занят другим процессом.',
+          'Инстанс не сохранён — links/rules не добавляются.',
+          'Неверный URL в Link (DOWN/ERROR в статусе).',
+          'Слишком строгие Allow rules блокируют клиентов.',
+        ],
+      },
+      {
+        title: 'Советы',
+        text: 'Начните с Basic preset, оставляйте уникальный config path на инстанс и сначала проверьте доступ с allow=0.0.0.0, затем ужесточайте правила.',
+        note: true,
+      },
+    ],
+  },
+  buffer: {
+    heading: 'Что это?',
+    sections: [
+      {
+        title: 'Что это',
+        text: 'Buffer resource — локальная HTTP-TS точка, которая читает входы, держит буфер и отдаёт стабильный выходной URL клиентам.',
+      },
+      {
+        title: 'Когда использовать',
+        bullets: [
+          'Есть нестабильные источники и нужен backup/failover.',
+          'Нужно сгладить рывки потока перед отдачей клиентам.',
+          'Нужен Smart start для контролируемого старта выдачи.',
+        ],
+      },
+      {
+        title: 'Быстрый старт',
+        bullets: [
+          'Нажмите NEW RESOURCE, задайте ID и Path, затем Save.',
+          'Добавьте хотя бы один input (NEW INPUT).',
+          'Выберите backup type и базовый preset при необходимости.',
+          'Проверьте Output URL, затем Reload/Restart reader.',
+        ],
+      },
+      {
+        title: 'Ключевые поля',
+        bullets: [
+          'Path: URL-путь ресурса (формирует Output URL).',
+          'Output URL: конечная ссылка для клиента.',
+          'Backup type + timeout/delay: политика переключения на backup.',
+          'Buffering sec / bandwidth / lag: параметры буферизации.',
+          'Smart start: условия готовности (PAT/PMT, keyframe, PCR и др.).',
+        ],
+      },
+      {
+        title: 'Типовые ошибки',
+        bullets: [
+          'Path пустой или конфликтует с другим ресурсом.',
+          'Нет входов — выход остаётся DOWN.',
+          'Слишком маленький buffering_sec вызывает фризы.',
+          'Порт buffer-сервера недоступен/занят в общих settings.',
+        ],
+      },
+      {
+        title: 'Советы',
+        text: 'Для первого запуска используйте passive backup, buffering 6-8 сек и включенный Smart start, затем снижайте задержку по метрикам.',
+        note: true,
+      },
+    ],
+  },
+};
 
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
   if (value === null || value === undefined || value === '') return fallback;
   return value === '1' || value === 'true';
+}
+
+function loadSidebarHelpState() {
+  const out = {};
+  Object.keys(SIDEBAR_HELP_KEYS).forEach((kind) => {
+    const raw = localStorage.getItem(SIDEBAR_HELP_KEYS[kind]);
+    if (raw === 'open' || raw === 'closed') {
+      out[kind] = raw;
+    }
+  });
+  return out;
 }
 
 function normalizePlayerPlaybackMode(value) {
@@ -209,6 +329,7 @@ const state = {
   generalMode: getStoredBool(SETTINGS_ADVANCED_KEY, false) ? 'advanced' : 'basic',
   // Компактный режим для карточек Settings -> General (визуально плотнее, на конфиг не влияет).
   generalCompact: getStoredBool(SETTINGS_DENSITY_KEY, false),
+  sidebarHelpState: loadSidebarHelpState(),
   generalDirty: false,
   generalSnapshot: '',
   generalCardOpen: {},
@@ -273,6 +394,7 @@ const state = {
   observabilityLastItems: null,
   observabilityLastScope: 'global',
   observabilityLastStreamId: '',
+  observabilityLastRange: '24h',
   logCursor: 0,
   logEntries: [],
   logLevelFilter: 'all',
@@ -517,6 +639,16 @@ const elements = {
   observabilityChartBitrate: $('#obs-chart-bitrate'),
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
+  observabilityChartCardBitrate: $('#obs-chart-card-bitrate'),
+  observabilityChartCardStreams: $('#obs-chart-card-streams'),
+  observabilityChartCardSwitches: $('#obs-chart-card-switches'),
+  observabilityChartTitleBitrate: $('#obs-chart-title-bitrate'),
+  observabilityChartTitleStreams: $('#obs-chart-title-streams'),
+  observabilityChartTitleSwitches: $('#obs-chart-title-switches'),
+  observabilityChartLegendBitrate: $('#obs-chart-legend-bitrate'),
+  observabilityChartLegendStreams: $('#obs-chart-legend-streams'),
+  observabilityChartLegendSwitches: $('#obs-chart-legend-switches'),
+  observabilityChartsEmpty: $('#obs-charts-empty'),
   observabilityLogs: $('#obs-logs'),
   observabilityAiSummary: $('#obs-ai-summary'),
   aiChatLog: $('#ai-chat-log'),
@@ -574,6 +706,7 @@ const elements = {
   streamCompact: $('#stream-compact'),
   splitterList: $('#splitter-list'),
   splitterListEmpty: $('#splitter-list-empty'),
+  splitterSidebarHelp: $('#splitter-sidebar-help'),
   splitterEditor: $('#splitter-editor'),
   splitterForm: $('#splitter-form'),
   splitterTitle: $('#splitter-title'),
@@ -620,6 +753,7 @@ const elements = {
   splitterConfigDismiss: $('#splitter-config-dismiss'),
   bufferList: $('#buffer-list'),
   bufferListEmpty: $('#buffer-list-empty'),
+  bufferSidebarHelp: $('#buffer-sidebar-help'),
   bufferEditor: $('#buffer-editor'),
   bufferForm: $('#buffer-form'),
   bufferTitle: $('#buffer-title'),
@@ -13802,8 +13936,109 @@ function openSplitterEditor(splitter, isNew) {
   renderSplitterDetail();
 }
 
+function getSidebarHelpStoredState(kind) {
+  const key = SIDEBAR_HELP_KEYS[kind];
+  if (!key) return null;
+  if (state.sidebarHelpState && (state.sidebarHelpState[kind] === 'open' || state.sidebarHelpState[kind] === 'closed')) {
+    return state.sidebarHelpState[kind];
+  }
+  const raw = localStorage.getItem(key);
+  if (raw === 'open' || raw === 'closed') {
+    if (state.sidebarHelpState) state.sidebarHelpState[kind] = raw;
+    return raw;
+  }
+  return null;
+}
+
+function setSidebarHelpStoredState(kind, isOpen) {
+  const key = SIDEBAR_HELP_KEYS[kind];
+  if (!key) return;
+  const value = isOpen ? 'open' : 'closed';
+  if (!state.sidebarHelpState) state.sidebarHelpState = {};
+  state.sidebarHelpState[kind] = value;
+  localStorage.setItem(key, value);
+}
+
+function buildSidebarHelpSections(kind) {
+  const spec = SIDEBAR_HELP_TEXTS[kind];
+  if (!spec || !Array.isArray(spec.sections)) return document.createDocumentFragment();
+  const fragment = document.createDocumentFragment();
+  spec.sections.forEach((section) => {
+    const block = createEl('div', `sidebar-help-section${section.note ? ' is-note' : ''}`);
+    if (section.title) {
+      block.appendChild(createEl('div', 'sidebar-help-section-title', section.title));
+    }
+    if (section.text) {
+      block.appendChild(createEl('div', 'sidebar-help-section-text', section.text));
+    }
+    if (Array.isArray(section.bullets) && section.bullets.length) {
+      const list = createEl('ul', 'sidebar-help-list');
+      section.bullets.forEach((line) => {
+        list.appendChild(createEl('li', '', line));
+      });
+      block.appendChild(list);
+    }
+    fragment.appendChild(block);
+  });
+  return fragment;
+}
+
+function applySidebarHelpOpenState(card, isOpen) {
+  if (!card) return;
+  const body = card.querySelector('.sidebar-help-body');
+  const toggle = card.querySelector('.sidebar-help-toggle');
+  card.classList.toggle('is-collapsed', !isOpen);
+  if (body) body.hidden = !isOpen;
+  if (toggle) {
+    toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    toggle.textContent = isOpen ? '▾' : '▸';
+  }
+}
+
+function renderSidebarHelpCard(kind, mount, hasItems) {
+  if (!mount) return;
+  const spec = SIDEBAR_HELP_TEXTS[kind];
+  if (!spec) {
+    mount.innerHTML = '';
+    return;
+  }
+
+  let card = mount.querySelector('.sidebar-help-card');
+  if (!card) {
+    mount.innerHTML = '';
+    card = createEl('section', 'sidebar-help-card');
+    const header = createEl('div', 'sidebar-help-header');
+    const titleWrap = createEl('div', 'sidebar-help-title-wrap');
+    titleWrap.appendChild(createEl('span', 'sidebar-help-badge', '?'));
+    titleWrap.appendChild(createEl('span', 'sidebar-help-title', spec.heading || 'Help'));
+    const toggle = createEl('button', 'sidebar-help-toggle');
+    toggle.type = 'button';
+    toggle.title = 'Свернуть/развернуть help';
+    toggle.setAttribute('aria-label', 'Toggle help');
+    header.appendChild(titleWrap);
+    header.appendChild(toggle);
+    card.appendChild(header);
+
+    const body = createEl('div', 'sidebar-help-body');
+    body.appendChild(buildSidebarHelpSections(kind));
+    card.appendChild(body);
+    mount.appendChild(card);
+
+    toggle.addEventListener('click', () => {
+      const nextOpen = card.classList.contains('is-collapsed');
+      applySidebarHelpOpenState(card, nextOpen);
+      setSidebarHelpStoredState(kind, nextOpen);
+    });
+  }
+
+  const stored = getSidebarHelpStoredState(kind);
+  const shouldOpen = stored ? (stored === 'open') : !hasItems;
+  applySidebarHelpOpenState(card, shouldOpen);
+}
+
 function renderSplitterList() {
   const list = Array.isArray(state.splitters) ? state.splitters : [];
+  renderSidebarHelpCard('hlssplitter', elements.splitterSidebarHelp, list.length > 0);
   elements.splitterList.innerHTML = '';
   if (list.length === 0) {
     elements.splitterListEmpty.style.display = 'block';
@@ -14767,6 +15002,7 @@ function openBufferEditor(buffer, isNew) {
 
 function renderBufferList() {
   const list = Array.isArray(state.buffers) ? state.buffers : [];
+  renderSidebarHelpCard('buffer', elements.bufferSidebarHelp, list.length > 0);
   elements.bufferList.innerHTML = '';
   if (list.length === 0) {
     elements.bufferListEmpty.style.display = 'block';
@@ -18656,7 +18892,99 @@ function drawEmptyChart(canvas, message) {
   ctx.fillText(message || 'No data', rect.width / 2, rect.height / 2);
 }
 
-function drawLineChart(canvas, series) {
+function trimTrailingZeros(value) {
+  const text = String(value);
+  return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
+}
+
+function formatBitrateAxisLabel(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  const abs = Math.abs(num);
+  if (abs >= 1000) {
+    const mbps = num / 1000;
+    const fixed = abs >= 10000 ? 0 : 1;
+    return `${trimTrailingZeros(mbps.toFixed(fixed))} Mbit/s`;
+  }
+  const fixed = abs >= 100 ? 0 : 1;
+  return `${trimTrailingZeros(num.toFixed(fixed))} Kbit/s`;
+}
+
+function formatCountAxisLabel(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  return String(Math.round(num));
+}
+
+function parseObservabilityRangeMs(range) {
+  if (range === '30d') return 30 * 24 * 3600 * 1000;
+  if (range === '7d') return 7 * 24 * 3600 * 1000;
+  return 24 * 3600 * 1000;
+}
+
+function formatObservabilityTimeTick(tsMs, range) {
+  const date = new Date(Number(tsMs) || 0);
+  if (Number.isNaN(date.getTime())) return '-';
+  const two = (v) => String(v).padStart(2, '0');
+  if (range === '24h') {
+    return `${two(date.getHours())}:${two(date.getMinutes())}`;
+  }
+  return `${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+}
+
+function computeLinearTicks(min, max, count, opts) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
+  if (min === max) return [min];
+
+  const desired = Math.max(2, Math.min(8, Number(count) || 5));
+  const integerOnly = opts && opts.integer === true;
+
+  if (integerOnly) {
+    const lo = Math.floor(min);
+    const hi = Math.ceil(max);
+    const span = hi - lo;
+    if (span >= 0 && span <= desired + 1) {
+      const out = [];
+      for (let value = lo; value <= hi; value += 1) {
+        out.push(value);
+      }
+      return out;
+    }
+  }
+
+  const span = max - min;
+  const rawStep = span / (desired - 1);
+  const pow10 = Math.pow(10, Math.floor(Math.log10(Math.abs(rawStep) || 1)));
+  const candidates = [1, 2, 2.5, 5, 10];
+  let step = pow10;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const candidate = pow10 * candidates[i];
+    if (rawStep <= candidate) {
+      step = candidate;
+      break;
+    }
+  }
+  if (!Number.isFinite(step) || step <= 0) {
+    step = span / (desired - 1);
+  }
+
+  const out = [];
+  const start = Math.floor(min / step) * step;
+  const end = Math.ceil(max / step) * step;
+  const maxTicks = desired + 2;
+  for (let value = start; value <= end + step * 0.5; value += step) {
+    const tick = Math.abs(value) < 1e-9 ? 0 : Number(value.toFixed(10));
+    if (tick < min - step * 0.5 || tick > max + step * 0.5) continue;
+    out.push(tick);
+    if (out.length >= maxTicks) break;
+  }
+  if (!out.length) {
+    out.push(min, max);
+  }
+  return out;
+}
+
+function drawLineChart(canvas, series, opts) {
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
   const rect = canvas.getBoundingClientRect();
@@ -18670,22 +18998,45 @@ function drawLineChart(canvas, series) {
   ctx.scale(ratio, ratio);
   ctx.clearRect(0, 0, rect.width, rect.height);
 
-  const allPoints = series.flatMap((item) => item.points || []);
+  const options = opts || {};
+  const showAxes = options.showAxes === true;
+  const inputSeries = Array.isArray(series) ? series : [];
+  const preparedSeries = inputSeries.map((item) => {
+    const points = Array.isArray(item && item.points) ? item.points : [];
+    const filtered = points
+      .map((pt) => ({ x: Number(pt && pt.x), y: Number(pt && pt.y) }))
+      .filter((pt) => Number.isFinite(pt.x) && Number.isFinite(pt.y))
+      .sort((a, b) => a.x - b.x);
+    return {
+      color: item && item.color,
+      points: filtered,
+    };
+  });
+  const allPoints = preparedSeries.flatMap((item) => item.points || []);
   if (!allPoints.length) {
-    drawEmptyChart(canvas, 'No data');
+    drawEmptyChart(canvas, options.emptyMessage || 'No data');
     return;
   }
 
-  let minX = Infinity;
-  let maxX = -Infinity;
+  const xDomain = Array.isArray(options.xDomain) ? options.xDomain : null;
+  let minX = xDomain && Number.isFinite(Number(xDomain[0])) ? Number(xDomain[0]) : Infinity;
+  let maxX = xDomain && Number.isFinite(Number(xDomain[1])) ? Number(xDomain[1]) : -Infinity;
   let minY = Infinity;
   let maxY = -Infinity;
   allPoints.forEach((pt) => {
-    minX = Math.min(minX, pt.x);
-    maxX = Math.max(maxX, pt.x);
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
+      minX = Math.min(minX, pt.x);
+      maxX = Math.max(maxX, pt.x);
+    }
     minY = Math.min(minY, pt.y);
     maxY = Math.max(maxY, pt.y);
   });
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX)) {
+    minX = allPoints[0].x;
+    maxX = allPoints[allPoints.length - 1].x;
+  }
+  if (Number.isFinite(options.yMin)) minY = Number(options.yMin);
+  if (Number.isFinite(options.yMax)) maxY = Number(options.yMax);
   if (minX === maxX) {
     minX -= 1;
     maxX += 1;
@@ -18695,13 +19046,50 @@ function drawLineChart(canvas, series) {
     maxY = maxY === 0 ? 1 : maxY * 1.1;
   }
 
-  const padding = { left: 36, right: 8, top: 10, bottom: 18 };
+  const padding = showAxes
+    ? { left: 52, right: 10, top: 12, bottom: 26 }
+    : { left: 36, right: 8, top: 10, bottom: 18 };
   const width = rect.width - padding.left - padding.right;
   const height = rect.height - padding.top - padding.bottom;
   const xScale = (x) => padding.left + ((x - minX) / (maxX - minX)) * width;
   const yScale = (y) => rect.height - padding.bottom - ((y - minY) / (maxY - minY)) * height;
 
-  ctx.strokeStyle = getThemeColor('--border', '#3d434e');
+  const axisColor = getThemeColor('--border', '#3d434e');
+  const textColor = getThemeColor('--muted', '#8f98a3');
+  const yTicks = showAxes
+    ? computeLinearTicks(minY, maxY, options.yTickCount || 5, { integer: options.yInteger === true })
+    : [];
+  const xTicks = showAxes
+    ? computeLinearTicks(minX, maxX, options.xTickCount || 5)
+    : [];
+  const yFormatter = typeof options.yFormatter === 'function' ? options.yFormatter : formatCountAxisLabel;
+  const xFormatter = typeof options.xFormatter === 'function'
+    ? options.xFormatter
+    : (value) => formatObservabilityTimeTick(value, options.range || '24h');
+
+  if (showAxes) {
+    ctx.font = '11px "IBM Plex Sans", sans-serif';
+    ctx.fillStyle = textColor;
+
+    ctx.strokeStyle = axisColor;
+    ctx.globalAlpha = 0.25;
+    yTicks.forEach((tick) => {
+      const y = yScale(tick);
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(rect.width - padding.right, y);
+      ctx.stroke();
+    });
+    xTicks.forEach((tick) => {
+      const x = xScale(tick);
+      ctx.beginPath();
+      ctx.moveTo(x, padding.top);
+      ctx.lineTo(x, rect.height - padding.bottom);
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  }
+
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(padding.left, padding.top);
@@ -18709,20 +19097,42 @@ function drawLineChart(canvas, series) {
   ctx.lineTo(rect.width - padding.right, rect.height - padding.bottom);
   ctx.stroke();
 
-  series.forEach((item) => {
+  if (showAxes) {
+    ctx.fillStyle = textColor;
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'right';
+    yTicks.forEach((tick) => {
+      const y = yScale(tick);
+      ctx.fillText(yFormatter(tick), padding.left - 6, y);
+    });
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    xTicks.forEach((tick) => {
+      const x = xScale(tick);
+      ctx.fillText(xFormatter(tick), x, rect.height - padding.bottom + 5);
+    });
+  }
+
+  preparedSeries.forEach((item) => {
     const points = item.points || [];
     if (!points.length) return;
     ctx.strokeStyle = item.color || getThemeColor('--accent', '#5aaae5');
     ctx.lineWidth = 2;
     ctx.beginPath();
+    let prevY = null;
     points.forEach((pt, idx) => {
       const x = xScale(pt.x);
       const y = yScale(pt.y);
       if (idx === 0) {
         ctx.moveTo(x, y);
       } else {
+        if (options.stepLine === true && prevY !== null) {
+          ctx.lineTo(x, prevY);
+        }
         ctx.lineTo(x, y);
       }
+      prevY = y;
     });
     ctx.stroke();
     if (points.length === 1) {
@@ -19009,19 +19419,70 @@ function renderAiCharts(charts) {
   return block;
 }
 
+function coerceMetricValue(value) {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  const match = raw.match(/-?\d+(?:\.\d+)?/);
+  if (!match) return undefined;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function normalizeTimeseries(points, opts) {
+  const options = opts || {};
+  const fromX = Number.isFinite(Number(options.fromX)) ? Number(options.fromX) : null;
+  const toX = Number.isFinite(Number(options.toX)) ? Number(options.toX) : null;
+
+  const byTs = new Map();
+  (Array.isArray(points) ? points : []).forEach((point) => {
+    const x = Number(point && point.x);
+    const y = Number(point && point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    if (fromX !== null && x < fromX) return;
+    if (toX !== null && x > toX) return;
+    byTs.set(x, y);
+  });
+
+  let out = Array.from(byTs.entries())
+    .map(([x, y]) => ({ x: Number(x), y: Number(y) }))
+    .sort((a, b) => a.x - b.x);
+
+  if (options.expandSinglePoint === true && out.length === 1) {
+    const start = fromX !== null ? fromX : out[0].x - 1;
+    const end = toX !== null ? toX : out[0].x + 1;
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      const target = Math.max(2, Math.min(60, Number(options.syntheticPoints) || 40));
+      const step = (end - start) / Math.max(1, (target - 1));
+      const fill = [];
+      for (let idx = 0; idx < target; idx += 1) {
+        fill.push({
+          x: Math.round(start + step * idx),
+          y: out[0].y,
+        });
+      }
+      out = fill;
+    }
+  }
+
+  return out;
+}
+
 function groupMetrics(items) {
   const map = {};
   (items || []).forEach((row) => {
     if (!row || row.metric_key == null || row.ts_bucket == null) return;
     const key = String(row.metric_key);
+    const tsRaw = Number(row.ts_bucket);
+    const y = coerceMetricValue(row.value);
+    if (!Number.isFinite(tsRaw) || !Number.isFinite(y)) return;
+    const x = tsRaw > 1e12 ? tsRaw : tsRaw * 1000;
     if (!map[key]) map[key] = [];
-    map[key].push({
-      x: Number(row.ts_bucket) * 1000,
-      y: Number(row.value) || 0,
-    });
+    map[key].push({ x, y });
   });
   Object.keys(map).forEach((key) => {
-    map[key].sort((a, b) => a.x - b.x);
+    map[key] = normalizeTimeseries(map[key], {});
   });
   return map;
 }
@@ -19040,6 +19501,8 @@ function renderObservabilitySummary(summary, scope, streamId) {
     addCard('Stream', streamId || '—');
     addCard('Bitrate', formatBitrate(Number(summary.bitrate_kbps) || 0));
     addCard('On air', summary.on_air ? 'YES' : 'NO');
+    addCard('CC errors', Number(summary.cc_errors || 0));
+    addCard('PES errors', Number(summary.pes_errors || 0));
     addCard('Input switch', Number(summary.input_switch || 0));
   } else {
     addCard('Total bitrate', formatBitrate(Number(summary.total_bitrate_kbps) || 0));
@@ -19052,36 +19515,230 @@ function renderObservabilitySummary(summary, scope, streamId) {
   cards.forEach((card) => elements.observabilitySummary.appendChild(card));
 }
 
+function setChartLegend(container, items) {
+  if (!container) return;
+  container.innerHTML = '';
+  const list = Array.isArray(items) ? items : [];
+  list.forEach((item) => {
+    const row = createEl('span', 'chart-legend-item');
+    const dot = createEl('span', 'chart-legend-dot');
+    dot.style.background = item.color || getThemeColor('--accent', '#5aaae5');
+    row.appendChild(dot);
+    row.appendChild(document.createTextNode(item.label || 'Series'));
+    container.appendChild(row);
+  });
+}
+
+function setChartCardVisible(card, visible) {
+  if (!card) return;
+  card.hidden = !visible;
+}
+
+function hasSeriesData(series) {
+  return Array.isArray(series) && series.some((row) => Array.isArray(row.points) && row.points.length > 0);
+}
+
+function prepareObservabilityPoints(points, fromMs, toMs, maxPoints) {
+  const normalized = normalizeTimeseries(points || [], {
+    fromX: fromMs,
+    toX: toMs,
+    expandSinglePoint: true,
+    syntheticPoints: 48,
+  });
+  return downsampleMinMax(normalized, maxPoints);
+}
+
 function renderObservabilityCharts(items, scope) {
   const seriesMap = groupMetrics(items || []);
   const maxPoints = 240;
+  const range = state.observabilityLastRange || (elements.observabilityRange && elements.observabilityRange.value) || '24h';
+  const nowMs = Date.now();
+  const fromMs = nowMs - parseObservabilityRangeMs(range);
   const accent = getThemeColor('--accent', '#5aaae5');
   const warning = getThemeColor('--warning', '#f0b54d');
   const danger = getThemeColor('--danger', '#e06666');
   const success = getThemeColor('--success', '#5bc377');
+  const xDomain = [fromMs, nowMs];
+
+  if (window && window.location && window.location.search.includes('obs_debug=1')) {
+    const metrics = Object.keys(seriesMap);
+    const stats = metrics.map((key) => {
+      const rows = seriesMap[key] || [];
+      const first = rows[0] && rows[0].x ? rows[0].x : null;
+      const last = rows.length ? rows[rows.length - 1].x : null;
+      return `${key}:${rows.length}${first ? ` [${new Date(first).toISOString()}..${new Date(last).toISOString()}]` : ''}`;
+    });
+    console.debug('[observability] chart metrics', scope, range, stats.join(' | '));
+  }
+
+  const drawIfData = (canvas, card, series, opts) => {
+    if (!canvas || !card) return false;
+    const hasData = hasSeriesData(series);
+    setChartCardVisible(card, hasData);
+    if (!hasData) return false;
+    drawLineChart(canvas, series, opts);
+    return true;
+  };
+
+  let visibleCharts = 0;
 
   if (scope === 'stream') {
-    drawLineChart(elements.observabilityChartBitrate, [
-      { color: accent, points: downsampleMinMax(seriesMap.bitrate_kbps || [], maxPoints) },
+    if (elements.observabilityChartTitleBitrate) {
+      elements.observabilityChartTitleBitrate.textContent = 'Stream bitrate (Kbit/s)';
+    }
+    if (elements.observabilityChartTitleStreams) {
+      elements.observabilityChartTitleStreams.textContent = 'CC / PES errors (count)';
+    }
+    if (elements.observabilityChartTitleSwitches) {
+      elements.observabilityChartTitleSwitches.textContent = 'Input switches (count)';
+    }
+    setChartLegend(elements.observabilityChartLegendBitrate, [{ label: 'BITRATE', color: accent }]);
+    setChartLegend(elements.observabilityChartLegendStreams, [
+      { label: 'CC', color: warning },
+      { label: 'PES', color: danger },
     ]);
-    drawLineChart(elements.observabilityChartStreams, [
-      { color: success, points: downsampleMinMax(seriesMap.on_air || [], maxPoints) },
-    ]);
-    drawLineChart(elements.observabilityChartSwitches, [
-      { color: warning, points: downsampleMinMax(seriesMap.input_switch || [], maxPoints) },
-    ]);
+    setChartLegend(elements.observabilityChartLegendSwitches, [{ label: 'SWITCHES', color: warning }]);
+
+    const bitrateSeries = [
+      { color: accent, points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints) },
+    ];
+    const streamsSeries = [
+      { color: warning, points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints) },
+      { color: danger, points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints) },
+    ];
+    const switchesSeries = [
+      { color: warning, points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints) },
+    ];
+
+    if (drawIfData(
+      elements.observabilityChartBitrate,
+      elements.observabilityChartCardBitrate,
+      bitrateSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatBitrateAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+      },
+    )) visibleCharts += 1;
+
+    if (drawIfData(
+      elements.observabilityChartStreams,
+      elements.observabilityChartCardStreams,
+      streamsSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatCountAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+        yInteger: true,
+        yMin: 0,
+      },
+    )) visibleCharts += 1;
+
+    if (drawIfData(
+      elements.observabilityChartSwitches,
+      elements.observabilityChartCardSwitches,
+      switchesSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatCountAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+        yInteger: true,
+        stepLine: true,
+        yMin: 0,
+      },
+    )) visibleCharts += 1;
   } else {
-    drawLineChart(elements.observabilityChartBitrate, [
-      { color: accent, points: downsampleMinMax(seriesMap.total_bitrate_kbps || [], maxPoints) },
+    if (elements.observabilityChartTitleBitrate) {
+      elements.observabilityChartTitleBitrate.textContent = 'Total bitrate (Kbit/s)';
+    }
+    if (elements.observabilityChartTitleStreams) {
+      elements.observabilityChartTitleStreams.textContent = 'Streams on air / down (count)';
+    }
+    if (elements.observabilityChartTitleSwitches) {
+      elements.observabilityChartTitleSwitches.textContent = 'Input switches / alerts (count)';
+    }
+    setChartLegend(elements.observabilityChartLegendBitrate, [{ label: 'TOTAL', color: accent }]);
+    setChartLegend(elements.observabilityChartLegendStreams, [
+      { label: 'ON AIR', color: success },
+      { label: 'DOWN', color: danger },
     ]);
-    drawLineChart(elements.observabilityChartStreams, [
-      { color: success, points: downsampleMinMax(seriesMap.streams_on_air || [], maxPoints) },
-      { color: danger, points: downsampleMinMax(seriesMap.streams_down || [], maxPoints) },
+    setChartLegend(elements.observabilityChartLegendSwitches, [
+      { label: 'SWITCHES', color: warning },
+      { label: 'ALERTS', color: danger },
     ]);
-    drawLineChart(elements.observabilityChartSwitches, [
-      { color: warning, points: downsampleMinMax(seriesMap.input_switch || [], maxPoints) },
-      { color: danger, points: downsampleMinMax(seriesMap.alerts_error || [], maxPoints) },
-    ]);
+
+    const bitrateSeries = [
+      { color: accent, points: prepareObservabilityPoints(seriesMap.total_bitrate_kbps || [], fromMs, nowMs, maxPoints) },
+    ];
+    const streamsSeries = [
+      { color: success, points: prepareObservabilityPoints(seriesMap.streams_on_air || [], fromMs, nowMs, maxPoints) },
+      { color: danger, points: prepareObservabilityPoints(seriesMap.streams_down || [], fromMs, nowMs, maxPoints) },
+    ];
+    const switchesSeries = [
+      { color: warning, points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints) },
+      { color: danger, points: prepareObservabilityPoints(seriesMap.alerts_error || [], fromMs, nowMs, maxPoints) },
+    ];
+
+    if (drawIfData(
+      elements.observabilityChartBitrate,
+      elements.observabilityChartCardBitrate,
+      bitrateSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatBitrateAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+      },
+    )) visibleCharts += 1;
+
+    if (drawIfData(
+      elements.observabilityChartStreams,
+      elements.observabilityChartCardStreams,
+      streamsSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatCountAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+        yInteger: true,
+        stepLine: true,
+        yMin: 0,
+      },
+    )) visibleCharts += 1;
+
+    if (drawIfData(
+      elements.observabilityChartSwitches,
+      elements.observabilityChartCardSwitches,
+      switchesSeries,
+      {
+        showAxes: true,
+        xDomain,
+        range,
+        yFormatter: formatCountAxisLabel,
+        yTickCount: 5,
+        xTickCount: 6,
+        yInteger: true,
+        stepLine: true,
+        yMin: 0,
+      },
+    )) visibleCharts += 1;
+  }
+
+  if (elements.observabilityChartsEmpty) {
+    elements.observabilityChartsEmpty.hidden = visibleCharts > 0;
   }
 }
 
@@ -19505,9 +20162,14 @@ async function loadObservability(showStatus) {
     state.observabilityLastItems = null;
     state.observabilityLastScope = 'global';
     state.observabilityLastStreamId = '';
+    state.observabilityLastRange = elements.observabilityRange ? (elements.observabilityRange.value || '24h') : '24h';
     renderSystemMetrics();
     if (elements.observabilitySummary) elements.observabilitySummary.innerHTML = '';
     if (elements.observabilityLogs) elements.observabilityLogs.innerHTML = '';
+    if (elements.observabilityChartsEmpty) elements.observabilityChartsEmpty.hidden = false;
+    setChartCardVisible(elements.observabilityChartCardBitrate, false);
+    setChartCardVisible(elements.observabilityChartCardStreams, false);
+    setChartCardVisible(elements.observabilityChartCardSwitches, false);
     return;
   }
   setVisibility(true);
@@ -19515,6 +20177,7 @@ async function loadObservability(showStatus) {
   const range = elements.observabilityRange.value || '24h';
   const scope = elements.observabilityScope.value || 'global';
   const streamId = elements.observabilityStream ? elements.observabilityStream.value : '';
+  state.observabilityLastRange = range;
   await loadSystemMetricsSnapshot(true);
   if (state.systemMetricsFlags && state.systemMetricsFlags.rollup === true) {
     await loadSystemMetricsTimeseries(range);
@@ -19526,7 +20189,8 @@ async function loadObservability(showStatus) {
     state.observabilityLastItems = [];
     state.observabilityLastScope = 'stream';
     state.observabilityLastStreamId = '';
-    renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, input_switch: 0 }, 'stream', '');
+    state.observabilityLastRange = range;
+    renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, cc_errors: 0, pes_errors: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
     return;
@@ -19581,6 +20245,8 @@ async function loadObservability(showStatus) {
       summary = {
         bitrate_kbps: latest.bitrate_kbps || 0,
         on_air: Number(latest.on_air || 0) > 0,
+        cc_errors: latest.cc_errors || 0,
+        pes_errors: latest.pes_errors || 0,
         input_switch: latest.input_switch || 0,
       };
     }
@@ -19588,6 +20254,7 @@ async function loadObservability(showStatus) {
     state.observabilityLastItems = items;
     state.observabilityLastScope = scope;
     state.observabilityLastStreamId = streamId || '';
+    state.observabilityLastRange = range;
     renderObservabilitySummary(summary, scope, streamId);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
