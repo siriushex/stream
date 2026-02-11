@@ -7,6 +7,7 @@ const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
 const SETTINGS_DENSITY_KEY = 'astral.settings.density';
 const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
+const HELP_GUIDE_STATE_KEY = 'helpGuide.expanded';
 const SIDEBAR_HELP_KEYS = {
   hlssplitter: 'sidebarHelp.hlssplitter',
   buffer: 'sidebarHelp.buffer',
@@ -116,6 +117,145 @@ const SIDEBAR_HELP_TEXTS = {
     ],
   },
 };
+
+const HELP_GUIDE_SHORT = {
+  intro: 'Astral — это панель для запуска и контроля ТВ‑потоков. Вы задаёте вход, задаёте выход и сразу видите, что происходит с каналом.',
+  goals: [
+    'Собирать поток из разных источников.',
+    'Держать резервный вход и быстро переключаться при проблеме.',
+    'Отдавать поток в HLS, HTTP‑TS, UDP/RTP и другие форматы.',
+    'Следить за состоянием, ошибками и клиентами.',
+  ],
+  menu: [
+    'Dashboard — список каналов, быстрые действия, Player и Analyze.',
+    'Adapters — настройка DVB‑адаптеров.',
+    'HLSSplitter — отдельные splitter‑инстансы, links и allow‑правила.',
+    'Buffer — буфер‑ресурсы, входы, smart start и allow‑правила.',
+    'Sessions — активные клиенты по потокам.',
+    'Access — журнал доступа и событий.',
+    'Settings — системные параметры сервера и UI.',
+    'Log — живой лог процесса.',
+    'Observability — метрики сервера и потоков.',
+    'Help — эта справка и AstralAI Chat.',
+  ],
+  quickStart: [
+    'Нажмите New Stream.',
+    'В General добавьте Input (NEW INPUT).',
+    'Добавьте Output (NEW OUTPUT).',
+    'Сохраните и откройте Play или Analyze.',
+    'Если нужен запасной источник — включите Backup.',
+  ],
+  important: [
+    'ONLINE значит поток идёт. OFFLINE значит данных нет.',
+    'Клиентов смотрите во вкладке Sessions.',
+    'Ошибки смотрите в Log и Observability.',
+    'Transcoding даёт новые профили качества, но грузит CPU/GPU.',
+    'Часть выходов работает только при включённом транскоде.',
+  ],
+};
+
+const HELP_GUIDE_EXTENDED_SECTIONS = [
+  {
+    title: 'Что есть в Astral',
+    lines: [
+      'Astral управляет входами, выходами и логикой доставки ТВ‑потока.',
+      'Вы настраиваете каналы через Edit stream. Каждый канал можно включать, выключать и анализировать.',
+      'Есть режимы списка: карточки, компактный список и таблица.',
+    ],
+  },
+  {
+    title: 'Основные разделы',
+    bullets: [
+      'Dashboard: общий экран каналов, статус ON/OFF, битрейт, быстрый Play/Analyze.',
+      'Adapters: DVB‑карты, LNB, частоты, параметры приёма.',
+      'HLSSplitter: отдельные инстансы, правила доступа, links и runtime‑статус.',
+      'Buffer: HTTP‑TS буфер‑ресурсы, backup, buffering, smart start, diagnostics.',
+      'Sessions: кто сейчас смотрит поток, IP, URL, время.',
+      'Access: лента авторизаций и событий доступа.',
+      'Settings: пользователи, HLS/HTTP Play, Public URLs, Buffer, Auth, Softcam/CAS, импорт/история.',
+      'Log: логи runtime и ошибки модулей.',
+      'Observability: графики нагрузки сервера и метрики потоков.',
+      'Help: краткая и полная справка + AstralAI Chat.',
+    ],
+  },
+  {
+    title: 'Что можно сделать со Stream',
+    bullets: [
+      'General: включение, имя/ID, INPUT LIST, OUTPUT LIST.',
+      'Groups: привязка к группам.',
+      'Service: service_id, provider, service name и сопутствующие поля.',
+      'Remap: карта PID и фильтры программ.',
+      'Backup: политика failover между входами.',
+      'Transcode: профили качества, engine (CPU/NVIDIA), publish.',
+      'EPG: экспорт EPG для канала.',
+      'Advanced: таймауты, probe, расширенные параметры.',
+    ],
+  },
+  {
+    title: 'Входы (Input)',
+    bullets: [
+      'Поддерживаются шаблоны: UDP, RTP, HTTP‑TS, HLS, SRT, RTSP, File.',
+      'В Input settings есть Preset, Type, Raw URL и Advanced параметры.',
+      'Дополнительные hash‑опции (например #pnr, #cam, #cc_limit) сохраняются в строке входа.',
+      'Для нестабильных источников используйте Backup и сетевые профили устойчивости.',
+    ],
+  },
+  {
+    title: 'Выходы (Output)',
+    bullets: [
+      'Единый OUTPUT LIST работает для transcode и non‑transcode.',
+      'Поддерживаются preset‑типы: HLS, DASH, HTTP‑TS, Embed, UDP, RTP, SRT, RTMP, RTSP, File, Custom.',
+      'URL можно генерировать автоматически или задать вручную.',
+      'Для ladder‑режима используются Variants (профили качества).',
+    ],
+  },
+  {
+    title: 'HLSSplitter и Buffer',
+    bullets: [
+      'HLSSplitter: создаёт отдельный сервис с собственным портом, links и allow‑правилами.',
+      'Buffer: публикует стабильный HTTP‑TS URL, держит backup‑входы и буферизацию.',
+      'Оба модуля имеют статус, uptime и быстрые действия Start/Stop/Restart/Reload.',
+      'Подсказки по первичной настройке доступны в левой колонке этих вкладок.',
+    ],
+  },
+  {
+    title: 'Transcoding',
+    bullets: [
+      'Включается тумблером Enable transcoding.',
+      'Можно выбрать готовый preset и применить профили.',
+      'Один профиль = single mode, несколько профилей = ladder mode.',
+      'Статус, логи и команды ffmpeg видны в Transcode monitor.',
+    ],
+  },
+  {
+    title: 'Мониторинг и диагностика',
+    bullets: [
+      'Analyze показывает детали входа и ошибок транспорта.',
+      'Log даёт живой поток событий сервера.',
+      'Observability показывает CPU, память, диск, сеть и метрики каналов по диапазону.',
+      'Sessions показывает реальных клиентов по stream_id.',
+    ],
+  },
+  {
+    title: 'Быстрый старт',
+    bullets: [
+      '1) Создайте Stream.',
+      '2) Добавьте хотя бы один Input.',
+      '3) Добавьте Output для публикации.',
+      '4) Сохраните и проверьте статус ONLINE.',
+      '5) При проблеме откройте Analyze, затем Log.',
+    ],
+  },
+  {
+    title: 'Важные ограничения',
+    bullets: [
+      'Транскод и много профилей увеличивают нагрузку.',
+      'Если выход не запущен, проверяйте сначала Input и Backup.',
+      'HTTP авторизация и Access‑правила могут блокировать клиентов.',
+      'При смене важных системных настроек иногда нужен reload.',
+    ],
+  },
+];
 
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
@@ -320,7 +460,11 @@ const state = {
   inputRawDebounce: null,
   inputRawParseDebounce: null,
   inputRawSyncing: false,
+  inputRawInvalid: false,
+  inputDetectorsInvalid: false,
+  inputAdvancedOpen: false,
   inputQualityPresetApplying: false,
+  helpGuideRendered: false,
   settingsSection: 'general',
   licenseLoaded: false,
   configRevisions: [],
@@ -668,6 +812,11 @@ const elements = {
   aiChatStreamId: $('#ai-chat-stream-id'),
   aiChatAnalyzeUrl: $('#ai-chat-analyze-url'),
   aiChatFemonUrl: $('#ai-chat-femon-url'),
+  helpGuideShort: $('#help-guide-short'),
+  helpGuideLong: $('#help-guide-long'),
+  helpGuideToggle: $('#help-guide-toggle'),
+  helpAiDetails: $('#help-ai-details'),
+  helpAiDisabled: $('#help-ai-disabled'),
   settingsGeneralRoot: $('#settings-general-root'),
   settingsGeneralSearch: $('#settings-general-search'),
   settingsGeneralMode: $('#settings-general-mode'),
@@ -1438,6 +1587,9 @@ const elements = {
   inputForm: $('#input-form'),
   inputClose: $('#input-close'),
   inputCancel: $('#input-cancel'),
+  inputAdvancedToggle: $('#input-advanced-toggle'),
+  inputAdvancedRoot: $('#input-advanced-root'),
+  inputBufferingFold: $('#input-buffering-fold'),
   inputType: $('#input-type'),
   inputRaw: $('#input-raw'),
   inputRawError: $('#input-raw-error'),
@@ -1528,6 +1680,8 @@ const elements = {
   inputSilenceNoise: $('#input-silence-noise'),
   inputDetectorsError: $('#input-detectors-error'),
   inputDetectorsFold: $('#input-detectors-fold'),
+  inputDetectorsEnabled: $('#input-detectors-enabled'),
+  inputDetectorsBody: $('#input-detectors-body'),
   inputCam: $('#input-cam'),
   inputCas: $('#input-cas'),
   inputPassSdt: $('#input-pass-sdt'),
@@ -1830,12 +1984,75 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'ui_polling_interval_sec',
             level: 'basic',
             options: [
+              { value: '0.2', label: '0.2 (ultra fast)' },
+              { value: '0.5', label: '0.5 (very fast)' },
+              { value: '1', label: '1 (fast)' },
               { value: '2', label: '2 (fast)' },
               { value: '4', label: '4 (default)' },
               { value: '6', label: '6' },
               { value: '8', label: '8' },
               { value: '10', label: '10 (low CPU)' },
             ],
+          },
+          {
+            id: 'settings-ui-status-lite-enabled',
+            label: 'Lite stream status polling',
+            type: 'switch',
+            key: 'ui_status_lite_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-performance-aggregate-stream-timers',
+            label: 'Aggregate stream 1s timers',
+            type: 'switch',
+            key: 'performance_aggregate_stream_timers',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-performance-aggregate-transcode-timers',
+            label: 'Aggregate transcode 1s timers',
+            type: 'switch',
+            key: 'performance_aggregate_transcode_timers',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-performance-profile',
+            label: 'Performance profile',
+            type: 'select',
+            key: 'performance_profile',
+            level: 'advanced',
+            options: [
+              { value: 'compat', label: 'compat (safe defaults)' },
+              { value: 'mass', label: 'mass (lower memory)' },
+              { value: 'low_latency', label: 'low latency' },
+            ],
+          },
+          {
+            id: 'settings-lua-gc-step-units',
+            label: 'Lua GC step units (0=off)',
+            type: 'input',
+            inputType: 'number',
+            key: 'lua_gc_step_units',
+            level: 'advanced',
+            placeholder: '0',
+          },
+          {
+            id: 'settings-lua-gc-step-interval-ms',
+            label: 'Lua GC step interval (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'lua_gc_step_interval_ms',
+            level: 'advanced',
+            placeholder: '250',
+          },
+          {
+            id: 'settings-lua-gc-full-interval-ms',
+            label: 'Lua GC full collect interval (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'lua_gc_full_collect_interval_ms',
+            level: 'advanced',
+            placeholder: '1000',
           },
         ],
         summary: () => {
@@ -1845,8 +2062,14 @@ const SETTINGS_GENERAL_SECTIONS = [
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
           const polling = readNumberValue('settings-ui-polling-interval', 4);
+          const lite = readBoolValue('settings-ui-status-lite-enabled', false);
+          const aggStreams = readBoolValue('settings-performance-aggregate-stream-timers', false);
+          const aggTc = readBoolValue('settings-performance-aggregate-transcode-timers', false);
+          const perfProfile = readStringValue('settings-performance-profile', 'compat');
+          const gcStepUnits = readNumberValue('settings-lua-gc-step-units', 0);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)}`;
+          const gcText = gcStepUnits > 0 ? `step ${gcStepUnits}` : 'idle-only';
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)} · Lite: ${formatOnOff(lite)} · Agg: ${formatOnOff(aggStreams && aggTc)} · Profile: ${perfProfile} · GC: ${gcText}`;
         },
       },
     ],
@@ -3642,6 +3865,13 @@ function bindGeneralElements() {
     settingsShowEpg: 'settings-show-epg',
     settingsEpgInterval: 'settings-epg-interval',
     settingsUiPollingInterval: 'settings-ui-polling-interval',
+    settingsUiStatusLiteEnabled: 'settings-ui-status-lite-enabled',
+    settingsPerformanceAggregateStreamTimers: 'settings-performance-aggregate-stream-timers',
+    settingsPerformanceAggregateTranscodeTimers: 'settings-performance-aggregate-transcode-timers',
+    settingsPerformanceProfile: 'settings-performance-profile',
+    settingsLuaGcStepUnits: 'settings-lua-gc-step-units',
+    settingsLuaGcStepIntervalMs: 'settings-lua-gc-step-interval-ms',
+    settingsLuaGcFullIntervalMs: 'settings-lua-gc-full-interval-ms',
     settingsInputResilienceEnabled: 'settings-input-resilience-enabled',
     settingsInputResilienceDefaultProfile: 'settings-input-resilience-default-profile',
     settingsInputResilienceMaxActive: 'settings-input-resilience-max-active',
@@ -4297,7 +4527,7 @@ function isViewEnabled(name) {
   if (name === 'splitters') return getSettingBool('ui_splitter_enabled', false);
   if (name === 'buffers') return getSettingBool('ui_buffer_enabled', false);
   if (name === 'access') return getSettingBool('ui_access_enabled', true);
-  if (name === 'help') return getSettingBool('ai_enabled', false);
+  if (name === 'help') return true;
   if (name === 'observability') {
     const onDemand = getSettingBool('ai_metrics_on_demand', true);
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
@@ -6910,7 +7140,7 @@ function normalizePublishTargetList(publish) {
       enabled: entry.enabled !== false,
       variants: Array.isArray(entry.variants) && entry.variants.length
         ? [String(entry.variants[0] || '').trim()].filter(Boolean)
-        : (entry.profile ? [String(entry.profile || '').trim()].filter(Boolean) : []),
+        : (entry.profile_id ? [String(entry.profile_id || '').trim()].filter(Boolean) : (entry.profile ? [String(entry.profile || '').trim()].filter(Boolean) : [])),
       url: entry.url || '',
     }));
 }
@@ -7349,6 +7579,7 @@ function syncTranscodeLadderPublishJsonFromCommonUi() {
     next.push({
       type: target.type,
       enabled: target.enabled !== false,
+      profile_id: target.profile_id || target.profile,
       profile: target.profile,
       url: target.url,
     });
@@ -7862,6 +8093,7 @@ function applyInputPreset(key) {
     : (format === 'hls' ? 'http'
       : (format === 'srt' || format === 'rtsp' ? 'bridge' : format));
   setInputGroup(group);
+  setInputAdvancedFoldVisibility(format);
 
   if (format === 'udp' || format === 'rtp') {
     elements.inputUdpIface.value = preset.iface || '';
@@ -7887,6 +8119,7 @@ function applyInputPreset(key) {
     const current = state.inputExtras[state.inputEditingIndex] || {};
     state.inputExtras[state.inputEditingIndex] = { ...current, ...preset.extra_options };
   }
+  scheduleInputRawSync();
 }
 
 const OUTPUT_PRESETS = {
@@ -9008,7 +9241,7 @@ function getPublishOutputPublicUrl(entry, streamId) {
     const base = getPublicBaseUrlForKind('http');
     const variants = Array.isArray(entry.variants)
       ? entry.variants
-      : (entry.profile ? [entry.profile] : []);
+      : (entry.profile_id ? [entry.profile_id] : (entry.profile ? [entry.profile] : []));
     if (variants.length === 1) {
       // Canonical HTTP-TS endpoints are extensionless. Backend still accepts legacy ".ts".
       return joinPath(base, `/live/${id}~${encodeURIComponent(variants[0])}`);
@@ -9199,6 +9432,9 @@ function openPublishOutputModal(index) {
   }
   if (elements.outputVariants) {
     let variants = Array.isArray(entry.variants) ? entry.variants : [];
+    if (!variants.length && entry.profile_id) {
+      variants = [String(entry.profile_id)];
+    }
     if (isOutputPresetPush(presetKey) && (!variants || variants.length === 0)) {
       const ids = getEditingProfileIds();
       if (ids.length) variants = [ids[0]];
@@ -9239,12 +9475,14 @@ function readPublishOutputForm() {
   const variants = elements.outputVariants ? parseVariantsCsv(elements.outputVariants.value) : [];
   if (type === 'hls' || type === 'dash' || type === 'http-ts') {
     if (variants.length) out.variants = variants;
+    if (variants.length === 1) out.profile_id = variants[0];
   } else if (type === 'udp' || type === 'rtp' || type === 'rtmp' || type === 'rtsp') {
     if (variants.length !== 1) {
       if (elements.outputHint) elements.outputHint.textContent = 'Exactly one Variant (profile id) is required.';
       return null;
     }
     out.variants = [variants[0]];
+    out.profile_id = variants[0];
     const url = elements.outputDestination ? String(elements.outputDestination.value || '').trim() : '';
     if (!url) {
       if (elements.outputHint) elements.outputHint.textContent = 'Destination URL is required.';
@@ -9274,17 +9512,17 @@ function formatPublishOutputLabel(entry, streamId) {
   if (['udp', 'rtp', 'rtmp', 'rtsp'].includes(type)) {
     const profile = (Array.isArray(entry.variants) && entry.variants.length)
       ? entry.variants[0]
-      : (entry.profile || 'profile?');
+      : (entry.profile_id || entry.profile || 'profile?');
     return `${type.toUpperCase()} (${enabled}) · ${profile} · ${url || 'url?'}`;
   }
   if (type === 'http-ts') {
     const variants = Array.isArray(entry.variants) ? entry.variants
-      : (entry.profile ? [entry.profile] : []);
+      : (entry.profile_id ? [entry.profile_id] : (entry.profile ? [entry.profile] : []));
     const v = variants.length ? variants.join(',') : 'all';
     return `HTTP-TS (${enabled}) · ${v} · ${url}`;
   }
   if (type === 'hls' || type === 'dash') {
-    const variants = Array.isArray(entry.variants) ? entry.variants : [];
+    const variants = Array.isArray(entry.variants) ? entry.variants : (entry.profile_id ? [entry.profile_id] : []);
     const v = variants.length ? variants.join(',') : 'all';
     return `${type.toUpperCase()} (${enabled}) · ${v} · ${url}`;
   }
@@ -9499,6 +9737,230 @@ function buildUnifiedOutputRows(streamId) {
       isMergedBridge: Boolean(legacy && publishEntry && bridgeType),
     };
   });
+}
+
+function isPublishOutputPushType(type) {
+  const t = String(type || '').toLowerCase();
+  return t === 'udp' || t === 'rtp' || t === 'rtmp' || t === 'rtsp';
+}
+
+function isEditingMultiBitrateLadder() {
+  if (!elements.streamTranscodeEnabled || !elements.streamTranscodeEnabled.checked) return false;
+  if (elements.streamTranscodeLadderEnabled && !elements.streamTranscodeLadderEnabled.checked) return false;
+  return getEditingProfileIds().length > 1;
+}
+
+function getUnifiedOutputTypeLabel(item) {
+  if (!item) return 'OUTPUT';
+  if (item.publish) {
+    const t = String(item.publish.type || '').trim();
+    return t ? t.toUpperCase() : 'PUBLISH';
+  }
+  if (item.legacy && typeof item.legacy === 'object') {
+    const preset = getLegacyOutputPreset(item.legacy);
+    const names = {
+      hls_local: 'HLS',
+      http_ts_local: 'HTTP-TS',
+      udp_multicast: 'UDP',
+      rtp_multicast: 'RTP',
+      srt_bridge: 'SRT',
+      file_ts: 'FILE',
+      custom: 'CUSTOM',
+    };
+    return names[preset] || String(preset || 'OUTPUT').toUpperCase();
+  }
+  if (typeof item.legacy === 'string') {
+    const inferred = inferInlineLegacyTypeFromUrl(item.legacy);
+    if (inferred === 'hls_local') return 'HLS';
+    if (inferred === 'http_ts_local') return 'HTTP-TS';
+    if (inferred === 'udp_multicast') return 'UDP';
+    if (inferred === 'rtp_multicast') return 'RTP';
+    if (inferred === 'srt_bridge') return 'SRT';
+    if (inferred === 'file_ts') return 'FILE';
+    return 'CUSTOM';
+  }
+  return 'OUTPUT';
+}
+
+function getUnifiedOutputDestination(item, streamId) {
+  if (!item) return '';
+  if (item.publish) {
+    return getPublishOutputPublicUrl(item.publish, streamId);
+  }
+  if (item.legacy) {
+    const presetKey = getLegacyOutputPreset(item.legacy);
+    return getLegacyOutputCopyValue(item.legacy, presetKey, streamId);
+  }
+  return '';
+}
+
+function getOutputRowProfileId(item, fallbackId) {
+  if (!item || !item.publish) return fallbackId || '';
+  const entry = item.publish;
+  const direct = String(entry.profile_id || entry.profile || '').trim();
+  if (direct) return direct;
+  if (Array.isArray(entry.variants) && entry.variants.length) {
+    return String(entry.variants[0] || '').trim();
+  }
+  return fallbackId || '';
+}
+
+function setOutputRowProfileId(item, profileId) {
+  const nextId = String(profileId || '').trim();
+  const profiles = getEditingProfileIds();
+  if (!nextId || !profiles.includes(nextId)) {
+    return { ok: false, error: 'Select a valid profile' };
+  }
+
+  const publish = parseEditingTranscodePublishJsonSafe();
+  const hasPublish = Number.isFinite(item.publishIndex) && publish[item.publishIndex] && typeof publish[item.publishIndex] === 'object';
+  const hasLegacy = Number.isFinite(item.legacyIndex) && state.outputs[item.legacyIndex];
+
+  if (hasPublish) {
+    const entry = { ...publish[item.publishIndex] };
+    entry.profile_id = nextId;
+    entry.variants = [nextId];
+    publish[item.publishIndex] = entry;
+    setEditingTranscodePublishJson(publish);
+    return { ok: true };
+  }
+
+  if (hasLegacy) {
+    const legacy = state.outputs[item.legacyIndex];
+    const generated = buildPublishFromLegacyBridge(legacy, nextId);
+    if (!generated) {
+      return { ok: false, error: 'Profile can be set only for transcoding-capable outputs' };
+    }
+    generated.profile_id = nextId;
+    generated.variants = [nextId];
+    publish.push(generated);
+    setEditingTranscodePublishJson(publish);
+    return { ok: true };
+  }
+
+  return { ok: false, error: 'Output row is not editable' };
+}
+
+function setOutputRowEnabled(item, enabled) {
+  const next = Boolean(enabled);
+  const publish = parseEditingTranscodePublishJsonSafe();
+  let changed = false;
+
+  if (Number.isFinite(item.publishIndex) && publish[item.publishIndex] && typeof publish[item.publishIndex] === 'object') {
+    publish[item.publishIndex] = {
+      ...publish[item.publishIndex],
+      enabled: next,
+    };
+    changed = true;
+  }
+
+  if (Number.isFinite(item.legacyIndex) && state.outputs[item.legacyIndex] && typeof state.outputs[item.legacyIndex] === 'object') {
+    state.outputs[item.legacyIndex] = {
+      ...state.outputs[item.legacyIndex],
+      enabled: next,
+    };
+    changed = true;
+  }
+
+  if (changed && publish.length) {
+    setEditingTranscodePublishJson(publish);
+  } else if (changed && Number.isFinite(item.publishIndex) && !publish.length) {
+    setEditingTranscodePublishJson([]);
+  }
+  return changed;
+}
+
+function applyUnifiedOutputDestination(item, value, streamId) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return { ok: false, error: 'Destination is required' };
+  }
+
+  const hasPublish = Number.isFinite(item.publishIndex);
+  const hasLegacy = Number.isFinite(item.legacyIndex);
+  const publish = parseEditingTranscodePublishJsonSafe();
+  const publishEntry = hasPublish ? publish[item.publishIndex] : null;
+  const legacy = hasLegacy ? state.outputs[item.legacyIndex] : null;
+
+  if (item.isMergedBridge && legacy && publishEntry) {
+    const bridgeType = getLegacyBridgeType(legacy) || getPublishBridgeType(publishEntry);
+    if (!bridgeType) {
+      return { ok: false, error: 'Bridge output type is not supported' };
+    }
+    const parsed = parseOutputInlineValue(text, legacy);
+    if (!parsed || !parsed.valid || !parsed.output || !parsed.output.addr || !parsed.output.port) {
+      return { ok: false, error: 'Invalid multicast destination' };
+    }
+    state.outputs[item.legacyIndex] = parsed.output;
+    const nextUrl = formatUdpUrl(bridgeType, parsed.output, text) || text;
+    publish[item.publishIndex] = {
+      ...publishEntry,
+      type: bridgeType,
+      url: nextUrl,
+    };
+    setEditingTranscodePublishJson(publish);
+    return { ok: true };
+  }
+
+  if (publishEntry && typeof publishEntry === 'object') {
+    const type = String(publishEntry.type || '').toLowerCase();
+    const nextEntry = { ...publishEntry };
+    if (isPublishOutputPushType(type)) {
+      if (!text.toLowerCase().startsWith(`${type}://`)) {
+        return { ok: false, error: `Destination must start with ${type}://` };
+      }
+      if (type === 'udp' || type === 'rtp') {
+        const parsed = parseOutputInlineValue(text, { format: type });
+        if (!parsed || !parsed.valid || !parsed.output || !parsed.output.addr || !parsed.output.port) {
+          return { ok: false, error: 'Invalid multicast destination' };
+        }
+      }
+      nextEntry.url = text;
+    } else {
+      try {
+        nextEntry.auto_url = false;
+        nextEntry.public_url = validatePublishPublicUrl(type, text);
+      } catch (err) {
+        return { ok: false, error: err.message || 'Invalid destination URL' };
+      }
+    }
+    publish[item.publishIndex] = nextEntry;
+    setEditingTranscodePublishJson(publish);
+    return { ok: true };
+  }
+
+  if (hasLegacy) {
+    const current = state.outputs[item.legacyIndex];
+    if (typeof current === 'string') {
+      state.outputs[item.legacyIndex] = text;
+      return { ok: true };
+    }
+    const parsed = parseOutputInlineValue(text, current);
+    if (!parsed || !parsed.valid || !parsed.output) {
+      return { ok: false, error: 'Invalid output destination' };
+    }
+    try {
+      validateOutput(parsed.output, item.displayIndex ? item.displayIndex - 1 : 0);
+    } catch (err) {
+      return { ok: false, error: err.message || 'Invalid output destination' };
+    }
+    state.outputs[item.legacyIndex] = parsed.output;
+    return { ok: true };
+  }
+
+  return { ok: false, error: 'Output row is not editable' };
+}
+
+function setUnifiedOutputRowError(row, message) {
+  if (!row) return;
+  const errorEl = row.querySelector('[data-role="output-inline-error"]');
+  const input = row.querySelector('[data-action="output-destination"]');
+  if (errorEl) {
+    errorEl.textContent = message || '';
+  }
+  if (input) {
+    input.classList.toggle('is-invalid', Boolean(message));
+  }
 }
 
 function syncBridgeOutputsAcrossModes(legacyOutputs, publishEntries, defaultProfileId) {
@@ -10161,7 +10623,7 @@ function renderPublishOutputList() {
     options.className = 'icon-btn';
     options.type = 'button';
     options.dataset.action = 'output-options';
-    options.textContent = '...';
+    options.textContent = 'Edit';
 
     const remove = document.createElement('button');
     remove.className = 'icon-btn is-danger';
@@ -10203,6 +10665,9 @@ function renderOutputList() {
     renderOutputInlineRow(elements.outputList, state.outputInlineDraft, streamId);
   }
 
+  const profileIds = getEditingProfileIds();
+  const showProfileSelector = isEditingMultiBitrateLadder();
+
   rows.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'list-row output-row';
@@ -10221,17 +10686,6 @@ function renderOutputList() {
     idx.className = 'list-index';
     idx.textContent = `#${item.displayIndex}`;
 
-    const label = document.createElement('div');
-    label.className = 'list-input';
-    const main = document.createElement('div');
-    main.className = 'output-unified-main';
-    main.textContent = item.main;
-    const meta = document.createElement('div');
-    meta.className = `output-unified-meta${item.active_now ? ' is-active' : ' is-inactive'}`;
-    meta.textContent = item.meta;
-    label.appendChild(main);
-    label.appendChild(meta);
-
     const legacy = item.legacyIndex !== null && item.legacyIndex !== undefined
       ? state.outputs[item.legacyIndex]
       : null;
@@ -10241,6 +10695,76 @@ function renderOutputList() {
       const status = getEditingOutputStatus(item.legacyIndex);
       audioFixMeta = getOutputAudioFixMeta(legacy, status);
     }
+
+    const editor = document.createElement('div');
+    editor.className = 'list-input output-inline-editor';
+
+    const inlineMain = document.createElement('div');
+    inlineMain.className = 'output-inline-main';
+
+    const enabledButton = document.createElement('button');
+    enabledButton.type = 'button';
+    enabledButton.className = `output-toggle-btn ${item.enabled ? 'is-on' : 'is-off'}`;
+    enabledButton.dataset.action = 'output-toggle';
+    enabledButton.textContent = item.enabled ? 'ON' : 'OFF';
+    const toggleSupported = Boolean(item.publish || (legacy && typeof legacy === 'object'));
+    enabledButton.disabled = !toggleSupported;
+    if (!toggleSupported) {
+      enabledButton.title = 'This output cannot be toggled inline';
+    }
+
+    const typeChip = document.createElement('span');
+    typeChip.className = 'output-type-chip';
+    typeChip.textContent = getUnifiedOutputTypeLabel(item);
+
+    const destinationInput = document.createElement('input');
+    destinationInput.type = 'text';
+    destinationInput.className = 'output-inline-destination';
+    destinationInput.dataset.action = 'output-destination';
+    destinationInput.value = getUnifiedOutputDestination(item, streamId);
+    destinationInput.title = destinationInput.value;
+
+    inlineMain.appendChild(enabledButton);
+    inlineMain.appendChild(typeChip);
+    inlineMain.appendChild(destinationInput);
+
+    if (showProfileSelector && item.supports_transcode && profileIds.length) {
+      const profileWrap = document.createElement('label');
+      profileWrap.className = 'output-profile-field';
+      const profileCaption = document.createElement('span');
+      profileCaption.className = 'output-profile-caption';
+      profileCaption.textContent = 'Profile';
+      const profileSelect = document.createElement('select');
+      profileSelect.className = 'output-profile-select';
+      profileSelect.dataset.action = 'output-profile';
+      const selectedProfile = getOutputRowProfileId(item, profileIds[0]);
+      profileIds.forEach((profileId) => {
+        const option = document.createElement('option');
+        option.value = profileId;
+        option.textContent = profileId;
+        profileSelect.appendChild(option);
+      });
+      if (selectedProfile && profileIds.includes(selectedProfile)) {
+        profileSelect.value = selectedProfile;
+      } else {
+        profileSelect.value = profileIds[0];
+      }
+      profileWrap.appendChild(profileCaption);
+      profileWrap.appendChild(profileSelect);
+      inlineMain.appendChild(profileWrap);
+    }
+
+    const meta = document.createElement('div');
+    meta.className = `output-unified-meta${item.active_now ? ' is-active' : ' is-inactive'}`;
+    meta.textContent = item.meta;
+
+    const error = document.createElement('div');
+    error.className = 'output-inline-error';
+    error.dataset.role = 'output-inline-error';
+
+    editor.appendChild(inlineMain);
+    editor.appendChild(meta);
+    editor.appendChild(error);
 
     const actions = document.createElement('div');
     actions.className = 'output-actions';
@@ -10256,7 +10780,7 @@ function renderOutputList() {
     options.className = 'icon-btn';
     options.type = 'button';
     options.dataset.action = 'output-options';
-    options.textContent = '...';
+    options.textContent = 'Edit';
 
     const remove = document.createElement('button');
     remove.className = 'icon-btn is-danger';
@@ -10270,7 +10794,7 @@ function renderOutputList() {
     actions.appendChild(remove);
 
     row.appendChild(idx);
-    row.appendChild(label);
+    row.appendChild(editor);
     if (isUdp) {
       const audioFix = audioFixMeta ? audioFixMeta.config : normalizeOutputAudioFix(legacy.audio_fix);
       const audioToggle = document.createElement('button');
@@ -11993,12 +12517,80 @@ function setInputGroup(group) {
   });
 }
 
+function isInputHttpLikeType(type) {
+  const value = String(type || '').toLowerCase();
+  return value === 'http' || value === 'https' || value === 'hls';
+}
+
+function isInputBufferingType(type) {
+  const value = String(type || '').toLowerCase();
+  return value === 'http'
+    || value === 'https'
+    || value === 'hls'
+    || value === 'udp'
+    || value === 'rtp'
+    || value === 'srt'
+    || value === 'rtsp';
+}
+
+function setInputBasicFieldVisibility(format) {
+  const showHttpFields = isInputHttpLikeType(format);
+  $$('.input-basic-http-only').forEach((item) => {
+    item.hidden = !showHttpFields;
+  });
+}
+
+function setInputAdvancedVisible(visible) {
+  const show = !!visible;
+  state.inputAdvancedOpen = show;
+  if (elements.inputAdvancedRoot) {
+    elements.inputAdvancedRoot.hidden = !show;
+  }
+  if (elements.inputAdvancedToggle) {
+    elements.inputAdvancedToggle.textContent = show ? 'Advanced ▴' : 'Advanced ▾';
+    elements.inputAdvancedToggle.setAttribute('aria-expanded', show ? 'true' : 'false');
+  }
+}
+
+function inputDetectorsAnyEnabled() {
+  return detectorToggleEnabled(elements.inputCcLimitEnabled)
+    || detectorToggleEnabled(elements.inputNoAudioEnabled)
+    || detectorToggleEnabled(elements.inputStopVideoEnabled)
+    || detectorToggleEnabled(elements.inputDetectAvEnabled)
+    || detectorToggleEnabled(elements.inputSilenceEnabled);
+}
+
+function syncInputDetectorsVisibility() {
+  const enabled = !elements.inputDetectorsEnabled || elements.inputDetectorsEnabled.checked;
+  if (elements.inputDetectorsBody) {
+    elements.inputDetectorsBody.hidden = !enabled;
+  }
+  if (!enabled) {
+    if (elements.inputQualityPreset) elements.inputQualityPreset.value = 'off';
+    setInputDetectorsError('');
+  } else {
+    ensureDetectorDefaults();
+    validateInputDetectors();
+  }
+}
+
 function setInputAdvancedFoldVisibility(format) {
   const type = String(format || '').toLowerCase();
-  const isHttpLike = type === 'http' || type === 'https' || type === 'hls';
+  const isHttpLike = isInputHttpLikeType(type);
+  const showBuffering = isInputBufferingType(type);
+  setInputBasicFieldVisibility(type);
+  if (elements.inputBufferingFold) {
+    elements.inputBufferingFold.hidden = !showBuffering;
+    if (!showBuffering) {
+      elements.inputBufferingFold.open = false;
+    }
+  }
   if (elements.inputNetFold) elements.inputNetFold.hidden = !isHttpLike;
+  if (elements.inputNetFold && !isHttpLike) elements.inputNetFold.open = false;
   if (elements.inputHlsFold) elements.inputHlsFold.hidden = type !== 'hls';
+  if (elements.inputHlsFold && type !== 'hls') elements.inputHlsFold.open = false;
   if (elements.inputPlayoutFold) elements.inputPlayoutFold.hidden = !isHttpLike;
+  if (elements.inputPlayoutFold && !isHttpLike) elements.inputPlayoutFold.open = false;
 }
 
 function getInputResiliencePrefill(profile) {
@@ -12138,6 +12730,7 @@ function applyInputResiliencePresetOverwrite(profile) {
 }
 
 function setInputRawError(message) {
+  state.inputRawInvalid = Boolean(message);
   if (elements.inputRawError) {
     elements.inputRawError.textContent = message || '';
     elements.inputRawError.classList.toggle('is-error', Boolean(message));
@@ -12145,6 +12738,7 @@ function setInputRawError(message) {
   if (elements.inputRaw) {
     elements.inputRaw.classList.toggle('is-invalid', Boolean(message));
   }
+  syncInputSaveState();
 }
 
 function setInputRawValue(value) {
@@ -12323,7 +12917,8 @@ function fillInputFormFromParsed(parsed, index) {
   }
 
   elements.inputBridgeUrl.value = parsed.url || '';
-  elements.inputBridgePort.value = opts.bridge_port || '';
+  const bridgeDefault = (format === 'srt' || format === 'rtsp') ? '14000' : '';
+  elements.inputBridgePort.value = opts.bridge_port || bridgeDefault;
 
   elements.inputFileName.value = parsed.file || '';
   elements.inputFileLoop.checked = asBool(opts.loop);
@@ -12417,7 +13012,10 @@ function fillInputFormFromParsed(parsed, index) {
   if (elements.inputQualityPreset) {
     elements.inputQualityPreset.value = deriveInputQualityPreset();
   }
-  ensureDetectorDefaults();
+  if (elements.inputDetectorsEnabled) {
+    elements.inputDetectorsEnabled.checked = inputDetectorsAnyEnabled();
+  }
+  syncInputDetectorsVisibility();
 
   const backupSelected = elements.inputCamBackupId && elements.inputCamBackupId.value;
   elements.inputCam.checked = asBool(opts.cam) || !!elements.inputCamId.value || !!backupSelected;
@@ -12442,11 +13040,18 @@ const INPUT_QUALITY_DEFAULTS = {
   silencedetect_noise: -30,
 };
 
+function syncInputSaveState() {
+  if (!elements.inputSave) return;
+  elements.inputSave.disabled = Boolean(state.inputRawInvalid || state.inputDetectorsInvalid);
+}
+
 function setInputDetectorsError(message) {
-  if (!elements.inputDetectorsError) return;
-  elements.inputDetectorsError.textContent = message || '';
-  elements.inputDetectorsError.classList.toggle('is-error', Boolean(message));
-  if (elements.inputSave) elements.inputSave.disabled = Boolean(message);
+  state.inputDetectorsInvalid = Boolean(message);
+  if (elements.inputDetectorsError) {
+    elements.inputDetectorsError.textContent = message || '';
+    elements.inputDetectorsError.classList.toggle('is-error', Boolean(message));
+  }
+  syncInputSaveState();
 }
 
 function detectorToggleEnabled(toggle) {
@@ -12455,6 +13060,9 @@ function detectorToggleEnabled(toggle) {
 }
 
 function deriveInputQualityPreset() {
+  if (elements.inputDetectorsEnabled && !elements.inputDetectorsEnabled.checked) {
+    return 'off';
+  }
   const ccEnabled = detectorToggleEnabled(elements.inputCcLimitEnabled);
   const noAudioEnabled = detectorToggleEnabled(elements.inputNoAudioEnabled);
   const stopEnabled = detectorToggleEnabled(elements.inputStopVideoEnabled);
@@ -12512,6 +13120,9 @@ function applyInputQualityPreset(preset) {
     if (!el) return;
     el.value = String(value);
   };
+  if (elements.inputDetectorsEnabled) {
+    elements.inputDetectorsEnabled.checked = preset !== 'off';
+  }
   if (preset === 'off') {
     if (elements.inputCcLimitEnabled) elements.inputCcLimitEnabled.checked = false;
     if (elements.inputCcLimit) elements.inputCcLimit.value = '';
@@ -12563,6 +13174,7 @@ function applyInputQualityPreset(preset) {
     }
   }
   state.inputQualityPresetApplying = false;
+  syncInputDetectorsVisibility();
   scheduleInputRawSync();
   validateInputDetectors();
 }
@@ -12578,6 +13190,10 @@ function markQualityPresetCustom() {
 
 function validateInputDetectors() {
   if (!elements.inputDetectorsError) return true;
+  if (elements.inputDetectorsEnabled && !elements.inputDetectorsEnabled.checked) {
+    setInputDetectorsError('');
+    return true;
+  }
   const toNum = (el) => {
     if (!el) return undefined;
     const raw = String(el.value || '').trim();
@@ -12628,6 +13244,7 @@ function validateInputDetectors() {
 }
 
 const DETECTOR_INPUT_IDS = new Set([
+  'input-detectors-enabled',
   'input-cc-limit-enabled',
   'input-cc-limit',
   'input-no-audio-enabled',
@@ -12654,6 +13271,9 @@ function isDetectorInputTarget(target) {
 }
 
 function ensureDetectorDefaults() {
+  if (elements.inputDetectorsEnabled && !elements.inputDetectorsEnabled.checked) {
+    return;
+  }
   const setIfEmpty = (el, value) => {
     if (!el) return;
     const cur = String(el.value || '').trim();
@@ -12724,7 +13344,10 @@ function scheduleInputRawSync() {
     if (state.inputRawSyncing) return;
     try {
       const url = readInputForm({ allowPartial: true });
-      if (url) setInputRawValue(url);
+      if (url) {
+        setInputRawValue(url);
+        setInputRawError('');
+      }
     } catch (_err) {
       // Ignore partial errors during live sync.
     }
@@ -12736,17 +13359,22 @@ function openInputModal(index) {
   const parsed = parseInputUrl(url);
   state.inputEditingIndex = index;
   fillInputFormFromParsed(parsed, index);
+  setInputAdvancedVisible(false);
   if (elements.inputRaw) {
     setInputRawValue(url || buildInputUrl(parsed));
     setInputRawError('');
   }
   setInputDetectorsError('');
+  syncInputDetectorsVisibility();
   validateInputDetectors();
+  syncInputSaveState();
   setOverlay(elements.inputOverlay, true);
 }
 
 function closeInputModal() {
   state.inputEditingIndex = null;
+  state.inputRawInvalid = false;
+  state.inputDetectorsInvalid = false;
   setOverlay(elements.inputOverlay, false);
 }
 
@@ -12781,94 +13409,97 @@ function readInputForm(opts = {}) {
   addString('filter', elements.inputFilter.value);
   addString('filter~', elements.inputFilterNot.value);
   addNumber('bitrate_limit', elements.inputBitrateLimit.value);
-  if (elements.inputCcLimitEnabled) {
-    if (elements.inputCcLimitEnabled.checked) {
-      const limit = toNumber(elements.inputCcLimit && elements.inputCcLimit.value);
-      requireMin(limit, 0, 'CC limit');
-      if (!allowPartial && limit !== undefined && limit > 50) {
-        throw new Error('CC limit must be between 0 and 50');
+  const detectorsEnabled = !elements.inputDetectorsEnabled || elements.inputDetectorsEnabled.checked;
+  if (detectorsEnabled) {
+    if (elements.inputCcLimitEnabled) {
+      if (elements.inputCcLimitEnabled.checked) {
+        const limit = toNumber(elements.inputCcLimit && elements.inputCcLimit.value);
+        requireMin(limit, 0, 'CC limit');
+        if (!allowPartial && limit !== undefined && limit > 50) {
+          throw new Error('CC limit must be between 0 and 50');
+        }
+        options.cc_limit = limit !== undefined ? limit : INPUT_QUALITY_DEFAULTS.cc_limit;
       }
-      options.cc_limit = limit !== undefined ? limit : INPUT_QUALITY_DEFAULTS.cc_limit;
+    } else {
+      addNumber('cc_limit', elements.inputCcLimit && elements.inputCcLimit.value);
     }
-  } else {
-    addNumber('cc_limit', elements.inputCcLimit && elements.inputCcLimit.value);
-  }
-  if (elements.inputNoAudioEnabled && elements.inputNoAudioEnabled.checked) {
-    const timeout = toNumber(elements.inputNoAudioTimeout && elements.inputNoAudioTimeout.value);
-    requireMin(timeout, 1, 'No audio timeout');
-    if (!allowPartial && timeout !== undefined && timeout > 600) {
-      throw new Error('No audio timeout must be between 1 and 600');
-    }
-    options.no_audio_on = timeout !== undefined ? timeout : INPUT_QUALITY_DEFAULTS.no_audio_on;
-  }
-  if (elements.inputStopVideoEnabled && elements.inputStopVideoEnabled.checked) {
-    const mode = elements.inputStopVideoMode ? String(elements.inputStopVideoMode.value || '').trim() : '';
-    options.stop_video = (mode.toLowerCase() === 'freeze') ? 'freeze' : true;
-    const timeout = toNumber(elements.inputStopVideoTimeout && elements.inputStopVideoTimeout.value);
-    requireMin(timeout, 1, 'Stop video timeout');
-    if (!allowPartial && timeout !== undefined && timeout > 600) {
-      throw new Error('Stop video timeout must be between 1 and 600');
-    }
-    if (timeout !== undefined) {
-      options.stop_video_timeout_sec = timeout;
-    } else if (!allowPartial) {
-      options.stop_video_timeout_sec = INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec;
-    }
-    const freeze = toNumber(elements.inputStopVideoFreeze && elements.inputStopVideoFreeze.value);
-    if (mode.toLowerCase() === 'freeze') {
-      requireMin(freeze, 1, 'Freeze window');
-      if (!allowPartial && freeze !== undefined && freeze > 600) {
-        throw new Error('Freeze window must be between 1 and 600');
+    if (elements.inputNoAudioEnabled && elements.inputNoAudioEnabled.checked) {
+      const timeout = toNumber(elements.inputNoAudioTimeout && elements.inputNoAudioTimeout.value);
+      requireMin(timeout, 1, 'No audio timeout');
+      if (!allowPartial && timeout !== undefined && timeout > 600) {
+        throw new Error('No audio timeout must be between 1 and 600');
       }
-      if (freeze !== undefined) options.stop_video_freeze_sec = freeze;
+      options.no_audio_on = timeout !== undefined ? timeout : INPUT_QUALITY_DEFAULTS.no_audio_on;
     }
-  }
-  if (elements.inputDetectAvEnabled && elements.inputDetectAvEnabled.checked) {
-    options.detect_av = true;
-    const threshold = toNumber(elements.inputDetectAvThreshold && elements.inputDetectAvThreshold.value);
-    requireMin(threshold, 1, 'AV desync threshold');
-    if (!allowPartial && threshold !== undefined && (threshold < 100 || threshold > 10000)) {
-      throw new Error('AV desync threshold must be between 100 and 10000');
+    if (elements.inputStopVideoEnabled && elements.inputStopVideoEnabled.checked) {
+      const mode = elements.inputStopVideoMode ? String(elements.inputStopVideoMode.value || '').trim() : '';
+      options.stop_video = (mode.toLowerCase() === 'freeze') ? 'freeze' : true;
+      const timeout = toNumber(elements.inputStopVideoTimeout && elements.inputStopVideoTimeout.value);
+      requireMin(timeout, 1, 'Stop video timeout');
+      if (!allowPartial && timeout !== undefined && timeout > 600) {
+        throw new Error('Stop video timeout must be between 1 and 600');
+      }
+      if (timeout !== undefined) {
+        options.stop_video_timeout_sec = timeout;
+      } else if (!allowPartial) {
+        options.stop_video_timeout_sec = INPUT_QUALITY_DEFAULTS.stop_video_timeout_sec;
+      }
+      const freeze = toNumber(elements.inputStopVideoFreeze && elements.inputStopVideoFreeze.value);
+      if (mode.toLowerCase() === 'freeze') {
+        requireMin(freeze, 1, 'Freeze window');
+        if (!allowPartial && freeze !== undefined && freeze > 600) {
+          throw new Error('Freeze window must be between 1 and 600');
+        }
+        if (freeze !== undefined) options.stop_video_freeze_sec = freeze;
+      }
     }
-    if (threshold !== undefined) options.detect_av_threshold_ms = threshold;
-    const hold = toNumber(elements.inputDetectAvHold && elements.inputDetectAvHold.value);
-    requireMin(hold, 1, 'AV desync hold');
-    if (!allowPartial && hold !== undefined && hold > 600) {
-      throw new Error('AV desync hold must be between 1 and 600');
+    if (elements.inputDetectAvEnabled && elements.inputDetectAvEnabled.checked) {
+      options.detect_av = true;
+      const threshold = toNumber(elements.inputDetectAvThreshold && elements.inputDetectAvThreshold.value);
+      requireMin(threshold, 1, 'AV desync threshold');
+      if (!allowPartial && threshold !== undefined && (threshold < 100 || threshold > 10000)) {
+        throw new Error('AV desync threshold must be between 100 and 10000');
+      }
+      if (threshold !== undefined) options.detect_av_threshold_ms = threshold;
+      const hold = toNumber(elements.inputDetectAvHold && elements.inputDetectAvHold.value);
+      requireMin(hold, 1, 'AV desync hold');
+      if (!allowPartial && hold !== undefined && hold > 600) {
+        throw new Error('AV desync hold must be between 1 and 600');
+      }
+      if (hold !== undefined) options.detect_av_hold_sec = hold;
+      const stable = toNumber(elements.inputDetectAvStable && elements.inputDetectAvStable.value);
+      requireMin(stable, 1, 'AV desync stable');
+      if (!allowPartial && stable !== undefined && stable > 600) {
+        throw new Error('AV desync stable must be between 1 and 600');
+      }
+      if (stable !== undefined) options.detect_av_stable_sec = stable;
+      const resend = toNumber(elements.inputDetectAvResend && elements.inputDetectAvResend.value);
+      requireMin(resend, 1, 'AV desync resend');
+      if (!allowPartial && resend !== undefined && resend > 600) {
+        throw new Error('AV desync resend must be between 1 and 600');
+      }
+      if (resend !== undefined) options.detect_av_resend_interval_sec = resend;
     }
-    if (hold !== undefined) options.detect_av_hold_sec = hold;
-    const stable = toNumber(elements.inputDetectAvStable && elements.inputDetectAvStable.value);
-    requireMin(stable, 1, 'AV desync stable');
-    if (!allowPartial && stable !== undefined && stable > 600) {
-      throw new Error('AV desync stable must be between 1 and 600');
+    if (elements.inputSilenceEnabled && elements.inputSilenceEnabled.checked) {
+      options.silencedetect = true;
+      const dur = toNumber(elements.inputSilenceDuration && elements.inputSilenceDuration.value);
+      requireMin(dur, 1, 'Silence duration');
+      if (!allowPartial && dur !== undefined && dur > 600) {
+        throw new Error('Silence duration must be between 1 and 600');
+      }
+      if (dur !== undefined) options.silencedetect_duration = dur;
+      const interval = toNumber(elements.inputSilenceInterval && elements.inputSilenceInterval.value);
+      requireMin(interval, 1, 'Silence interval');
+      if (!allowPartial && interval !== undefined && interval > 600) {
+        throw new Error('Silence interval must be between 1 and 600');
+      }
+      if (interval !== undefined) options.silencedetect_interval = interval;
+      const noise = toNumber(elements.inputSilenceNoise && elements.inputSilenceNoise.value);
+      if (!allowPartial && noise !== undefined && (noise > 0 || noise < -90)) {
+        throw new Error('Silence noise must be between -90 and 0');
+      }
+      if (noise !== undefined) options.silencedetect_noise = noise;
     }
-    if (stable !== undefined) options.detect_av_stable_sec = stable;
-    const resend = toNumber(elements.inputDetectAvResend && elements.inputDetectAvResend.value);
-    requireMin(resend, 1, 'AV desync resend');
-    if (!allowPartial && resend !== undefined && resend > 600) {
-      throw new Error('AV desync resend must be between 1 and 600');
-    }
-    if (resend !== undefined) options.detect_av_resend_interval_sec = resend;
-  }
-  if (elements.inputSilenceEnabled && elements.inputSilenceEnabled.checked) {
-    options.silencedetect = true;
-    const dur = toNumber(elements.inputSilenceDuration && elements.inputSilenceDuration.value);
-    requireMin(dur, 1, 'Silence duration');
-    if (!allowPartial && dur !== undefined && dur > 600) {
-      throw new Error('Silence duration must be between 1 and 600');
-    }
-    if (dur !== undefined) options.silencedetect_duration = dur;
-    const interval = toNumber(elements.inputSilenceInterval && elements.inputSilenceInterval.value);
-    requireMin(interval, 1, 'Silence interval');
-    if (!allowPartial && interval !== undefined && interval > 600) {
-      throw new Error('Silence interval must be between 1 and 600');
-    }
-    if (interval !== undefined) options.silencedetect_interval = interval;
-    const noise = toNumber(elements.inputSilenceNoise && elements.inputSilenceNoise.value);
-    if (!allowPartial && noise !== undefined && (noise > 0 || noise < -90)) {
-      throw new Error('Silence noise must be between -90 and 0');
-    }
-    if (noise !== undefined) options.silencedetect_noise = noise;
   }
   addNumber('connect_timeout_ms', elements.inputNetConnect && elements.inputNetConnect.value);
   addNumber('read_timeout_ms', elements.inputNetRead && elements.inputNetRead.value);
@@ -14247,6 +14878,99 @@ function renderSidebarHelpCard(kind, mount, hasItems) {
   const stored = getSidebarHelpStoredState(kind);
   const shouldOpen = stored ? (stored === 'open') : !hasItems;
   applySidebarHelpOpenState(card, shouldOpen);
+}
+
+function getHelpGuideExpandedState() {
+  const raw = localStorage.getItem(HELP_GUIDE_STATE_KEY);
+  return raw === '1' || raw === 'true';
+}
+
+function setHelpGuideExpandedState(expanded) {
+  localStorage.setItem(HELP_GUIDE_STATE_KEY, expanded ? '1' : '0');
+}
+
+function clearNode(node) {
+  if (!node) return;
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function buildHelpGuideSection(title, lines, bullets) {
+  const section = createEl('section', 'help-guide-section');
+  if (title) {
+    section.appendChild(createEl('h4', '', title));
+  }
+  (lines || []).forEach((line) => {
+    section.appendChild(createEl('p', '', line));
+  });
+  if (Array.isArray(bullets) && bullets.length) {
+    const list = createEl('ul');
+    bullets.forEach((line) => {
+      list.appendChild(createEl('li', '', line));
+    });
+    section.appendChild(list);
+  }
+  return section;
+}
+
+function setHelpGuideExpanded(expanded) {
+  if (elements.helpGuideLong) {
+    elements.helpGuideLong.hidden = !expanded;
+  }
+  if (elements.helpGuideToggle) {
+    elements.helpGuideToggle.textContent = expanded ? 'Скрыть полную справку' : 'Показать полную справку';
+    elements.helpGuideToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+  }
+}
+
+function updateHelpAiAvailability() {
+  const aiEnabled = getSettingBool('ai_enabled', false);
+  if (elements.aiChat) {
+    elements.aiChat.hidden = !aiEnabled;
+  }
+  if (elements.helpAiDisabled) {
+    elements.helpAiDisabled.hidden = aiEnabled;
+  }
+  if (elements.helpAiDetails) {
+    if (!aiEnabled) {
+      elements.helpAiDetails.open = false;
+    }
+  }
+}
+
+function renderHelpGuide() {
+  if (state.helpGuideRendered) return;
+  if (!elements.helpGuideShort || !elements.helpGuideLong) return;
+
+  clearNode(elements.helpGuideShort);
+  clearNode(elements.helpGuideLong);
+
+  elements.helpGuideShort.appendChild(
+    buildHelpGuideSection('Коротко', [HELP_GUIDE_SHORT.intro], HELP_GUIDE_SHORT.goals)
+  );
+  elements.helpGuideShort.appendChild(
+    buildHelpGuideSection('Разделы меню', [], HELP_GUIDE_SHORT.menu)
+  );
+  elements.helpGuideShort.appendChild(
+    buildHelpGuideSection('Быстрый старт', [], HELP_GUIDE_SHORT.quickStart)
+  );
+  elements.helpGuideShort.appendChild(
+    buildHelpGuideSection('Важно', [], HELP_GUIDE_SHORT.important)
+  );
+
+  HELP_GUIDE_EXTENDED_SECTIONS.forEach((section) => {
+    elements.helpGuideLong.appendChild(buildHelpGuideSection(section.title, section.lines || [], section.bullets || []));
+  });
+
+  if (elements.helpGuideToggle) {
+    elements.helpGuideToggle.addEventListener('click', () => {
+      const next = elements.helpGuideLong ? elements.helpGuideLong.hidden : true;
+      setHelpGuideExpanded(next);
+      setHelpGuideExpandedState(next);
+    });
+  }
+
+  setHelpGuideExpanded(getHelpGuideExpandedState());
+  state.helpGuideRendered = true;
 }
 
 function renderSplitterList() {
@@ -16957,7 +17681,7 @@ function readStreamForm() {
 
 	        const rawVariants = Array.isArray(raw.variants)
 	          ? raw.variants
-	          : (raw.profile ? [raw.profile] : []);
+	          : (raw.profile_id ? [raw.profile_id] : (raw.profile ? [raw.profile] : []));
 	        const variants = rawVariants.map((v) => String(v || '').trim()).filter(Boolean);
 
 	        if (t === 'hls' || t === 'dash' || t === 'http-ts') {
@@ -17978,7 +18702,18 @@ function updateEditorMptsStatus() {
 
 async function loadStreamStatus() {
   try {
-    const data = await apiJson('/api/v1/stream-status');
+    const needsFullStatus = Boolean(
+      (state.editing && state.editing.stream)
+      || state.analyzeStreamId
+      || state.analyzeStarting
+      || state.analyzeJobId
+      || state.analyzeJob
+    );
+    const liteEnabled = getSettingBool('ui_status_lite_enabled', false);
+    const endpoint = (liteEnabled && !needsFullStatus)
+      ? '/api/v1/stream-status?lite=1'
+      : '/api/v1/stream-status';
+    const data = await apiJson(endpoint);
     state.stats = data || {};
     updateTiles();
     updatePlayerMeta();
@@ -17992,14 +18727,14 @@ async function loadStreamStatus() {
 }
 
 function getUiPollingIntervalSec() {
-  const allowed = [2, 4, 6, 8, 10];
+  const allowed = [0.2, 0.5, 1, 2, 4, 6, 8, 10];
   const raw = Number(state.settings && state.settings.ui_polling_interval_sec);
   if (Number.isFinite(raw) && allowed.includes(raw)) return raw;
   return Math.round(POLL_STATUS_DEFAULT_MS / 1000);
 }
 
 function computeStatusPollDelayMs() {
-  const baseMs = Math.max(1000, getUiPollingIntervalSec() * 1000);
+  const baseMs = Math.max(200, getUiPollingIntervalSec() * 1000);
   const fastMs = Math.min(baseMs, POLL_STATUS_WARMUP_MS);
   const started = Number(state.statusPollStartMs) || 0;
   const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
@@ -18019,7 +18754,7 @@ function scheduleNextStatusPoll(delayMs) {
   if (state.statusTimer) {
     clearTimeout(state.statusTimer);
   }
-  const delay = Math.max(250, Number(delayMs) || 0);
+  const delay = Math.max(100, Number(delayMs) || 0);
   state.statusTimer = setTimeout(() => {
     tickStatusPolling().catch(() => {});
   }, delay);
@@ -21338,6 +22073,31 @@ function applySettingsToUI() {
   if (elements.settingsUiPollingInterval) {
     setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
   }
+  if (elements.settingsUiStatusLiteEnabled) {
+    elements.settingsUiStatusLiteEnabled.checked = getSettingBool('ui_status_lite_enabled', false);
+  }
+  if (elements.settingsPerformanceAggregateStreamTimers) {
+    elements.settingsPerformanceAggregateStreamTimers.checked = getSettingBool('performance_aggregate_stream_timers', false);
+  }
+  if (elements.settingsPerformanceAggregateTranscodeTimers) {
+    elements.settingsPerformanceAggregateTranscodeTimers.checked = getSettingBool('performance_aggregate_transcode_timers', false);
+  }
+  if (elements.settingsPerformanceProfile) {
+    setSelectValue(
+      elements.settingsPerformanceProfile,
+      getSettingString('performance_profile', 'compat'),
+      'compat'
+    );
+  }
+  if (elements.settingsLuaGcStepUnits) {
+    elements.settingsLuaGcStepUnits.value = getSettingNumber('lua_gc_step_units', 0);
+  }
+  if (elements.settingsLuaGcStepIntervalMs) {
+    elements.settingsLuaGcStepIntervalMs.value = getSettingNumber('lua_gc_step_interval_ms', 250);
+  }
+  if (elements.settingsLuaGcFullIntervalMs) {
+    elements.settingsLuaGcFullIntervalMs.value = getSettingNumber('lua_gc_full_collect_interval_ms', 1000);
+  }
   const inputRes = getSettingObject('input_resilience', {});
   const inputResEnabled = inputRes && inputRes.enabled === true;
   const allowedProfiles = ['dc', 'wan', 'bad', 'max', 'superbad'];
@@ -21664,6 +22424,7 @@ function applySettingsToUI() {
       elements.aiChatStatus.textContent = `Model: ${effectiveModel} (auto fallback if unavailable).`;
     }
   }
+  updateHelpAiAvailability();
   if (elements.settingsWatchdogEnabled) {
     elements.settingsWatchdogEnabled.checked = getSettingBool('resource_watchdog_enabled', true);
   }
@@ -22027,10 +22788,33 @@ function collectGeneralSettings() {
   }
   const uiPolling = toNumber(elements.settingsUiPollingInterval && elements.settingsUiPollingInterval.value);
   if (uiPolling !== undefined) {
-    const allowed = [2, 4, 6, 8, 10];
+    const allowed = [0.2, 0.5, 1, 2, 4, 6, 8, 10];
     if (!allowed.includes(uiPolling)) {
-      throw new Error('Polling interval must be one of: 2, 4, 6, 8, 10');
+      throw new Error('Polling interval must be one of: 0.2, 0.5, 1, 2, 4, 6, 8, 10');
     }
+  }
+  const uiStatusLiteEnabled = !!(elements.settingsUiStatusLiteEnabled && elements.settingsUiStatusLiteEnabled.checked);
+  const aggregateStreamTimers = !!(elements.settingsPerformanceAggregateStreamTimers
+    && elements.settingsPerformanceAggregateStreamTimers.checked);
+  const aggregateTranscodeTimers = !!(elements.settingsPerformanceAggregateTranscodeTimers
+    && elements.settingsPerformanceAggregateTranscodeTimers.checked);
+  const performanceProfile = elements.settingsPerformanceProfile
+    ? String(elements.settingsPerformanceProfile.value || 'compat').trim()
+    : 'compat';
+  if (!['compat', 'mass', 'low_latency'].includes(performanceProfile)) {
+    throw new Error('Performance profile must be compat, mass or low_latency');
+  }
+  const luaGcStepUnits = toNumber(elements.settingsLuaGcStepUnits && elements.settingsLuaGcStepUnits.value);
+  if (luaGcStepUnits !== undefined && (luaGcStepUnits < 0 || luaGcStepUnits > 10000)) {
+    throw new Error('Lua GC step units must be 0..10000');
+  }
+  const luaGcStepIntervalMs = toNumber(elements.settingsLuaGcStepIntervalMs && elements.settingsLuaGcStepIntervalMs.value);
+  if (luaGcStepIntervalMs !== undefined && (luaGcStepIntervalMs < 50 || luaGcStepIntervalMs > 10000)) {
+    throw new Error('Lua GC step interval must be 50..10000 ms');
+  }
+  const luaGcFullIntervalMs = toNumber(elements.settingsLuaGcFullIntervalMs && elements.settingsLuaGcFullIntervalMs.value);
+  if (luaGcFullIntervalMs !== undefined && (luaGcFullIntervalMs < 100 || luaGcFullIntervalMs > 60000)) {
+    throw new Error('Lua GC full collect interval must be 100..60000 ms');
   }
   const monitorMax = toNumber(elements.settingsMonitorAnalyzeMax && elements.settingsMonitorAnalyzeMax.value);
   if (monitorMax !== undefined && monitorMax < 1) {
@@ -22379,6 +23163,13 @@ function collectGeneralSettings() {
     ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
     ui_polling_interval_sec: uiPolling || 4,
+    ui_status_lite_enabled: uiStatusLiteEnabled,
+    performance_aggregate_stream_timers: aggregateStreamTimers,
+    performance_aggregate_transcode_timers: aggregateTranscodeTimers,
+    performance_profile: performanceProfile || 'compat',
+    lua_gc_step_units: luaGcStepUnits !== undefined ? Math.floor(luaGcStepUnits) : 0,
+    lua_gc_step_interval_ms: luaGcStepIntervalMs !== undefined ? Math.floor(luaGcStepIntervalMs) : 250,
+    lua_gc_full_collect_interval_ms: luaGcFullIntervalMs !== undefined ? Math.floor(luaGcFullIntervalMs) : 1000,
   };
   payload.net_resilience = {
     connect_timeout_ms: netConnect !== undefined ? netConnect : NET_RESILIENCE_DEFAULTS.connect_timeout_ms,
@@ -27410,6 +28201,17 @@ function bindEvents() {
     const legacy = hasLegacy ? state.outputs[legacyIndex] : null;
     const publishEntry = hasPublish ? publish[publishIndex] : null;
 
+    if (action.dataset.action === 'output-toggle') {
+      const changed = setOutputRowEnabled({
+        legacyIndex: hasLegacy ? legacyIndex : null,
+        publishIndex: hasPublish ? publishIndex : null,
+      }, !(legacy ? (legacy.enabled !== false) : (publishEntry ? publishEntry.enabled !== false : false)));
+      if (changed) {
+        renderOutputList();
+      }
+      return;
+    }
+
     if (action.dataset.action === 'output-copy') {
       let url = '';
       if (transcodeEnabled && publishEntry) {
@@ -27461,6 +28263,68 @@ function bindEvents() {
         state.outputs.splice(legacyIndex, 1);
       }
       renderOutputList();
+    }
+  });
+
+  elements.outputList.addEventListener('change', (event) => {
+    const target = event.target;
+    if (!target || !target.dataset) return;
+    if (target.dataset.action !== 'output-destination' && target.dataset.action !== 'output-profile') return;
+    const row = target.closest('.list-row');
+    if (!row) return;
+    const streamId = (elements.streamId && elements.streamId.value)
+      ? String(elements.streamId.value)
+      : (state.editing && state.editing.stream ? String(state.editing.stream.id || '') : '');
+    const legacyIndexRaw = row.dataset.legacyIndex;
+    const publishIndexRaw = row.dataset.publishIndex;
+    const legacyIndex = legacyIndexRaw === undefined ? null : Number(legacyIndexRaw);
+    const publishIndex = publishIndexRaw === undefined ? null : Number(publishIndexRaw);
+    const hasLegacy = Number.isFinite(legacyIndex);
+    const hasPublish = Number.isFinite(publishIndex);
+    const item = {
+      legacyIndex: hasLegacy ? legacyIndex : null,
+      publishIndex: hasPublish ? publishIndex : null,
+      legacy: hasLegacy ? state.outputs[legacyIndex] : null,
+      publish: hasPublish ? parseEditingTranscodePublishJsonSafe()[publishIndex] : null,
+      isMergedBridge: hasLegacy && hasPublish,
+      displayIndex: Number(row.querySelector('.list-index') && row.querySelector('.list-index').textContent.replace('#', '')) || 1,
+    };
+
+    if (target.dataset.action === 'output-profile') {
+      const res = setOutputRowProfileId(item, target.value);
+      if (!res.ok) {
+        setUnifiedOutputRowError(row, res.error || 'Invalid profile');
+        return;
+      }
+      renderOutputList();
+      return;
+    }
+
+    const res = applyUnifiedOutputDestination(item, target.value, streamId);
+    if (!res.ok) {
+      setUnifiedOutputRowError(row, res.error || 'Invalid destination');
+      return;
+    }
+    setUnifiedOutputRowError(row, '');
+    renderOutputList();
+  });
+
+  elements.outputList.addEventListener('input', (event) => {
+    const target = event.target;
+    if (!target || !target.dataset || target.dataset.action !== 'output-destination') return;
+    const row = target.closest('.list-row');
+    if (row) {
+      setUnifiedOutputRowError(row, '');
+    }
+    target.title = target.value || '';
+  });
+
+  elements.outputList.addEventListener('keydown', (event) => {
+    const target = event.target;
+    if (!target || !target.dataset || target.dataset.action !== 'output-destination') return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      target.blur();
     }
   });
 
@@ -27906,6 +28770,11 @@ function bindEvents() {
       setInputAdvancedFoldVisibility(type);
     });
   }
+  if (elements.inputAdvancedToggle) {
+    elements.inputAdvancedToggle.addEventListener('click', () => {
+      setInputAdvancedVisible(!state.inputAdvancedOpen);
+    });
+  }
   if (elements.inputQualityPreset) {
     elements.inputQualityPreset.addEventListener('change', () => {
       if (state.inputQualityPresetApplying) return;
@@ -27914,6 +28783,12 @@ function bindEvents() {
       if (preset === 'basic' || preset === 'full') {
         elements.inputQualityPreset.value = 'custom';
       }
+    });
+  }
+  if (elements.inputDetectorsEnabled) {
+    elements.inputDetectorsEnabled.addEventListener('change', () => {
+      syncInputDetectorsVisibility();
+      scheduleInputRawSync();
     });
   }
   if (elements.inputDetectorsFold) {
@@ -27941,8 +28816,11 @@ function bindEvents() {
     elements.inputForm.addEventListener('input', (event) => {
       if (event.target === elements.inputRaw) return;
       if (isDetectorInputTarget(event.target)) {
-        if (event.target !== elements.inputQualityPreset) {
+        if (event.target !== elements.inputQualityPreset && event.target !== elements.inputDetectorsEnabled) {
           markQualityPresetCustom();
+        }
+        if (event.target === elements.inputDetectorsEnabled) {
+          syncInputDetectorsVisibility();
         }
         validateInputDetectors();
       }
@@ -27951,8 +28829,11 @@ function bindEvents() {
     elements.inputForm.addEventListener('change', (event) => {
       if (event.target === elements.inputRaw) return;
       if (isDetectorInputTarget(event.target)) {
-        if (event.target !== elements.inputQualityPreset) {
+        if (event.target !== elements.inputQualityPreset && event.target !== elements.inputDetectorsEnabled) {
           markQualityPresetCustom();
+        }
+        if (event.target === elements.inputDetectorsEnabled) {
+          syncInputDetectorsVisibility();
         }
         ensureDetectorDefaults();
         validateInputDetectors();
@@ -28521,6 +29402,8 @@ function bindEvents() {
 
 renderGeneralSettings();
 bindEvents();
+renderHelpGuide();
+updateHelpAiAvailability();
 setViewMode(state.viewMode, { persist: false, render: false });
 setThemeMode(state.themeMode, { persist: false });
 setSettingsSection(state.settingsSection);
