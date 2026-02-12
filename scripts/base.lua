@@ -75,6 +75,72 @@ end
 ifaddr_list = nil
 if utils.ifaddrs then ifaddr_list = utils.ifaddrs() end
 
+local invalid_udp_localaddr_warned = {}
+
+local function parse_ipv4(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local a, b, c, d = value:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+    if not a then
+        return nil
+    end
+    a = tonumber(a)
+    b = tonumber(b)
+    c = tonumber(c)
+    d = tonumber(d)
+    if not a or not b or not c or not d then
+        return nil
+    end
+    if a < 0 or a > 255 or b < 0 or b > 255 or c < 0 or c > 255 or d < 0 or d > 255 then
+        return nil
+    end
+    return value
+end
+
+local function normalize_udp_localaddr(value)
+    if value == nil then
+        return nil, nil
+    end
+
+    local localaddr = tostring(value):match("^%s*(.-)%s*$")
+    if localaddr == "" then
+        return nil, nil
+    end
+
+    if ifaddr_list then
+        local ifaddr = ifaddr_list[localaddr]
+        if ifaddr and ifaddr.ipv4 and ifaddr.ipv4[1] then
+            return tostring(ifaddr.ipv4[1]), nil
+        end
+    end
+
+    if parse_ipv4(localaddr) then
+        return localaddr, nil
+    end
+
+    return nil, localaddr
+end
+
+local function resolve_udp_input_localaddr(conf, log_warning)
+    local localaddr, invalid = normalize_udp_localaddr(conf and conf.localaddr)
+    if log_warning and invalid then
+        local stream_name = tostring(conf and conf.name or conf and conf.id or "?")
+        local warn_key = stream_name .. "|" .. tostring(invalid)
+        if not invalid_udp_localaddr_warned[warn_key] then
+            invalid_udp_localaddr_warned[warn_key] = true
+            log.warning("[" .. stream_name .. "] invalid localaddr/interface \"" .. tostring(invalid)
+                .. "\" for UDP/RTP input; fallback to default interface")
+        end
+    end
+    return localaddr
+end
+
+local function udp_input_instance_id(conf)
+    local localaddr = resolve_udp_input_localaddr(conf, false)
+    return tostring(localaddr) .. "@" .. tostring(conf.addr) .. ":" .. tostring(conf.port)
+end
+
 local function tool_exists(path)
     if not path or path == "" then
         return false
@@ -186,9 +252,9 @@ parse_url_format.udp = function(url, data)
     if b then
         if b > 1 then
             data.localaddr = url:sub(1, b - 1)
-            if ifaddr_list then
-                local ifaddr = ifaddr_list[data.localaddr]
-                if ifaddr and ifaddr.ipv4 then data.localaddr = ifaddr.ipv4[1] end
+            local resolved = normalize_udp_localaddr(data.localaddr)
+            if resolved then
+                data.localaddr = resolved
             end
         end
         url = url:sub(b + 1)
@@ -2050,7 +2116,8 @@ end
 udp_input_instance_list = {}
 
 init_input_module.udp = function(conf)
-    local instance_id = tostring(conf.localaddr) .. "@" .. conf.addr .. ":" .. conf.port
+    local localaddr = resolve_udp_input_localaddr(conf, true)
+    local instance_id = tostring(localaddr) .. "@" .. conf.addr .. ":" .. conf.port
     local instance = udp_input_instance_list[instance_id]
 
     if not instance then
@@ -2058,7 +2125,7 @@ init_input_module.udp = function(conf)
         udp_input_instance_list[instance_id] = instance
 
         instance.input = udp_input({
-            addr = conf.addr, port = conf.port, localaddr = conf.localaddr,
+            addr = conf.addr, port = conf.port, localaddr = localaddr,
             socket_size = conf.socket_size,
             renew = conf.renew,
             rtp = conf.rtp,
@@ -2071,8 +2138,12 @@ init_input_module.udp = function(conf)
 end
 
 kill_input_module.udp = function(module, conf)
-    local instance_id = tostring(conf.localaddr) .. "@" .. conf.addr .. ":" .. conf.port
+    local instance_id = udp_input_instance_id(conf)
     local instance = udp_input_instance_list[instance_id]
+
+    if not instance then
+        return
+    end
 
     instance.clients = instance.clients - 1
     if instance.clients == 0 then

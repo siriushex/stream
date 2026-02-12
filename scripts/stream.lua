@@ -6340,6 +6340,92 @@ function make_channel(channel_config)
         return nil
     end
 
+    local function bridge_output_keys(resolved)
+        if type(resolved) ~= "table" then
+            return nil, nil
+        end
+        local fmt = tostring(resolved.format or ""):lower()
+        if fmt ~= "udp" and fmt ~= "rtp" then
+            return nil, nil
+        end
+        local addr = tostring(resolved.addr or ""):lower()
+        local port = tonumber(resolved.port)
+        if addr == "" or not port or port <= 0 then
+            return nil, nil
+        end
+        local localaddr = tostring(resolved.localaddr or ""):lower()
+        local sync = tonumber(resolved.sync) or 0
+        local strict_key = fmt .. "|" .. localaddr .. "|" .. addr .. ":" .. tostring(port) .. "|" .. tostring(sync)
+        local endpoint_key = fmt .. "|" .. addr .. ":" .. tostring(port) .. "|" .. tostring(sync)
+        return strict_key, endpoint_key
+    end
+
+    local function suppress_passthrough_bridge_outputs_for_transcode()
+        local tc = channel_config.transcode
+        if type(tc) ~= "table" or tc.enabled ~= true then
+            return
+        end
+        local publish = tc.publish
+        if type(publish) ~= "table" or #publish == 0 then
+            return
+        end
+        local output_list = normalize_stream_list(channel_config.output)
+        if type(output_list) ~= "table" or #output_list == 0 then
+            return
+        end
+
+        local publish_strict = {}
+        local publish_endpoint = {}
+        for _, entry in ipairs(publish) do
+            if type(entry) == "table" and entry.enabled ~= false then
+                local kind = tostring(entry.type or ""):lower()
+                if kind == "udp" or kind == "rtp" then
+                    local raw = tostring(entry.url or ""):gsub("^%s+", ""):gsub("%s+$", "")
+                    if raw ~= "" then
+                        local resolved = resolve_io_config(raw, false)
+                        local strict_key, endpoint_key = bridge_output_keys(resolved)
+                        if strict_key then
+                            publish_strict[strict_key] = true
+                        end
+                        if endpoint_key then
+                            publish_endpoint[endpoint_key] = true
+                        end
+                    end
+                end
+            end
+        end
+
+        if next(publish_strict) == nil and next(publish_endpoint) == nil then
+            return
+        end
+
+        local filtered = {}
+        local suppressed = 0
+        for _, output_entry in ipairs(output_list) do
+            local resolved = resolve_io_config(output_entry, false)
+            local strict_key, endpoint_key = bridge_output_keys(resolved)
+            local is_bridge = strict_key ~= nil
+            local duplicate = is_bridge and (publish_strict[strict_key] == true
+                or (endpoint_key and publish_endpoint[endpoint_key] == true))
+            if duplicate then
+                suppressed = suppressed + 1
+            else
+                table.insert(filtered, output_entry)
+            end
+        end
+
+        if suppressed > 0 then
+            channel_config.output = filtered
+            log.info("[" .. channel_config.name .. "] transcode enabled: suppressed " .. tostring(suppressed)
+                .. " duplicate passthrough UDP/RTP outputs (published by transcode)")
+        end
+    end
+
+    -- Unified OUTPUT LIST stores bridge outputs in both cfg.output and transcode.publish.
+    -- During transcoding this can produce duplicate senders to the same multicast endpoint.
+    -- Keep config intact, but suppress duplicate legacy bridge outputs at runtime.
+    suppress_passthrough_bridge_outputs_for_transcode()
+
     local channel_data = {
         config = channel_config,
         input = {},
