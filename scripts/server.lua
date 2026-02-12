@@ -190,6 +190,8 @@ local opt = {
     addr = "0.0.0.0",
     port = 8000,
     port_set = false,
+    http_play_port = nil,
+    http_play_port_set = false,
     data_dir = "./data",
     data_dir_set = false,
     db_path = nil,
@@ -225,6 +227,7 @@ end
 options_usage = [[
     -a ADDR             listen address (default: 0.0.0.0)
     -p PORT             listen port (default: 8000)
+    --http-play-port P  http play server port override (default: setting http_play_port or PORT)
     --data-dir PATH     data directory (default: ./data or <config>.data)
     --db PATH           sqlite db path (default: data-dir/astra.db)
     --web-dir PATH      web ui directory (default: ./web)
@@ -250,6 +253,15 @@ options = {
             os.exit(78)
         end
         opt.port_set = true
+        return 1
+    end,
+    ["--http-play-port"] = function(idx)
+        opt.http_play_port = tonumber(argv[idx + 1])
+        if not opt.http_play_port or opt.http_play_port < 1 or opt.http_play_port > 65535 then
+            log.error("[server] wrong --http-play-port value")
+            os.exit(78)
+        end
+        opt.http_play_port_set = true
         return 1
     end,
     ["--data-dir"] = function(idx)
@@ -1639,6 +1651,9 @@ function main()
     local http_play_allow = setting_bool("http_play_allow", false)
     local http_play_hls = setting_bool("http_play_hls", false)
     local http_play_port = setting_number("http_play_port", opt.port)
+    if opt.http_play_port_set and opt.http_play_port then
+        http_play_port = opt.http_play_port
+    end
     local http_play_logos = setting_string("http_play_logos", "")
     local http_play_screens = setting_string("http_play_screens", "")
     local http_play_playlist_name = setting_string("http_play_playlist_name", "playlist.m3u8")

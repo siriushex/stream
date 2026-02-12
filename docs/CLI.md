@@ -39,6 +39,7 @@ astral --femon dvb://#adapter=0&type=S2&tp=...
 ```text
   -a ADDR             listen address (default: 0.0.0.0)
   -p PORT             listen port (default: 8000)
+  --http-play-port P  http play server port override (default: setting http_play_port or PORT)
   --data-dir PATH     data directory (default: ./data or <config>.data)
   --db PATH           sqlite db path (default: data-dir/astra.db)
   --web-dir PATH      web ui directory (default: ./web)
