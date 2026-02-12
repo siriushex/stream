@@ -693,6 +693,12 @@ local function apply_config_change(server, client, request, opts)
         })
     end
 
+    -- In sharded setups other processes must reload runtime to pick up DB changes.
+    -- This is best-effort and should not block config apply.
+    if sharding and type(sharding.broadcast_reload) == "function" then
+        pcall(sharding.broadcast_reload)
+    end
+
     local body = nil
     if type(opts.success_builder) == "function" then
         body = opts.success_builder(apply_result, revision_id)
