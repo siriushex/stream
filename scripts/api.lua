@@ -2970,12 +2970,9 @@ local function list_stream_status(server, client, request)
                 if lite then
                     path = path .. "?lite=1"
                 end
-                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
-                    "Content-Length: 0",
-                }) or {
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
                     "Host: 127.0.0.1:" .. tostring(port),
                     "Connection: close",
-                    "Content-Length: 0",
                 }
                 local ok, _req = pcall(http_request, {
                     host = "127.0.0.1",
@@ -3037,12 +3034,9 @@ local function get_stream_status(server, client, request, id)
                 if lite then
                     path = path .. "?lite=1"
                 end
-                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
-                    "Content-Length: 0",
-                }) or {
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
                     "Host: 127.0.0.1:" .. tostring(port),
                     "Connection: close",
-                    "Content-Length: 0",
                 }
                 local ok, err = pcall(http_request, {
                     host = "127.0.0.1",
@@ -3835,12 +3829,9 @@ local function list_transcode_status(server, client, request)
         for _, port in ipairs(ports) do
             if port ~= local_port then
                 pending = pending + 1
-                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
-                    "Content-Length: 0",
-                }) or {
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
                     "Host: 127.0.0.1:" .. tostring(port),
                     "Connection: close",
-                    "Content-Length: 0",
                 }
                 local ok, _req = pcall(http_request, {
                     host = "127.0.0.1",
@@ -3884,12 +3875,9 @@ local function get_transcode_status(server, client, request, id)
             local port = sharding_port_for_stream_id(tostring(id))
             local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
             if port and port ~= local_port then
-                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
-                    "Content-Length: 0",
-                }) or {
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
                     "Host: 127.0.0.1:" .. tostring(port),
                     "Connection: close",
-                    "Content-Length: 0",
                 }
                 local ok, err = pcall(http_request, {
                     host = "127.0.0.1",
