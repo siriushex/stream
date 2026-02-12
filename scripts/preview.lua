@@ -602,6 +602,11 @@ local function stop_session(token, reason)
     end
     s.output = nil
 
+    if s.input then
+        pcall(function() kill_input(s.input) end)
+        s.input = nil
+    end
+
     if s.channel_data and _G.channel_release then
         pcall(function() _G.channel_release(s.channel_data, reason or "preview_stop") end)
     end
@@ -719,8 +724,162 @@ function preview.start(stream_id, opts)
     local audio_aac = (not video_only) and (not video_h264) and (opts.audio_aac == true)
 
     local stream = runtime and runtime.streams and runtime.streams[stream_id] or nil
-    if not stream then
+    local cfg = nil
+    if not stream and config and config.get_stream then
+        local row = config.get_stream(stream_id)
+        if row then
+            cfg = row.config or nil
+        end
+    end
+    if not stream and not cfg then
         return nil, "stream not found", 404
+    end
+
+    -- If transcoding is enabled for this stream (or stream type is transcode),
+    -- preview must NOT spawn another ffmpeg transcoder. Use the post-ffmpeg output "as is".
+    local is_transcode_cfg = false
+    if type(cfg) == "table" then
+        local stype = tostring(cfg.type or ""):lower()
+        if stype == "transcode" or stype == "ffmpeg" then
+            is_transcode_cfg = true
+        elseif type(cfg.transcode) == "table" and cfg.transcode.enabled == true then
+            is_transcode_cfg = true
+        end
+    end
+    if is_transcode_cfg then
+        video_only = false
+        audio_aac = false
+        video_h264 = false
+    end
+
+    -- If this stream is not instantiated in this shard runtime (stream sharding),
+    -- build preview from loopback /play (which can proxy to the owning shard).
+    if not stream then
+        local existing = by_stream[stream_id]
+        if existing and sessions[existing] then
+            local s = sessions[existing]
+            if (video_only ~= (s.video_only == true))
+                or (audio_aac ~= (s.audio_aac == true))
+                or (video_h264 ~= (s.video_h264 == true)) then
+                stop_session(existing, "profile_change")
+            else
+                preview.touch(existing)
+                return {
+                    mode = "preview",
+                    url = s.url,
+                    token = s.token,
+                    expires_in_sec = tonumber(s.expires_in_sec) or nil,
+                    reused = true,
+                }
+            end
+        end
+
+        local max_sessions, _, ttl = preview_limits()
+        local active = 0
+        for _ in pairs(sessions) do
+            active = active + 1
+        end
+        if active >= max_sessions then
+            return nil, "preview limit reached", 429
+        end
+
+        local token = new_token()
+        if not token then
+            return nil, "failed to generate token", 500
+        end
+
+        local output = nil
+        local proc = nil
+        local base_path = nil
+        local input = nil
+        if video_only then
+            local started, start_err, start_code = start_ffmpeg_hls_video_only(token, stream_id)
+            if not started then
+                return nil, start_err or "preview failed", start_code or 500
+            end
+            proc = started.proc
+            base_path = started.base_path
+        elseif audio_aac then
+            local started, start_err, start_code = start_ffmpeg_hls_audio_aac(token, stream_id)
+            if not started then
+                return nil, start_err or "preview failed", start_code or 500
+            end
+            proc = started.proc
+            base_path = started.base_path
+        elseif video_h264 then
+            local started, start_err, start_code = start_ffmpeg_hls_h264_aac(token, stream_id)
+            if not started then
+                return nil, start_err or "preview failed", start_code or 500
+            end
+            proc = started.proc
+            base_path = started.base_path
+        else
+            local url = build_local_play_url(stream_id)
+            local conf = parse_url(url)
+            if not conf then
+                return nil, "invalid input url", 400
+            end
+            conf.name = "preview-" .. tostring(stream_id)
+            input = init_input(conf)
+            if not input then
+                return nil, "failed to init preview input", 500
+            end
+
+            local ts_ext = setting_string("hls_ts_extension", "ts")
+            if ts_ext == "" then
+                ts_ext = "ts"
+            end
+            output = hls_output({
+                upstream = input.tail:stream(),
+                playlist = "index.m3u8",
+                prefix = "seg",
+                ts_extension = ts_ext,
+                pass_data = true,
+                use_wall = true,
+                naming = "sequence",
+                round_duration = false,
+                storage = "memfd",
+                stream_id = token,
+                on_demand = true,
+                idle_timeout_sec = setting_number("preview_idle_timeout_sec", 45),
+                target_duration = 2,
+                window = 4,
+                cleanup = 8,
+                max_bytes = 32 * 1024 * 1024,
+                max_segments = 32,
+            })
+        end
+
+        local now = os.time()
+        sessions[token] = {
+            token = token,
+            stream_id = stream_id,
+            created_at = now,
+            last_access_at = now,
+            expires_at = now + ttl,
+            expires_in_sec = ttl,
+            url = "/preview/" .. token .. "/index.m3u8",
+            video_only = video_only,
+            audio_aac = audio_aac,
+            video_h264 = video_h264,
+            output = output,
+            proc = proc,
+            base_path = base_path,
+            input = input,
+            channel_data = nil,
+        }
+        by_stream[stream_id] = token
+
+        log.info("[preview] start token=" .. token .. " stream=" .. stream_id .. " (loopback)")
+        ensure_sweep_timer()
+
+        return {
+            mode = "preview",
+            url = sessions[token].url,
+            token = token,
+            expires_in_sec = ttl,
+            reused = false,
+        }
     end
 
     -- Streams with an active transcode job already have an encoded output. For preview we must not launch

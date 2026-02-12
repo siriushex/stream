@@ -13,6 +13,8 @@ runtime = {
     stream_shard_count = nil,
     stream_shard_source = nil, -- "cli" or "settings"
     stream_shard_pending = false, -- settings enabled, but not applied yet
+    stream_shard_map = nil, -- optional: stream_id -> shard_index mapping (JSON in settings)
+    stream_shard_map_raw = nil,
 }
 
 local function get_setting(key)
@@ -112,11 +114,51 @@ local function join_path(base, suffix)
     return base .. suffix
 end
 
+local function load_stream_shard_map()
+    if not config or type(config.get_setting) ~= "function" then
+        runtime.stream_shard_map = nil
+        runtime.stream_shard_map_raw = nil
+        return nil
+    end
+    local raw = config.get_setting("stream_sharding_map")
+    if raw == runtime.stream_shard_map_raw then
+        return runtime.stream_shard_map
+    end
+    runtime.stream_shard_map_raw = raw
+    runtime.stream_shard_map = nil
+
+    if raw == nil or raw == "" then
+        return nil
+    end
+    if not json or type(json.decode) ~= "function" then
+        log.error("[runtime] stream sharding map: json.decode is unavailable")
+        return nil
+    end
+    local ok, decoded = pcall(json.decode, raw)
+    if not ok or type(decoded) ~= "table" then
+        log.error("[runtime] stream sharding map: invalid json (ignored)")
+        return nil
+    end
+    runtime.stream_shard_map = decoded
+    return decoded
+end
+
 -- Deterministic shard bucket for a stream id. Used for multi-process sharding.
+-- Priority:
+-- 1) explicit mapping in settings (stream_sharding_map) when present
+-- 2) md5(id) % shard_count (legacy deterministic mode)
 local function stream_shard_bucket(id, shard_count)
     local text = tostring(id or "")
     if text == "" or not shard_count or shard_count <= 1 then
         return 0
+    end
+    local map = runtime.stream_shard_map
+    if type(map) == "table" then
+        local v = map[text]
+        local idx = tonumber(v)
+        if idx and idx >= 0 and idx < shard_count then
+            return math.floor(idx)
+        end
     end
     -- string.md5() returns binary digest (may contain \0), so convert to hex first.
     local hex = string.hex(string.md5(text))
@@ -1201,6 +1243,7 @@ function runtime.apply_streams(rows, force)
     local shard_count = tonumber(runtime.stream_shard_count or 0) or 0
     local shard_index = tonumber(runtime.stream_shard_index or 0) or 0
     if shard_count > 1 then
+        load_stream_shard_map()
         local filtered = {}
         for _, row in ipairs(rows or {}) do
             if stream_shard_bucket(row.id, shard_count) == shard_index then
@@ -1273,6 +1316,9 @@ function runtime.apply_stream_row(row, force)
     end
     local shard_count = tonumber(runtime.stream_shard_count or 0) or 0
     local shard_index = tonumber(runtime.stream_shard_index or 0) or 0
+    if shard_count > 1 then
+        load_stream_shard_map()
+    end
     if shard_count > 1 and stream_shard_bucket(row.id, shard_count) ~= shard_index then
         return false, string.format("stream %s does not belong to this shard (%d/%d)", tostring(row.id), shard_index, shard_count)
     end
@@ -1312,6 +1358,12 @@ end
 function runtime.refresh(force)
     local start_ms = clock_ms()
     reconfigure_stream_sharding_from_settings()
+    if (tonumber(runtime.stream_shard_count or 0) or 0) > 1 then
+        load_stream_shard_map()
+    else
+        runtime.stream_shard_map = nil
+        runtime.stream_shard_map_raw = nil
+    end
     local rows = config.list_streams()
     local errors = runtime.apply_streams(rows, force) or {}
     runtime.last_refresh_errors = errors
