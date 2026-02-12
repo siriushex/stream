@@ -2828,6 +2828,8 @@ local function proxy_api_request(server, client, request, target_port, path_over
     local body = request.content or ""
     if method == "GET" or method == "HEAD" then
         body = ""
+    elseif method == "POST" and body == "" then
+        body = "{}"
     end
     local content_type = get_header(request.headers, "content-type") or "application/json"
 
@@ -3031,11 +3033,51 @@ local function get_stream_status(server, client, request, id)
             local port = sharding_port_for_stream_id(tostring(id))
             local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
             if port and port ~= local_port then
-                local path = "/api/v1/stream-status/" .. tostring(id)
+                local path = "/api/v1/stream-status"
                 if lite then
                     path = path .. "?lite=1"
                 end
-                return proxy_api_request(server, client, request, port, path)
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
+                    "Content-Length: 0",
+                }) or {
+                    "Host: 127.0.0.1:" .. tostring(port),
+                    "Connection: close",
+                    "Content-Length: 0",
+                }
+                local ok, err = pcall(http_request, {
+                    host = "127.0.0.1",
+                    port = port,
+                    path = path,
+                    method = "GET",
+                    headers = headers,
+                    connect_timeout_ms = 200,
+                    read_timeout_ms = 800,
+                    callback = function(self, response)
+                        if not response or tonumber(response.code) ~= 200 then
+                            return error_response(server, client, 404, "stream not found")
+                        end
+                        local ok2, payload = pcall(json.decode, response.content or "")
+                        if not ok2 or type(payload) ~= "table" then
+                            return error_response(server, client, 503, "shard decode failed")
+                        end
+                        local entry = payload[tostring(id)]
+                        if not entry then
+                            return error_response(server, client, 404, "stream not found")
+                        end
+                        if type(entry) == "table" then
+                            entry.shard_port = port
+                            local base = sharding.get_base_port and sharding.get_base_port() or nil
+                            if base then
+                                entry.shard_index = tonumber(port) - tonumber(base)
+                            end
+                        end
+                        json_response(server, client, 200, entry)
+                    end,
+                })
+                if not ok then
+                    return error_response(server, client, 503, "shard request failed: " .. tostring(err))
+                end
+                return nil
             end
         end
         return error_response(server, client, 404, "stream not found")
@@ -3842,7 +3884,47 @@ local function get_transcode_status(server, client, request, id)
             local port = sharding_port_for_stream_id(tostring(id))
             local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
             if port and port ~= local_port then
-                return proxy_api_request(server, client, request, port, "/api/v1/transcode-status/" .. tostring(id))
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
+                    "Content-Length: 0",
+                }) or {
+                    "Host: 127.0.0.1:" .. tostring(port),
+                    "Connection: close",
+                    "Content-Length: 0",
+                }
+                local ok, err = pcall(http_request, {
+                    host = "127.0.0.1",
+                    port = port,
+                    path = "/api/v1/transcode-status",
+                    method = "GET",
+                    headers = headers,
+                    connect_timeout_ms = 200,
+                    read_timeout_ms = 800,
+                    callback = function(self, response)
+                        if not response or tonumber(response.code) ~= 200 then
+                            return error_response(server, client, 404, "transcode not found")
+                        end
+                        local ok2, payload = pcall(json.decode, response.content or "")
+                        if not ok2 or type(payload) ~= "table" then
+                            return error_response(server, client, 503, "shard decode failed")
+                        end
+                        local entry = payload[tostring(id)]
+                        if not entry then
+                            return error_response(server, client, 404, "transcode not found")
+                        end
+                        if type(entry) == "table" then
+                            entry.shard_port = port
+                            local base = sharding.get_base_port and sharding.get_base_port() or nil
+                            if base then
+                                entry.shard_index = tonumber(port) - tonumber(base)
+                            end
+                        end
+                        json_response(server, client, 200, entry)
+                    end,
+                })
+                if not ok then
+                    return error_response(server, client, 503, "shard request failed: " .. tostring(err))
+                end
+                return nil
             end
         end
         return error_response(server, client, 404, "transcode not found")
