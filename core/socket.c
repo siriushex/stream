@@ -415,7 +415,6 @@ bool asc_socket_accept(asc_socket_t *sock, asc_socket_t **client_ptr, void * arg
     client->fd = accept(sock->fd, (struct sockaddr *)&client->addr, &sin_size);
     if(client->fd <= 0)
     {
-        asc_log_error(MSG("accept() failed [%s]"), asc_socket_error());
         free(client);
         *client_ptr = NULL;
         return false;

@@ -1331,8 +1331,11 @@ static void module_init(module_data_t *mod)
     asc_socket_set_reuseaddr(mod->sock, 1);
     if(!asc_socket_bind(mod->sock, mod->addr, mod->port))
     {
+        asc_log_error(MSG("http server bind failed on %s:%d; server will stay stopped"),
+                      mod->addr ? mod->addr : "0.0.0.0",
+                      mod->port);
         on_server_close(mod);
-        astra_abort(); // TODO: try to restart server
+        return;
     }
     asc_socket_listen(mod->sock, on_server_accept, on_server_close);
 }
