@@ -713,8 +713,10 @@ local function apply_config_change(server, client, request, opts)
 
     -- In sharded setups other processes must reload runtime to pick up DB changes.
     -- This is best-effort and should not block config apply.
-    if sharding and type(sharding.broadcast_reload) == "function" then
-        pcall(sharding.broadcast_reload)
+    if opts.broadcast_reload ~= false
+        and sharding and type(sharding.broadcast_reload) == "function"
+    then
+        pcall(sharding.broadcast_reload, opts.broadcast_force)
     end
 
     local body = nil
@@ -4325,6 +4327,13 @@ local function set_settings(server, client, request)
                 epg.configure_timer()
             end
         end,
+        -- Для настроек используем мягкий refresh без force:
+        -- stream/adapters с тем же hash не пересобираются, uptime не сбрасывается.
+        runtime_apply = function()
+            return reload_runtime(false)
+        end,
+        -- В шардах также нужен мягкий refresh, чтобы не дергать все стримы.
+        broadcast_force = false,
     })
 end
 
@@ -6335,7 +6344,19 @@ function api.handle_request(server, client, request)
         if not is_internal_loopback(request) then
             return error_response(server, client, 403, "forbidden")
         end
-        return reload_service(server, client)
+        local q = request and request.query or {}
+        local force = true
+        if q.force ~= nil then
+            local v = tostring(q.force or ""):lower()
+            if v == "0" or v == "false" or v == "no" or v == "off" then
+                force = false
+            end
+        end
+        local ok, err = reload_runtime(force)
+        if not ok then
+            return json_response(server, client, 500, { error = "reload failed", detail = err })
+        end
+        return json_response(server, client, 200, { status = "ok", force = force })
     end
 
     local session = require_auth(request)

@@ -512,7 +512,9 @@ end
 
 -- Best-effort reload of all shard processes after config/settings changes.
 -- Used when shards share one sqlite store; otherwise each process keeps old in-memory config.
-function sharding.broadcast_reload()
+-- force=nil/true  -> full reload (историческое поведение)
+-- force=false     -> soft reload без force-пересборки всех стримов
+function sharding.broadcast_reload(force)
     if not http_request then
         return false
     end
@@ -534,10 +536,14 @@ function sharding.broadcast_reload()
         local p = base_port + i
         if p ~= port then
             local host_header = "127.0.0.1:" .. tostring(p)
+            local path = "/api/v1/reload-internal"
+            if force == false then
+                path = path .. "?force=0"
+            end
             pcall(http_request, {
                 host = "127.0.0.1",
                 port = p,
-                path = "/api/v1/reload-internal",
+                path = path,
                 method = "POST",
                 headers = {
                     "Host: " .. host_header,
