@@ -1911,6 +1911,13 @@ function main()
 	        local client_data = server:data(client)
 
 	            if not request then
+                    if client_data and client_data.shard_proxy_req and type(client_data.shard_proxy_req.close) == "function" then
+                        pcall(function() client_data.shard_proxy_req:close() end)
+                    end
+                    if client_data then
+                        client_data.shard_proxy_req = nil
+                        client_data.shard_proxy_port = nil
+                    end
 	                if client_data.output_data and client_data.output_data.channel_data then
 	                    local channel_data = client_data.output_data.channel_data
 	                    local clients = tonumber(channel_data.clients or 0) or 0
@@ -2023,6 +2030,124 @@ function main()
         end
 
         local entry = runtime.streams[stream_id]
+        -- Stream sharding: if this stream belongs to another shard process, proxy /play to it.
+        if not entry and sharding and type(sharding.is_active) == "function" and sharding.is_active()
+            and type(sharding.get_stream_shard_port) == "function"
+            and http_request
+        then
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            local target_port = sharding.get_stream_shard_port(stream_id)
+            if target_port and target_port ~= local_port then
+                local function proxy_allowed()
+                    local proxy_path = tostring(request.path or ("/play/" .. tostring(raw_stream_id)))
+                    -- Ensure internal loopback is allowed on the shard process.
+                    if not proxy_path:find("internal=", 1, true) then
+                        if proxy_path:find("?", 1, true) then
+                            proxy_path = proxy_path .. "&internal=1"
+                        else
+                            proxy_path = proxy_path .. "?internal=1"
+                        end
+                    end
+
+                    local ok, req = pcall(http_request, {
+                        host = "127.0.0.1",
+                        port = target_port,
+                        path = proxy_path,
+                        method = "GET",
+                        headers = {
+                            "Host: 127.0.0.1:" .. tostring(target_port),
+                            "Connection: close",
+                        },
+                        stream = true,
+                        sync = false,
+                        connect_timeout_ms = 200,
+                        read_timeout_ms = 800,
+                        stall_timeout_ms = 2000,
+                        callback = function(self, response)
+                            if not response then
+                                server:send(client, {
+                                    code = 503,
+                                    headers = {
+                                        "Content-Type: text/plain",
+                                        "Cache-Control: no-store",
+                                        "Pragma: no-cache",
+                                        "Retry-After: 1",
+                                        "Connection: close",
+                                    },
+                                    content = "shard unavailable",
+                                })
+                                return
+                            end
+                            local code = tonumber(response.code) or 0
+                            if code ~= 200 then
+                                server:send(client, {
+                                    code = (code > 0 and code or 502),
+                                    headers = {
+                                        "Content-Type: text/plain",
+                                        "Cache-Control: no-store",
+                                        "Connection: close",
+                                    },
+                                    content = tostring(response.message or "proxy error"),
+                                })
+                                return
+                            end
+
+                            -- Keep proxy request alive until client disconnects.
+                            client_data.shard_proxy_req = self
+                            client_data.shard_proxy_port = target_port
+
+                            local buffer_size = math.max(128, http_play_buffer_kb)
+                            if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                                buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                            end
+                            local buffer_fill = math.floor(buffer_size / 4)
+                            if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                                buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                            end
+
+                            server:send(client, {
+                                upstream = self:stream(),
+                                buffer_size = buffer_size,
+                                buffer_fill = buffer_fill,
+                            }, "video/MP2T")
+                        end,
+                    })
+                    if not ok or not req then
+                        server:send(client, {
+                            code = 503,
+                            headers = {
+                                "Content-Type: text/plain",
+                                "Cache-Control: no-store",
+                                "Connection: close",
+                            },
+                            content = "shard proxy init failed",
+                        })
+                        return
+                    end
+                end
+
+                -- Preserve token auth decisions on the master (real client IP), then proxy via loopback.
+                if internal then
+                    proxy_allowed()
+                    return nil
+                end
+
+                local row = config and config.get_stream and config.get_stream(stream_id) or nil
+                local stream_cfg = row and row.config or nil
+                local stream_name = (stream_cfg and stream_cfg.name) or stream_id
+                local token = auth and auth.get_token and auth.get_token(request) or nil
+                ensure_token_auth(server, client, request, {
+                    stream_id = stream_id,
+                    stream_name = stream_name,
+                    stream_cfg = stream_cfg,
+                    proto = "http_ts",
+                    token = token,
+                }, function(_session)
+                    proxy_allowed()
+                end)
+                return nil
+            end
+        end
         if not entry then
             server:abort(client, 404)
             return nil
@@ -2418,6 +2543,13 @@ function main()
     local function http_live_stream(server, client, request)
         local client_data = server:data(client)
         if not request then
+            if client_data and client_data.shard_live_proxy_req and type(client_data.shard_live_proxy_req.close) == "function" then
+                pcall(function() client_data.shard_live_proxy_req:close() end)
+            end
+            if client_data then
+                client_data.shard_live_proxy_req = nil
+                client_data.shard_live_proxy_port = nil
+            end
             local meta = client_data and client_data.live_meta or nil
             if meta and meta.stream_id and meta.profile_id then
                 local job = transcode and transcode.jobs and transcode.jobs[meta.stream_id] or nil
@@ -2468,6 +2600,97 @@ function main()
         if not stream_id or not profile_id then
             server:abort(client, 404)
             return nil
+        end
+
+        -- Stream sharding: proxy /live to the owning shard when called on a different shard port.
+        if sharding and type(sharding.is_active) == "function" and sharding.is_active()
+            and type(sharding.get_stream_shard_port) == "function"
+            and http_request
+        then
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            local target_port = sharding.get_stream_shard_port(stream_id)
+            if target_port and target_port ~= local_port then
+                local internal = is_internal_live_request(request)
+
+                local function proxy_allowed()
+                    local proxy_path = tostring(request.path or ("/live/" .. tostring(stream_id) .. "~" .. tostring(profile_id)))
+                    if not proxy_path:find("internal=", 1, true) then
+                        if proxy_path:find("?", 1, true) then
+                            proxy_path = proxy_path .. "&internal=1"
+                        else
+                            proxy_path = proxy_path .. "?internal=1"
+                        end
+                    end
+
+                    local ok, req = pcall(http_request, {
+                        host = "127.0.0.1",
+                        port = target_port,
+                        path = proxy_path,
+                        method = "GET",
+                        headers = {
+                            "Host: 127.0.0.1:" .. tostring(target_port),
+                            "Connection: close",
+                        },
+                        stream = true,
+                        sync = false,
+                        connect_timeout_ms = 200,
+                        read_timeout_ms = 800,
+                        stall_timeout_ms = 2000,
+                        callback = function(self, response)
+                            if not response then
+                                server:abort(client, 503)
+                                return
+                            end
+                            local code = tonumber(response.code) or 0
+                            if code ~= 200 then
+                                server:abort(client, code > 0 and code or 502)
+                                return
+                            end
+
+                            client_data.shard_live_proxy_req = self
+                            client_data.shard_live_proxy_port = target_port
+
+                            local buffer_size = math.max(128, http_play_buffer_kb)
+                            if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                                buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                            end
+                            local buffer_fill = math.floor(buffer_size / 4)
+                            if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                                buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                            end
+                            server:send(client, {
+                                upstream = self:stream(),
+                                buffer_size = buffer_size,
+                                buffer_fill = buffer_fill,
+                            }, "video/MP2T")
+                        end,
+                    })
+                    if not ok or not req then
+                        server:abort(client, 503)
+                        return
+                    end
+                end
+
+                if internal then
+                    proxy_allowed()
+                    return nil
+                end
+
+                local row = config and config.get_stream and config.get_stream(stream_id) or nil
+                local stream_cfg = row and row.config or nil
+                local stream_name = (stream_cfg and stream_cfg.name) or stream_id
+                local token = auth and auth.get_token and auth.get_token(request) or nil
+                ensure_token_auth(server, client, request, {
+                    stream_id = stream_id,
+                    stream_name = stream_name,
+                    stream_cfg = stream_cfg,
+                    proto = "http_ts",
+                    token = token,
+                }, function(_session)
+                    proxy_allowed()
+                end)
+                return nil
+            end
         end
 
         local job = transcode and transcode.jobs and transcode.jobs[stream_id] or nil

@@ -357,6 +357,24 @@ local function require_admin(request)
     return user
 end
 
+local function is_internal_loopback(request)
+    if not request then
+        return false
+    end
+    local ip = tostring(request.addr or "")
+    local lower = ip:lower()
+    if not (ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.")) then
+        return false
+    end
+    local headers = request.headers or {}
+    if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+        or headers["forwarded"] or headers["Forwarded"]
+        or headers["x-real-ip"] or headers["X-Real-IP"] then
+        return false
+    end
+    return true
+end
+
 local function audit_event(action, request, opts)
     if not config.add_audit_event then
         return
@@ -2687,6 +2705,89 @@ local stream_status_cache = {
     lite = { ts = 0, payload = nil },
 }
 
+local function sharding_master_enabled()
+    return sharding
+        and type(sharding.is_active) == "function"
+        and type(sharding.is_master) == "function"
+        and sharding.is_active()
+        and sharding.is_master()
+end
+
+local function sharding_port_for_stream_id(stream_id)
+    if not stream_id or stream_id == "" then
+        return nil
+    end
+    if not sharding or type(sharding.get_stream_shard_port) ~= "function" then
+        return nil
+    end
+    return sharding.get_stream_shard_port(stream_id)
+end
+
+local function proxy_api_request(server, client, request, target_port, path_override)
+    if not http_request then
+        return error_response(server, client, 500, "http_request unavailable")
+    end
+    if not request then
+        return error_response(server, client, 400, "request required")
+    end
+
+    local method = request.method or "GET"
+    local path = path_override or (request.path or "/")
+    local body = request.content or ""
+    local content_type = get_header(request.headers, "content-type") or "application/json"
+
+    local extra = {}
+    if body ~= "" then
+        extra[#extra + 1] = "Content-Type: " .. tostring(content_type)
+        extra[#extra + 1] = "Content-Length: " .. tostring(#body)
+    else
+        extra[#extra + 1] = "Content-Length: 0"
+    end
+
+    local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, target_port, extra)
+        or {
+            "Host: 127.0.0.1:" .. tostring(target_port),
+            "Connection: close",
+            extra[1],
+            extra[2],
+        }
+
+    local ok, err = pcall(http_request, {
+        host = "127.0.0.1",
+        port = target_port,
+        path = path,
+        method = method,
+        headers = headers,
+        content = body,
+        connect_timeout_ms = 200,
+        read_timeout_ms = 800,
+        callback = function(self, response)
+            if not response then
+                return error_response(server, client, 503, "shard unavailable")
+            end
+            local code = tonumber(response.code) or 0
+            if code <= 0 then
+                return error_response(server, client, 503, tostring(response.message or "shard error"))
+            end
+            local resp_headers = response.headers or {}
+            local resp_type = resp_headers["content-type"] or resp_headers["Content-Type"] or "application/json"
+            server:send(client, {
+                code = code,
+                headers = {
+                    "Content-Type: " .. tostring(resp_type),
+                    "Cache-Control: no-cache",
+                    "Connection: close",
+                },
+                content = response.content or "",
+            })
+        end,
+    })
+    if not ok then
+        return error_response(server, client, 503, "shard request failed: " .. tostring(err))
+    end
+    return nil
+end
+
 local function query_truthy(value)
     if value == true then
         return true
@@ -2709,6 +2810,105 @@ local function list_stream_status(server, client, request)
         return json_response(server, client, 200, cache.payload)
     end
 
+    -- Sharding master aggregates status from all shard processes.
+    if sharding_master_enabled() and sharding and type(sharding.get_cluster_ports) == "function" then
+        local merged = {}
+        local ports = sharding.get_cluster_ports() or {}
+        local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+        local base_port = sharding.get_base_port and sharding.get_base_port() or nil
+
+        -- Local shard data (avoid self-http recursion).
+        local local_status = {}
+        if lite and runtime.list_status_lite then
+            local_status = runtime.list_status_lite() or {}
+        elseif runtime.list_status then
+            local_status = runtime.list_status() or {}
+        end
+        for id, entry in pairs(local_status) do
+            if type(entry) == "table" then
+                entry.shard_port = local_port
+                entry.shard_index = sharding.get_shard_index and sharding.get_shard_index() or 0
+            end
+            merged[id] = entry
+        end
+
+        local pending = 0
+        local done = false
+
+        local function finish()
+            if done then
+                return
+            end
+            done = true
+            stream_status_cache[cache_key] = { ts = now, payload = merged }
+            json_response(server, client, 200, merged)
+        end
+
+        local function on_shard_response(port, payload)
+            if type(payload) == "table" then
+                local idx = nil
+                if base_port and port then
+                    idx = tonumber(port) - tonumber(base_port)
+                end
+                for id, entry in pairs(payload) do
+                    if type(entry) == "table" then
+                        entry.shard_port = port
+                        entry.shard_index = idx
+                    end
+                    merged[id] = entry
+                end
+            end
+            pending = pending - 1
+            if pending <= 0 then
+                finish()
+            end
+        end
+
+        for _, port in ipairs(ports) do
+            if port ~= local_port then
+                pending = pending + 1
+                local path = "/api/v1/stream-status"
+                if lite then
+                    path = path .. "?lite=1"
+                end
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
+                    "Content-Length: 0",
+                }) or {
+                    "Host: 127.0.0.1:" .. tostring(port),
+                    "Connection: close",
+                    "Content-Length: 0",
+                }
+                local ok, _req = pcall(http_request, {
+                    host = "127.0.0.1",
+                    port = port,
+                    path = path,
+                    method = "GET",
+                    headers = headers,
+                    connect_timeout_ms = 200,
+                    read_timeout_ms = 800,
+                    callback = function(self, response)
+                        if not response or tonumber(response.code) ~= 200 then
+                            return on_shard_response(port, nil)
+                        end
+                        local ok, decoded = pcall(json.decode, response.content or "")
+                        if not ok then
+                            return on_shard_response(port, nil)
+                        end
+                        on_shard_response(port, decoded)
+                    end,
+                })
+                if not ok then
+                    on_shard_response(port, nil)
+                end
+            end
+        end
+
+        if pending <= 0 then
+            finish()
+        end
+        return nil
+    end
+
     local status = {}
     if lite and runtime.list_status_lite then
         status = runtime.list_status_lite() or {}
@@ -2729,6 +2929,18 @@ local function get_stream_status(server, client, request, id)
         status = runtime.get_stream_status(id)
     end
     if not status then
+        -- If requested on the master shard, proxy to the owning shard.
+        if sharding_master_enabled() then
+            local port = sharding_port_for_stream_id(tostring(id))
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            if port and port ~= local_port then
+                local path = "/api/v1/stream-status/" .. tostring(id)
+                if lite then
+                    path = path .. "?lite=1"
+                end
+                return proxy_api_request(server, client, request, port, path)
+            end
+        end
         return error_response(server, client, 404, "stream not found")
     end
     json_response(server, client, 200, status)
@@ -3426,22 +3638,124 @@ local function list_audit_events(server, client, request)
     json_response(server, client, 200, rows)
 end
 
-local function list_transcode_status(server, client)
+local function list_transcode_status(server, client, request)
+    -- Sharding master aggregates transcode status from all shard processes.
+    if sharding_master_enabled() and sharding and type(sharding.get_cluster_ports) == "function" and http_request then
+        local merged = {}
+        local ports = sharding.get_cluster_ports() or {}
+        local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+        local base_port = sharding.get_base_port and sharding.get_base_port() or nil
+
+        local local_status = runtime.list_transcode_status and runtime.list_transcode_status() or {}
+        for id, entry in pairs(local_status) do
+            if type(entry) == "table" then
+                entry.shard_port = local_port
+                entry.shard_index = sharding.get_shard_index and sharding.get_shard_index() or 0
+            end
+            merged[id] = entry
+        end
+
+        local pending = 0
+        local done = false
+
+        local function finish()
+            if done then
+                return
+            end
+            done = true
+            json_response(server, client, 200, merged)
+        end
+
+        local function on_shard_response(port, payload)
+            if type(payload) == "table" then
+                local idx = nil
+                if base_port and port then
+                    idx = tonumber(port) - tonumber(base_port)
+                end
+                for id, entry in pairs(payload) do
+                    if type(entry) == "table" then
+                        entry.shard_port = port
+                        entry.shard_index = idx
+                    end
+                    merged[id] = entry
+                end
+            end
+            pending = pending - 1
+            if pending <= 0 then
+                finish()
+            end
+        end
+
+        for _, port in ipairs(ports) do
+            if port ~= local_port then
+                pending = pending + 1
+                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port, {
+                    "Content-Length: 0",
+                }) or {
+                    "Host: 127.0.0.1:" .. tostring(port),
+                    "Connection: close",
+                    "Content-Length: 0",
+                }
+                local ok, _req = pcall(http_request, {
+                    host = "127.0.0.1",
+                    port = port,
+                    path = "/api/v1/transcode-status",
+                    method = "GET",
+                    headers = headers,
+                    connect_timeout_ms = 200,
+                    read_timeout_ms = 800,
+                    callback = function(self, response)
+                        if not response or tonumber(response.code) ~= 200 then
+                            return on_shard_response(port, nil)
+                        end
+                        local ok, decoded = pcall(json.decode, response.content or "")
+                        if not ok then
+                            return on_shard_response(port, nil)
+                        end
+                        on_shard_response(port, decoded)
+                    end,
+                })
+                if not ok then
+                    on_shard_response(port, nil)
+                end
+            end
+        end
+
+        if pending <= 0 then
+            finish()
+        end
+        return nil
+    end
+
     local status = runtime.list_transcode_status and runtime.list_transcode_status() or {}
     json_response(server, client, 200, status)
 end
 
-local function get_transcode_status(server, client, id)
+local function get_transcode_status(server, client, request, id)
     local status = runtime.get_transcode_status and runtime.get_transcode_status(id)
     if not status then
+        if sharding_master_enabled() then
+            local port = sharding_port_for_stream_id(tostring(id))
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            if port and port ~= local_port then
+                return proxy_api_request(server, client, request, port, "/api/v1/transcode-status/" .. tostring(id))
+            end
+        end
         return error_response(server, client, 404, "transcode not found")
     end
     json_response(server, client, 200, status)
 end
 
-local function restart_transcode(server, client, id)
+local function restart_transcode(server, client, request, id)
     local ok = runtime.restart_transcode and runtime.restart_transcode(id)
     if not ok then
+        if sharding_master_enabled() then
+            local port = sharding_port_for_stream_id(tostring(id))
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            if port and port ~= local_port then
+                return proxy_api_request(server, client, request, port, "/api/v1/transcode/" .. tostring(id) .. "/restart")
+            end
+        end
         return error_response(server, client, 404, "transcode not found")
     end
     json_response(server, client, 200, { status = "restarting" })
@@ -5801,6 +6115,15 @@ function api.handle_request(server, client, request)
         return health_summary(server, client)
     end
 
+    -- Internal-only reload hook for sharded setups (no auth/csrf).
+    -- Used by sharding.broadcast_reload() to refresh peers after DB changes.
+    if path == "/api/v1/reload-internal" and method == "POST" then
+        if not is_internal_loopback(request) then
+            return error_response(server, client, 403, "forbidden")
+        end
+        return reload_service(server, client)
+    end
+
     local session = require_auth(request)
     if not session then
         return error_response(server, client, 401, "unauthorized")
@@ -6172,17 +6495,17 @@ function api.handle_request(server, client, request)
     end
 
     if path == "/api/v1/transcode-status" and method == "GET" then
-        return list_transcode_status(server, client)
+        return list_transcode_status(server, client, request)
     end
 
     local transcode_id = path:match("^/api/v1/transcode%-status/([%w%-%_]+)$")
     if transcode_id and method == "GET" then
-        return get_transcode_status(server, client, transcode_id)
+        return get_transcode_status(server, client, request, transcode_id)
     end
 
     local restart_id = path:match("^/api/v1/transcode/([%w%-%_]+)/restart$")
     if restart_id and method == "POST" then
-        return restart_transcode(server, client, restart_id)
+        return restart_transcode(server, client, request, restart_id)
     end
 
     if path == "/api/v1/reload" and method == "POST" then
