@@ -73,6 +73,18 @@ tools/perf/settings_no_restart_smoke.sh --base http://127.0.0.1:9060 --stream a0
 - `--check-local-pid` — дополнительно сверять локальный PID ffmpeg
   (используйте только когда скрипт запускается на той же машине, где работает Astral)
 
+## 3.3) Smoke: stream update scope (target-only reload)
+
+Проверяет, что изменение одного stream через `PUT /api/v1/streams/<id>`
+не роняет uptime контрольного stream.
+
+```bash
+tools/perf/stream_update_scope_smoke.sh \
+  --base http://127.0.0.1:9060 \
+  --target a014 \
+  --control a019
+```
+
 ## 4) Hotspot-проверка таймеров (P1.2)
 
 ```bash
