@@ -1079,6 +1079,10 @@ local function normalize_watchdog_defaults(tc)
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
         restart_cooldown_sec = num("restart_cooldown_sec", 1200),
+        restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", num("restart_cooldown_sec", 1200)),
+        restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", num("restart_cooldown_sec", 1200)),
+        restart_force_after_sec = num("restart_force_after_sec", 0),
+        error_rearm_sec = num("error_rearm_sec", 0),
         stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
@@ -1139,6 +1143,10 @@ local function normalize_output_watchdog(wd, base)
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
         restart_cooldown_sec = num("restart_cooldown_sec", 1200),
+        restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", num("restart_cooldown_sec", 1200)),
+        restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", num("restart_cooldown_sec", 1200)),
+        restart_force_after_sec = num("restart_force_after_sec", 0),
+        error_rearm_sec = num("error_rearm_sec", 0),
         stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
@@ -1498,7 +1506,7 @@ local function normalize_failover_config(cfg, enabled)
     if stop_if_all_inactive_sec < 5 then stop_if_all_inactive_sec = 5 end
 
     return {
-        enabled = enabled and backup_type ~= "disabled",
+        enabled = enabled and has_backups and backup_type ~= "disabled",
         has_backups = has_backups,
         mode = backup_type,
         initial_delay = initial_delay,
@@ -3313,6 +3321,81 @@ local function resolve_restart_reason_code(code)
     return code
 end
 
+function transcode._classify_restart_reason(reason_code)
+    if reason_code == "NO_PROGRESS"
+        or reason_code == "EXIT_UNEXPECTED"
+        or reason_code == "INPUT_NO_DATA"
+        or reason_code == "OUTPUT_PROBE_FAIL"
+        or reason_code == "WARMUP_FAIL"
+        or reason_code == "WARMUP_TIMEOUT"
+        or reason_code == "PUBLISH_NO_PROGRESS"
+        or reason_code == "PUBLISH_ERROR_RATE"
+        or reason_code == "RESTART_REQUEST"
+    then
+        return "critical"
+    end
+    return "quality"
+end
+
+function transcode._resolve_reason_cooldown(watchdog, reason_code)
+    if type(watchdog) ~= "table" then
+        return 0, "quality"
+    end
+    local lane = transcode._classify_restart_reason(reason_code)
+    local value = nil
+    if lane == "critical" then
+        value = tonumber(watchdog.restart_cooldown_critical_sec)
+    else
+        value = tonumber(watchdog.restart_cooldown_quality_sec)
+    end
+    if value == nil then
+        value = tonumber(watchdog.restart_cooldown_sec)
+    end
+    if value == nil or value < 0 then
+        value = 0
+    end
+    return value, lane
+end
+
+function transcode._note_restart_suppressed(target, now, reason_code)
+    if not target then
+        return
+    end
+    if not target.restart_suppressed_since_ts then
+        target.restart_suppressed_since_ts = now
+    end
+    target.restart_suppressed_count = (tonumber(target.restart_suppressed_count) or 0) + 1
+    target.last_restart_suppressed_reason = reason_code
+end
+
+function transcode._clear_restart_suppressed(target)
+    if not target then
+        return
+    end
+    target.restart_suppressed_since_ts = nil
+    target.restart_suppressed_count = 0
+    target.last_restart_suppressed_reason = nil
+end
+
+function transcode._should_force_restart(target, watchdog, now)
+    if not target or type(watchdog) ~= "table" then
+        return false, nil
+    end
+    local force_after = tonumber(watchdog.restart_force_after_sec) or 0
+    if force_after <= 0 then
+        return false, nil
+    end
+    local since = tonumber(target.restart_suppressed_since_ts)
+    if not since then
+        return false, nil
+    end
+    local suppressed_sec = now - since
+    if suppressed_sec >= force_after then
+        return true, suppressed_sec
+    end
+    return false, suppressed_sec
+end
+
 local function compute_restart_delay(watchdog, history)
     local base = watchdog and tonumber(watchdog.restart_delay_sec) or 0
     if base < 0 then
@@ -3857,6 +3940,23 @@ local function restart_allowed(job, output_state, watchdog)
             output_url = output_state and output_state.url or nil,
         })
         job.state = "ERROR"
+        job.error_since_ts = now
+        job.error_reason = "TRANSCODE_RESTART_LIMIT"
+        local rearm_sec = tonumber(watchdog and watchdog.error_rearm_sec) or 0
+        if rearm_sec > 0 then
+            job.error_rearm_ts = now + rearm_sec
+        else
+            job.error_rearm_ts = nil
+        end
+        if output_state then
+            output_state.error_since_ts = now
+            output_state.error_reason = "TRANSCODE_RESTART_LIMIT"
+            if rearm_sec > 0 then
+                output_state.error_rearm_ts = now + rearm_sec
+            else
+                output_state.error_rearm_ts = nil
+            end
+        end
         return false, history
     end
     return true, history
@@ -3882,6 +3982,14 @@ local function restart_allowed_worker(job, worker, watchdog)
         })
         if worker then
             worker.state = "ERROR"
+            worker.error_since_ts = now
+            worker.error_reason = "TRANSCODE_RESTART_LIMIT"
+            local rearm_sec = tonumber(watchdog and watchdog.error_rearm_sec) or 0
+            if rearm_sec > 0 then
+                worker.error_rearm_ts = now + rearm_sec
+            else
+                worker.error_rearm_ts = nil
+            end
         end
         return false, history
     end
@@ -3904,6 +4012,39 @@ local function merge_watchdog(base, override)
     return out
 end
 
+function transcode._try_auto_rearm_holder(job, holder, now, extra_meta)
+    if not job or not holder or holder.state ~= "ERROR" then
+        return false
+    end
+    local rearm_ts = tonumber(holder.error_rearm_ts)
+    if not rearm_ts or rearm_ts <= 0 or now < rearm_ts then
+        return false
+    end
+    if not job.enabled or job.state == "STOPPED" or job.state == "INACTIVE" then
+        return false
+    end
+    local payload = {
+        reason = holder.error_reason or "unknown",
+        error_since_ts = holder.error_since_ts,
+        rearm_wait_sec = holder.error_since_ts and (now - holder.error_since_ts) or nil,
+    }
+    if type(extra_meta) == "table" then
+        for k, v in pairs(extra_meta) do
+            payload[k] = v
+        end
+    end
+    record_alert(job, "TRANSCODE_AUTO_REARM", "auto rearm scheduled", payload)
+    holder.error_rearm_ts = nil
+    holder.error_since_ts = nil
+    holder.error_reason = nil
+    holder.state = "RESTARTING"
+    holder.restart_due_ts = now
+    if job.state == "ERROR" then
+        job.state = "RESTARTING"
+    end
+    return true
+end
+
 schedule_worker_restart = function(job, worker, code, message, meta)
     if not job or not worker then
         return false
@@ -3916,13 +4057,24 @@ schedule_worker_restart = function(job, worker, code, message, meta)
         return false
     end
     local now = os.time()
-    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    local reason_code = resolve_restart_reason_code(code)
+    local cooldown, cooldown_lane = transcode._resolve_reason_cooldown(watchdog, reason_code)
     if cooldown > 0 and worker.last_restart_ts then
         local note = now - worker.last_restart_ts
         if note < cooldown then
-            log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown) output #" ..
-                tostring(worker.index))
-            return false
+            transcode._note_restart_suppressed(worker, now, reason_code)
+            local force, suppressed_sec = transcode._should_force_restart(worker, watchdog, now)
+            if not force then
+                log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" .. tostring(cooldown_lane) ..
+                    ") output #" .. tostring(worker.index))
+                return false
+            end
+            if meta == nil then
+                meta = {}
+            end
+            meta.forced = true
+            meta.suppressed_sec = suppressed_sec
+            meta.suppressed_count = worker.restart_suppressed_count
         end
     end
 
@@ -3934,7 +4086,6 @@ schedule_worker_restart = function(job, worker, code, message, meta)
         worker.standby = nil
         worker.cutover = nil
     end
-    local reason_code = resolve_restart_reason_code(code)
     local payload = normalize_restart_meta(meta)
     payload.output_index = worker.index
     payload.output_url = worker.output and worker.output.url or nil
@@ -3949,6 +4100,11 @@ schedule_worker_restart = function(job, worker, code, message, meta)
 
     worker.last_restart_ts = now
     worker.last_restart_reason = reason_code
+    transcode._clear_restart_suppressed(worker)
+    if payload and payload.forced == true then
+        worker.last_forced_restart_ts = now
+        worker.last_forced_restart_reason = reason_code
+    end
     if worker.monitor then
         worker.monitor.last_restart_ts = now
         worker.monitor.last_restart_reason = reason_code
@@ -3977,16 +4133,44 @@ schedule_restart = function(job, output_state, code, message, meta)
         return false
     end
     local now = os.time()
-    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    local reason_code = resolve_restart_reason_code(code)
+    local cooldown, cooldown_lane = transcode._resolve_reason_cooldown(watchdog, reason_code)
     if output_state and cooldown > 0 and output_state.last_restart_ts then
         local note = now - output_state.last_restart_ts
         if note < cooldown then
-            log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown) output #" ..
-                tostring(output_state.index))
-            return false
+            transcode._note_restart_suppressed(output_state, now, reason_code)
+            local force, suppressed_sec = transcode._should_force_restart(output_state, watchdog, now)
+            if not force then
+                log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" ..
+                    tostring(cooldown_lane) .. ") output #" .. tostring(output_state.index))
+                return false
+            end
+            if meta == nil then
+                meta = {}
+            end
+            meta.forced = true
+            meta.suppressed_sec = suppressed_sec
+            meta.suppressed_count = output_state.restart_suppressed_count
         end
     end
-    local reason_code = resolve_restart_reason_code(code)
+    if not output_state and cooldown > 0 and job.last_restart_ts then
+        local note = now - job.last_restart_ts
+        if note < cooldown then
+            transcode._note_restart_suppressed(job, now, reason_code)
+            local force, suppressed_sec = transcode._should_force_restart(job, watchdog, now)
+            if not force then
+                log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" ..
+                    tostring(cooldown_lane) .. ")")
+                return false
+            end
+            if meta == nil then
+                meta = {}
+            end
+            meta.forced = true
+            meta.suppressed_sec = suppressed_sec
+            meta.suppressed_count = job.restart_suppressed_count
+        end
+    end
     local payload = normalize_restart_meta(meta)
     local alert_message = message
     if output_state then
@@ -4010,7 +4194,19 @@ schedule_restart = function(job, output_state, code, message, meta)
     if output_state then
         output_state.last_restart_ts = now
         output_state.last_restart_reason = reason_code
+        transcode._clear_restart_suppressed(output_state)
+        if payload and payload.forced == true then
+            output_state.last_forced_restart_ts = now
+            output_state.last_forced_restart_reason = reason_code
+        end
     end
+    if payload and payload.forced == true then
+        job.last_forced_restart_ts = now
+        job.last_forced_restart_reason = reason_code
+    end
+    job.last_restart_ts = now
+    job.last_restart_reason = reason_code
+    transcode._clear_restart_suppressed(job)
     job.state = "RESTARTING"
     job.restart_due_ts = now + compute_restart_delay(watchdog, history)
     job.restart_reason = reason_code
@@ -4191,8 +4387,11 @@ local function update_output_bitrate(job, output_state, bitrate, now)
         output_state.low_bitrate_seconds = now - output_state.low_bitrate_since
         local hold = tonumber(wd.low_bitrate_hold_sec) or 0
         if hold > 0 and output_state.low_bitrate_seconds >= hold then
-            local cooldown = tonumber(wd.restart_cooldown_sec) or 0
-            if not output_state.last_restart_ts or now - output_state.last_restart_ts >= cooldown then
+            local cooldown = nil
+            if output_state.last_restart_ts then
+                cooldown = select(1, transcode._resolve_reason_cooldown(wd, "LOW_BITRATE"))
+            end
+            if (cooldown == nil) or (not output_state.last_restart_ts) or now - output_state.last_restart_ts >= cooldown then
                 local last_trigger = output_state.low_bitrate_trigger_ts or 0
                 if now - last_trigger >= hold then
                     output_state.low_bitrate_trigger_ts = now
@@ -4584,6 +4783,7 @@ end
 
 local function tick_job(job)
     local now = os.time()
+    transcode._try_auto_rearm_holder(job, job, now, nil)
     if job.ladder_enabled == true then
         if tick_ladder then
             tick_ladder(job, now)
@@ -5628,6 +5828,10 @@ local function reset_publish_runtime(worker, now)
     worker.last_error_ts = nil
     worker.ffmpeg_exit_code = nil
     worker.ffmpeg_exit_signal = nil
+    clear_restart_suppressed(worker)
+    worker.error_since_ts = nil
+    worker.error_rearm_ts = nil
+    worker.error_reason = nil
 end
 
 local function build_publish_ffmpeg_argv(job, worker)
@@ -5840,17 +6044,28 @@ local function schedule_publish_restart(job, worker, code, message, meta)
         return false
     end
     local now = os.time()
-    local cooldown = tonumber(watchdog.restart_cooldown_sec) or 0
+    local reason_code = resolve_restart_reason_code(code)
+    local cooldown, cooldown_lane = transcode._resolve_reason_cooldown(watchdog, reason_code)
     if cooldown > 0 and worker.last_restart_ts then
         local note = now - worker.last_restart_ts
         if note < cooldown then
-            log.warning("[publish " .. tostring(job.id) .. "] restart suppressed (cooldown) " ..
-                tostring(worker.publish_type) .. ":" .. tostring(worker.profile_id))
-            return false
+            transcode._note_restart_suppressed(worker, now, reason_code)
+            local force, suppressed_sec = transcode._should_force_restart(worker, watchdog, now)
+            if not force then
+                log.warning("[publish " .. tostring(job.id) .. "] restart suppressed (cooldown:" ..
+                    tostring(cooldown_lane) .. ") " .. tostring(worker.publish_type) .. ":" ..
+                    tostring(worker.profile_id))
+                return false
+            end
+            if meta == nil then
+                meta = {}
+            end
+            meta.forced = true
+            meta.suppressed_sec = suppressed_sec
+            meta.suppressed_count = worker.restart_suppressed_count
         end
     end
 
-    local reason_code = resolve_restart_reason_code(code)
     local payload = normalize_restart_meta(meta)
     payload.publish_type = worker.publish_type
     payload.profile_id = worker.profile_id
@@ -5869,6 +6084,11 @@ local function schedule_publish_restart(job, worker, code, message, meta)
 
     worker.last_restart_ts = now
     worker.last_restart_reason = reason_code
+    transcode._clear_restart_suppressed(worker)
+    if payload and payload.forced == true then
+        worker.last_forced_restart_ts = now
+        worker.last_forced_restart_reason = reason_code
+    end
     worker.state = "RESTARTING"
     worker.restart_due_ts = now + compute_restart_delay(watchdog, history)
     worker.restart_reason_code = reason_code
@@ -5959,6 +6179,12 @@ local function tick_publish_worker(job, worker, now)
             })
         end
     end
+
+    transcode._try_auto_rearm_holder(job, worker, now, {
+        publish_type = worker.publish_type,
+        profile_id = worker.profile_id,
+        publish_url = worker.publish_url,
+    })
 
     if worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
         if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
@@ -6074,6 +6300,10 @@ local function reset_worker_runtime(worker, now)
     worker.last_error_ts = nil
     worker.ffmpeg_exit_code = nil
     worker.ffmpeg_exit_signal = nil
+    clear_restart_suppressed(worker)
+    worker.error_since_ts = nil
+    worker.error_rearm_ts = nil
+    worker.error_reason = nil
 end
 
 local function parse_query_params(query)
@@ -6757,6 +6987,11 @@ tick_worker = function(job, worker, now)
         end
     end
 
+    transcode._try_auto_rearm_holder(job, worker, now, {
+        output_index = worker.index,
+        output_url = worker.output and worker.output.url or nil,
+    })
+
     if not worker.cutover and worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
         if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
             worker.restart_due_ts = nil
@@ -7058,6 +7293,11 @@ tick_ladder_encoder = function(job, now)
             end
         end
     end
+
+    transcode._try_auto_rearm_holder(job, worker, now, {
+        output_index = worker.index,
+        output_url = worker.output and worker.output.url or nil,
+    })
 
     if not worker.cutover and worker.state == "RESTARTING" and (not worker.proc) and worker.restart_due_ts and now >= worker.restart_due_ts then
         if job and job.enabled and job.state ~= "STOPPED" and job.state ~= "INACTIVE" and job.state ~= "ERROR" then
@@ -7502,7 +7742,9 @@ function transcode.upsert(id, row, force)
         end
         job.enabled = enabled
         if job.failover then
-            job.failover.enabled = enabled and job.failover.mode ~= "disabled"
+            local input_count = #ensure_list(cfg.input)
+            job.failover.has_backups = input_count > 1
+            job.failover.enabled = enabled and job.failover.has_backups and job.failover.mode ~= "disabled"
             if job.failover.enabled and not job.failover.inputs then
                 local inputs, invalid = build_failover_inputs(cfg, job.name)
                 if invalid then
@@ -7699,6 +7941,14 @@ function transcode.get_status_lite(id)
         active_input_url = active_input_url,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
+        restart_suppressed_since_ts = job.restart_suppressed_since_ts,
+        restart_suppressed_count = job.restart_suppressed_count,
+        last_restart_suppressed_reason = job.last_restart_suppressed_reason,
+        last_forced_restart_ts = job.last_forced_restart_ts,
+        last_forced_restart_reason = job.last_forced_restart_reason,
+        error_since_ts = job.error_since_ts,
+        error_rearm_ts = job.error_rearm_ts,
+        error_reason = job.error_reason,
         gpu_overload_active = job.gpu_overload_active or false,
         gpu_overload_reason = job.gpu_overload_reason,
         updated_at = job.last_progress_ts or job.start_ts,
@@ -7774,6 +8024,18 @@ function transcode.get_status(id)
                 last_restart_reason = output_state.last_restart_reason,
                 restart_cooldown_sec = cooldown,
                 restart_cooldown_remaining_sec = remaining,
+                restart_cooldown_critical_sec = output_state.watchdog and output_state.watchdog.restart_cooldown_critical_sec or nil,
+                restart_cooldown_quality_sec = output_state.watchdog and output_state.watchdog.restart_cooldown_quality_sec or nil,
+                restart_force_after_sec = output_state.watchdog and output_state.watchdog.restart_force_after_sec or nil,
+                restart_suppressed_since_ts = output_state.restart_suppressed_since_ts,
+                restart_suppressed_count = output_state.restart_suppressed_count,
+                last_restart_suppressed_reason = output_state.last_restart_suppressed_reason,
+                last_forced_restart_ts = output_state.last_forced_restart_ts,
+                last_forced_restart_reason = output_state.last_forced_restart_reason,
+                error_rearm_sec = output_state.watchdog and output_state.watchdog.error_rearm_sec or nil,
+                error_rearm_ts = output_state.error_rearm_ts,
+                error_since_ts = output_state.error_since_ts,
+                error_reason = output_state.error_reason,
                 restart_count_10min = #output_state.restart_history,
             }
         end
@@ -7801,6 +8063,14 @@ function transcode.get_status(id)
                 state = worker.state,
                 restart_reason_code = worker.restart_reason_code,
                 restart_reason_meta = worker.restart_reason_meta,
+                restart_suppressed_since_ts = worker.restart_suppressed_since_ts,
+                restart_suppressed_count = worker.restart_suppressed_count,
+                last_restart_suppressed_reason = worker.last_restart_suppressed_reason,
+                last_forced_restart_ts = worker.last_forced_restart_ts,
+                last_forced_restart_reason = worker.last_forced_restart_reason,
+                error_since_ts = worker.error_since_ts,
+                error_rearm_ts = worker.error_rearm_ts,
+                error_reason = worker.error_reason,
                 last_progress = worker.last_progress,
                 last_progress_ts = worker.last_progress_ts,
                 stderr_tail = worker.stderr_tail or {},
@@ -7847,6 +8117,14 @@ function transcode.get_status(id)
                 state = worker.state,
                 restart_reason_code = worker.restart_reason_code,
                 restart_reason_meta = worker.restart_reason_meta,
+                restart_suppressed_since_ts = worker.restart_suppressed_since_ts,
+                restart_suppressed_count = worker.restart_suppressed_count,
+                last_restart_suppressed_reason = worker.last_restart_suppressed_reason,
+                last_forced_restart_ts = worker.last_forced_restart_ts,
+                last_forced_restart_reason = worker.last_forced_restart_reason,
+                error_since_ts = worker.error_since_ts,
+                error_rearm_ts = worker.error_rearm_ts,
+                error_reason = worker.error_reason,
                 last_progress = worker.last_progress,
                 last_progress_ts = worker.last_progress_ts,
                 stderr_tail = worker.stderr_tail or {},
@@ -7885,6 +8163,14 @@ function transcode.get_status(id)
             dst.state = worker.state
             dst.restart_reason_code = worker.restart_reason_code
             dst.restart_reason_meta = worker.restart_reason_meta
+            dst.restart_suppressed_since_ts = worker.restart_suppressed_since_ts
+            dst.restart_suppressed_count = worker.restart_suppressed_count
+            dst.last_restart_suppressed_reason = worker.last_restart_suppressed_reason
+            dst.last_forced_restart_ts = worker.last_forced_restart_ts
+            dst.last_forced_restart_reason = worker.last_forced_restart_reason
+            dst.error_since_ts = worker.error_since_ts
+            dst.error_rearm_ts = worker.error_rearm_ts
+            dst.error_reason = worker.error_reason
             dst.last_progress = worker.last_progress
             dst.last_progress_ts = worker.last_progress_ts
             dst.stderr_tail = worker.stderr_tail or {}
@@ -8180,6 +8466,16 @@ function transcode.get_status(id)
         restarts_10min = #job.restart_history,
         restart_reason_code = job.restart_reason_code,
         restart_reason_meta = job.restart_reason_meta,
+        restart_suppressed_since_ts = job.restart_suppressed_since_ts,
+        restart_suppressed_count = job.restart_suppressed_count,
+        last_restart_suppressed_reason = job.last_restart_suppressed_reason,
+        last_forced_restart_ts = job.last_forced_restart_ts,
+        last_forced_restart_reason = job.last_forced_restart_reason,
+        restart_force_after_sec = job.watchdog and job.watchdog.restart_force_after_sec or nil,
+        error_rearm_sec = job.watchdog and job.watchdog.error_rearm_sec or nil,
+        error_since_ts = job.error_since_ts,
+        error_rearm_ts = job.error_rearm_ts,
+        error_reason = job.error_reason,
         last_progress = job.last_progress,
         last_progress_ts = job.last_progress_ts,
         last_error = job.last_error_line,
