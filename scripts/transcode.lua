@@ -5828,7 +5828,7 @@ local function reset_publish_runtime(worker, now)
     worker.last_error_ts = nil
     worker.ffmpeg_exit_code = nil
     worker.ffmpeg_exit_signal = nil
-    clear_restart_suppressed(worker)
+    transcode._clear_restart_suppressed(worker)
     worker.error_since_ts = nil
     worker.error_rearm_ts = nil
     worker.error_reason = nil
@@ -6300,7 +6300,7 @@ local function reset_worker_runtime(worker, now)
     worker.last_error_ts = nil
     worker.ffmpeg_exit_code = nil
     worker.ffmpeg_exit_signal = nil
-    clear_restart_suppressed(worker)
+    transcode._clear_restart_suppressed(worker)
     worker.error_since_ts = nil
     worker.error_rearm_ts = nil
     worker.error_reason = nil
