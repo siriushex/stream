@@ -58,6 +58,21 @@ tools/perf/capture_incident.sh "$PID" 15 "$OUT"
 - softnet drops (before/after)
 - perf record/report (best-effort), если доступно
 
+## 3.2) Smoke: Settings → General без перезапуска стримов
+
+Проверяет, что безопасное изменение настроек (например `ui_status_polling_interval_sec`)
+не роняет uptime выбранного стрима.
+
+```bash
+tools/perf/settings_no_restart_smoke.sh --base http://127.0.0.1:9060 --stream a014
+```
+
+Опции:
+- `--user` / `--pass` — если не admin/admin
+- `--token` — использовать готовый bearer token
+- `--check-local-pid` — дополнительно сверять локальный PID ffmpeg
+  (используйте только когда скрипт запускается на той же машине, где работает Astral)
+
 ## 4) Hotspot-проверка таймеров (P1.2)
 
 ```bash
