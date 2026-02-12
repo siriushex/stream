@@ -10313,14 +10313,11 @@ function generateUniqueOutputUrl(kind, type, streamId, used) {
 }
 
 function createOutputInlineDraft(kind, streamId) {
-  const type = kind === 'publish' ? 'hls' : 'custom';
-  const used = collectAllOutputUrls();
-  const url = generateUniqueOutputUrl(kind, type, streamId, used);
   return {
     kind,
     enabled: true,
-    type,
-    url,
+    type: '',
+    url: '',
     error: '',
     typeManual: false,
     autoUrl: true,
@@ -10663,13 +10660,6 @@ function renderOutputInlineRow(container, draft, streamId) {
   const actions = document.createElement('div');
   actions.className = 'output-inline-actions';
 
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.className = 'icon-btn';
-  // Inline row adds an output entry to the list. Stream config is persisted only by the main "Save" button.
-  saveBtn.textContent = 'Add';
-  saveBtn.title = 'Add output to list';
-
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.className = 'icon-btn';
@@ -10684,7 +10674,6 @@ function renderOutputInlineRow(container, draft, streamId) {
   const validate = () => {
     const result = validateInlineOutputDraft(draft, streamId);
     error.textContent = result.error || '';
-    saveBtn.disabled = !result.ok;
     if (draft.url && result.error) {
       urlInput.classList.add('is-invalid');
     } else {
@@ -10693,20 +10682,6 @@ function renderOutputInlineRow(container, draft, streamId) {
     resetRow.style.display = draft.autoUrl === false ? '' : 'none';
     return result;
   };
-
-  saveBtn.addEventListener('click', () => {
-    const result = validate();
-    if (!result.ok) return;
-    if (draft.kind === 'publish') {
-      const publish = parseEditingTranscodePublishJsonSafe();
-      publish.push(result.entry);
-      setEditingTranscodePublishJson(publish);
-    } else {
-      state.outputs.push(result.output);
-    }
-    state.outputInlineDraft = null;
-    renderOutputList();
-  });
 
   cancelBtn.addEventListener('click', () => {
     state.outputInlineDraft = null;
@@ -10732,7 +10707,6 @@ function renderOutputInlineRow(container, draft, streamId) {
     openOutputModal(index);
   });
 
-  actions.appendChild(saveBtn);
   actions.appendChild(cancelBtn);
   actions.appendChild(moreBtn);
 
@@ -10742,7 +10716,7 @@ function renderOutputInlineRow(container, draft, streamId) {
 
   container.appendChild(row);
   syncPlaceholder();
-  if (!draft.url) {
+  if (!draft.url && draft.type) {
     applyAutoUrl(true);
   }
   validate();
