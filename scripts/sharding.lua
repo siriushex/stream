@@ -279,8 +279,8 @@ function sharding.apply_systemd()
 
     if config and config.set_setting then
         config.set_setting("stream_sharding_applied_shards", shards)
+        config.set_setting("stream_sharding_applied_base_port", base_port)
     end
 
     return true
 end
-

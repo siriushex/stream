@@ -12,6 +12,7 @@ runtime = {
     stream_shard_index = nil,
     stream_shard_count = nil,
     stream_shard_source = nil, -- "cli" or "settings"
+    stream_shard_pending = false, -- settings enabled, but not applied yet
 }
 
 local function get_setting(key)
@@ -126,6 +127,7 @@ end
 
 local function reconfigure_stream_sharding_from_settings()
     if runtime.stream_shard_source == "cli" then
+        runtime.stream_shard_pending = false
         return
     end
     local enabled = setting_bool("stream_sharding_enabled", false)
@@ -133,8 +135,10 @@ local function reconfigure_stream_sharding_from_settings()
     if shards < 1 then
         shards = 1
     end
+    local applied_shards = math.floor(setting_number("stream_sharding_applied_shards", 0) or 0)
     local port = math.floor(setting_number("http_port", 0) or 0)
     local base_port = math.floor(setting_number("stream_sharding_base_port", 0) or 0)
+    local applied_base_port = math.floor(setting_number("stream_sharding_applied_base_port", 0) or 0)
     if base_port <= 0 then
         base_port = port
     end
@@ -142,15 +146,38 @@ local function reconfigure_stream_sharding_from_settings()
     local prev_i = runtime.stream_shard_index
     local prev_n = runtime.stream_shard_count
     local prev_src = runtime.stream_shard_source
+    local prev_pending = runtime.stream_shard_pending
 
     if not enabled or shards <= 1 then
         runtime.stream_shard_index = nil
         runtime.stream_shard_count = nil
         runtime.stream_shard_source = nil
+        runtime.stream_shard_pending = false
         if prev_src == "settings" and prev_n and prev_n > 1 then
             log.warning("[runtime] stream sharding disabled (settings)")
         end
         return
+    end
+
+    -- Safety: do not start filtering streams in a single-process instance until sharding
+    -- is explicitly applied (which should also start/restart shard processes).
+    if applied_shards < 2 then
+        runtime.stream_shard_index = nil
+        runtime.stream_shard_count = nil
+        runtime.stream_shard_source = nil
+        runtime.stream_shard_pending = true
+        if not prev_pending then
+            log.warning("[runtime] stream sharding enabled in settings but not applied yet; ignoring until Apply")
+        end
+        return
+    end
+
+    runtime.stream_shard_pending = false
+
+    -- While settings are edited, keep using the last applied shard count/range until Apply is pressed.
+    shards = applied_shards
+    if applied_base_port > 0 then
+        base_port = applied_base_port
     end
 
     local idx = port - base_port
