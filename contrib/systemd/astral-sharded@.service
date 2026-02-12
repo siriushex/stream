@@ -9,7 +9,9 @@ StartLimitBurst=3
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/home/hex/astra
+# Important: do NOT use a working directory that contains ./scripts or ./web.
+# Otherwise the binary may pick up on-disk Lua/UI files instead of embedded assets.
+WorkingDirectory=/home/hex
 EnvironmentFile=/etc/astral/%i.env
 ExecStartPre=/bin/sh -lc 'test -n "$PORT" && echo "$PORT" | grep -Eq "^[0-9]+$"'
 ExecStartPre=/bin/sh -lc 'test -n "$CONFIG" && test -r "$CONFIG"'
@@ -22,4 +24,3 @@ LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
-
