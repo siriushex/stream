@@ -36,6 +36,7 @@
  */
 
 #include <astra.h>
+#include <errno.h>
 
 #define MSG(_msg) "[udp_output %s:%d] " _msg, mod->addr, mod->port
 
@@ -77,9 +78,50 @@ struct module_data_t
 
     uint64_t pcr;
     uint16_t pcr_pid;
+
+    struct
+    {
+        uint64_t dropped_packets;
+        uint64_t last_log_us;
+        int last_errno;
+    } send_diag;
 };
 
 static const uint8_t null_ts[TS_PACKET_SIZE] = { 0x47, 0x1F, 0xFF, 0x10, 0x00 };
+
+static void udp_send_packet(module_data_t *mod, const uint8_t *buffer, size_t size)
+{
+    if(asc_socket_sendto(mod->sock, buffer, size) != -1)
+        return;
+
+    const int err = errno;
+    const uint64_t now_us = asc_utime();
+    const bool transient = (err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS);
+    const bool changed_errno = (mod->send_diag.last_errno != err);
+
+    if(transient)
+    {
+        ++mod->send_diag.dropped_packets;
+
+        if(changed_errno || now_us >= mod->send_diag.last_log_us + 2000000)
+        {
+            asc_log_warning(MSG("send queue overflow: dropped %" PRIu64 " packets; last error [%s]"),
+                mod->send_diag.dropped_packets,
+                asc_socket_error());
+            mod->send_diag.dropped_packets = 0;
+            mod->send_diag.last_log_us = now_us;
+            mod->send_diag.last_errno = err;
+        }
+        return;
+    }
+
+    if(changed_errno || now_us >= mod->send_diag.last_log_us + 1000000)
+    {
+        asc_log_warning(MSG("error on send [%s]"), asc_socket_error());
+        mod->send_diag.last_log_us = now_us;
+        mod->send_diag.last_errno = err;
+    }
+}
 
 static void on_ts(module_data_t *mod, const uint8_t *ts)
 {
@@ -107,8 +149,7 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
 
     if(mod->packet.skip > UDP_BUFFER_SIZE - TS_PACKET_SIZE)
     {
-        if(asc_socket_sendto(mod->sock, mod->packet.buffer, mod->packet.skip) == -1)
-            asc_log_warning(MSG("error on send [%s]"), asc_socket_error());
+        udp_send_packet(mod, mod->packet.buffer, mod->packet.skip);
         mod->packet.skip = 0;
     }
 }

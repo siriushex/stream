@@ -126,6 +126,7 @@ struct module_data_t
 
     bool is_active;
     bool callback_failed;
+    bool is_closing;
 
     // receiver
     struct
@@ -426,6 +427,13 @@ static void on_thread_close(void *arg);
 static void on_close(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
+    if(!mod)
+        return;
+
+    /* Защита от повторного on_close() из разных callback-путей. */
+    if(mod->is_closing)
+        return;
+    mod->is_closing = true;
 
     if(mod->thread)
         on_thread_close(mod);
@@ -1589,6 +1597,7 @@ static int method_set_receiver(module_data_t *mod)
 
 static int method_send(module_data_t *mod)
 {
+    mod->is_closing = false;
     mod->status = 0;
 
     if(mod->timeout)
@@ -1617,6 +1626,8 @@ static int method_close(module_data_t *mod)
 
 static void module_init(module_data_t *mod)
 {
+    mod->is_closing = false;
+
     module_option_string("host", &mod->config.host, NULL);
     asc_assert(mod->config.host != NULL, MSG("option 'host' is required"));
 
