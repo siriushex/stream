@@ -85,6 +85,34 @@ local function clamp_int(v, min_v, max_v)
     return n
 end
 
+local function setting_bool(key, fallback)
+    if not (config and config.get_setting) then
+        return fallback
+    end
+    local value = config.get_setting(key)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" or value == "true" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" then
+        return false
+    end
+    return fallback
+end
+
+local function setting_number(key, fallback)
+    if not (config and config.get_setting) then
+        return fallback
+    end
+    local value = tonumber(config.get_setting(key))
+    if value == nil then
+        return fallback
+    end
+    return value
+end
+
 local function detect_systemd_unit_name()
     -- Prefer cgroup info (works inside systemd service).
     local raw = read_file("/proc/self/cgroup") or ""
@@ -143,6 +171,43 @@ end
 local function systemctl_available()
     local ok = os.execute("command -v systemctl >/dev/null 2>&1")
     return ok == true or ok == 0
+end
+
+local stream_map_cache = { raw = nil, map = nil }
+
+local function decode_stream_sharding_map()
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local raw = config.get_setting("stream_sharding_map")
+    if raw == stream_map_cache.raw then
+        return stream_map_cache.map
+    end
+    stream_map_cache.raw = raw
+    stream_map_cache.map = nil
+    if raw == nil or raw == "" then
+        return nil
+    end
+    if not json or type(json.decode) ~= "function" then
+        return nil
+    end
+    local ok, decoded = pcall(json.decode, raw)
+    if not ok or type(decoded) ~= "table" then
+        return nil
+    end
+    stream_map_cache.map = decoded
+    return decoded
+end
+
+local function encode_stream_sharding_map(map)
+    if not json or type(json.encode) ~= "function" then
+        return nil
+    end
+    local ok, encoded = pcall(json.encode, map)
+    if not ok then
+        return nil
+    end
+    return encoded
 end
 
 local function build_shard_env(prefix, idx, shard_count, base_port, config_path, env_dir, shared_data_dir)
@@ -211,17 +276,10 @@ function sharding.apply_systemd()
         return nil, err or "invalid shard prefix"
     end
 
-    local enabled = false
-    if config and config.get_setting then
-        enabled = (config.get_setting("stream_sharding_enabled") == true)
-    end
+    local enabled = setting_bool("stream_sharding_enabled", false)
 
-    local shards = 1
-    local base_port = nil
-    if config and config.get_setting then
-        shards = clamp_int(config.get_setting("stream_sharding_shards"), 1, 64) or 1
-        base_port = clamp_int(config.get_setting("stream_sharding_base_port"), 1, 65535)
-    end
+    local shards = clamp_int(setting_number("stream_sharding_shards", 1), 1, 64) or 1
+    local base_port = clamp_int(setting_number("stream_sharding_base_port", 0), 1, 65535)
     if not enabled then
         shards = 1
     elseif shards < 2 then
@@ -245,6 +303,127 @@ function sharding.apply_systemd()
     end
     if base_port + shards - 1 > 65535 then
         return nil, "port range out of bounds"
+    end
+
+    -- Stable stream_id -> shard mapping.
+    -- Why: users expect stream ports to stay the same across sharding enable/disable cycles.
+    -- The mapping lives in settings (shared sqlite) and is used by runtime.lua for stream filtering,
+    -- and by master API/UI for routing (/play, /live, status aggregation).
+    if enabled and shards >= 2 and config and config.set_setting and config.list_streams then
+        local map_initialized = setting_bool("stream_sharding_map_initialized", false)
+        local map_shards = clamp_int(setting_number("stream_sharding_map_shards", 0), 0, 64) or 0
+        local applied = clamp_int(setting_number("stream_sharding_applied_shards", 0), 0, 64) or 0
+
+        local map = decode_stream_sharding_map()
+        if not map_initialized or type(map) ~= "table" then
+            map = {}
+
+            -- Preserve the current legacy bucket distribution when sharding was already applied before mapping existed.
+            -- This avoids "stream migration" on upgrade.
+            local init_shards = shards
+            if applied and applied >= 2 then
+                init_shards = applied
+            end
+
+            local ids = {}
+            for _, row in ipairs(config.list_streams() or {}) do
+                if row and row.id then
+                    ids[#ids + 1] = tostring(row.id)
+                end
+            end
+            table.sort(ids)
+            for i, sid in ipairs(ids) do
+                if applied and applied >= 2 then
+                    map[sid] = sharding.stream_bucket(sid, applied)
+                else
+                    map[sid] = (i - 1) % init_shards
+                end
+            end
+
+            local encoded = encode_stream_sharding_map(map)
+            if not encoded then
+                return nil, "failed to encode stream sharding map"
+            end
+            config.set_setting("stream_sharding_map", encoded)
+            config.set_setting("stream_sharding_map_initialized", true)
+            config.set_setting("stream_sharding_map_shards", init_shards)
+            map_shards = init_shards
+            log.warning(string.format(
+                "[sharding] stream map initialized (%s, shards=%d, streams=%d)",
+                (applied and applied >= 2) and "preserve-md5" or "round-robin",
+                init_shards,
+                #ids
+            ))
+        end
+
+        -- Validate existing map against the requested shard count.
+        -- We allow increasing shard count (new shards start empty), but disallow shrinking below used indices.
+        if map_shards > 0 and map_shards > shards then
+            return nil, string.format(
+                "stream sharding map was created for %d shards; refusing to apply %d shards (would move streams). " ..
+                "Increase shard count or reset mapping.",
+                map_shards,
+                shards
+            )
+        end
+
+        local counts = {}
+        for i = 0, shards - 1 do
+            counts[i] = 0
+        end
+        local max_idx = -1
+        for sid, v in pairs(map or {}) do
+            local idx = tonumber(v)
+            if idx and idx >= 0 then
+                idx = math.floor(idx)
+                if idx > max_idx then
+                    max_idx = idx
+                end
+                if idx < shards then
+                    counts[idx] = (counts[idx] or 0) + 1
+                end
+            end
+        end
+        if max_idx >= shards then
+            return nil, string.format(
+                "stream sharding map contains shard index %d, but shard count is %d. " ..
+                "Increase shard count or reset mapping.",
+                max_idx,
+                shards
+            )
+        end
+
+        -- Ensure new streams are assigned deterministically (least-loaded shard), without changing existing ids.
+        local changed = false
+        for _, row in ipairs(config.list_streams() or {}) do
+            local sid = row and row.id and tostring(row.id) or nil
+            if sid and sid ~= "" then
+                local cur = map[sid]
+                local idx = tonumber(cur)
+                if not idx or idx < 0 or idx >= shards then
+                    -- Find least-loaded shard.
+                    local best = 0
+                    local best_count = counts[0] or 0
+                    for i = 1, shards - 1 do
+                        local c = counts[i] or 0
+                        if c < best_count then
+                            best = i
+                            best_count = c
+                        end
+                    end
+                    map[sid] = best
+                    counts[best] = (counts[best] or 0) + 1
+                    changed = true
+                end
+            end
+        end
+        if changed then
+            local encoded = encode_stream_sharding_map(map)
+            if encoded then
+                config.set_setting("stream_sharding_map", encoded)
+                log.warning("[sharding] stream map updated (new streams assigned)")
+            end
+        end
     end
 
     -- Ensure primary config is exported before restarting shards, so they import latest settings/streams.
@@ -436,7 +615,18 @@ function sharding.get_stream_shard_index(stream_id)
     if n <= 1 then
         return 0
     end
-    return sharding.stream_bucket(stream_id, n)
+    local id = tostring(stream_id or "")
+    if id ~= "" then
+        local map = decode_stream_sharding_map()
+        if type(map) == "table" then
+            local v = map[id]
+            local idx = tonumber(v)
+            if idx and idx >= 0 and idx < n then
+                return math.floor(idx)
+            end
+        end
+    end
+    return sharding.stream_bucket(id, n)
 end
 
 function sharding.get_stream_shard_port(stream_id)

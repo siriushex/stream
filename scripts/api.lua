@@ -816,6 +816,106 @@ local function stop_stream_preview(server, client, request, stream_id)
     return json_response(server, client, 200, { status = "ok" })
 end
 
+-- In multi-process sharding, a stream config can be updated from any API port (shared sqlite),
+-- but runtime.apply_stream_row() can only be executed on the owning shard.
+-- For master-only UI/API workflows we treat "wrong shard" errors as success and rely on
+-- sharding.broadcast_reload() (triggered by apply_config_change) to refresh the owning shard.
+local function apply_stream_row_sharded_safe(row, force)
+    if not runtime or not runtime.apply_stream_row then
+        return false, "runtime apply not available"
+    end
+    local ok, err = runtime.apply_stream_row(row, force)
+    if ok == false
+        and tostring(err or ""):find("does not belong to this shard", 1, true) ~= nil
+        and sharding
+        and type(sharding.is_active) == "function"
+        and sharding.is_active()
+    then
+        return true
+    end
+    return ok, err
+end
+
+local function ensure_stream_sharding_map_assignments(stream_ids)
+    if type(stream_ids) ~= "table" then
+        return
+    end
+    if not (config and config.get_setting and config.set_setting) then
+        return
+    end
+    if not json or type(json.decode) ~= "function" or type(json.encode) ~= "function" then
+        return
+    end
+    local init = config.get_setting("stream_sharding_map_initialized")
+    if not (init == true or init == 1 or init == "1" or init == "true") then
+        return
+    end
+
+    local map_raw = config.get_setting("stream_sharding_map")
+    local map = {}
+    if map_raw and map_raw ~= "" then
+        local ok, decoded = pcall(json.decode, map_raw)
+        if ok and type(decoded) == "table" then
+            map = decoded
+        end
+    end
+
+    local map_shards = tonumber(config.get_setting("stream_sharding_map_shards") or 0) or 0
+    local applied = tonumber(config.get_setting("stream_sharding_applied_shards") or 0) or 0
+    local desired = tonumber(config.get_setting("stream_sharding_shards") or 0) or 0
+    local shard_count = math.floor(math.max(map_shards, applied, desired))
+    if shard_count < 2 then
+        return
+    end
+
+    local counts = {}
+    for i = 0, shard_count - 1 do
+        counts[i] = 0
+    end
+    for _, v in pairs(map) do
+        local idx = tonumber(v)
+        if idx and idx >= 0 and idx < shard_count then
+            idx = math.floor(idx)
+            counts[idx] = (counts[idx] or 0) + 1
+        end
+    end
+
+    local function pick_least_loaded()
+        local best = 0
+        local best_count = counts[0] or 0
+        for i = 1, shard_count - 1 do
+            local c = counts[i] or 0
+            if c < best_count then
+                best = i
+                best_count = c
+            end
+        end
+        return best
+    end
+
+    local changed = false
+    for _, id in ipairs(stream_ids) do
+        local sid = tostring(id or "")
+        if sid ~= "" then
+            local cur = tonumber(map[sid])
+            if not cur or cur < 0 or cur >= shard_count then
+                local best = pick_least_loaded()
+                map[sid] = best
+                counts[best] = (counts[best] or 0) + 1
+                changed = true
+            end
+        end
+    end
+
+    if not changed then
+        return
+    end
+    local ok, encoded = pcall(json.encode, map)
+    if ok and encoded then
+        config.set_setting("stream_sharding_map", encoded)
+    end
+end
+
 local function upsert_stream(server, client, id, request)
     local body = parse_json_body(request)
     if not body then
@@ -889,17 +989,15 @@ local function upsert_stream(server, client, id, request)
             return true
         end,
         apply = function()
+            ensure_stream_sharding_map_assignments({ id })
             config.upsert_stream(id, enabled, cfg)
         end,
         runtime_apply = function()
-            if not runtime or not runtime.apply_stream_row then
-                return false, "runtime apply not available"
-            end
             local row = config.get_stream(id)
             if not row then
                 return false, "stream not found after update"
             end
-            return runtime.apply_stream_row(row, true)
+            return apply_stream_row_sharded_safe(row, true)
         end,
         after = function()
             if epg and epg.export_all then
@@ -916,10 +1014,7 @@ local function delete_stream(server, client, id, request)
             config.delete_stream(id)
         end,
         runtime_apply = function()
-            if not runtime or not runtime.apply_stream_row then
-                return false, "runtime apply not available"
-            end
-            return runtime.apply_stream_row({ id = id, enabled = 0, config = {} }, true)
+            return apply_stream_row_sharded_safe({ id = id, enabled = 0, config = {} }, true)
         end,
         after = function()
             if epg and epg.export_all then
@@ -957,11 +1052,8 @@ local function purge_disabled_streams(server, client, request)
             return { deleted = #ids }
         end,
         runtime_apply = function()
-            if not runtime or not runtime.apply_stream_row then
-                return false, "runtime apply not available"
-            end
             for _, id in ipairs(ids) do
-                local ok, err = runtime.apply_stream_row({ id = id, enabled = 0, config = {} }, true)
+                local ok, err = apply_stream_row_sharded_safe({ id = id, enabled = 0, config = {} }, true)
                 if ok == false then
                     return false, err or ("runtime delete failed: " .. id)
                 end
@@ -1105,21 +1197,21 @@ local function transcode_all_streams(server, client, request)
             return true
         end,
         apply = function()
+            local new_ids = {}
             for _, item in ipairs(targets) do
                 local cfg = build_default_transcode_ladder(item.base_id, item.base_name)
                 cfg.id = item.tc_id
                 config.upsert_stream(item.tc_id, false, cfg)
+                new_ids[#new_ids + 1] = item.tc_id
             end
+            ensure_stream_sharding_map_assignments(new_ids)
             return { created = #targets, skipped = skipped }
         end,
         runtime_apply = function()
-            if not runtime or not runtime.apply_stream_row then
-                return false, "runtime apply not available"
-            end
             for _, item in ipairs(targets) do
                 local row = config.get_stream(item.tc_id)
                 if row then
-                    local ok, err = runtime.apply_stream_row(row, true)
+                    local ok, err = apply_stream_row_sharded_safe(row, true)
                     if ok == false then
                         return false, err or ("runtime apply failed: " .. tostring(item.tc_id))
                     end
@@ -2946,9 +3038,16 @@ local function get_stream_status(server, client, request, id)
     json_response(server, client, 200, status)
 end
 
-local function get_stream_cam_stats(server, client, id)
+local function get_stream_cam_stats(server, client, request, id)
     local entry = runtime and runtime.streams and runtime.streams[tostring(id)] or nil
     if not entry or entry.kind ~= "stream" or not entry.channel then
+        if sharding_master_enabled() then
+            local port = sharding_port_for_stream_id(tostring(id))
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            if port and port ~= local_port then
+                return proxy_api_request(server, client, request, port, "/api/v1/streams/" .. tostring(id) .. "/cam-stats")
+            end
+        end
         return error_response(server, client, 404, "stream not found")
     end
 
@@ -5989,7 +6088,7 @@ local function export_config(server, client, request)
     })
 end
 
-local function validate_config(server, client, request)
+function api._validate_config(server, client, request)
     local body = parse_json_body(request)
     local payload = nil
     if body then
@@ -6007,7 +6106,7 @@ local function validate_config(server, client, request)
     })
 end
 
-local function list_config_revisions(server, client, request)
+function api._list_config_revisions(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
@@ -6022,7 +6121,7 @@ local function list_config_revisions(server, client, request)
     })
 end
 
-local function restore_config_revision(server, client, request, rev_id)
+function api._restore_config_revision(server, client, request, rev_id)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
@@ -6054,7 +6153,7 @@ local function restore_config_revision(server, client, request, rev_id)
     })
 end
 
-local function delete_config_revision(server, client, request, rev_id)
+function api._delete_config_revision(server, client, request, rev_id)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
@@ -6077,7 +6176,7 @@ local function delete_config_revision(server, client, request, rev_id)
     json_response(server, client, 200, { status = "ok", deleted = tonumber(rev_id) })
 end
 
-local function delete_all_config_revisions(server, client, request)
+function api._delete_all_config_revisions(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
@@ -6162,7 +6261,7 @@ function api.handle_request(server, client, request)
 
     local stream_cam_stats = path:match("^/api/v1/streams/([%w%-%_]+)/cam%-stats$")
     if stream_cam_stats and method == "GET" then
-        return get_stream_cam_stats(server, client, stream_cam_stats)
+        return get_stream_cam_stats(server, client, request, stream_cam_stats)
     end
 
     local stream_analyze_id = path:match("^/api/v1/streams/analyze/([%w%-%_]+)$")
@@ -6521,22 +6620,22 @@ function api.handle_request(server, client, request)
     end
 
     if path == "/api/v1/config/validate" and method == "POST" then
-        return validate_config(server, client, request)
+        return api._validate_config(server, client, request)
     end
 
     if path == "/api/v1/config/revisions" and method == "GET" then
-        return list_config_revisions(server, client, request)
+        return api._list_config_revisions(server, client, request)
     end
     if path == "/api/v1/config/revisions" and method == "DELETE" then
-        return delete_all_config_revisions(server, client, request)
+        return api._delete_all_config_revisions(server, client, request)
     end
     local config_rev_id = path:match("^/api/v1/config/revisions/(%d+)/restore$")
     if config_rev_id and method == "POST" then
-        return restore_config_revision(server, client, request, config_rev_id)
+        return api._restore_config_revision(server, client, request, config_rev_id)
     end
     local config_rev_delete = path:match("^/api/v1/config/revisions/(%d+)$")
     if config_rev_delete and method == "DELETE" then
-        return delete_config_revision(server, client, request, config_rev_delete)
+        return api._delete_config_revision(server, client, request, config_rev_delete)
     end
 
     if path == "/api/v1/settings" and method == "GET" then
