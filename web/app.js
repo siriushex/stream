@@ -10666,7 +10666,9 @@ function renderOutputInlineRow(container, draft, streamId) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'icon-btn';
-  saveBtn.textContent = 'Save';
+  // Inline row adds an output entry to the list. Stream config is persisted only by the main "Save" button.
+  saveBtn.textContent = 'Add';
+  saveBtn.title = 'Add output to list';
 
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
