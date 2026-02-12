@@ -125,3 +125,28 @@ taskset -c 9-11 astral ... --stream-shard 3/4 -p 9063
 
 systemd alternative:
 - Use `CPUAffinity=` in the service unit per shard.
+
+### systemd example (template + env files)
+Templates live in `contrib/systemd/`. For sharding you can use:
+- `contrib/systemd/astral-sharded@.service` (supports optional `taskset` via `CPUS=` env)
+
+Example envs:
+```bash
+# /etc/astral/prod0.env
+CONFIG=/etc/astral/prod.json
+PORT=9060
+EXTRA_OPTS=--stream-shard 0/4
+CPUS=0-2
+
+# /etc/astral/prod1.env
+CONFIG=/etc/astral/prod.json
+PORT=9061
+EXTRA_OPTS=--stream-shard 1/4
+CPUS=3-5
+```
+
+Enable:
+```bash
+systemctl enable --now astral-sharded@prod0.service
+systemctl enable --now astral-sharded@prod1.service
+```
