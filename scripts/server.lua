@@ -3451,7 +3451,7 @@ function main()
     http_server({
         addr = opt.addr,
         port = opt.port,
-        server_name = "Astra Studio",
+        server_name = "Stream Hub",
         route = main_routes,
         request_line_max = http_request_line_max,
         headers_max = http_headers_max,
@@ -3466,7 +3466,7 @@ function main()
         http_server({
             addr = opt.addr,
             port = http_play_port,
-            server_name = "Astra HTTP Play",
+            server_name = "Stream HTTP Play",
             route = build_http_play_routes(true, true, true),
             request_line_max = http_request_line_max,
             headers_max = http_headers_max,

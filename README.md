@@ -25,6 +25,12 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - `docs/CLI.md` - CLI modes and examples.
 - `docs/ASTRAL_AI.md` - AstralAI overview and safety rules.
 
+## UI brand assets
+- Source icon: `web/assets/icons/stream-hub.svg`
+- Render PNG/ICO set:
+  - `python3 tools/branding/render_stream_hub_icons.py --svg web/assets/icons/stream-hub.svg --out web/assets/icons`
+- Generated files include favicon and PWA sizes (16..512 + apple-touch icon).
+
 ## Run UI/API server
 - `./astra scripts/server.lua [options]`
 - `./astra <config.json|config.lua> [options]` (auto-runs `scripts/server.lua --config <path>`)
