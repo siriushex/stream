@@ -1415,15 +1415,31 @@ function main()
 
     -- Optional stream sharding: useful for multi-process scaling to multiple CPU cores.
     -- This does not change stream behavior, only which subset is instantiated in this process.
-    if runtime and opt.stream_shard_count and opt.stream_shard_count > 1 then
-        runtime.stream_shard_index = opt.stream_shard_index or 0
-        runtime.stream_shard_count = opt.stream_shard_count
-        runtime.stream_shard_source = "cli"
-        log.warning(string.format(
-            "[server] stream shard enabled: %d/%d",
-            runtime.stream_shard_index,
-            runtime.stream_shard_count
-        ))
+    local cli_shard_count = tonumber(opt.stream_shard_count or 0) or 0
+    local cli_shard_index = tonumber(opt.stream_shard_index or 0) or 0
+    if cli_shard_count > 1 then
+        if not (shard_enabled and shard_count > 1) then
+            -- Safety: settings disable sharding, but shard units might still pass --stream-shard.
+            -- We keep shard0 alive as a single instance and let non-zero shards exit cleanly.
+            if cli_shard_index > 0 then
+                log.warning(string.format(
+                    "[server] stream sharding is disabled in settings; exiting stale shard process %d/%d",
+                    cli_shard_index,
+                    cli_shard_count
+                ))
+                os.exit(0)
+            end
+            log.warning("[server] stream sharding is disabled in settings; running shard0 as single instance")
+        elseif runtime then
+            runtime.stream_shard_index = cli_shard_index
+            runtime.stream_shard_count = cli_shard_count
+            runtime.stream_shard_source = "cli"
+            log.warning(string.format(
+                "[server] stream shard enabled: %d/%d",
+                runtime.stream_shard_index,
+                runtime.stream_shard_count
+            ))
+        end
     end
 
     -- Transcode/audio-fix may use /play as a local HTTP input. During boot we must avoid
