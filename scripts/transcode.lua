@@ -3396,6 +3396,14 @@ function transcode._should_force_restart(target, watchdog, now)
     return false, suppressed_sec
 end
 
+function transcode._clear_udp_switch_source(sw)
+    if not sw or type(sw.clear_source) ~= "function" then
+        return false
+    end
+    local ok = pcall(sw.clear_source, sw)
+    return ok == true
+end
+
 local function compute_restart_delay(watchdog, history)
     local base = watchdog and tonumber(watchdog.restart_delay_sec) or 0
     if base < 0 then
@@ -6300,6 +6308,9 @@ local function reset_worker_runtime(worker, now)
     worker.last_error_ts = nil
     worker.ffmpeg_exit_code = nil
     worker.ffmpeg_exit_signal = nil
+    -- udp_switch locks to the first observed sender; after ffmpeg restart its source port changes.
+    -- Clear it so the bus can re-lock to the new ffmpeg sender.
+    transcode._clear_udp_switch_source(worker.bus_switch)
     transcode._clear_restart_suppressed(worker)
     worker.error_since_ts = nil
     worker.error_rearm_ts = nil
@@ -6542,6 +6553,14 @@ start_ladder_encoder = function(job, worker)
         return false
     end
 
+    -- udp_switch locks to the first sender; after restart the encoder uses new source ports.
+    -- Clear all profile bus locks so /live + publish keep working after restarts.
+    for _, bus in pairs(job.profile_buses or {}) do
+        if bus and bus.switch then
+            transcode._clear_udp_switch_source(bus.switch)
+        end
+    end
+
     local argv, err, selected_url, bin_info = build_ladder_encoder_ffmpeg_args(job)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
@@ -6583,6 +6602,12 @@ start_ladder_encoder_standby = function(job, worker)
     end
     if worker.standby and worker.standby.proc then
         return true
+    end
+
+    for _, bus in pairs(job.profile_buses or {}) do
+        if bus and bus.switch then
+            transcode._clear_udp_switch_source(bus.switch)
+        end
     end
 
     local argv, err = build_ladder_encoder_ffmpeg_args(job)
