@@ -11,6 +11,7 @@ runtime = {
     influx = {},
     stream_shard_index = nil,
     stream_shard_count = nil,
+    stream_shard_source = nil, -- "cli" or "settings"
 }
 
 local function get_setting(key)
@@ -121,6 +122,62 @@ local function stream_shard_bucket(id, shard_count)
     local head = hex and hex:sub(1, 8) or "0"
     local n = tonumber(head, 16) or 0
     return n % shard_count
+end
+
+local function reconfigure_stream_sharding_from_settings()
+    if runtime.stream_shard_source == "cli" then
+        return
+    end
+    local enabled = setting_bool("stream_sharding_enabled", false)
+    local shards = math.floor(setting_number("stream_sharding_shards", 1) or 1)
+    if shards < 1 then
+        shards = 1
+    end
+    local port = math.floor(setting_number("http_port", 0) or 0)
+    local base_port = math.floor(setting_number("stream_sharding_base_port", 0) or 0)
+    if base_port <= 0 then
+        base_port = port
+    end
+
+    local prev_i = runtime.stream_shard_index
+    local prev_n = runtime.stream_shard_count
+    local prev_src = runtime.stream_shard_source
+
+    if not enabled or shards <= 1 then
+        runtime.stream_shard_index = nil
+        runtime.stream_shard_count = nil
+        runtime.stream_shard_source = nil
+        if prev_src == "settings" and prev_n and prev_n > 1 then
+            log.warning("[runtime] stream sharding disabled (settings)")
+        end
+        return
+    end
+
+    local idx = port - base_port
+    if idx < 0 or idx >= shards then
+        idx = 0
+        log.warning(string.format(
+            "[runtime] stream sharding: port %d is outside base range %d..%d, falling back to shard 0/%d",
+            port,
+            base_port,
+            base_port + shards - 1,
+            shards
+        ))
+    end
+
+    runtime.stream_shard_index = idx
+    runtime.stream_shard_count = shards
+    runtime.stream_shard_source = "settings"
+
+    if prev_src ~= "settings" or prev_i ~= idx or prev_n ~= shards then
+        log.warning(string.format(
+            "[runtime] stream sharding enabled (settings): %d/%d (port=%d, base=%d)",
+            idx,
+            shards,
+            port,
+            base_port
+        ))
+    end
 end
 
 local function influx_escape_tag(value)
@@ -1227,6 +1284,7 @@ end
 
 function runtime.refresh(force)
     local start_ms = clock_ms()
+    reconfigure_stream_sharding_from_settings()
     local rows = config.list_streams()
     local errors = runtime.apply_streams(rows, force) or {}
     runtime.last_refresh_errors = errors
