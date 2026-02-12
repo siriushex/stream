@@ -2832,8 +2832,6 @@ local function proxy_api_request(server, client, request, target_port, path_over
     if body ~= "" then
         extra[#extra + 1] = "Content-Type: " .. tostring(content_type)
         extra[#extra + 1] = "Content-Length: " .. tostring(#body)
-    else
-        extra[#extra + 1] = "Content-Length: 0"
     end
 
     local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, target_port, extra)
