@@ -1957,6 +1957,7 @@ init_input_module.udp = function(conf)
             socket_size = conf.socket_size,
             renew = conf.renew,
             rtp = conf.rtp,
+            read_burst = conf.read_burst,
         })
     end
 
