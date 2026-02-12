@@ -5,6 +5,13 @@
 
 sharding = sharding or {}
 
+local function header_value(headers, key)
+    if not headers then
+        return nil
+    end
+    return headers[key] or headers[string.lower(key)] or headers[string.upper(key)]
+end
+
 local function sh_quote(text)
     local value = tostring(text or "")
     return "'" .. value:gsub("'", "'\\''") .. "'"
@@ -324,7 +331,7 @@ function sharding.broadcast_reload()
             pcall(http_request, {
                 host = "127.0.0.1",
                 port = p,
-                path = "/api/v1/reload",
+                path = "/api/v1/reload-internal",
                 method = "POST",
                 headers = {
                     "Host: " .. host_header,
@@ -339,4 +346,152 @@ function sharding.broadcast_reload()
         end
     end
     return true
+end
+
+-- ==========
+-- Routing helpers (multi-process sharding)
+-- ==========
+
+-- Return true when this process is running in an active multi-shard mode.
+-- NOTE: This depends on runtime (stream filtering), not just settings.
+function sharding.is_active()
+    local n = tonumber(runtime and runtime.stream_shard_count or 0) or 0
+    local i = runtime and runtime.stream_shard_index
+    return n > 1 and i ~= nil
+end
+
+function sharding.get_shard_count()
+    return tonumber(runtime and runtime.stream_shard_count or 0) or 0
+end
+
+function sharding.get_shard_index()
+    local i = runtime and runtime.stream_shard_index
+    if i == nil then
+        return nil
+    end
+    return tonumber(i) or 0
+end
+
+function sharding.is_master()
+    local i = sharding.get_shard_index()
+    return i ~= nil and i == 0
+end
+
+-- Current process listen port (runtime override).
+local function local_port()
+    local p = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+    if p <= 0 then
+        return nil
+    end
+    return p
+end
+
+-- Base port for the sharded cluster. Derived from local port and shard index.
+function sharding.get_base_port()
+    if not sharding.is_active() then
+        return nil
+    end
+    local p = local_port()
+    if not p then
+        return nil
+    end
+    local idx = tonumber(sharding.get_shard_index() or 0) or 0
+    return p - idx
+end
+
+function sharding.get_shard_port(idx)
+    if not sharding.is_active() then
+        return nil
+    end
+    local base = sharding.get_base_port()
+    if not base then
+        return nil
+    end
+    local i = tonumber(idx)
+    if not i or i < 0 then
+        return nil
+    end
+    return base + i
+end
+
+-- Deterministic shard bucket for a stream id.
+-- Must match runtime.lua (stream_shard_bucket) logic.
+function sharding.stream_bucket(id, shard_count)
+    local text = tostring(id or "")
+    local n = tonumber(shard_count) or 0
+    if text == "" or n <= 1 then
+        return 0
+    end
+    local hex = string.hex(string.md5(text))
+    local head = hex and hex:sub(1, 8) or "0"
+    local v = tonumber(head, 16) or 0
+    return v % n
+end
+
+function sharding.get_stream_shard_index(stream_id)
+    if not sharding.is_active() then
+        return 0
+    end
+    local n = tonumber(runtime and runtime.stream_shard_count or 0) or 0
+    if n <= 1 then
+        return 0
+    end
+    return sharding.stream_bucket(stream_id, n)
+end
+
+function sharding.get_stream_shard_port(stream_id)
+    if not sharding.is_active() then
+        return nil
+    end
+    local idx = sharding.get_stream_shard_index(stream_id)
+    return sharding.get_shard_port(idx)
+end
+
+function sharding.get_cluster_ports()
+    if not sharding.is_active() then
+        return {}
+    end
+    local n = tonumber(runtime and runtime.stream_shard_count or 0) or 0
+    local base = sharding.get_base_port()
+    if not base or n < 2 then
+        return {}
+    end
+    local out = {}
+    for i = 0, n - 1 do
+        out[#out + 1] = base + i
+    end
+    return out
+end
+
+-- Build headers for internal shard-to-shard API requests.
+-- We only forward auth-related headers; other values (Host/Connection/Content-Length)
+-- are always re-generated.
+function sharding.forward_auth_headers(request, port, extra)
+    local headers = {}
+    local req_headers = request and request.headers or {}
+
+    local cookie = header_value(req_headers, "cookie")
+    if cookie and cookie ~= "" then
+        headers[#headers + 1] = "Cookie: " .. tostring(cookie)
+    end
+    local authz = header_value(req_headers, "authorization")
+    if authz and authz ~= "" then
+        headers[#headers + 1] = "Authorization: " .. tostring(authz)
+    end
+    local csrf = header_value(req_headers, "x-csrf-token")
+    if csrf and csrf ~= "" then
+        headers[#headers + 1] = "X-CSRF-Token: " .. tostring(csrf)
+    end
+
+    headers[#headers + 1] = "Host: 127.0.0.1:" .. tostring(port)
+    headers[#headers + 1] = "Connection: close"
+
+    if type(extra) == "table" then
+        for _, h in ipairs(extra) do
+            if h and h ~= "" then
+                headers[#headers + 1] = h
+            end
+        end
+    end
+    return headers
 end
