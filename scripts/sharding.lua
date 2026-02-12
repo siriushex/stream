@@ -173,6 +173,30 @@ local function systemctl_available()
     return ok == true or ok == 0
 end
 
+local function detect_active_shard_max_index(prefix)
+    local safe_prefix = sanitize_prefix(prefix)
+    if not safe_prefix or not systemctl_available() then
+        return -1
+    end
+    local pattern = "astral%-sharded@" .. safe_prefix .. "%-sh(%d+)%.service"
+    local filter = "astral-sharded@" .. safe_prefix .. "-sh*.service"
+    local cmd = "systemctl list-units --type=service --all --no-legend --plain "
+        .. sh_quote(filter) .. " 2>/dev/null"
+    local f = io.popen(cmd, "r")
+    if not f then
+        return -1
+    end
+    local max_idx = -1
+    for line in f:lines() do
+        local idx = tonumber((line or ""):match(pattern))
+        if idx and idx > max_idx then
+            max_idx = idx
+        end
+    end
+    f:close()
+    return max_idx
+end
+
 local stream_map_cache = { raw = nil, map = nil }
 
 local function decode_stream_sharding_map()
@@ -444,7 +468,10 @@ function sharding.apply_systemd()
 
     -- Disable extra shards from previous runs.
     local last = clamp_int((config and config.get_setting and config.get_setting("stream_sharding_applied_shards")) or 0, 0, 64) or 0
-    local max_disable = math.max(last, shards, 1)
+    local map_shards = clamp_int((config and config.get_setting and config.get_setting("stream_sharding_map_shards")) or 0, 0, 64) or 0
+    local running_max_idx = detect_active_shard_max_index(prefix)
+    local running_count = (running_max_idx and running_max_idx >= 0) and (running_max_idx + 1) or 0
+    local max_disable = math.max(last, map_shards, running_count, shards, 1)
     for i = shards, max_disable - 1 do
         local instance = tostring(prefix) .. "-sh" .. tostring(i)
         local service = "astral-sharded@" .. instance .. ".service"
