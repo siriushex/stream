@@ -200,6 +200,8 @@ local opt = {
     config_path = nil,
     import_mode = "merge",
     reset_pass = false,
+    stream_shard_index = nil,
+    stream_shard_count = nil,
 }
 
 if auth then
@@ -228,6 +230,7 @@ options_usage = [[
     --web-dir PATH      web ui directory (default: ./web)
     --hls-dir PATH      hls output directory (default: data-dir/hls)
     --hls-route PATH    hls url prefix (default: /hls)
+    --stream-shard S/C  run only a shard of streams (example: 0/4)
     -c PATH             alias for --config
     -pass               reset admin password to default (admin/admin)
     --config PATH       import config (.json or .lua) before start
@@ -293,6 +296,19 @@ options = {
     end,
     ["--import-mode"] = function(idx)
         opt.import_mode = argv[idx + 1]
+        return 1
+    end,
+    ["--stream-shard"] = function(idx)
+        local raw = tostring(argv[idx + 1] or "")
+        local a, b = raw:match("^(%d+)%s*/%s*(%d+)$")
+        local shard_i = tonumber(a)
+        local shard_n = tonumber(b)
+        if not shard_i or not shard_n or shard_n < 1 or shard_i < 0 or shard_i >= shard_n then
+            log.error("[server] wrong --stream-shard value: " .. raw .. " (expected N/M, 0<=N<M)")
+            os.exit(78)
+        end
+        opt.stream_shard_index = shard_i
+        opt.stream_shard_count = shard_n
         return 1
     end,
 }
@@ -1360,6 +1376,18 @@ function main()
     config.set_setting("http_port", opt.port)
 
     apply_softcam_settings()
+
+    -- Optional stream sharding: useful for multi-process scaling to multiple CPU cores.
+    -- This does not change stream behavior, only which subset is instantiated in this process.
+    if runtime and opt.stream_shard_count and opt.stream_shard_count > 1 then
+        runtime.stream_shard_index = opt.stream_shard_index or 0
+        runtime.stream_shard_count = opt.stream_shard_count
+        log.warning(string.format(
+            "[server] stream shard enabled: %d/%d",
+            runtime.stream_shard_index,
+            runtime.stream_shard_count
+        ))
+    end
 
     -- Transcode/audio-fix may use /play as a local HTTP input. During boot we must avoid
     -- starting ffmpeg before the HTTP server starts listening, otherwise ffmpeg may hang

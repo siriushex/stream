@@ -95,3 +95,33 @@ journalctl -u astral-watchdog.service -n 50
 ## Security Notes
 - Do not commit secrets (tokens, passwords).
 - Use `http_ip_allow` and `http_ip_deny` where possible.
+
+## Multi-core Scaling (Stream Sharding)
+Astral is largely single-threaded for the MPEG-TS hot path (inputs → processing → outputs). If one CPU core
+hits 100% (often visible with SoftCAM/descrambling), you can spread load across multiple processes.
+
+### Run multiple shards (same DB/config)
+Each process will instantiate only its shard of streams:
+```bash
+# 4 shards on different ports
+astral scripts/server.lua --config /etc/astral/prod.json -p 9060 --stream-shard 0/4
+astral scripts/server.lua --config /etc/astral/prod.json -p 9061 --stream-shard 1/4
+astral scripts/server.lua --config /etc/astral/prod.json -p 9062 --stream-shard 2/4
+astral scripts/server.lua --config /etc/astral/prod.json -p 9063 --stream-shard 3/4
+```
+
+Notes:
+- UDP/HLS outputs are independent; sharding does not change stream behavior, only which process runs which streams.
+- UI/API will show only streams owned by that shard instance.
+
+### Optional CPU pinning
+You can pin each shard to its own CPU set to avoid “everything on core0”:
+```bash
+taskset -c 0-2 astral ... --stream-shard 0/4 -p 9060
+taskset -c 3-5 astral ... --stream-shard 1/4 -p 9061
+taskset -c 6-8 astral ... --stream-shard 2/4 -p 9062
+taskset -c 9-11 astral ... --stream-shard 3/4 -p 9063
+```
+
+systemd alternative:
+- Use `CPUAffinity=` in the service unit per shard.

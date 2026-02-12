@@ -44,6 +44,7 @@ astral --femon dvb://#adapter=0&type=S2&tp=...
   --web-dir PATH      web ui directory (default: ./web)
   --hls-dir PATH      hls output directory (default: data-dir/hls)
   --hls-route PATH    hls url prefix (default: /hls)
+  --stream-shard S/C  run only a shard of streams (example: 0/4)
   -c PATH             alias for --config
   -pass               reset admin password to default (admin/admin)
   --config PATH       import config (.json or .lua) before start

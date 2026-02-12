@@ -9,6 +9,8 @@ runtime = {
     last_refresh_ok = true,
     last_refresh_errors = {},
     influx = {},
+    stream_shard_index = nil,
+    stream_shard_count = nil,
 }
 
 local function get_setting(key)
@@ -106,6 +108,19 @@ local function join_path(base, suffix)
         suffix = "/" .. suffix
     end
     return base .. suffix
+end
+
+-- Deterministic shard bucket for a stream id. Used for multi-process sharding.
+local function stream_shard_bucket(id, shard_count)
+    local text = tostring(id or "")
+    if text == "" or not shard_count or shard_count <= 1 then
+        return 0
+    end
+    -- string.md5() returns binary digest (may contain \0), so convert to hex first.
+    local hex = string.hex(string.md5(text))
+    local head = hex and hex:sub(1, 8) or "0"
+    local n = tonumber(head, 16) or 0
+    return n % shard_count
 end
 
 local function influx_escape_tag(value)
@@ -1099,6 +1114,17 @@ end
 
 function runtime.apply_streams(rows, force)
     local errors = {}
+    local shard_count = tonumber(runtime.stream_shard_count or 0) or 0
+    local shard_index = tonumber(runtime.stream_shard_index or 0) or 0
+    if shard_count > 1 then
+        local filtered = {}
+        for _, row in ipairs(rows or {}) do
+            if stream_shard_bucket(row.id, shard_count) == shard_index then
+                table.insert(filtered, row)
+            end
+        end
+        rows = filtered
+    end
     local desired = {}
     local ordered_spts = {}
     local ordered_mpts = {}
@@ -1160,6 +1186,11 @@ end
 function runtime.apply_stream_row(row, force)
     if not row or not row.id then
         return false, "stream row required"
+    end
+    local shard_count = tonumber(runtime.stream_shard_count or 0) or 0
+    local shard_index = tonumber(runtime.stream_shard_index or 0) or 0
+    if shard_count > 1 and stream_shard_bucket(row.id, shard_count) ~= shard_index then
+        return false, string.format("stream %s does not belong to this shard (%d/%d)", tostring(row.id), shard_index, shard_count)
     end
     local all_rows = config.list_streams()
     http_output_keepalive = build_http_output_keepalive(all_rows)
