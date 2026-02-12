@@ -2028,6 +2028,74 @@ const SETTINGS_GENERAL_SECTIONS = [
             ],
           },
           {
+            type: 'heading',
+            text: 'SoftCAM (performance)',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-softcam-descramble-parallel',
+            label: 'SoftCAM descramble parallel',
+            type: 'select',
+            key: 'softcam_descramble_parallel',
+            level: 'advanced',
+            options: [
+              { value: 'off', label: 'off (single thread)' },
+              { value: 'per_stream_thread', label: 'per stream worker thread' },
+            ],
+          },
+          {
+            id: 'settings-softcam-descramble-batch',
+            label: 'SoftCAM batch packets',
+            type: 'input',
+            inputType: 'number',
+            key: 'softcam_descramble_batch_packets',
+            level: 'advanced',
+            placeholder: '64',
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
+            id: 'settings-softcam-descramble-depth',
+            label: 'SoftCAM queue depth (batches)',
+            type: 'input',
+            inputType: 'number',
+            key: 'softcam_descramble_queue_depth_batches',
+            level: 'advanced',
+            placeholder: '16',
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
+            id: 'settings-softcam-descramble-stack',
+            label: 'SoftCAM worker stack (KB)',
+            type: 'input',
+            inputType: 'number',
+            key: 'softcam_descramble_worker_stack_kb',
+            level: 'advanced',
+            placeholder: '256',
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
+            id: 'settings-softcam-descramble-drop',
+            label: 'SoftCAM drop policy',
+            type: 'select',
+            key: 'softcam_descramble_drop_policy',
+            level: 'advanced',
+            options: [
+              { value: 'drop_oldest', label: 'drop_oldest (recommended)' },
+              { value: 'drop_newest', label: 'drop_newest' },
+            ],
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
+            id: 'settings-softcam-descramble-lograte',
+            label: 'SoftCAM drop log rate limit (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'softcam_descramble_log_rate_limit_sec',
+            level: 'advanced',
+            placeholder: '5',
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
             id: 'settings-lua-gc-step-units',
             label: 'Lua GC step units (0=off)',
             type: 'input',
@@ -2066,10 +2134,12 @@ const SETTINGS_GENERAL_SECTIONS = [
           const aggStreams = readBoolValue('settings-performance-aggregate-stream-timers', false);
           const aggTc = readBoolValue('settings-performance-aggregate-transcode-timers', false);
           const perfProfile = readStringValue('settings-performance-profile', 'compat');
+          const softcamParallel = readStringValue('settings-softcam-descramble-parallel', 'off');
           const gcStepUnits = readNumberValue('settings-lua-gc-step-units', 0);
           const epgText = epgOn && epgInterval > 0 ? `${epgInterval}с` : 'выкл';
           const gcText = gcStepUnits > 0 ? `step ${gcStepUnits}` : 'idle-only';
-          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)} · Lite: ${formatOnOff(lite)} · Agg: ${formatOnOff(aggStreams && aggTc)} · Profile: ${perfProfile} · GC: ${gcText}`;
+          const softcamText = softcamParallel === 'per_stream_thread' ? 'parallel' : 'off';
+          return `HLSSplitter: ${formatOnOff(splitter)} · Buffer: ${formatOnOff(buffer)} · Access: ${formatOnOff(access)} · EPG: ${epgText} · Polling: ${formatSeconds(polling)} · Lite: ${formatOnOff(lite)} · Agg: ${formatOnOff(aggStreams && aggTc)} · Profile: ${perfProfile} · SoftCAM: ${softcamText} · GC: ${gcText}`;
         },
       },
     ],
@@ -3869,6 +3939,12 @@ function bindGeneralElements() {
     settingsPerformanceAggregateStreamTimers: 'settings-performance-aggregate-stream-timers',
     settingsPerformanceAggregateTranscodeTimers: 'settings-performance-aggregate-transcode-timers',
     settingsPerformanceProfile: 'settings-performance-profile',
+    settingsSoftcamDescrambleParallel: 'settings-softcam-descramble-parallel',
+    settingsSoftcamDescrambleBatch: 'settings-softcam-descramble-batch',
+    settingsSoftcamDescrambleDepth: 'settings-softcam-descramble-depth',
+    settingsSoftcamDescrambleStack: 'settings-softcam-descramble-stack',
+    settingsSoftcamDescrambleDrop: 'settings-softcam-descramble-drop',
+    settingsSoftcamDescrambleLograte: 'settings-softcam-descramble-lograte',
     settingsLuaGcStepUnits: 'settings-lua-gc-step-units',
     settingsLuaGcStepIntervalMs: 'settings-lua-gc-step-interval-ms',
     settingsLuaGcFullIntervalMs: 'settings-lua-gc-full-interval-ms',
@@ -22257,6 +22333,32 @@ function applySettingsToUI() {
       'compat'
     );
   }
+  if (elements.settingsSoftcamDescrambleParallel) {
+    setSelectValue(
+      elements.settingsSoftcamDescrambleParallel,
+      getSettingString('softcam_descramble_parallel', 'off'),
+      'off'
+    );
+  }
+  if (elements.settingsSoftcamDescrambleBatch) {
+    elements.settingsSoftcamDescrambleBatch.value = getSettingNumber('softcam_descramble_batch_packets', 64);
+  }
+  if (elements.settingsSoftcamDescrambleDepth) {
+    elements.settingsSoftcamDescrambleDepth.value = getSettingNumber('softcam_descramble_queue_depth_batches', 16);
+  }
+  if (elements.settingsSoftcamDescrambleStack) {
+    elements.settingsSoftcamDescrambleStack.value = getSettingNumber('softcam_descramble_worker_stack_kb', 256);
+  }
+  if (elements.settingsSoftcamDescrambleDrop) {
+    setSelectValue(
+      elements.settingsSoftcamDescrambleDrop,
+      getSettingString('softcam_descramble_drop_policy', 'drop_oldest'),
+      'drop_oldest'
+    );
+  }
+  if (elements.settingsSoftcamDescrambleLograte) {
+    elements.settingsSoftcamDescrambleLograte.value = getSettingNumber('softcam_descramble_log_rate_limit_sec', 5);
+  }
   if (elements.settingsLuaGcStepUnits) {
     elements.settingsLuaGcStepUnits.value = getSettingNumber('lua_gc_step_units', 0);
   }
@@ -22972,6 +23074,34 @@ function collectGeneralSettings() {
   if (!['compat', 'mass', 'low_latency'].includes(performanceProfile)) {
     throw new Error('Performance profile must be compat, mass or low_latency');
   }
+  const softcamDescrambleParallel = elements.settingsSoftcamDescrambleParallel
+    ? String(elements.settingsSoftcamDescrambleParallel.value || 'off').trim()
+    : 'off';
+  if (!['off', 'per_stream_thread'].includes(softcamDescrambleParallel)) {
+    throw new Error('SoftCAM descramble parallel must be off or per_stream_thread');
+  }
+  const softcamBatchPackets = toNumber(elements.settingsSoftcamDescrambleBatch && elements.settingsSoftcamDescrambleBatch.value);
+  if (softcamBatchPackets !== undefined && (softcamBatchPackets < 8 || softcamBatchPackets > 1024)) {
+    throw new Error('SoftCAM batch packets must be 8..1024');
+  }
+  const softcamQueueDepth = toNumber(elements.settingsSoftcamDescrambleDepth && elements.settingsSoftcamDescrambleDepth.value);
+  if (softcamQueueDepth !== undefined && (softcamQueueDepth < 1 || softcamQueueDepth > 256)) {
+    throw new Error('SoftCAM queue depth must be 1..256');
+  }
+  const softcamWorkerStackKb = toNumber(elements.settingsSoftcamDescrambleStack && elements.settingsSoftcamDescrambleStack.value);
+  if (softcamWorkerStackKb !== undefined && (softcamWorkerStackKb < 0 || softcamWorkerStackKb > 2048)) {
+    throw new Error('SoftCAM worker stack must be 0..2048 KB');
+  }
+  const softcamDropPolicy = elements.settingsSoftcamDescrambleDrop
+    ? String(elements.settingsSoftcamDescrambleDrop.value || 'drop_oldest').trim()
+    : 'drop_oldest';
+  if (!['drop_oldest', 'drop_newest'].includes(softcamDropPolicy)) {
+    throw new Error('SoftCAM drop policy must be drop_oldest or drop_newest');
+  }
+  const softcamLogRate = toNumber(elements.settingsSoftcamDescrambleLograte && elements.settingsSoftcamDescrambleLograte.value);
+  if (softcamLogRate !== undefined && (softcamLogRate < 1 || softcamLogRate > 60)) {
+    throw new Error('SoftCAM drop log rate limit must be 1..60 sec');
+  }
   const luaGcStepUnits = toNumber(elements.settingsLuaGcStepUnits && elements.settingsLuaGcStepUnits.value);
   if (luaGcStepUnits !== undefined && (luaGcStepUnits < 0 || luaGcStepUnits > 10000)) {
     throw new Error('Lua GC step units must be 0..10000');
@@ -23335,6 +23465,12 @@ function collectGeneralSettings() {
     performance_aggregate_stream_timers: aggregateStreamTimers,
     performance_aggregate_transcode_timers: aggregateTranscodeTimers,
     performance_profile: performanceProfile || 'compat',
+    softcam_descramble_parallel: softcamDescrambleParallel || 'off',
+    softcam_descramble_batch_packets: softcamBatchPackets !== undefined ? Math.floor(softcamBatchPackets) : 64,
+    softcam_descramble_queue_depth_batches: softcamQueueDepth !== undefined ? Math.floor(softcamQueueDepth) : 16,
+    softcam_descramble_worker_stack_kb: softcamWorkerStackKb !== undefined ? Math.floor(softcamWorkerStackKb) : 256,
+    softcam_descramble_drop_policy: softcamDropPolicy || 'drop_oldest',
+    softcam_descramble_log_rate_limit_sec: softcamLogRate !== undefined ? Math.floor(softcamLogRate) : 5,
     lua_gc_step_units: luaGcStepUnits !== undefined ? Math.floor(luaGcStepUnits) : 0,
     lua_gc_step_interval_ms: luaGcStepIntervalMs !== undefined ? Math.floor(luaGcStepIntervalMs) : 250,
     lua_gc_full_collect_interval_ms: luaGcFullIntervalMs !== undefined ? Math.floor(luaGcFullIntervalMs) : 1000,

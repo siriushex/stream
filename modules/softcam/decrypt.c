@@ -31,6 +31,12 @@
  *      cam_backup_mode - string: race|hedge|failover
  *      cam_backup_hedge_ms - number: backup ECM delay for hedge/failover
  *      cam_prefer_primary_ms - number: hold backup CW waiting for primary
+ *      descramble_parallel - string: off|per_stream_thread (opt-in)
+ *      descramble_batch_packets - number: batch size in TS packets (default 64)
+ *      descramble_queue_depth_batches - number: input queue depth in batches (default 16)
+ *      descramble_worker_stack_kb - number: pthread stack size for worker (default 256)
+ *      descramble_drop_policy - string: drop_oldest|drop_newest (default drop_oldest)
+ *      descramble_log_rate_limit_sec - number: rate limit for overflow logs (default 5)
  *      cas_data    - string, additional paramters for CAS
  *      cas_pnr     - number, original PNR
  */
@@ -38,6 +44,11 @@
 #include <astra.h>
 #include "module_cam.h"
 #include "cas/cas_list.h"
+
+#include <pthread.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
 
 #ifndef FFDECSA
 #   define FFDECSA 1
@@ -57,6 +68,18 @@
 
 typedef struct ca_stream_t ca_stream_t;
 
+/*
+ * Parallel descrambling (opt-in)
+ *
+ * Цель: вынести CPU-heavy CSA decrypt из main loop в отдельный поток на каждый decrypt-инстанс.
+ * Важно: НЕ трогаем смысл CA (ECM/CW), только исполнение decrypt части.
+ */
+#define DESCRAMBLE_PARALLEL_OFF 0
+#define DESCRAMBLE_PARALLEL_PER_STREAM_THREAD 1
+
+typedef struct descramble_key_ctx_t descramble_key_ctx_t;
+typedef struct descramble_batch_t descramble_batch_t;
+
 typedef struct
 {
     ca_stream_t *stream;
@@ -68,6 +91,44 @@ typedef struct
     module_data_t *mod;
     ca_stream_t *stream;
 } cam_backup_timer_arg_t;
+
+struct descramble_key_ctx_t
+{
+    volatile uint32_t refcount;
+
+#if FFDECSA == 1
+    void *ff_keys;
+#elif LIBDVBCSA == 1
+    struct dvbcsa_bs_key_s *even_key;
+    struct dvbcsa_bs_key_s *odd_key;
+#endif
+};
+
+typedef struct
+{
+    descramble_batch_t **items;
+    uint32_t capacity;
+    uint32_t size;
+    uint32_t head;
+    uint32_t tail;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+} descramble_queue_t;
+
+struct descramble_batch_t
+{
+    uint64_t seq;
+    uint32_t count;
+    uint32_t cap;
+    uint8_t *buf; /* cap * TS_PACKET_SIZE */
+
+    /* Per-packet key ctx (NULL for clear packets). */
+    descramble_key_ctx_t **pkt_ctx;
+
+    /* Unique key ctx references held for this batch (inc once per unique ctx). */
+    descramble_key_ctx_t **held_ctx;
+    uint32_t held_ctx_count;
+};
 
 struct ca_stream_t
 {
@@ -173,6 +234,9 @@ struct ca_stream_t
     uint8_t backup_bad_streak;
     uint64_t backup_suspend_until_us;
     uint64_t backup_suspend_count;
+
+    /* Parallel descramble: immutable key ctx (refcounted) */
+    descramble_key_ctx_t *parallel_key;
 };
 
 typedef struct
@@ -234,6 +298,43 @@ struct module_data_t
         size_t write;
     } shift;
 
+    /* Parallel CSA descramble (opt-in). */
+    struct
+    {
+        uint8_t mode; /* DESCRAMBLE_PARALLEL_* */
+        uint32_t batch_packets;
+        uint32_t queue_depth_batches;
+        uint32_t worker_stack_kb;
+        uint8_t drop_policy; /* 0=drop_oldest, 1=drop_newest */
+        uint32_t log_rate_limit_sec;
+
+        pthread_t thread;
+        bool thread_running;
+        bool stop;
+
+        int pipe_rd;
+        int pipe_wr;
+        asc_event_t *event;
+
+        descramble_queue_t in_q;
+        descramble_queue_t out_q;
+
+        descramble_batch_t *current;
+        uint64_t seq_next;
+
+        /* Pool (main thread only) */
+        descramble_batch_t **pool_free;
+        uint32_t pool_free_count;
+        uint32_t pool_total;
+
+        /* Stats (best-effort) */
+        volatile uint64_t drops;
+        volatile uint64_t batches;
+        volatile uint64_t decrypt_us_sum;
+        volatile uint64_t decrypt_us_max;
+        volatile uint64_t last_drop_log_us;
+    } descramble;
+
     /* Base */
     mpegts_psi_t *stream[MAX_PID];
     mpegts_psi_t *pmt;
@@ -256,6 +357,171 @@ struct module_data_t
 #define CAM_BACKUP_SUSPEND_MS 10000
 
 void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8_t *odd);
+
+static inline uint32_t ref_inc_u32(volatile uint32_t *v)
+{
+    return __sync_add_and_fetch(v, 1);
+}
+
+static inline uint32_t ref_dec_u32(volatile uint32_t *v)
+{
+    return __sync_sub_and_fetch(v, 1);
+}
+
+static descramble_key_ctx_t * descramble_key_ctx_create_from_active(const ca_stream_t *ca_stream)
+{
+    descramble_key_ctx_t *ctx = (descramble_key_ctx_t *)calloc(1, sizeof(descramble_key_ctx_t));
+    ctx->refcount = 1;
+
+    uint8_t even[8] = { 0 };
+    uint8_t odd[8] = { 0 };
+    if(ca_stream && ca_stream->active_key_set)
+    {
+        memcpy(even, &ca_stream->active_key[0], 8);
+        memcpy(odd, &ca_stream->active_key[8], 8);
+    }
+
+#if FFDECSA == 1
+    ctx->ff_keys = get_key_struct();
+    if(ctx->ff_keys)
+        set_control_words(ctx->ff_keys, even, odd);
+#elif LIBDVBCSA == 1
+    ctx->even_key = dvbcsa_bs_key_alloc();
+    ctx->odd_key = dvbcsa_bs_key_alloc();
+    if(ctx->even_key)
+        dvbcsa_bs_key_set(even, ctx->even_key);
+    if(ctx->odd_key)
+        dvbcsa_bs_key_set(odd, ctx->odd_key);
+#endif
+    return ctx;
+}
+
+static void descramble_key_ctx_destroy(descramble_key_ctx_t *ctx)
+{
+    if(!ctx)
+        return;
+#if FFDECSA == 1
+    if(ctx->ff_keys)
+        free_key_struct(ctx->ff_keys);
+    ctx->ff_keys = NULL;
+#elif LIBDVBCSA == 1
+    if(ctx->even_key)
+        dvbcsa_bs_key_free(ctx->even_key);
+    if(ctx->odd_key)
+        dvbcsa_bs_key_free(ctx->odd_key);
+    ctx->even_key = NULL;
+    ctx->odd_key = NULL;
+#endif
+    free(ctx);
+}
+
+static inline void descramble_key_ctx_acquire(descramble_key_ctx_t *ctx)
+{
+    if(ctx)
+        ref_inc_u32(&ctx->refcount);
+}
+
+static inline void descramble_key_ctx_release(descramble_key_ctx_t *ctx)
+{
+    if(!ctx)
+        return;
+    if(ref_dec_u32(&ctx->refcount) == 0)
+        descramble_key_ctx_destroy(ctx);
+}
+
+static void descramble_queue_init(descramble_queue_t *q, uint32_t capacity)
+{
+    memset(q, 0, sizeof(*q));
+    q->capacity = capacity;
+    q->items = (descramble_batch_t **)calloc(capacity, sizeof(descramble_batch_t *));
+    pthread_mutex_init(&q->mutex, NULL);
+    pthread_cond_init(&q->cond, NULL);
+}
+
+static void descramble_queue_destroy(descramble_queue_t *q)
+{
+    if(!q)
+        return;
+    if(q->items)
+        free(q->items);
+    q->items = NULL;
+    pthread_mutex_destroy(&q->mutex);
+    pthread_cond_destroy(&q->cond);
+    memset(q, 0, sizeof(*q));
+}
+
+static inline bool descramble_queue_is_full(const descramble_queue_t *q)
+{
+    return q->size >= q->capacity;
+}
+
+static inline bool descramble_queue_is_empty(const descramble_queue_t *q)
+{
+    return q->size == 0;
+}
+
+static inline void descramble_queue_push_nolock(descramble_queue_t *q, descramble_batch_t *b)
+{
+    q->items[q->tail] = b;
+    q->tail = (q->tail + 1) % q->capacity;
+    q->size += 1;
+}
+
+static inline descramble_batch_t * descramble_queue_pop_nolock(descramble_queue_t *q)
+{
+    if(q->size == 0)
+        return NULL;
+    descramble_batch_t *b = q->items[q->head];
+    q->items[q->head] = NULL;
+    q->head = (q->head + 1) % q->capacity;
+    q->size -= 1;
+    return b;
+}
+
+static void descramble_batch_release_keys(descramble_batch_t *b)
+{
+    if(!b)
+        return;
+    for(uint32_t i = 0; i < b->held_ctx_count; ++i)
+    {
+        if(b->held_ctx[i])
+            descramble_key_ctx_release(b->held_ctx[i]);
+        b->held_ctx[i] = NULL;
+    }
+    b->held_ctx_count = 0;
+}
+
+static inline void descramble_batch_reset(descramble_batch_t *b)
+{
+    if(!b)
+        return;
+    b->count = 0;
+    /* pkt_ctx[] is overwritten for indices < count, no need to memset. */
+}
+
+static descramble_batch_t * descramble_pool_get(module_data_t *mod)
+{
+    if(!mod || mod->descramble.pool_free_count == 0)
+        return NULL;
+    descramble_batch_t *b = mod->descramble.pool_free[--mod->descramble.pool_free_count];
+    descramble_batch_reset(b);
+    return b;
+}
+
+static void descramble_pool_put(module_data_t *mod, descramble_batch_t *b)
+{
+    if(!mod || !b)
+        return;
+    descramble_batch_release_keys(b);
+    descramble_batch_reset(b);
+    if(mod->descramble.pool_free_count < mod->descramble.pool_total)
+        mod->descramble.pool_free[mod->descramble.pool_free_count++] = b;
+}
+
+static bool descramble_start(module_data_t *mod);
+static void descramble_stop(module_data_t *mod);
+static void descramble_queue_ts(module_data_t *mod, const uint8_t *ts);
+static void descramble_flush_current(module_data_t *mod);
 
 static inline bool decrypt_any_cam_ready(module_data_t *mod)
 {
@@ -338,6 +604,11 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
 
     asc_list_insert_tail(mod->ca_list, ca_stream);
 
+    if(mod && mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    {
+        ca_stream->parallel_key = descramble_key_ctx_create_from_active(ca_stream);
+    }
+
     return ca_stream;
 }
 
@@ -378,6 +649,12 @@ void ca_stream_destroy(ca_stream_t *ca_stream)
         dvbcsa_bs_key_free(ca_stream->cand_odd_key);
 
 #endif
+
+    if(ca_stream->parallel_key)
+    {
+        descramble_key_ctx_release(ca_stream->parallel_key);
+        ca_stream->parallel_key = NULL;
+    }
 
     free(ca_stream);
 }
@@ -432,6 +709,7 @@ static void ca_stream_stat_rtt(ca_stream_t *ca_stream, uint64_t ms)
 }
 
 static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial, bool from_backup);
+static void ca_stream_apply_staged_key_parallel(module_data_t *mod, ca_stream_t *ca_stream);
 
 static inline const char *cam_backup_mode_name(uint8_t mode)
 {
@@ -599,6 +877,8 @@ static void ca_stream_apply_keys_from_cam(module_data_t *mod, ca_stream_t *ca_st
     {
         /* Immediate apply path (legacy behavior) */
         ca_stream_stage_new_key(ca_stream, key16, mask, is_backup);
+        if(mod && mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+            ca_stream_apply_staged_key_parallel(mod, ca_stream);
         if(mask == 3 && ca_stream->active_key_set && asc_log_is_debug())
             asc_log_debug(MSG("Both keys changed"));
     }
@@ -649,6 +929,67 @@ static void ca_stream_guard_clear(ca_stream_t *ca_stream)
     ca_stream->cand_set_us = 0;
     ca_stream->cand_ok_count = 0;
     ca_stream->cand_fail_count = 0;
+}
+
+static void ca_stream_parallel_key_replace(ca_stream_t *ca_stream)
+{
+    if(!ca_stream)
+        return;
+    descramble_key_ctx_t *new_ctx = descramble_key_ctx_create_from_active(ca_stream);
+    descramble_key_ctx_t *old_ctx = ca_stream->parallel_key;
+    ca_stream->parallel_key = new_ctx;
+    if(old_ctx)
+        descramble_key_ctx_release(old_ctx);
+}
+
+static void ca_stream_apply_staged_key_parallel(module_data_t *mod, ca_stream_t *ca_stream)
+{
+    if(!mod || !ca_stream)
+        return;
+    if(mod->descramble.mode != DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        return;
+    if(ca_stream->new_key_id == 0)
+        return;
+
+    bool applied_key = false;
+    const bool applied_from_backup = ca_stream->new_key_from_backup;
+    switch(ca_stream->new_key_id)
+    {
+        case 1:
+            ca_stream_set_active_key(ca_stream, 1, ca_stream->new_key);
+            ca_stream_guard_clear(ca_stream);
+            applied_key = true;
+            break;
+        case 2:
+            ca_stream_set_active_key(ca_stream, 2, ca_stream->new_key);
+            ca_stream_guard_clear(ca_stream);
+            applied_key = true;
+            break;
+        case 3:
+            ca_stream_set_active_key(ca_stream, 3, ca_stream->new_key);
+            ca_stream_guard_clear(ca_stream);
+            applied_key = true;
+            break;
+        default:
+            break;
+    }
+
+    ca_stream->new_key_id = 0;
+    ca_stream->new_key_from_backup = false;
+
+    if(applied_key)
+    {
+        ca_stream_parallel_key_replace(ca_stream);
+        if(applied_from_backup)
+        {
+            ca_stream->stat_cw_applied_backup += 1;
+            ca_stream_backup_mark_good(ca_stream);
+        }
+        else
+        {
+            ca_stream->stat_cw_applied_primary += 1;
+        }
+    }
 }
 
 static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t *key16, uint8_t mask, bool allow_initial, bool from_backup)
@@ -823,6 +1164,14 @@ static void module_decrypt_cas_destroy(module_data_t *mod)
 
 static void stream_reload(module_data_t *mod)
 {
+    /*
+     * Parallel descramble: restart worker on reload to avoid mixing old buffers
+     * and to guarantee we don't have in-flight batches referencing stale PSI state.
+     * Reloads are rare (PAT/PMT change, CAM ready/error), so restart cost is acceptable.
+     */
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        descramble_stop(mod);
+
     mod->stream[0]->crc32 = 0;
 
     for(int i = 1; i < MAX_PID; ++i)
@@ -844,6 +1193,15 @@ static void stream_reload(module_data_t *mod)
     mod->shift.count = 0;
     mod->shift.read = 0;
     mod->shift.write = 0;
+
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    {
+        if(!descramble_start(mod))
+        {
+            asc_log_error(MSG("descramble_parallel failed to start, falling back to off"));
+            mod->descramble.mode = DESCRAMBLE_PARALLEL_OFF;
+        }
+    }
 }
 
 /*
@@ -1061,6 +1419,15 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     if(psi->buffer[0] != 0x02)
         return;
 
+    /* In parallel mode keep TS order: PMT output must go through the same queue as A/V packets. */
+    void (*pmt_send_cb)(void *, const uint8_t *) = (void (*)(void *, const uint8_t *))__module_stream_send;
+    void *pmt_send_arg = &mod->__stream;
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    {
+        pmt_send_cb = (void (*)(void *, const uint8_t *))descramble_queue_ts;
+        pmt_send_arg = mod;
+    }
+
     // check pnr
     const uint16_t pnr = PMT_GET_PNR(psi);
     if(pnr != mod->__decrypt.pnr)
@@ -1070,9 +1437,9 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     const uint32_t crc32 = PSI_GET_CRC32(psi);
     if(crc32 == psi->crc32)
     {
-        mpegts_psi_demux(  mod->pmt
-                         , (void (*)(void *, const uint8_t *))__module_stream_send
-                         , &mod->__stream);
+        mpegts_psi_demux(mod->pmt, pmt_send_cb, pmt_send_arg);
+        if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+            descramble_flush_current(mod);
         return;
     }
 
@@ -1172,9 +1539,9 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     PSI_SET_SIZE(mod->pmt);
     PSI_SET_CRC32(mod->pmt);
 
-    mpegts_psi_demux(  mod->pmt
-                     , (void (*)(void *, const uint8_t *))__module_stream_send
-                     , &mod->__stream);
+    mpegts_psi_demux(mod->pmt, pmt_send_cb, pmt_send_arg);
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        descramble_flush_current(mod);
 }
 
 /*
@@ -1378,6 +1745,455 @@ static void on_em(void *arg, mpegts_psi_t *psi)
  *
  */
 
+static void descramble_decrypt_batch(module_data_t *mod, descramble_batch_t *b)
+{
+    if(!mod || !b || b->count == 0)
+        return;
+
+#if FFDECSA == 1
+    /* FFdecsa: cluster is list of ranges [start,end,start,end,...,NULL]. */
+    for(uint32_t h = 0; h < b->held_ctx_count; ++h)
+    {
+        descramble_key_ctx_t *ctx = b->held_ctx[h];
+        if(!ctx || !ctx->ff_keys)
+            continue;
+
+        unsigned char *cluster[(2 * 1024) + 1];
+        const uint32_t max_ranges = (uint32_t)((sizeof(cluster) / sizeof(cluster[0]) - 1) / 2);
+        uint32_t ranges = 0;
+        for(uint32_t i = 0; i < b->count && ranges < max_ranges; ++i)
+        {
+            if(b->pkt_ctx[i] != ctx)
+                continue;
+            unsigned char *pkt = (unsigned char *)&b->buf[i * TS_PACKET_SIZE];
+            cluster[ranges * 2] = pkt;
+            cluster[ranges * 2 + 1] = pkt + TS_PACKET_SIZE;
+            ranges += 1;
+        }
+        cluster[ranges * 2] = NULL;
+
+        size_t done = 0;
+        const size_t total = ranges;
+        while(done < total)
+            done += decrypt_packets(ctx->ff_keys, cluster);
+    }
+
+#elif LIBDVBCSA == 1
+    /* dvbcsa: group payloads by key ctx and parity (even/odd). */
+    struct dvbcsa_bs_batch_s even_batch[1024 + 1];
+    struct dvbcsa_bs_batch_s odd_batch[1024 + 1];
+
+    for(uint32_t h = 0; h < b->held_ctx_count; ++h)
+    {
+        descramble_key_ctx_t *ctx = b->held_ctx[h];
+        if(!ctx || !ctx->even_key || !ctx->odd_key)
+            continue;
+
+        uint32_t even_n = 0;
+        uint32_t odd_n = 0;
+
+        for(uint32_t i = 0; i < b->count; ++i)
+        {
+            if(b->pkt_ctx[i] != ctx)
+                continue;
+
+            uint8_t *pkt = &b->buf[i * TS_PACKET_SIZE];
+            const uint8_t sc = TS_IS_SCRAMBLED(pkt);
+            if(!sc)
+                continue;
+
+            int hdr_size = 0;
+            if(TS_IS_PAYLOAD(pkt))
+            {
+                if(TS_IS_AF(pkt))
+                    hdr_size = 4 + pkt[4] + 1;
+                else
+                    hdr_size = 4;
+            }
+            if(hdr_size <= 0 || hdr_size >= TS_PACKET_SIZE)
+                continue;
+
+            pkt[3] &= ~0xC0;
+
+            if(sc == 0x80)
+            {
+                even_batch[even_n].data = &pkt[hdr_size];
+                even_batch[even_n].len = TS_PACKET_SIZE - hdr_size;
+                even_n += 1;
+            }
+            else if(sc == 0xC0)
+            {
+                odd_batch[odd_n].data = &pkt[hdr_size];
+                odd_batch[odd_n].len = TS_PACKET_SIZE - hdr_size;
+                odd_n += 1;
+            }
+        }
+
+        even_batch[even_n].data = NULL;
+        odd_batch[odd_n].data = NULL;
+
+        if(even_n)
+            dvbcsa_bs_decrypt(ctx->even_key, even_batch, TS_BODY_SIZE);
+        if(odd_n)
+            dvbcsa_bs_decrypt(ctx->odd_key, odd_batch, TS_BODY_SIZE);
+    }
+#endif
+}
+
+static void descramble_signal_main(module_data_t *mod)
+{
+    if(!mod || mod->descramble.pipe_wr == -1)
+        return;
+    const uint8_t b = 0x01;
+    const ssize_t w = write(mod->descramble.pipe_wr, &b, 1);
+    __uarg(w);
+}
+
+static void descramble_out_drain(module_data_t *mod)
+{
+    if(!mod)
+        return;
+    while(true)
+    {
+        pthread_mutex_lock(&mod->descramble.out_q.mutex);
+        descramble_batch_t *b = descramble_queue_pop_nolock(&mod->descramble.out_q);
+        if(b)
+            pthread_cond_signal(&mod->descramble.out_q.cond);
+        pthread_mutex_unlock(&mod->descramble.out_q.mutex);
+        if(!b)
+            break;
+
+        for(uint32_t i = 0; i < b->count; ++i)
+        {
+            __module_stream_send(&mod->__stream, &b->buf[i * TS_PACKET_SIZE]);
+        }
+
+        descramble_pool_put(mod, b);
+    }
+}
+
+static void descramble_event_read(void *arg)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    if(!mod)
+        return;
+
+    /* Drain pipe to clear readability. */
+    uint8_t tmp[64];
+    while(true)
+    {
+        const ssize_t r = read(mod->descramble.pipe_rd, tmp, sizeof(tmp));
+        if(r > 0)
+            continue;
+        if(r == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
+            break;
+        break;
+    }
+
+    descramble_out_drain(mod);
+}
+
+static void * descramble_thread_main(void *arg)
+{
+    module_data_t *mod = (module_data_t *)arg;
+    if(!mod)
+        return NULL;
+
+#if defined(__linux__)
+    pthread_setname_np(pthread_self(), "descramble");
+#elif defined(__APPLE__)
+    pthread_setname_np("descramble");
+#endif
+
+    while(true)
+    {
+        pthread_mutex_lock(&mod->descramble.in_q.mutex);
+        while(descramble_queue_is_empty(&mod->descramble.in_q) && !mod->descramble.stop)
+            pthread_cond_wait(&mod->descramble.in_q.cond, &mod->descramble.in_q.mutex);
+
+        if(mod->descramble.stop)
+        {
+            pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+            break;
+        }
+
+        descramble_batch_t *b = descramble_queue_pop_nolock(&mod->descramble.in_q);
+        pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+        if(!b)
+            continue;
+
+        const uint64_t t0 = asc_utime();
+        descramble_decrypt_batch(mod, b);
+        const uint64_t dt = asc_utime() - t0;
+        __sync_add_and_fetch(&mod->descramble.batches, 1);
+        __sync_add_and_fetch(&mod->descramble.decrypt_us_sum, dt);
+        uint64_t prev_max = mod->descramble.decrypt_us_max;
+        while(dt > prev_max)
+        {
+            if(__sync_bool_compare_and_swap(&mod->descramble.decrypt_us_max, prev_max, dt))
+                break;
+            prev_max = mod->descramble.decrypt_us_max;
+        }
+
+        descramble_batch_release_keys(b);
+
+        pthread_mutex_lock(&mod->descramble.out_q.mutex);
+        while(descramble_queue_is_full(&mod->descramble.out_q) && !mod->descramble.stop)
+            pthread_cond_wait(&mod->descramble.out_q.cond, &mod->descramble.out_q.mutex);
+        if(!descramble_queue_is_full(&mod->descramble.out_q))
+            descramble_queue_push_nolock(&mod->descramble.out_q, b);
+        pthread_mutex_unlock(&mod->descramble.out_q.mutex);
+
+        descramble_signal_main(mod);
+    }
+
+    return NULL;
+}
+
+static bool descramble_set_fd_nonblock_cloexec(int fd)
+{
+    if(fd < 0)
+        return false;
+
+    int flags = fcntl(fd, F_GETFL, 0);
+    if(flags == -1)
+        return false;
+    if(fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+        return false;
+
+    int fdflags = fcntl(fd, F_GETFD, 0);
+    if(fdflags == -1)
+        return false;
+    if(fcntl(fd, F_SETFD, fdflags | FD_CLOEXEC) == -1)
+        return false;
+
+    return true;
+}
+
+static void descramble_free_pool(module_data_t *mod)
+{
+    if(!mod || !mod->descramble.pool_free)
+        return;
+
+    for(uint32_t i = 0; i < mod->descramble.pool_free_count; ++i)
+    {
+        descramble_batch_t *b = mod->descramble.pool_free[i];
+        if(!b)
+            continue;
+        if(b->buf)
+            free(b->buf);
+        if(b->pkt_ctx)
+            free(b->pkt_ctx);
+        if(b->held_ctx)
+            free(b->held_ctx);
+        free(b);
+        mod->descramble.pool_free[i] = NULL;
+    }
+
+    free(mod->descramble.pool_free);
+    mod->descramble.pool_free = NULL;
+    mod->descramble.pool_free_count = 0;
+    mod->descramble.pool_total = 0;
+}
+
+static void descramble_drain_queue_to_pool(module_data_t *mod, descramble_queue_t *q)
+{
+    if(!mod || !q)
+        return;
+    while(true)
+    {
+        descramble_batch_t *b = descramble_queue_pop_nolock(q);
+        if(!b)
+            break;
+        descramble_pool_put(mod, b);
+    }
+}
+
+static bool descramble_start(module_data_t *mod)
+{
+    if(!mod)
+        return false;
+    if(mod->descramble.mode != DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        return true;
+    if(mod->descramble.thread_running)
+        return true;
+
+    /* Reset runtime state (keep config values). */
+    mod->descramble.stop = false;
+    mod->descramble.drops = 0;
+    mod->descramble.batches = 0;
+    mod->descramble.decrypt_us_sum = 0;
+    mod->descramble.decrypt_us_max = 0;
+    mod->descramble.last_drop_log_us = 0;
+    mod->descramble.seq_next = 1;
+    mod->descramble.current = NULL;
+
+    /* Pipe for worker->main notifications. */
+    int fds[2] = { -1, -1 };
+    if(pipe(fds) != 0)
+    {
+        asc_log_error(MSG("descramble: pipe() failed: %s"), strerror(errno));
+        return false;
+    }
+    mod->descramble.pipe_rd = fds[0];
+    mod->descramble.pipe_wr = fds[1];
+    if(!descramble_set_fd_nonblock_cloexec(mod->descramble.pipe_rd)
+       || !descramble_set_fd_nonblock_cloexec(mod->descramble.pipe_wr))
+    {
+        asc_log_error(MSG("descramble: fcntl() failed: %s"), strerror(errno));
+        close(mod->descramble.pipe_rd);
+        close(mod->descramble.pipe_wr);
+        mod->descramble.pipe_rd = -1;
+        mod->descramble.pipe_wr = -1;
+        return false;
+    }
+
+    /* Pool and queues. */
+    mod->descramble.pool_total = mod->descramble.queue_depth_batches * 2 + 4;
+    if(mod->descramble.pool_total < 8)
+        mod->descramble.pool_total = 8;
+
+    descramble_queue_init(&mod->descramble.in_q, mod->descramble.queue_depth_batches);
+    descramble_queue_init(&mod->descramble.out_q, mod->descramble.pool_total);
+
+    mod->descramble.pool_free = (descramble_batch_t **)calloc(mod->descramble.pool_total, sizeof(descramble_batch_t *));
+    mod->descramble.pool_free_count = 0;
+    for(uint32_t i = 0; i < mod->descramble.pool_total; ++i)
+    {
+        descramble_batch_t *b = (descramble_batch_t *)calloc(1, sizeof(descramble_batch_t));
+        if(!b)
+            break;
+        b->cap = mod->descramble.batch_packets;
+        b->buf = (uint8_t *)malloc((size_t)b->cap * TS_PACKET_SIZE);
+        b->pkt_ctx = (descramble_key_ctx_t **)calloc(b->cap, sizeof(descramble_key_ctx_t *));
+        b->held_ctx = (descramble_key_ctx_t **)calloc(b->cap, sizeof(descramble_key_ctx_t *));
+        if(!b->buf || !b->pkt_ctx || !b->held_ctx)
+        {
+            if(b->buf)
+                free(b->buf);
+            if(b->pkt_ctx)
+                free(b->pkt_ctx);
+            if(b->held_ctx)
+                free(b->held_ctx);
+            free(b);
+            break;
+        }
+        mod->descramble.pool_free[mod->descramble.pool_free_count++] = b;
+    }
+
+    if(mod->descramble.pool_free_count != mod->descramble.pool_total)
+    {
+        asc_log_error(MSG("descramble: pool alloc failed (%u/%u)"), (unsigned)mod->descramble.pool_free_count,
+                      (unsigned)mod->descramble.pool_total);
+        descramble_stop(mod);
+        return false;
+    }
+
+    mod->descramble.event = asc_event_init(mod->descramble.pipe_rd, mod);
+    if(!mod->descramble.event)
+    {
+        asc_log_error(MSG("descramble: asc_event_init failed"));
+        descramble_stop(mod);
+        return false;
+    }
+    asc_event_set_on_read(mod->descramble.event, descramble_event_read);
+
+    /* Start worker thread. */
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    if(mod->descramble.worker_stack_kb > 0)
+    {
+        size_t stack_size = (size_t)mod->descramble.worker_stack_kb * 1024U;
+        if(stack_size < PTHREAD_STACK_MIN)
+            stack_size = PTHREAD_STACK_MIN;
+        pthread_attr_setstacksize(&attr, stack_size);
+    }
+
+    const int th_rc = pthread_create(&mod->descramble.thread, &attr, descramble_thread_main, mod);
+    if(th_rc != 0)
+    {
+        pthread_attr_destroy(&attr);
+        asc_log_error(MSG("descramble: pthread_create failed: %s"), strerror(th_rc));
+        descramble_stop(mod);
+        return false;
+    }
+    pthread_attr_destroy(&attr);
+
+    mod->descramble.thread_running = true;
+    if(asc_log_is_debug())
+    {
+        asc_log_debug(MSG("descramble_parallel enabled: per_stream_thread batch_packets:%u queue_depth:%u"),
+                      (unsigned)mod->descramble.batch_packets,
+                      (unsigned)mod->descramble.queue_depth_batches);
+    }
+
+    return true;
+}
+
+static void descramble_stop(module_data_t *mod)
+{
+    if(!mod)
+        return;
+    if(!mod->descramble.thread_running && mod->descramble.pipe_rd == -1 && mod->descramble.pipe_wr == -1)
+        return;
+
+    /* Drop current batch (module is reloading/stopping). */
+    if(mod->descramble.current)
+    {
+        descramble_pool_put(mod, mod->descramble.current);
+        mod->descramble.current = NULL;
+    }
+
+    /* Stop worker thread. */
+    mod->descramble.stop = true;
+    pthread_mutex_lock(&mod->descramble.in_q.mutex);
+    pthread_cond_broadcast(&mod->descramble.in_q.cond);
+    pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+    pthread_mutex_lock(&mod->descramble.out_q.mutex);
+    pthread_cond_broadcast(&mod->descramble.out_q.cond);
+    pthread_mutex_unlock(&mod->descramble.out_q.mutex);
+
+    if(mod->descramble.thread_running)
+    {
+        pthread_join(mod->descramble.thread, NULL);
+        mod->descramble.thread_running = false;
+    }
+
+    /* Drain queues back to pool (best-effort). */
+    pthread_mutex_lock(&mod->descramble.out_q.mutex);
+    descramble_drain_queue_to_pool(mod, &mod->descramble.out_q);
+    pthread_mutex_unlock(&mod->descramble.out_q.mutex);
+
+    pthread_mutex_lock(&mod->descramble.in_q.mutex);
+    descramble_drain_queue_to_pool(mod, &mod->descramble.in_q);
+    pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+
+    /* Close event before closing fds. */
+    if(mod->descramble.event)
+    {
+        asc_event_close(mod->descramble.event);
+        mod->descramble.event = NULL;
+    }
+
+    if(mod->descramble.pipe_rd != -1)
+    {
+        close(mod->descramble.pipe_rd);
+        mod->descramble.pipe_rd = -1;
+    }
+    if(mod->descramble.pipe_wr != -1)
+    {
+        close(mod->descramble.pipe_wr);
+        mod->descramble.pipe_wr = -1;
+    }
+
+    descramble_queue_destroy(&mod->descramble.in_q);
+    descramble_queue_destroy(&mod->descramble.out_q);
+
+    descramble_free_pool(mod);
+
+    mod->descramble.stop = false;
+}
+
 static void decrypt(module_data_t *mod)
 {
     asc_list_for(mod->ca_list)
@@ -1461,8 +2277,278 @@ static void decrypt(module_data_t *mod)
     mod->storage.dsc_count = mod->storage.count;
 }
 
+static void descramble_drop_log_rate_limited(module_data_t *mod, const char *reason)
+{
+    if(!mod)
+        return;
+    const uint64_t now_us = asc_utime();
+    const uint64_t interval_us = (uint64_t)(mod->descramble.log_rate_limit_sec ? mod->descramble.log_rate_limit_sec : 5) * 1000000ULL;
+    const uint64_t last_us = mod->descramble.last_drop_log_us;
+    if(last_us != 0 && now_us - last_us < interval_us)
+        return;
+    if(__sync_bool_compare_and_swap(&mod->descramble.last_drop_log_us, last_us, now_us))
+        asc_log_warning(MSG("descramble queue overflow: %s"), reason ? reason : "drop");
+}
+
+static void descramble_in_enqueue(module_data_t *mod, descramble_batch_t *b)
+{
+    if(!mod || !b)
+        return;
+
+    if(b->count == 0)
+    {
+        descramble_pool_put(mod, b);
+        return;
+    }
+
+    b->seq = mod->descramble.seq_next++;
+
+    pthread_mutex_lock(&mod->descramble.in_q.mutex);
+
+    if(descramble_queue_is_full(&mod->descramble.in_q))
+    {
+        __sync_add_and_fetch(&mod->descramble.drops, 1);
+
+        if(mod->descramble.drop_policy == 0 /* drop_oldest */)
+        {
+            descramble_batch_t *old = descramble_queue_pop_nolock(&mod->descramble.in_q);
+            if(old)
+                descramble_pool_put(mod, old);
+            descramble_queue_push_nolock(&mod->descramble.in_q, b);
+        }
+        else
+        {
+            /* drop_newest: keep queue as-is */
+            descramble_pool_put(mod, b);
+        }
+
+        descramble_drop_log_rate_limited(mod, "in_queue_full");
+    }
+    else
+    {
+        descramble_queue_push_nolock(&mod->descramble.in_q, b);
+    }
+
+    pthread_cond_signal(&mod->descramble.in_q.cond);
+    pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+}
+
+static inline void descramble_flush_current(module_data_t *mod)
+{
+    if(!mod || mod->descramble.mode != DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        return;
+    if(!mod->descramble.thread_running)
+    {
+        if(mod->descramble.current)
+        {
+            descramble_pool_put(mod, mod->descramble.current);
+            mod->descramble.current = NULL;
+        }
+        return;
+    }
+    if(!mod->descramble.current)
+        return;
+    descramble_batch_t *b = mod->descramble.current;
+    mod->descramble.current = NULL;
+    descramble_in_enqueue(mod, b);
+}
+
+static void descramble_queue_ts(module_data_t *mod, const uint8_t *ts)
+{
+    if(!mod || !ts)
+        return;
+    if(mod->descramble.mode != DESCRAMBLE_PARALLEL_PER_STREAM_THREAD || !mod->descramble.thread_running)
+    {
+        __module_stream_send(&mod->__stream, ts);
+        return;
+    }
+
+    if(!mod->descramble.current)
+        mod->descramble.current = descramble_pool_get(mod);
+
+    descramble_batch_t *b = mod->descramble.current;
+    if(!b)
+        return;
+
+    if(b->count >= b->cap)
+    {
+        descramble_flush_current(mod);
+        if(!mod->descramble.current)
+            mod->descramble.current = descramble_pool_get(mod);
+        b = mod->descramble.current;
+        if(!b)
+            return;
+    }
+
+    uint8_t *dst = &b->buf[b->count * TS_PACKET_SIZE];
+    memcpy(dst, ts, TS_PACKET_SIZE);
+
+    descramble_key_ctx_t *ctx = NULL;
+    if(TS_IS_SCRAMBLED(dst) && TS_IS_PAYLOAD(dst))
+    {
+        const uint16_t pid = TS_GET_PID(dst);
+        ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
+        if(ca_stream)
+            ctx = ca_stream->parallel_key;
+    }
+
+    b->pkt_ctx[b->count] = ctx;
+    if(ctx)
+    {
+        bool seen = false;
+        for(uint32_t i = 0; i < b->held_ctx_count; ++i)
+        {
+            if(b->held_ctx[i] == ctx)
+            {
+                seen = true;
+                break;
+            }
+        }
+        if(!seen && b->held_ctx_count < b->cap)
+        {
+            b->held_ctx[b->held_ctx_count++] = ctx;
+            descramble_key_ctx_acquire(ctx);
+        }
+    }
+
+    b->count += 1;
+
+    if(b->count >= mod->descramble.batch_packets)
+        descramble_flush_current(mod);
+}
+
+static void on_ts_parallel(module_data_t *mod, const uint8_t *ts)
+{
+    const uint16_t pid = TS_GET_PID(ts);
+
+    if(pid == 0)
+    {
+        mpegts_psi_mux(mod->stream[pid], ts, on_pat, mod);
+    }
+    else if(pid == 1)
+    {
+        if(mod->stream[pid])
+            mpegts_psi_mux(mod->stream[pid], ts, on_cat, mod);
+        return;
+    }
+    else if(pid == NULL_TS_PID)
+    {
+        return;
+    }
+    else if(mod->stream[pid])
+    {
+        switch(mod->stream[pid]->type)
+        {
+            case MPEGTS_PACKET_PMT:
+                mpegts_psi_mux(mod->stream[pid], ts, on_pmt, mod);
+                return;
+            case MPEGTS_PACKET_ECM:
+            case MPEGTS_PACKET_EMM:
+                mpegts_psi_mux(mod->stream[pid], ts, on_em, mod);
+            case MPEGTS_PACKET_CA:
+                return;
+            default:
+                break;
+        }
+    }
+
+    if(asc_list_size(mod->ca_list) == 0)
+    {
+        /* Still go through parallel queue to keep ordering consistent. */
+        descramble_queue_ts(mod, ts);
+        return;
+    }
+
+    if(mod->shift.buffer)
+    {
+        memcpy(&mod->shift.buffer[mod->shift.write], ts, TS_PACKET_SIZE);
+        mod->shift.write += TS_PACKET_SIZE;
+        if(mod->shift.write == mod->shift.size)
+            mod->shift.write = 0;
+        mod->shift.count += TS_PACKET_SIZE;
+
+        if(mod->shift.count < mod->shift.size)
+            return;
+
+        ts = &mod->shift.buffer[mod->shift.read];
+        mod->shift.read += TS_PACKET_SIZE;
+        if(mod->shift.read == mod->shift.size)
+            mod->shift.read = 0;
+        mod->shift.count -= TS_PACKET_SIZE;
+    }
+
+    /* key_guard: validate candidate keys on PES headers before applying */
+    if(mod->key_guard && TS_IS_SCRAMBLED(ts) && TS_IS_PAYLOAD_START(ts))
+    {
+        ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
+        if(ca_stream && ca_stream->cand_pending)
+        {
+            const uint64_t now_us = asc_utime();
+            if(ca_stream->cand_set_us && now_us - ca_stream->cand_set_us > 10000000ULL)
+            {
+                ca_stream_guard_clear(ca_stream);
+            }
+            else
+            {
+                const uint8_t sc = TS_IS_SCRAMBLED(ts);
+                uint8_t p_mask = 0;
+                if(sc == 0x80)
+                    p_mask = 1;
+                else if(sc == 0xC0)
+                    p_mask = 2;
+
+                if(p_mask && (ca_stream->cand_mask & p_mask))
+                {
+                    const bool ok = ca_stream_guard_validate_pes(mod, ca_stream, ts);
+                    if(ok)
+                        ca_stream->cand_ok_count += 1;
+                    else
+                        ca_stream->cand_fail_count += 1;
+
+                    if(ca_stream->cand_ok_count >= 2)
+                    {
+                        ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
+                        ca_stream_apply_staged_key_parallel(mod, ca_stream);
+                        if(asc_log_is_debug())
+                            asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
+                        ca_stream_guard_clear(ca_stream);
+                    }
+                    else if(ca_stream->cand_fail_count >= 2)
+                    {
+                        const bool cand_from_backup = ca_stream->cand_from_backup;
+                        if(asc_log_is_debug())
+                            asc_log_debug(MSG("key_guard: candidate keys rejected (mask:%u)"), (unsigned)ca_stream->cand_mask);
+                        if(cand_from_backup)
+                        {
+                            ca_stream->stat_key_guard_reject_backup += 1;
+                            ca_stream_backup_mark_bad(mod, ca_stream, "key_guard_reject");
+                        }
+                        else
+                        {
+                            ca_stream->stat_key_guard_reject_primary += 1;
+                        }
+                        ca_stream_guard_clear(ca_stream);
+                        ca_stream->last_ecm_ok = false;
+                        ca_stream->last_ecm_send_us = 0;
+                        if(ca_stream->ecm_fail_count != UINT32_MAX)
+                            ++ca_stream->ecm_fail_count;
+                    }
+                }
+            }
+        }
+    }
+
+    descramble_queue_ts(mod, ts);
+}
+
 static void on_ts(module_data_t *mod, const uint8_t *ts)
 {
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    {
+        on_ts_parallel(mod, ts);
+        return;
+    }
+
     const uint16_t pid = TS_GET_PID(ts);
 
     if(pid == 0)
@@ -1552,6 +2638,8 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
                     if(ca_stream->cand_ok_count >= 2)
                     {
                         ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
+                        if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+                            ca_stream_apply_staged_key_parallel(mod, ca_stream);
                         if(asc_log_is_debug())
                             asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
                         ca_stream_guard_clear(ca_stream);
@@ -1926,6 +3014,72 @@ static void module_init(module_data_t *mod)
 
     module_option_boolean("key_guard", &mod->key_guard);
 
+    /* Parallel descramble (opt-in). По умолчанию выключено. */
+    mod->descramble.mode = DESCRAMBLE_PARALLEL_OFF;
+    mod->descramble.pipe_rd = -1;
+    mod->descramble.pipe_wr = -1;
+    mod->descramble.batch_packets = 64;
+    mod->descramble.queue_depth_batches = 16;
+    mod->descramble.worker_stack_kb = 256;
+    mod->descramble.drop_policy = 0; /* drop_oldest */
+    mod->descramble.log_rate_limit_sec = 5;
+
+    const char *descramble_parallel_opt = NULL;
+    module_option_string("descramble_parallel", &descramble_parallel_opt, NULL);
+    if(descramble_parallel_opt)
+    {
+        if(!strcasecmp(descramble_parallel_opt, "per_stream_thread") || !strcasecmp(descramble_parallel_opt, "per_stream"))
+            mod->descramble.mode = DESCRAMBLE_PARALLEL_PER_STREAM_THREAD;
+        else if(!strcasecmp(descramble_parallel_opt, "off") || !strcasecmp(descramble_parallel_opt, "0") || !strcasecmp(descramble_parallel_opt, "false"))
+            mod->descramble.mode = DESCRAMBLE_PARALLEL_OFF;
+        else
+            asc_log_warning(MSG("unknown descramble_parallel '%s', keeping 'off'"), descramble_parallel_opt);
+    }
+
+    int batch_packets = (int)mod->descramble.batch_packets;
+    module_option_number("descramble_batch_packets", &batch_packets);
+    if(batch_packets < 8)
+        batch_packets = 8;
+    if(batch_packets > 1024)
+        batch_packets = 1024;
+    mod->descramble.batch_packets = (uint32_t)batch_packets;
+
+    int queue_depth = (int)mod->descramble.queue_depth_batches;
+    module_option_number("descramble_queue_depth_batches", &queue_depth);
+    if(queue_depth < 1)
+        queue_depth = 1;
+    if(queue_depth > 256)
+        queue_depth = 256;
+    mod->descramble.queue_depth_batches = (uint32_t)queue_depth;
+
+    int worker_stack_kb = (int)mod->descramble.worker_stack_kb;
+    module_option_number("descramble_worker_stack_kb", &worker_stack_kb);
+    if(worker_stack_kb < 0)
+        worker_stack_kb = 0;
+    if(worker_stack_kb > 2048)
+        worker_stack_kb = 2048;
+    mod->descramble.worker_stack_kb = (uint32_t)worker_stack_kb;
+
+    const char *drop_policy_opt = NULL;
+    module_option_string("descramble_drop_policy", &drop_policy_opt, NULL);
+    if(drop_policy_opt)
+    {
+        if(!strcasecmp(drop_policy_opt, "drop_newest"))
+            mod->descramble.drop_policy = 1;
+        else if(!strcasecmp(drop_policy_opt, "drop_oldest"))
+            mod->descramble.drop_policy = 0;
+        else
+            asc_log_warning(MSG("unknown descramble_drop_policy '%s', using drop_oldest"), drop_policy_opt);
+    }
+
+    int log_rate = (int)mod->descramble.log_rate_limit_sec;
+    module_option_number("descramble_log_rate_limit_sec", &log_rate);
+    if(log_rate < 1)
+        log_rate = 1;
+    if(log_rate > 60)
+        log_rate = 60;
+    mod->descramble.log_rate_limit_sec = (uint32_t)log_rate;
+
     mod->cam_backup_mode = CAM_BACKUP_MODE_HEDGE;
     const char *cam_backup_mode_opt = NULL;
     module_option_string("cam_backup_mode", &cam_backup_mode_opt, NULL);
@@ -1998,6 +3152,11 @@ static void module_init(module_data_t *mod)
         memcpy(&key16[0], key, 8);
         memcpy(&key16[8], key, 8);
         ca_stream_set_active_key(biss, 3, key16);
+        if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        {
+            /* BISS sets active_key after ca_stream_init(): refresh parallel key ctx. */
+            ca_stream_parallel_key_replace(biss);
+        }
     }
 
     lua_getfield(lua, 2, "cam");
@@ -2091,6 +3250,9 @@ static void module_init(module_data_t *mod)
 static void module_destroy(module_data_t *mod)
 {
     module_stream_destroy(mod);
+
+    /* Stop parallel worker before we start freeing stream/CAS resources. */
+    descramble_stop(mod);
 
     module_cam_t *cam_primary = mod->cam_primary;
     module_cam_t *cam_backup = mod->cam_backup;
@@ -2206,6 +3368,46 @@ static int method_stats(module_data_t *mod)
         lua_setfield(lua, -2, "fill_pct");
     }
     lua_setfield(lua, -2, "shift");
+
+    /* parallel descramble stats (lightweight) */
+    lua_newtable(lua);
+    const char *mode_s = "off";
+    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        mode_s = "per_stream_thread";
+    lua_pushstring(lua, mode_s);
+    lua_setfield(lua, -2, "mode");
+    lua_pushinteger(lua, (lua_Integer)mod->descramble.batch_packets);
+    lua_setfield(lua, -2, "batch_packets");
+    lua_pushinteger(lua, (lua_Integer)mod->descramble.queue_depth_batches);
+    lua_setfield(lua, -2, "queue_depth_batches");
+    lua_pushinteger(lua, (lua_Integer)mod->descramble.drops);
+    lua_setfield(lua, -2, "drops");
+    lua_pushinteger(lua, (lua_Integer)mod->descramble.batches);
+    lua_setfield(lua, -2, "batches");
+    if(mod->descramble.batches)
+    {
+        const uint64_t avg_us = mod->descramble.decrypt_us_sum / mod->descramble.batches;
+        lua_pushinteger(lua, (lua_Integer)avg_us);
+        lua_setfield(lua, -2, "decrypt_avg_us");
+        lua_pushinteger(lua, (lua_Integer)mod->descramble.decrypt_us_max);
+        lua_setfield(lua, -2, "decrypt_max_us");
+    }
+    if(mod->descramble.thread_running && mod->descramble.in_q.items && mod->descramble.out_q.items)
+    {
+        uint32_t in_len = 0;
+        uint32_t out_len = 0;
+        pthread_mutex_lock(&mod->descramble.in_q.mutex);
+        in_len = mod->descramble.in_q.size;
+        pthread_mutex_unlock(&mod->descramble.in_q.mutex);
+        pthread_mutex_lock(&mod->descramble.out_q.mutex);
+        out_len = mod->descramble.out_q.size;
+        pthread_mutex_unlock(&mod->descramble.out_q.mutex);
+        lua_pushinteger(lua, (lua_Integer)in_len);
+        lua_setfield(lua, -2, "in_queue_len");
+        lua_pushinteger(lua, (lua_Integer)out_len);
+        lua_setfield(lua, -2, "out_queue_len");
+    }
+    lua_setfield(lua, -2, "descramble");
 
     /* per-ECM PID stats */
     lua_newtable(lua);
