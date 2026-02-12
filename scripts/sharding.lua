@@ -138,10 +138,13 @@ local function systemctl_available()
     return ok == true or ok == 0
 end
 
-local function build_shard_env(prefix, idx, shard_count, base_port, config_path, env_dir)
+local function build_shard_env(prefix, idx, shard_count, base_port, config_path, env_dir, shared_data_dir)
     local instance = tostring(prefix) .. "-sh" .. tostring(idx)
     local port = base_port + idx
-    local data_dir = env_dir .. "/" .. instance .. ".data"
+    local data_dir = tostring(shared_data_dir or "")
+    if data_dir == "" then
+        data_dir = env_dir .. "/" .. tostring(prefix) .. "-sh0.data"
+    end
 
     local extra = {}
     -- Explicit sharding via CLI keeps runtime deterministic even if settings are not loaded.
@@ -150,6 +153,11 @@ local function build_shard_env(prefix, idx, shard_count, base_port, config_path,
     end
     table.insert(extra, "--data-dir " .. sh_quote(data_dir))
     table.insert(extra, "--http-play-port " .. tostring(port))
+    -- In shared-db sharded setups only one instance should import the config file on boot.
+    -- This avoids SQLite write contention during parallel restarts.
+    if idx ~= 0 then
+        table.insert(extra, "--no-import")
+    end
 
     local env = {
         CONFIG = config_path,
@@ -185,6 +193,9 @@ function sharding.apply_systemd()
     if not systemctl_available() then
         return nil, "systemctl not found"
     end
+    if runtime and tonumber(runtime.stream_shard_count or 0) > 1 and tonumber(runtime.stream_shard_index or 0) ~= 0 then
+        return nil, "apply sharding must be executed on shard 0"
+    end
 
     local unit = detect_systemd_unit_name()
     local prefix, _, err = parse_shard_prefix(unit)
@@ -215,6 +226,7 @@ function sharding.apply_systemd()
         return nil, "primary config path not set (start with --config)"
     end
     local env_dir = path_dirname(config_path) or "/etc/astral"
+    local shared_data_dir = (config and config.data_dir) or (env_dir .. "/" .. tostring(prefix) .. "-sh0.data")
 
     if not base_port then
         -- Fall back to current http_port or current listen port.
@@ -241,7 +253,7 @@ function sharding.apply_systemd()
     -- Reconfigure shard units.
     local plan = {}
     for i = 0, shards - 1 do
-        table.insert(plan, build_shard_env(prefix, i, shards, base_port, config_path, env_dir))
+        table.insert(plan, build_shard_env(prefix, i, shards, base_port, config_path, env_dir, shared_data_dir))
     end
 
     -- Disable extra shards from previous runs.
@@ -282,5 +294,49 @@ function sharding.apply_systemd()
         config.set_setting("stream_sharding_applied_base_port", base_port)
     end
 
+    return true
+end
+
+-- Best-effort reload of all shard processes after config/settings changes.
+-- Used when shards share one sqlite store; otherwise each process keeps old in-memory config.
+function sharding.broadcast_reload()
+    if not http_request then
+        return false
+    end
+    local shard_count = tonumber(runtime and runtime.stream_shard_count or 0) or 0
+    local shard_index = tonumber(runtime and runtime.stream_shard_index or 0) or 0
+    if shard_count < 2 then
+        return false
+    end
+    local port = tonumber((config and config.get_setting and config.get_setting("http_port")) or 0) or 0
+    if port <= 0 then
+        return false
+    end
+    local base_port = port - shard_index
+    if base_port <= 0 then
+        return false
+    end
+
+    for i = 0, shard_count - 1 do
+        local p = base_port + i
+        if p ~= port then
+            local host_header = "127.0.0.1:" .. tostring(p)
+            pcall(http_request, {
+                host = "127.0.0.1",
+                port = p,
+                path = "/api/v1/reload",
+                method = "POST",
+                headers = {
+                    "Host: " .. host_header,
+                    "Connection: close",
+                    "Content-Length: 0",
+                },
+                callback = function(self, response)
+                    -- ignore failures; shards might be down during restart.
+                    return
+                end,
+            })
+        end
+    end
     return true
 end

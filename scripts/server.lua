@@ -196,6 +196,7 @@ local opt = {
     data_dir = "./data",
     data_dir_set = false,
     db_path = nil,
+    no_import = false,
     web_dir = "./web",
     web_dir_set = false,
     hls_dir = nil,
@@ -231,6 +232,7 @@ options_usage = [[
     --http-play-port P  http play server port override (default: setting http_play_port or PORT)
     --data-dir PATH     data directory (default: ./data or <config>.data)
     --db PATH           sqlite db path (default: data-dir/astra.db)
+    --no-import         do not import config file into sqlite on start (use existing db)
     --web-dir PATH      web ui directory (default: ./web)
     --hls-dir PATH      hls output directory (default: data-dir/hls)
     --hls-route PATH    hls url prefix (default: /hls)
@@ -273,6 +275,10 @@ options = {
     ["--db"] = function(idx)
         opt.db_path = argv[idx + 1]
         return 1
+    end,
+    ["--no-import"] = function(idx)
+        opt.no_import = true
+        return 0
     end,
     ["--web-dir"] = function(idx)
         opt.web_dir = argv[idx + 1]
@@ -1236,22 +1242,24 @@ function main()
         if created then
             log.warning("[server] config file missing, created defaults: " .. tostring(opt.config_path))
         end
-        local summary, err = config.import_astra_file(opt.config_path, { mode = opt.import_mode })
-        if not summary then
-            log.error("[server] import failed: " .. tostring(err))
-            os.exit(78)
-        else
-            log.info(string.format(
-                "[server] import ok: settings=%d users=%d adapters=%d streams=%d softcam=%d splitters=%d splitter_links=%d splitter_allow=%d",
-                summary.settings or 0,
-                summary.users or 0,
-                summary.adapters or 0,
-                summary.streams or 0,
-                summary.softcam or 0,
-                summary.splitters or 0,
-                summary.splitter_links or 0,
-                summary.splitter_allow or 0
-            ))
+        if not opt.no_import then
+            local summary, err = config.import_astra_file(opt.config_path, { mode = opt.import_mode })
+            if not summary then
+                log.error("[server] import failed: " .. tostring(err))
+                os.exit(78)
+            else
+                log.info(string.format(
+                    "[server] import ok: settings=%d users=%d adapters=%d streams=%d softcam=%d splitters=%d splitter_links=%d splitter_allow=%d",
+                    summary.settings or 0,
+                    summary.users or 0,
+                    summary.adapters or 0,
+                    summary.streams or 0,
+                    summary.softcam or 0,
+                    summary.splitters or 0,
+                    summary.splitter_links or 0,
+                    summary.splitter_allow or 0
+                ))
+            end
         end
     end
 
