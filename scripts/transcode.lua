@@ -4072,7 +4072,10 @@ schedule_worker_restart = function(job, worker, code, message, meta)
         if note < cooldown then
             transcode._note_restart_suppressed(worker, now, reason_code)
             local force, suppressed_sec = transcode._should_force_restart(worker, watchdog, now)
-            if not force then
+            -- If the process is already dead, we must not "drop" the restart request,
+            -- otherwise the job can get stuck RUNNING without a proc until another watchdog fires.
+            -- Cooldown still applies for quality-driven restarts while ffmpeg is running.
+            if not force and worker.proc then
                 log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" .. tostring(cooldown_lane) ..
                     ") output #" .. tostring(worker.index))
                 return false
@@ -4148,7 +4151,9 @@ schedule_restart = function(job, output_state, code, message, meta)
         if note < cooldown then
             transcode._note_restart_suppressed(output_state, now, reason_code)
             local force, suppressed_sec = transcode._should_force_restart(output_state, watchdog, now)
-            if not force then
+            -- If the encoder process is already gone, do not drop the restart request
+            -- (otherwise we can get stuck with a dead worker and no restart scheduled).
+            if not force and job.proc then
                 log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" ..
                     tostring(cooldown_lane) .. ") output #" .. tostring(output_state.index))
                 return false
@@ -4166,7 +4171,7 @@ schedule_restart = function(job, output_state, code, message, meta)
         if note < cooldown then
             transcode._note_restart_suppressed(job, now, reason_code)
             local force, suppressed_sec = transcode._should_force_restart(job, watchdog, now)
-            if not force then
+            if not force and job.proc then
                 log.warning("[transcode " .. tostring(job.id) .. "] restart suppressed (cooldown:" ..
                     tostring(cooldown_lane) .. ")")
                 return false
