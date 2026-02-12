@@ -1558,10 +1558,62 @@ function init_input(conf)
     end
 
     if conf.biss then
+        -- Parallel descramble (CSA decrypt) offload (opt-in).
+        local descramble_parallel = conf.descramble_parallel
+        if descramble_parallel == nil then
+            descramble_parallel = read_setting("softcam_descramble_parallel")
+        end
+        if descramble_parallel ~= nil then
+            descramble_parallel = tostring(descramble_parallel):lower()
+            if descramble_parallel == "1" or descramble_parallel == "on" or descramble_parallel == "true" then
+                descramble_parallel = "per_stream_thread"
+            elseif descramble_parallel == "per_stream" or descramble_parallel == "per_stream_thread" then
+                descramble_parallel = "per_stream_thread"
+            elseif descramble_parallel == "0" or descramble_parallel == "off" or descramble_parallel == "false" then
+                descramble_parallel = "off"
+            else
+                descramble_parallel = nil
+            end
+        end
+
+        local descramble_batch_packets = tonumber(conf.descramble_batch_packets)
+        if descramble_batch_packets == nil then
+            descramble_batch_packets = tonumber(read_setting("softcam_descramble_batch_packets"))
+        end
+
+        local descramble_queue_depth_batches = tonumber(conf.descramble_queue_depth_batches)
+        if descramble_queue_depth_batches == nil then
+            descramble_queue_depth_batches = tonumber(read_setting("softcam_descramble_queue_depth_batches"))
+        end
+
+        local descramble_worker_stack_kb = tonumber(conf.descramble_worker_stack_kb)
+        if descramble_worker_stack_kb == nil then
+            descramble_worker_stack_kb = tonumber(read_setting("softcam_descramble_worker_stack_kb"))
+        end
+
+        local descramble_drop_policy = conf.descramble_drop_policy
+        if descramble_drop_policy == nil then
+            descramble_drop_policy = read_setting("softcam_descramble_drop_policy")
+        end
+        if descramble_drop_policy ~= nil then
+            descramble_drop_policy = tostring(descramble_drop_policy):lower()
+        end
+
+        local descramble_log_rate_limit_sec = tonumber(conf.descramble_log_rate_limit_sec)
+        if descramble_log_rate_limit_sec == nil then
+            descramble_log_rate_limit_sec = tonumber(read_setting("softcam_descramble_log_rate_limit_sec"))
+        end
+
         instance.decrypt = decrypt({
             upstream = instance.tail:stream(),
             name = conf.name,
             biss = conf.biss,
+            descramble_parallel = descramble_parallel,
+            descramble_batch_packets = descramble_batch_packets,
+            descramble_queue_depth_batches = descramble_queue_depth_batches,
+            descramble_worker_stack_kb = descramble_worker_stack_kb,
+            descramble_drop_policy = descramble_drop_policy,
+            descramble_log_rate_limit_sec = descramble_log_rate_limit_sec,
         })
         instance.tail = instance.decrypt
     elseif conf.cam == true then
@@ -1754,6 +1806,53 @@ function init_input(conf)
             local cas_pnr = nil
             if conf.pnr and conf.set_pnr then cas_pnr = conf.pnr end
 
+            -- Parallel descramble (CSA decrypt) offload (opt-in).
+            -- Важно: смысл CA (ECM/CW) не меняется, переносится только CPU-heavy decrypt.
+            local descramble_parallel = conf.descramble_parallel
+            if descramble_parallel == nil then
+                descramble_parallel = read_setting("softcam_descramble_parallel")
+            end
+            if descramble_parallel ~= nil then
+                descramble_parallel = tostring(descramble_parallel):lower()
+                if descramble_parallel == "1" or descramble_parallel == "on" or descramble_parallel == "true" then
+                    descramble_parallel = "per_stream_thread"
+                elseif descramble_parallel == "per_stream" or descramble_parallel == "per_stream_thread" then
+                    descramble_parallel = "per_stream_thread"
+                elseif descramble_parallel == "0" or descramble_parallel == "off" or descramble_parallel == "false" then
+                    descramble_parallel = "off"
+                else
+                    descramble_parallel = nil
+                end
+            end
+
+            local descramble_batch_packets = tonumber(conf.descramble_batch_packets)
+            if descramble_batch_packets == nil then
+                descramble_batch_packets = tonumber(read_setting("softcam_descramble_batch_packets"))
+            end
+
+            local descramble_queue_depth_batches = tonumber(conf.descramble_queue_depth_batches)
+            if descramble_queue_depth_batches == nil then
+                descramble_queue_depth_batches = tonumber(read_setting("softcam_descramble_queue_depth_batches"))
+            end
+
+            local descramble_worker_stack_kb = tonumber(conf.descramble_worker_stack_kb)
+            if descramble_worker_stack_kb == nil then
+                descramble_worker_stack_kb = tonumber(read_setting("softcam_descramble_worker_stack_kb"))
+            end
+
+            local descramble_drop_policy = conf.descramble_drop_policy
+            if descramble_drop_policy == nil then
+                descramble_drop_policy = read_setting("softcam_descramble_drop_policy")
+            end
+            if descramble_drop_policy ~= nil then
+                descramble_drop_policy = tostring(descramble_drop_policy):lower()
+            end
+
+            local descramble_log_rate_limit_sec = tonumber(conf.descramble_log_rate_limit_sec)
+            if descramble_log_rate_limit_sec == nil then
+                descramble_log_rate_limit_sec = tonumber(read_setting("softcam_descramble_log_rate_limit_sec"))
+            end
+
             instance.decrypt = decrypt({
                 upstream = instance.tail:stream(),
                 name = conf.name,
@@ -1768,6 +1867,12 @@ function init_input(conf)
                 cam_backup_hedge_ms = cam_backup_hedge_ms,
                 cam_backup_mode = cam_backup_mode,
                 cam_prefer_primary_ms = cam_prefer_primary_ms,
+                descramble_parallel = descramble_parallel,
+                descramble_batch_packets = descramble_batch_packets,
+                descramble_queue_depth_batches = descramble_queue_depth_batches,
+                descramble_worker_stack_kb = descramble_worker_stack_kb,
+                descramble_drop_policy = descramble_drop_policy,
+                descramble_log_rate_limit_sec = descramble_log_rate_limit_sec,
             })
             instance.tail = instance.decrypt
         end
