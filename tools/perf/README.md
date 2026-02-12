@@ -41,6 +41,23 @@ Suite сохраняет:
 - latency JSON для full/lite endpoint
 - секундные samples процесса во время нагрузки (`cpu_pct`, `rss_kb`, `threads`, `fds`)
 
+## 3.1) Снятие инцидента (per-core/per-thread + softnet + perf)
+
+Полезно, когда “одно ядро 100%” и стримы дёргаются.
+
+```bash
+PID=<astra_pid>
+OUT=tools/perf/results/incident_$(date +%Y%m%d_%H%M%S)
+tools/perf/capture_incident.sh "$PID" 15 "$OUT"
+```
+
+Сохраняет:
+- top threads (PSR/%CPU)
+- per-core load (mpstat), если доступно
+- per-thread (pidstat), если доступно
+- softnet drops (before/after)
+- perf record/report (best-effort), если доступно
+
 ## 4) Hotspot-проверка таймеров (P1.2)
 
 ```bash
