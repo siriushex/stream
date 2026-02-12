@@ -2826,6 +2826,9 @@ local function proxy_api_request(server, client, request, target_port, path_over
     local method = request.method or "GET"
     local path = path_override or (request.path or "/")
     local body = request.content or ""
+    if method == "GET" or method == "HEAD" then
+        body = ""
+    end
     local content_type = get_header(request.headers, "content-type") or "application/json"
 
     local extra = {}
