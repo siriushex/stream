@@ -2844,13 +2844,12 @@ local function proxy_api_request(server, client, request, target_port, path_over
             extra[2],
         }
 
-    local ok, err = pcall(http_request, {
+    local req_opts = {
         host = "127.0.0.1",
         port = target_port,
         path = path,
         method = method,
         headers = headers,
-        content = body,
         connect_timeout_ms = 200,
         read_timeout_ms = 800,
         callback = function(self, response)
@@ -2873,7 +2872,12 @@ local function proxy_api_request(server, client, request, target_port, path_over
                 content = response.content or "",
             })
         end,
-    })
+    }
+    if body ~= "" then
+        req_opts.content = body
+    end
+
+    local ok, err = pcall(http_request, req_opts)
     if not ok then
         return error_response(server, client, 503, "shard request failed: " .. tostring(err))
     end
