@@ -46,6 +46,8 @@ local WARMUP_STDERR_MAX = 30
 local WARMUP_TIMEOUT_EXTRA = 2
 local TRANSCODE_PLAY_BUFFER_KB_DEFAULT = 512
 local TRANSCODE_PLAY_BUFFER_FILL_KB_DEFAULT = 16
+local FFMPEG_LOG_REPEAT_WINDOW_SEC = 2
+local FFMPEG_LOG_MAX_PER_WINDOW = 20
 
 local function normalize_stream_type(cfg)
     local t = cfg and cfg.type
@@ -3759,6 +3761,107 @@ local function get_log_to_main_mode(tc)
     return nil
 end
 
+local function flush_ffmpeg_repeat(owner, prefix, is_warning)
+    if type(owner) ~= "table" then
+        return
+    end
+    local cache = owner.ffmpeg_log_repeat
+    if type(cache) ~= "table" then
+        return
+    end
+    if prefix and cache.prefix and cache.prefix ~= prefix then
+        return
+    end
+    local repeated = tonumber(cache.repeat_count) or 0
+    if repeated > 0 then
+        local msg = (cache.prefix or "") .. "ffmpeg: previous line repeated " .. tostring(repeated) .. " times"
+        if is_warning then
+            log.warning(msg)
+        else
+            log.info(msg)
+        end
+    end
+    cache.repeat_count = 0
+end
+
+local function log_ffmpeg_line(owner, prefix, log_mode, is_error, line)
+    local warn_mode = (log_mode == "errors")
+    if not (log_mode == "all" or (warn_mode and is_error)) then
+        return
+    end
+    if type(owner) ~= "table" then
+        local msg = prefix .. "ffmpeg: " .. tostring(line or "")
+        if warn_mode then
+            log.warning(msg)
+        else
+            log.info(msg)
+        end
+        return
+    end
+
+    local now = os.time()
+    local cache = owner.ffmpeg_log_repeat
+    if type(cache) ~= "table" then
+        cache = {}
+        owner.ffmpeg_log_repeat = cache
+    end
+    if cache.prefix ~= prefix then
+        flush_ffmpeg_repeat(owner, cache.prefix, cache.is_warning == true)
+        cache.prefix = prefix
+        cache.last_line = nil
+        cache.repeat_count = 0
+        cache.last_ts = now
+    end
+
+    if not cache.window_start or (now - cache.window_start) >= FFMPEG_LOG_REPEAT_WINDOW_SEC then
+        local dropped = tonumber(cache.window_dropped) or 0
+        if dropped > 0 then
+            local msg = prefix .. "ffmpeg: log rate limited, skipped " .. tostring(dropped) .. " lines"
+            if cache.window_is_warning then
+                log.warning(msg)
+            else
+                log.info(msg)
+            end
+        end
+        cache.window_start = now
+        cache.window_count = 0
+        cache.window_dropped = 0
+        cache.window_is_warning = warn_mode
+    end
+    if (tonumber(cache.window_count) or 0) >= FFMPEG_LOG_MAX_PER_WINDOW then
+        cache.window_dropped = (tonumber(cache.window_dropped) or 0) + 1
+        cache.window_is_warning = warn_mode
+        return
+    end
+    cache.window_count = (tonumber(cache.window_count) or 0) + 1
+
+    if cache.last_line and cache.last_line == line then
+        cache.repeat_count = (cache.repeat_count or 0) + 1
+        if not cache.last_ts then
+            cache.last_ts = now
+        end
+        cache.is_warning = warn_mode
+        if (now - cache.last_ts) >= FFMPEG_LOG_REPEAT_WINDOW_SEC then
+            flush_ffmpeg_repeat(owner, prefix, warn_mode)
+            cache.last_ts = now
+        end
+        return
+    end
+
+    flush_ffmpeg_repeat(owner, prefix, cache.is_warning == true)
+
+    local msg = prefix .. "ffmpeg: " .. tostring(line or "")
+    if warn_mode then
+        log.warning(msg)
+    else
+        log.info(msg)
+    end
+    cache.last_line = line
+    cache.last_ts = now
+    cache.repeat_count = 0
+    cache.is_warning = warn_mode
+end
+
 local function read_process_output(job)
     if not job.proc then
         return
@@ -3778,11 +3881,7 @@ local function read_process_output(job)
             mark_error_line(job, line)
         end
         append_stderr_tail(job, line)
-        if log_mode == "all" then
-            log.info("[transcode " .. tostring(job.id) .. "] ffmpeg: " .. line)
-        elseif log_mode == "errors" and is_error then
-            log.warning("[transcode " .. tostring(job.id) .. "] ffmpeg: " .. line)
-        end
+        log_ffmpeg_line(job, "[transcode " .. tostring(job.id) .. "] ", log_mode, is_error, line)
         if job.log_file_handle then
             job.log_file_handle:write(line .. "\n")
             job.log_file_handle:flush()
@@ -6038,11 +6137,7 @@ local function read_publish_output(job, worker)
                 })
             end
             append_stderr_tail(worker, line)
-            if log_mode == "all" then
-                log.info("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
-            elseif log_mode == "errors" and is_error then
-                log.warning("[publish " .. tostring(job.id) .. " " .. label .. "] ffmpeg: " .. line)
-        end
+            log_ffmpeg_line(worker, "[publish " .. tostring(job.id) .. " " .. label .. "] ", log_mode, is_error, line)
         if job.log_file_handle then
             job.log_file_handle:write("[publish " .. label .. "] " .. line .. "\n")
             job.log_file_handle:flush()
@@ -6303,7 +6398,7 @@ ensure_publish_workers = function(job)
     end
 end
 
-local function reset_worker_runtime(worker, now)
+transcode._reset_worker_runtime = function(worker, now)
     worker.start_ts = now
     worker.stderr_tail = {}
     worker.last_progress = {}
@@ -6327,7 +6422,7 @@ local function reset_worker_runtime(worker, now)
     worker.error_reason = nil
 end
 
-local function parse_query_params(query)
+transcode._parse_query_params = function(query)
     local out = {}
     if not query or query == "" then
         return out
@@ -6420,11 +6515,11 @@ parse_udp_output_url = function(url)
         addr = addr,
         port = port,
         localaddr = localaddr,
-        query = parse_query_params(merged_query),
+        query = transcode._parse_query_params(merged_query),
     }
 end
 
-local function ensure_udp_proxy(job, worker)
+transcode._ensure_udp_proxy = function(job, worker)
     if worker.proxy_enabled == true then
         return true
     end
@@ -6494,12 +6589,12 @@ local function ensure_udp_proxy(job, worker)
     return true
 end
 
-local function build_worker_output_override(job, worker)
+transcode._build_worker_output_override = function(job, worker)
     if job and job.ladder_enabled == true then
         return worker.output
     end
     if job and job.seamless_udp_proxy == true and is_udp_url(worker.output and worker.output.url) then
-        if ensure_udp_proxy(job, worker) and worker.proxy_listen_port then
+        if transcode._ensure_udp_proxy(job, worker) and worker.proxy_listen_port then
             local out = {}
             for k, v in pairs(worker.output or {}) do
                 out[k] = v
@@ -6512,8 +6607,8 @@ local function build_worker_output_override(job, worker)
     return worker.output
 end
 
-local function build_worker_ffmpeg_args(job, worker)
-	    local output_override = build_worker_output_override(job, worker)
+transcode._build_worker_ffmpeg_args = function(job, worker)
+	    local output_override = transcode._build_worker_output_override(job, worker)
 	    local play_input_url = resolve_job_input_url(job)
 	    local tc = job.config and job.config.transcode or {}
 	    local require_loopback = normalize_bool(tc.input_allow_direct, true) == false
@@ -6527,7 +6622,7 @@ local function build_worker_ffmpeg_args(job, worker)
 	    return argv, err, selected_url, bin_info
 	end
 
-local function build_ladder_encoder_ffmpeg_args(job)
+transcode._build_ladder_encoder_ffmpeg_args = function(job)
     if not job or job.ladder_enabled ~= true then
         return nil, "not a ladder job"
     end
@@ -6551,8 +6646,8 @@ local function build_ladder_encoder_ffmpeg_args(job)
 	        play_input_url = play_input_url,
 	        require_play_input_url = require_loopback,
 	    })
-	    return argv, err, selected_url, bin_info
-	end
+		    return argv, err, selected_url, bin_info
+		end
 
 start_ladder_encoder = function(job, worker)
     if not job or job.ladder_enabled ~= true then
@@ -6571,7 +6666,7 @@ start_ladder_encoder = function(job, worker)
         end
     end
 
-    local argv, err, selected_url, bin_info = build_ladder_encoder_ffmpeg_args(job)
+    local argv, err, selected_url, bin_info = transcode._build_ladder_encoder_ffmpeg_args(job)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
         worker.state = "ERROR"
@@ -6597,7 +6692,7 @@ start_ladder_encoder = function(job, worker)
     worker.term_sent_ts = nil
     worker.kill_due_ts = nil
     worker.kill_attempts = nil
-    reset_worker_runtime(worker, os.time())
+    transcode._reset_worker_runtime(worker, os.time())
     worker.state = "RUNNING"
     return true
 end
@@ -6620,7 +6715,7 @@ start_ladder_encoder_standby = function(job, worker)
         end
     end
 
-    local argv, err = build_ladder_encoder_ffmpeg_args(job)
+    local argv, err = transcode._build_ladder_encoder_ffmpeg_args(job)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
         return false
@@ -6643,7 +6738,7 @@ start_ladder_encoder_standby = function(job, worker)
         stdout_buf = "",
         stderr_buf = "",
     }
-    reset_worker_runtime(standby, os.time())
+    transcode._reset_worker_runtime(standby, os.time())
     worker.standby = standby
     return true
 end
@@ -6668,11 +6763,7 @@ local function read_worker_output(job, worker)
             mark_error_line(worker, line)
         end
         append_stderr_tail(worker, line)
-        if log_mode == "all" then
-            log.info("[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ffmpeg: " .. line)
-        elseif log_mode == "errors" and is_error then
-            log.warning("[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ffmpeg: " .. line)
-        end
+        log_ffmpeg_line(worker, "[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ", log_mode, is_error, line)
         if job.log_file_handle then
             job.log_file_handle:write("[output " .. tostring(worker.index) .. "] " .. line .. "\n")
             job.log_file_handle:flush()
@@ -6684,7 +6775,7 @@ start_worker = function(job, worker)
     if worker.proc or worker.state == "ERROR" then
         return false
     end
-    local argv, err, selected_url, bin_info = build_worker_ffmpeg_args(job, worker)
+    local argv, err, selected_url, bin_info = transcode._build_worker_ffmpeg_args(job, worker)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", {
             output_index = worker.index,
@@ -6714,7 +6805,7 @@ start_worker = function(job, worker)
     worker.term_sent_ts = nil
     worker.kill_due_ts = nil
     worker.kill_attempts = nil
-    reset_worker_runtime(worker, os.time())
+    transcode._reset_worker_runtime(worker, os.time())
     if worker.monitor then
         reset_output_monitor_state(worker.monitor, worker.start_ts)
     end
@@ -6729,7 +6820,7 @@ start_worker_standby = function(job, worker)
     if worker.standby and worker.standby.proc then
         return true
     end
-    local argv, err, _selected_url = build_worker_ffmpeg_args(job, worker)
+    local argv, err, _selected_url = transcode._build_worker_ffmpeg_args(job, worker)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", {
             output_index = worker.index,
@@ -6755,7 +6846,7 @@ start_worker_standby = function(job, worker)
         stdout_buf = "",
         stderr_buf = "",
     }
-    reset_worker_runtime(standby, os.time())
+    transcode._reset_worker_runtime(standby, os.time())
     worker.standby = standby
     return true
 end
