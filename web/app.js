@@ -119,7 +119,7 @@ const SIDEBAR_HELP_TEXTS = {
 };
 
 const HELP_GUIDE_SHORT = {
-  intro: 'Astral — это панель для запуска и контроля ТВ‑потоков. Вы задаёте вход, задаёте выход и сразу видите, что происходит с каналом.',
+  intro: 'Stream Hub — это панель для запуска и контроля ТВ‑потоков. Вы задаёте вход, задаёте выход и сразу видите, что происходит с каналом.',
   goals: [
     'Собирать поток из разных источников.',
     'Держать резервный вход и быстро переключаться при проблеме.',
@@ -136,7 +136,7 @@ const HELP_GUIDE_SHORT = {
     'Settings — системные параметры сервера и UI.',
     'Log — живой лог процесса.',
     'Observability — метрики сервера и потоков.',
-    'Help — эта справка и AstralAI Chat.',
+    'Help — эта справка и StreamAI Chat.',
   ],
   quickStart: [
     'Нажмите New Stream.',
@@ -156,9 +156,9 @@ const HELP_GUIDE_SHORT = {
 
 const HELP_GUIDE_EXTENDED_SECTIONS = [
   {
-    title: 'Что есть в Astral',
+    title: 'Что есть в Stream Hub',
     lines: [
-      'Astral управляет входами, выходами и логикой доставки ТВ‑потока.',
+      'Stream Hub управляет входами, выходами и логикой доставки ТВ‑потока.',
       'Вы настраиваете каналы через Edit stream. Каждый канал можно включать, выключать и анализировать.',
       'Есть режимы списка: карточки, компактный список и таблица.',
     ],
@@ -175,7 +175,7 @@ const HELP_GUIDE_EXTENDED_SECTIONS = [
       'Settings: пользователи, HLS/HTTP Play, Public URLs, Buffer, Auth, Softcam/CAS, импорт/история.',
       'Log: логи runtime и ошибки модулей.',
       'Observability: графики нагрузки сервера и метрики потоков.',
-      'Help: краткая и полная справка + AstralAI Chat.',
+      'Help: краткая и полная справка + StreamAI Chat.',
     ],
   },
   {
@@ -665,7 +665,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
       low_speed_limit_bytes_sec: 32768,
       low_speed_time_sec: 4,
       keepalive: true,
-      user_agent: 'Astral/1.0',
+      user_agent: 'Stream/1.0',
     },
     wan: {
       connect_timeout_ms: 5000,
@@ -679,7 +679,7 @@ const INPUT_RESILIENCE_DEFAULTS = {
       low_speed_limit_bytes_sec: 16384,
       low_speed_time_sec: 6,
       keepalive: true,
-      user_agent: 'Astral/1.0',
+      user_agent: 'Stream/1.0',
     },
     bad: {
       connect_timeout_ms: 8000,
@@ -2504,7 +2504,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'net_resilience.user_agent',
             level: 'advanced',
-            placeholder: 'Astra/Resilience',
+            placeholder: 'Stream/Resilience',
           },
           {
             id: 'settings-net-keepalive',
@@ -2796,7 +2796,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'runtime_log_file',
             level: 'advanced',
-            placeholder: '/var/log/astral/astral.log',
+            placeholder: '/var/log/stream-hub/stream-hub.log',
             dependsOn: () => ['file', 'stdout_file', 'file_syslog', 'all'].includes(
               readStringValue('settings-runtime-log-dest', 'inherit'),
             ),
@@ -2832,7 +2832,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'runtime_log_syslog',
             level: 'advanced',
-            placeholder: 'astral',
+            placeholder: 'stream-hub',
             dependsOn: () => ['syslog', 'stdout_syslog', 'file_syslog', 'all'].includes(
               readStringValue('settings-runtime-log-dest', 'inherit'),
             ),
@@ -3217,7 +3217,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'influx_bucket',
             level: 'advanced',
-            placeholder: 'astra',
+            placeholder: 'stream',
           },
           {
             id: 'settings-influx-token',
@@ -3235,7 +3235,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'influx_instance',
             level: 'advanced',
-            placeholder: 'astra-1',
+            placeholder: 'stream-1',
           },
           {
             id: 'settings-influx-measurement',
@@ -3244,7 +3244,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             inputType: 'text',
             key: 'influx_measurement',
             level: 'advanced',
-            placeholder: 'astra_metrics',
+            placeholder: 'stream_metrics',
           },
           {
             id: 'settings-influx-interval',
@@ -3409,7 +3409,7 @@ const SETTINGS_GENERAL_SECTIONS = [
     cards: [
       {
         id: 'astra-ai',
-        title: 'AstraAI',
+        title: 'StreamAI',
         description: 'Планирование и применение изменений.',
         level: 'advanced',
         toggle: { id: 'settings-ai-enabled', label: 'Включено' },
@@ -8169,7 +8169,7 @@ const INPUT_PRESETS = {
     host: 'example.com',
     port: 80,
     path: '/stream',
-    ua: 'Astra',
+    ua: 'Stream',
     timeout: 10,
     buffer_size: 1024,
   },
@@ -8178,7 +8178,7 @@ const INPUT_PRESETS = {
     host: 'example.com',
     port: 80,
     path: '/index.m3u8',
-    ua: 'Astra',
+    ua: 'Stream',
     timeout: 10,
     buffer_size: 1024,
   },
@@ -22822,9 +22822,9 @@ function applySettingsToUI() {
     const effectiveModel = model || 'gpt-5-nano';
     const keySet = getSettingBool('ai_api_key_set', false);
     if (!enabled) {
-      elements.aiChatStatus.textContent = 'AstralAI disabled. Enable it in Settings → General.';
+      elements.aiChatStatus.textContent = 'StreamAI disabled. Enable it in Settings → General.';
     } else if (!keySet) {
-      elements.aiChatStatus.textContent = 'AstralAI not configured. Set API key.';
+      elements.aiChatStatus.textContent = 'StreamAI not configured. Set API key.';
     } else {
       elements.aiChatStatus.textContent = `Model: ${effectiveModel} (auto fallback if unavailable).`;
     }
@@ -22870,7 +22870,7 @@ function applySettingsToUI() {
     elements.settingsInfluxInstance.value = getSettingString('influx_instance', '');
   }
   if (elements.settingsInfluxMeasurement) {
-    elements.settingsInfluxMeasurement.value = getSettingString('influx_measurement', 'astra_metrics');
+    elements.settingsInfluxMeasurement.value = getSettingString('influx_measurement', 'stream_metrics');
   }
   if (elements.settingsInfluxInterval) {
     elements.settingsInfluxInterval.value = getSettingNumber('influx_interval_sec', 30);
@@ -23095,7 +23095,7 @@ function applySettingsToUI() {
     elements.httpAuthTokens.value = getSettingString('http_auth_tokens', '');
   }
   if (elements.httpAuthRealm) {
-    elements.httpAuthRealm.value = getSettingString('http_auth_realm', 'Astra');
+    elements.httpAuthRealm.value = getSettingString('http_auth_realm', 'Stream Hub');
   }
   if (elements.authOnPlayUrl) {
     elements.authOnPlayUrl.value = getSettingString('auth_on_play_url', '');
@@ -23967,7 +23967,7 @@ function collectHttpAuthSettings() {
     http_auth_allow: elements.httpAuthAllow.value.trim(),
     http_auth_deny: elements.httpAuthDeny.value.trim(),
     http_auth_tokens: elements.httpAuthTokens.value.trim(),
-    http_auth_realm: elements.httpAuthRealm.value.trim() || 'Astra',
+    http_auth_realm: elements.httpAuthRealm.value.trim() || 'Stream Hub',
     auth_on_play_url: elements.authOnPlayUrl.value.trim(),
     auth_on_publish_url: elements.authOnPublishUrl.value.trim(),
     auth_timeout_ms: toNumber(elements.authTimeoutMs.value) || 3000,
@@ -26554,12 +26554,12 @@ function getAiHelpHints() {
 
 function buildAiHelpNode() {
   const wrapper = createEl('div');
-  wrapper.appendChild(createEl('div', '', 'Astral это веб интерфейс для управления IPTV конфигом: streams, adapters, доступ, логи и настройки.'));
+  wrapper.appendChild(createEl('div', '', 'Stream Hub это веб интерфейс для управления IPTV конфигом: streams, adapters, доступ, логи и настройки.'));
   wrapper.appendChild(
     createEl(
       'div',
       'form-note',
-      'AstralAI Chat отвечает как обычный чат. Если вы попросите изменить конфиг, он сначала предложит план. Применение изменений возможно только через Apply plan (если включено).'
+      'StreamAI Chat отвечает как обычный чат. Если вы попросите изменить конфиг, он сначала предложит план. Применение изменений возможно только через Apply plan (если включено).'
     )
   );
   wrapper.appendChild(createEl('div', 'form-note', 'Нажмите на подсказку или напишите свой запрос:'));
@@ -26586,7 +26586,7 @@ function buildAiHelpNode() {
 
 function buildUpdateChannelNamesNode() {
   const node = createEl('div');
-  node.appendChild(createEl('div', '', 'Update channel names from SDT (service name) using `astral --analyze`.'));
+  node.appendChild(createEl('div', '', 'Update channel names from SDT (service name) using the built-in Analyze CLI.'));
   node.appendChild(
     createEl(
       'div',
@@ -26615,7 +26615,7 @@ function buildMakeMptsNode() {
   node.appendChild(createEl(
     'div',
     'form-note',
-    'MPTS is a transport stream that contains multiple TV services (programs) in one output. Astral can build MPTS in the Stream editor (MPTS tab).'
+    'MPTS is a transport stream that contains multiple TV services (programs) in one output. Stream Hub can build MPTS in the Stream editor (MPTS tab).'
   ));
   const steps = createEl('div', 'ai-help-lines');
   steps.appendChild(createEl('div', '', '1) Open a stream, enable “Create Multi Program Stream” on General (or press “Enable MPTS” on the MPTS tab).'));
@@ -26626,7 +26626,7 @@ function buildMakeMptsNode() {
   node.appendChild(createEl(
     'div',
     'form-note',
-    'If you want AstralAI to draft the config plan, reply with details: source stream id or input URL, required PNR list, output URL, and whether to enable.'
+    'If you want StreamAI to draft the config plan, reply with details: source stream id or input URL, required PNR list, output URL, and whether to enable.'
   ));
   return node;
 }

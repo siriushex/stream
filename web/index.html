@@ -3,17 +3,26 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Astra Studio</title>
+  <title>Stream Hub</title>
+  <meta name="application-name" content="Stream Hub" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20260213a" />
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=20260213a" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png?v=20260213a" />
+  <link rel="manifest" href="/manifest.json?v=20260213a" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260211d" />
-  <script defer src="/app.js?v=20260211d"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260213a" />
+  <script defer src="/app.js?v=20260213a"></script>
 </head>
 <body>
   <div class="app">
     <header class="topbar">
       <div class="top-left">
+        <a class="app-brand" href="#" aria-label="Stream Hub home">
+          <img src="/assets/icons/stream-hub.svg" alt="" />
+          <span>Stream Hub</span>
+        </a>
         <nav class="top-nav">
           <button class="nav-link active" data-view="dashboard">Dashboard</button>
           <button class="nav-link" data-view="adapters">Adapters</button>
@@ -1156,10 +1165,10 @@
 	          <div class="settings-section" data-section="public-urls">
 	            <div class="form-stack">
 	              <div class="panel-title">Public URLs</div>
-	              <div class="form-hint">
-	                Used to generate full links in the UI (Output list, Publish links, Copy buttons).
-	                If empty, Astra falls back to the current browser origin.
-	              </div>
+		              <div class="form-hint">
+		                Used to generate full links in the UI (Output list, Publish links, Copy buttons).
+		                If empty, Stream Hub falls back to the current browser origin.
+		              </div>
 	              <label class="field">
 	                <span>HTTP base URL</span>
 	                <input type="text" id="public-http-base-url" placeholder="http://example.com:9060" />
@@ -1248,7 +1257,7 @@
               </label>
               <label class="field">
                 <span>Basic auth realm</span>
-                <input type="text" id="http-auth-realm" placeholder="Astra" />
+                <input type="text" id="http-auth-realm" placeholder="Stream Hub" />
               </label>
               <div class="form-hint">Token auth backend (Flussonic-like)</div>
               <label class="field">
@@ -1398,7 +1407,7 @@
               <div class="apply-row">
                 <button class="btn" id="btn-import-json">Import JSON</button>
               </div>
-              <div class="panel" id="import-result">Supported formats: Astra JSON, M3U</div>
+              <div class="panel" id="import-result">Supported formats: Stream JSON, M3U</div>
             </div>
           </div>
 
@@ -1507,8 +1516,8 @@
         <div class="panel">
           <div class="panel-title">Help</div>
           <div class="panel-body">
-            <div class="help-guide-card" id="help-guide-card">
-              <div class="help-guide-title">Что такое Astral</div>
+	            <div class="help-guide-card" id="help-guide-card">
+	              <div class="help-guide-title">Что такое Stream Hub</div>
               <div class="help-guide-short" id="help-guide-short"></div>
               <div class="help-guide-actions">
                 <button class="btn ghost" type="button" id="help-guide-toggle">Показать полную справку</button>
@@ -1516,8 +1525,8 @@
               <div class="help-guide-long" id="help-guide-long" hidden></div>
             </div>
 
-            <details class="help-ai-details" id="help-ai-details">
-              <summary>AstralAI Chat (опционально)</summary>
+	            <details class="help-ai-details" id="help-ai-details">
+	              <summary>StreamAI Chat (опционально)</summary>
               <div class="help-intro">
                 <p class="muted">Нажмите на подсказку или напишите запрос. Справка: <code>/help</code>.</p>
               </div>
@@ -1548,9 +1557,9 @@
                 </div>
                 <div class="form-note" id="ai-chat-status"></div>
               </div>
-              <div class="help-ai-disabled" id="help-ai-disabled" hidden>
-                AstralAI выключен в Settings → General. Блок чата недоступен.
-              </div>
+	              <div class="help-ai-disabled" id="help-ai-disabled" hidden>
+	                StreamAI выключен в Settings → General. Блок чата недоступен.
+	              </div>
             </details>
 
             <div class="help-guide-footer">
@@ -2273,7 +2282,7 @@
           </div>
           <label class="checkline">
             <input type="checkbox" id="stream-transcode-log-main" />
-            <span>Log ffmpeg to Astra log</span>
+            <span>Log ffmpeg to Stream Hub log</span>
           </label>
           <label class="checkline">
             <input type="checkbox" id="stream-transcode-process-per-output" />
@@ -2385,7 +2394,7 @@
           </div>
           <label class="field">
             <span>Destination</span>
-            <input type="text" id="stream-epg-destination" placeholder="/var/lib/astra/epg.xml" />
+            <input type="text" id="stream-epg-destination" placeholder="/var/lib/stream/epg.xml" />
           </label>
           <label class="field">
             <span>Codepage</span>
@@ -2711,9 +2720,9 @@
               <span>Restart cooldown (sec)</span>
               <input type="number" id="output-udp-audio-fix-cooldown" placeholder="1200" />
             </label>
-            <div class="form-hint">
-              Checks the UDP output audio type; if not AAC (0x0F), Astra starts an AAC normalize pass.
-            </div>
+	            <div class="form-hint">
+	              Checks the UDP output audio type; if not AAC (0x0F), Stream Hub starts an AAC normalize pass.
+	            </div>
           </div>
         </div>
 
@@ -2726,9 +2735,9 @@
             <span>Bridge port (UDP)</span>
             <input type="number" id="output-srt-bridge-port" placeholder="14000" />
           </label>
-          <div class="form-hint">
-            Requires ffmpeg; Astra sends MPEG-TS to a local UDP port which ffmpeg forwards to SRT.
-          </div>
+	          <div class="form-hint">
+	            Requires ffmpeg; Stream Hub sends MPEG-TS to a local UDP port which ffmpeg forwards to SRT.
+	          </div>
           <div class="form-subsection">
             <div class="panel-title">Bridge advanced</div>
             <div class="form-grid">
@@ -2962,9 +2971,9 @@
             <label class="field">
               <span>Monitor engine</span>
               <select id="transcode-monitor-engine">
-                <option value="auto">Auto (UDP → Astra Analyze)</option>
+                <option value="auto">Auto (UDP → Stream Analyze)</option>
                 <option value="ffprobe">FFprobe</option>
-                <option value="astra_analyze">Astra Analyze</option>
+                <option value="astra_analyze">Stream Analyze</option>
               </select>
             </label>
             <label class="field">
@@ -3145,10 +3154,10 @@
                   <span>Path</span>
                   <input type="text" id="input-http-path" placeholder="/stream" />
                 </label>
-                <label class="field">
-                  <span>User-Agent</span>
-                  <input type="text" id="input-http-ua" placeholder="Astra" />
-                </label>
+	                <label class="field">
+	                  <span>User-Agent</span>
+	                  <input type="text" id="input-http-ua" placeholder="Stream" />
+	                </label>
               </div>
 
               <div class="input-group" data-group="bridge">
@@ -3160,9 +3169,9 @@
                   <span>Bridge port (UDP)</span>
                   <input type="number" id="input-bridge-port" placeholder="14000" />
                 </label>
-                <div class="form-hint">
-                  Requires ffmpeg; Astra reads via ffmpeg and injects into a local UDP port.
-                </div>
+	                <div class="form-hint">
+	                  Requires ffmpeg; Stream Hub reads via ffmpeg and injects into a local UDP port.
+	                </div>
               </div>
 
               <div class="input-group" data-group="file">
@@ -3804,10 +3813,10 @@
           <input type="checkbox" id="server-enabled" checked />
           <span>Enable</span>
         </label>
-        <label class="field">
-          <span>ID</span>
-          <input type="text" id="server-id" placeholder="astra-main" />
-        </label>
+	        <label class="field">
+	          <span>ID</span>
+	          <input type="text" id="server-id" placeholder="stream-main" />
+	        </label>
         <label class="field">
           <span>Name</span>
           <input type="text" id="server-name" placeholder="Main server" />
@@ -4016,10 +4025,10 @@
   <div class="overlay" id="ai-apply-confirm-overlay" aria-hidden="true">
     <div class="modal">
       <div class="modal-head">
-        <div>
-          <div class="modal-title">Разрешить изменения от AstraAI?</div>
-          <div class="modal-sub">AI сможет записывать изменения в конфиг и применять их.</div>
-        </div>
+	        <div>
+	          <div class="modal-title">Разрешить изменения от StreamAI?</div>
+	          <div class="modal-sub">AI сможет записывать изменения в конфиг и применять их.</div>
+	        </div>
         <button class="icon-btn" id="ai-apply-confirm-close" aria-label="Close">
           <span class="icon-x"></span>
         </button>
