@@ -3732,7 +3732,8 @@ details.fold[open] > .fold-summary::after {
 }
 
 .stream-desc-field {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 
