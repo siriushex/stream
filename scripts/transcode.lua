@@ -1044,6 +1044,11 @@ local function normalize_watchdog_defaults(tc)
         end
         return v
     end
+    -- Важно: по умолчанию не душить критические рестарты (NO_PROGRESS/EXIT/etc) большим cooldown'ом.
+    -- Но если пользователь явно задал restart_cooldown_sec (старый контракт), он должен применяться и к critical lane.
+    local raw_restart_cooldown = tonumber(wd.restart_cooldown_sec)
+    local base_cooldown = num("restart_cooldown_sec", 1200)
+    local critical_cooldown_fallback = raw_restart_cooldown ~= nil and base_cooldown or 30
     return {
         restart_delay_sec = num("restart_delay_sec", 4),
         restart_jitter_sec = num("restart_jitter_sec", 2),
@@ -1078,9 +1083,9 @@ local function normalize_watchdog_defaults(tc)
         low_bitrate_enabled = normalize_bool(wd.low_bitrate_enabled, true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
-        restart_cooldown_sec = num("restart_cooldown_sec", 1200),
-        restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", num("restart_cooldown_sec", 1200)),
-        restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", num("restart_cooldown_sec", 1200)),
+        restart_cooldown_sec = base_cooldown,
+        restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", critical_cooldown_fallback),
+        restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", base_cooldown),
         restart_force_after_sec = num("restart_force_after_sec", 0),
         error_rearm_sec = num("error_rearm_sec", 0),
         stop_timeout_sec = num("stop_timeout_sec", 5),
