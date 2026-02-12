@@ -2062,9 +2062,8 @@ const SETTINGS_GENERAL_SECTIONS = [
           {
             id: 'settings-stream-sharding-apply',
             type: 'button',
-            buttonText: 'Apply (restart shards)',
+            buttonText: 'Apply sharding (restart/stop shards)',
             level: 'advanced',
-            dependsOn: { id: 'settings-stream-sharding-enabled', value: true },
           },
           {
             type: 'heading',
@@ -6666,6 +6665,7 @@ function buildStreamTile(stream) {
   const rateState = enabled ? (onAir ? '' : 'warn') : 'disabled';
   const metaText = enabled ? (onAir ? 'Active' : 'Inactive') : 'Disabled';
   const statusInfo = getStreamStatusInfo(stream, stats);
+  const shard = resolveStreamShardInfo(stream, stats);
   const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
   const activeIndex = getActiveInputIndex(stats);
   const activeLabel = getActiveInputLabel(inputs, activeIndex);
@@ -6694,6 +6694,7 @@ function buildStreamTile(stream) {
           <span class="stream-status-dot"></span>
           <span data-role="tile-compact-status-label">${statusInfo.label}</span>
         </div>
+        <div class="tile-compact-shard${shard.label ? '' : ' is-hidden'}" data-role="tile-compact-shard"${shard.label ? '' : ' hidden'}>${shard.label || ''}</div>
         <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
         <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
         <div class="tile-detectors is-hidden" data-role="tile-detectors" hidden></div>
@@ -18257,6 +18258,7 @@ function getTileRefs(tile) {
     metaEl: tile.querySelector('.tile-meta'),
     compactStatus: tile.querySelector('[data-role="tile-compact-status"]'),
     compactStatusLabel: null,
+    compactShard: tile.querySelector('[data-role="tile-compact-shard"]'),
     compactInput: tile.querySelector('[data-role="tile-compact-input"]'),
     compactSummary: tile.querySelector('[data-role="tile-compact-input-summary"]'),
     detectors: tile.querySelector('[data-role="tile-detectors"]'),
@@ -18301,6 +18303,7 @@ function updateTiles() {
         label: enabled ? (onAir ? 'Online' : 'Offline') : 'Disabled',
         className: enabled ? (onAir ? 'ok' : 'warn') : 'disabled',
       };
+    const shard = resolveStreamShardInfo(stream, stats);
 
     if (refs && refs.rateEl) {
       if (transcodeState) {
@@ -18401,6 +18404,13 @@ function updateTiles() {
       if (refs.compactInput.textContent !== text) refs.compactInput.textContent = text;
       const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
       refs.compactInput.title = activeInput && activeInput.url ? activeInput.url : '';
+    }
+    if (refs && refs.compactShard) {
+      const text = shard.label || '';
+      if (refs.compactShard.textContent !== text) refs.compactShard.textContent = text;
+      refs.compactShard.hidden = !text;
+      refs.compactShard.classList.toggle('is-hidden', !text);
+      refs.compactShard.title = shard.title || '';
     }
     if (refs && refs.compactSummary) {
       const text = formatInputSummary(inputs, activeIndex);
@@ -19165,6 +19175,50 @@ function formatTableOutputMetaLine(outputs, clients) {
   return `Out ${safeOutputs} • Clients ${safeClients}`;
 }
 
+function normalizeShardPort(value) {
+  const port = Number(value);
+  if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
+  return Math.floor(port);
+}
+
+function normalizeShardIndex(value) {
+  const idx = Number(value);
+  if (!Number.isFinite(idx) || idx < 0) return null;
+  return Math.floor(idx);
+}
+
+function resolveStreamShardInfo(stream, stats) {
+  const port = normalizeShardPort(
+    (stats && stats.shard_port !== undefined)
+      ? stats.shard_port
+      : (stream && stream.shard_port)
+  );
+  const index = normalizeShardIndex(
+    (stats && stats.shard_index !== undefined)
+      ? stats.shard_index
+      : (stream && stream.shard_index)
+  );
+  if (port === null && index === null) {
+    return { port: null, index: null, label: '', title: '' };
+  }
+  const label = port !== null
+    ? `Shard ${port}`
+    : `Shard #${index !== null ? index : '?'}`;
+  const parts = [];
+  if (index !== null) {
+    parts.push(`id ${index}`);
+  }
+  if (port !== null) {
+    parts.push(`port ${port}`);
+  }
+  return {
+    port,
+    index,
+    label,
+    title: parts.length ? `Stream shard: ${parts.join(', ')}` : '',
+  };
+}
+
 function applyTableRowUptimeDataset(row, model) {
   if (!row) return;
   row.dataset.inputLabel = model.inputLabel || 'n/a';
@@ -19251,6 +19305,7 @@ function buildStreamModel(stream) {
     ? Number(stats.clients_count)
     : (Number.isFinite(stats.clients) ? Number(stats.clients) : 0);
   const enabled = stream.enabled !== false;
+  const shard = resolveStreamShardInfo(stream, stats);
 
   return {
     id: stream.id,
@@ -19270,6 +19325,10 @@ function buildStreamModel(stream) {
     clients,
     enabled,
     hasPreview: true,
+    shardPort: shard.port,
+    shardIndex: shard.index,
+    shardLabel: shard.label,
+    shardTitle: shard.title,
   };
 }
 
@@ -19297,8 +19356,15 @@ function buildStreamTableRow(stream) {
   const statusText = createEl('span', '', model.statusInfo.label);
   status.appendChild(dot);
   status.appendChild(statusText);
-  const sub = createEl('div', 'stream-cell-sub');
+  const sub = createEl('div', 'stream-cell-sub stream-status-row');
   sub.appendChild(status);
+  const shardBadge = createEl('span', 'stream-shard-badge', model.shardLabel || '');
+  shardBadge.dataset.role = 'stream-shard';
+  shardBadge.hidden = !model.shardLabel;
+  if (model.shardTitle) {
+    shardBadge.title = model.shardTitle;
+  }
+  sub.appendChild(shardBadge);
   info.appendChild(nameBtn);
   info.appendChild(sub);
 
@@ -19384,6 +19450,12 @@ function updateStreamTableRow(row, stream) {
     const textNode = status.querySelector('span:last-child');
     if (textNode) textNode.textContent = model.statusInfo.label;
   }
+  const shardBadge = row.querySelector('[data-role="stream-shard"]');
+  if (shardBadge) {
+    shardBadge.textContent = model.shardLabel || '';
+    shardBadge.hidden = !model.shardLabel;
+    shardBadge.title = model.shardTitle || '';
+  }
   const inputUrl = row.querySelector('[data-role="stream-input-url"]');
   if (inputUrl) {
     inputUrl.textContent = model.inputUrl || '-';
@@ -19456,17 +19528,21 @@ function buildStreamCompactRow(stream) {
   row.title = [
     model.name,
     `Status: ${model.statusInfo.label}`,
+    model.shardLabel ? `${model.shardLabel}` : null,
     `Input: ${model.inputUrl || '-'}`,
     `Input bitrate: ${model.inputBitrate}`,
     `Transcode: ${model.transcodeStatus}`,
     `Outputs: ${model.outputSummary}`,
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const dot = createEl('span', `stream-status-dot ${model.statusInfo.className}`);
   const nameBtn = createEl('button', 'stream-compact-name', model.name);
   nameBtn.dataset.action = 'edit';
   const rate = createEl('div', 'stream-compact-rate', model.inputBitrate);
-  const clients = createEl('div', 'stream-compact-clients', `Clients: ${model.clients}`);
+  const clientsText = model.shardLabel
+    ? `Clients: ${model.clients} • ${model.shardLabel}`
+    : `Clients: ${model.clients}`;
+  const clients = createEl('div', 'stream-compact-clients', clientsText);
   const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
   toggleBtn.dataset.action = 'toggle';
 
@@ -19505,11 +19581,12 @@ function updateStreamCompactRows() {
     row.title = [
       model.name,
       `Status: ${model.statusInfo.label}`,
+      model.shardLabel ? `${model.shardLabel}` : null,
       `Input: ${model.inputUrl || '-'}`,
       `Input bitrate: ${model.inputBitrate}`,
       `Transcode: ${model.transcodeStatus}`,
       `Outputs: ${model.outputSummary}`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
     const dot = row.querySelector('.stream-status-dot');
     if (dot) {
       dot.className = `stream-status-dot ${model.statusInfo.className}`;
@@ -19517,7 +19594,11 @@ function updateStreamCompactRows() {
     const rate = row.querySelector('.stream-compact-rate');
     if (rate) rate.textContent = model.inputBitrate;
     const clients = row.querySelector('.stream-compact-clients');
-    if (clients) clients.textContent = `Clients: ${model.clients}`;
+    if (clients) {
+      clients.textContent = model.shardLabel
+        ? `Clients: ${model.clients} • ${model.shardLabel}`
+        : `Clients: ${model.clients}`;
+    }
     const toggleBtn = row.querySelector('[data-action="toggle"]');
     if (toggleBtn) toggleBtn.textContent = model.enabled ? 'Disable' : 'Enable';
   });
@@ -27225,7 +27306,25 @@ function bindEvents() {
   if (elements.settingsActionSave) {
     elements.settingsActionSave.addEventListener('click', async () => {
       try {
-        await saveSettings(collectGeneralSettings());
+        const beforeEnabled = getSettingBool('stream_sharding_enabled', false);
+        const beforeBasePort = Math.floor(Number((state.settings && state.settings.stream_sharding_base_port) || 0) || 0);
+        const beforeShards = Math.floor(Number((state.settings && state.settings.stream_sharding_shards) || 1) || 1);
+        const payload = collectGeneralSettings();
+        const afterEnabled = payload.stream_sharding_enabled === true;
+        const afterBasePort = Math.floor(Number(payload.stream_sharding_base_port || 0) || 0);
+        const afterShards = Math.floor(Number(payload.stream_sharding_shards || 1) || 1);
+        const shardingChanged = beforeEnabled !== afterEnabled
+          || beforeBasePort !== afterBasePort
+          || beforeShards !== afterShards;
+
+        await saveSettings(payload, { silent: true });
+
+        if (shardingChanged) {
+          await apiJson('/api/v1/sharding/apply', { method: 'POST', body: JSON.stringify({}) });
+          setStatus('Settings saved. Sharding apply requested (services restarting)...', 'sticky');
+        } else {
+          setStatus('Settings saved');
+        }
       } catch (err) {
         setStatus(err.message);
         computeDirtyState();

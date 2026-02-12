@@ -735,12 +735,36 @@ end
 local function list_streams(server, client)
     local rows = config.list_streams()
     local result = {}
+    local shard_active = sharding
+        and type(sharding.is_active) == "function"
+        and sharding.is_active()
+    local shard_get_port = shard_active
+        and type(sharding.get_stream_shard_port) == "function"
+        and sharding.get_stream_shard_port
+        or nil
+    local shard_get_index = shard_active
+        and type(sharding.get_stream_shard_index) == "function"
+        and sharding.get_stream_shard_index
+        or nil
     for _, row in ipairs(rows) do
-        table.insert(result, {
+        local item = {
             id = row.id,
             enabled = (tonumber(row.enabled) or 0) ~= 0,
             config = row.config,
-        })
+        }
+        if shard_get_port then
+            local port = shard_get_port(row.id)
+            if port then
+                item.shard_port = port
+            end
+        end
+        if shard_get_index then
+            local idx = shard_get_index(row.id)
+            if idx ~= nil then
+                item.shard_index = idx
+            end
+        end
+        table.insert(result, item)
     end
     json_response(server, client, 200, result)
 end
@@ -750,11 +774,27 @@ local function get_stream(server, client, id)
     if not row then
         return error_response(server, client, 404, "stream not found")
     end
-    json_response(server, client, 200, {
+    local payload = {
         id = row.id,
         enabled = (tonumber(row.enabled) or 0) ~= 0,
         config = row.config,
-    })
+    }
+    local shard_active = sharding
+        and type(sharding.is_active) == "function"
+        and sharding.is_active()
+    if shard_active and type(sharding.get_stream_shard_port) == "function" then
+        local port = sharding.get_stream_shard_port(id)
+        if port then
+            payload.shard_port = port
+        end
+    end
+    if shard_active and type(sharding.get_stream_shard_index) == "function" then
+        local idx = sharding.get_stream_shard_index(id)
+        if idx ~= nil then
+            payload.shard_index = idx
+        end
+    end
+    json_response(server, client, 200, payload)
 end
 
 local function start_stream_preview(server, client, request, stream_id)

@@ -356,6 +356,26 @@ select {
   line-height: 1.3;
 }
 
+.stream-status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stream-shard-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
 .stream-status-badge {
   display: inline-flex;
   align-items: center;
@@ -628,6 +648,7 @@ select {
 }
 
 .tile-compact-status,
+.tile-compact-shard,
 .tile-compact-input,
 .tile-compact-input-summary {
   display: none;
@@ -648,6 +669,14 @@ select {
 .tile-compact-input,
 .tile-compact-input-summary {
   font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tile-compact-shard {
+  font-size: 10px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -688,6 +717,7 @@ select {
 }
 
 .tile.is-compact .tile-compact-status,
+.tile.is-compact .tile-compact-shard,
 .tile.is-compact .tile-compact-input,
 .tile.is-compact .tile-compact-input-summary {
   display: block;
@@ -704,6 +734,7 @@ select {
 }
 
 .tile.is-expanded .tile-compact-status,
+.tile.is-expanded .tile-compact-shard,
 .tile.is-expanded .tile-compact-input,
 .tile.is-expanded .tile-compact-input-summary {
   display: none;
