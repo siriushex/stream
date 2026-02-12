@@ -1330,6 +1330,12 @@ function main()
         end
     end
 
+    -- Per-process runtime overrides (do not rely on DB when multiple processes share a config).
+    -- This keeps internal loopback URLs (ffmpeg /input, /live) stable even with stream sharding.
+    if config and config.set_runtime_override then
+        config.set_runtime_override("http_port", opt.port)
+    end
+
     -- If global HLS storage is memfd, avoid creating/touching the disk HLS directory unless
     -- at least one stream explicitly uses disk storage.
     local function needs_hls_disk_dir(storage_mode)
@@ -1385,7 +1391,16 @@ function main()
 
     config.set_setting("hls_dir", hls_dir)
     config.set_setting("hls_base_url", opt.hls_route)
-    config.set_setting("http_port", opt.port)
+    -- In sharded multi-port setups store the base port (stable) in DB, but keep instance-local
+    -- port via config.set_runtime_override("http_port", opt.port) above.
+    local shard_enabled = setting_bool("stream_sharding_enabled", false)
+    local shard_count = math.floor(setting_number("stream_sharding_shards", 1) or 1)
+    local shard_base = math.floor(setting_number("stream_sharding_base_port", opt.port) or opt.port)
+    if shard_enabled and shard_count > 1 and shard_base > 0 then
+        config.set_setting("http_port", shard_base)
+    else
+        config.set_setting("http_port", opt.port)
+    end
 
     apply_softcam_settings()
 
@@ -1394,6 +1409,7 @@ function main()
     if runtime and opt.stream_shard_count and opt.stream_shard_count > 1 then
         runtime.stream_shard_index = opt.stream_shard_index or 0
         runtime.stream_shard_count = opt.stream_shard_count
+        runtime.stream_shard_source = "cli"
         log.warning(string.format(
             "[server] stream shard enabled: %d/%d",
             runtime.stream_shard_index,

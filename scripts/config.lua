@@ -1,6 +1,21 @@
 -- Config store and migrations (SQLite)
 
 config = {}
+config.runtime_overrides = {}
+
+-- Runtime-only setting overrides (per-process).
+-- Useful for multi-process setups (for example stream sharding on different ports),
+-- where some keys must be instance-local while the DB stays shared.
+function config.set_runtime_override(key, value)
+    if type(key) ~= "string" or key == "" then
+        return
+    end
+    if value == nil then
+        config.runtime_overrides[key] = nil
+        return
+    end
+    config.runtime_overrides[key] = value
+end
 
 local function ensure_dir(path)
     local stat = utils.stat(path)
@@ -1578,6 +1593,12 @@ function config.delete_buffer_allow(id)
 end
 
 function config.get_setting(key)
+    if config.runtime_overrides and config.runtime_overrides[key] ~= nil then
+        return config.runtime_overrides[key]
+    end
+    if not config.db then
+        return nil
+    end
     local rows = db_query(config.db, "SELECT value_json FROM settings WHERE key='" ..
         sql_escape(key) .. "' LIMIT 1;")
     if #rows == 0 then

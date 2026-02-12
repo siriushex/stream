@@ -2029,6 +2029,38 @@ const SETTINGS_GENERAL_SECTIONS = [
           },
           {
             type: 'heading',
+            text: 'Stream sharding (multi-process)',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-stream-sharding-enabled',
+            label: 'Enable stream sharding',
+            type: 'switch',
+            key: 'stream_sharding_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-stream-sharding-base-port',
+            label: 'Shard port base',
+            type: 'input',
+            inputType: 'number',
+            key: 'stream_sharding_base_port',
+            level: 'advanced',
+            placeholder: '9060',
+            dependsOn: { id: 'settings-stream-sharding-enabled', value: true },
+          },
+          {
+            id: 'settings-stream-sharding-shards',
+            label: 'Shard count',
+            type: 'input',
+            inputType: 'number',
+            key: 'stream_sharding_shards',
+            level: 'advanced',
+            placeholder: '1',
+            dependsOn: { id: 'settings-stream-sharding-enabled', value: true },
+          },
+          {
+            type: 'heading',
             text: 'SoftCAM (performance)',
             level: 'advanced',
           },
@@ -3939,6 +3971,9 @@ function bindGeneralElements() {
     settingsPerformanceAggregateStreamTimers: 'settings-performance-aggregate-stream-timers',
     settingsPerformanceAggregateTranscodeTimers: 'settings-performance-aggregate-transcode-timers',
     settingsPerformanceProfile: 'settings-performance-profile',
+    settingsStreamShardingEnabled: 'settings-stream-sharding-enabled',
+    settingsStreamShardingBasePort: 'settings-stream-sharding-base-port',
+    settingsStreamShardingShards: 'settings-stream-sharding-shards',
     settingsSoftcamDescrambleParallel: 'settings-softcam-descramble-parallel',
     settingsSoftcamDescrambleBatch: 'settings-softcam-descramble-batch',
     settingsSoftcamDescrambleDepth: 'settings-softcam-descramble-depth',
@@ -22333,6 +22368,17 @@ function applySettingsToUI() {
       'compat'
     );
   }
+  if (elements.settingsStreamShardingEnabled) {
+    elements.settingsStreamShardingEnabled.checked = getSettingBool('stream_sharding_enabled', false);
+  }
+  const currentPort = Number(window.location && window.location.port) || 0;
+  if (elements.settingsStreamShardingBasePort) {
+    const fallbackPort = currentPort || getSettingNumber('http_port', 0) || 0;
+    elements.settingsStreamShardingBasePort.value = getSettingNumber('stream_sharding_base_port', fallbackPort);
+  }
+  if (elements.settingsStreamShardingShards) {
+    elements.settingsStreamShardingShards.value = getSettingNumber('stream_sharding_shards', 1);
+  }
   if (elements.settingsSoftcamDescrambleParallel) {
     setSelectValue(
       elements.settingsSoftcamDescrambleParallel,
@@ -23074,6 +23120,28 @@ function collectGeneralSettings() {
   if (!['compat', 'mass', 'low_latency'].includes(performanceProfile)) {
     throw new Error('Performance profile must be compat, mass or low_latency');
   }
+  const shardingEnabled = !!(elements.settingsStreamShardingEnabled && elements.settingsStreamShardingEnabled.checked);
+  const shardingBasePortRaw = toNumber(elements.settingsStreamShardingBasePort && elements.settingsStreamShardingBasePort.value);
+  const shardingShardsRaw = toNumber(elements.settingsStreamShardingShards && elements.settingsStreamShardingShards.value);
+  const shardingBasePort = shardingBasePortRaw !== undefined
+    ? Math.floor(shardingBasePortRaw)
+    : (Number(window.location && window.location.port) || 0);
+  const shardingShards = shardingShardsRaw !== undefined ? Math.floor(shardingShardsRaw) : 1;
+  if (shardingEnabled) {
+    if (!shardingBasePort || shardingBasePort < 1 || shardingBasePort > 65535) {
+      throw new Error('Shard base port must be 1..65535');
+    }
+    if (shardingShards < 2 || shardingShards > 64) {
+      throw new Error('Shard count must be 2..64');
+    }
+    if (shardingBasePort + shardingShards - 1 > 65535) {
+      throw new Error('Shard port range is out of bounds');
+    }
+  } else {
+    if (shardingShards !== undefined && (shardingShards < 1 || shardingShards > 64)) {
+      throw new Error('Shard count must be 1..64');
+    }
+  }
   const softcamDescrambleParallel = elements.settingsSoftcamDescrambleParallel
     ? String(elements.settingsSoftcamDescrambleParallel.value || 'off').trim()
     : 'off';
@@ -23465,6 +23533,9 @@ function collectGeneralSettings() {
     performance_aggregate_stream_timers: aggregateStreamTimers,
     performance_aggregate_transcode_timers: aggregateTranscodeTimers,
     performance_profile: performanceProfile || 'compat',
+    stream_sharding_enabled: shardingEnabled,
+    stream_sharding_base_port: shardingBasePort || 0,
+    stream_sharding_shards: shardingShards,
     softcam_descramble_parallel: softcamDescrambleParallel || 'off',
     softcam_descramble_batch_packets: softcamBatchPackets !== undefined ? Math.floor(softcamBatchPackets) : 64,
     softcam_descramble_queue_depth_batches: softcamQueueDepth !== undefined ? Math.floor(softcamQueueDepth) : 16,
