@@ -470,9 +470,11 @@ bool http_parse_chunk(const char *str, size_t size, parse_match_t *match)
     char c;
     size_t skip = 0;
     match[0].so = 0;
+    match[0].eo = 0;
+    match[1].so = 0;
+    match[1].eo = 0;
 
     // parse chunk
-    match[1].so = 0;
     while(1)
     {
         if(skip >= size)
@@ -497,7 +499,10 @@ bool http_parse_chunk(const char *str, size_t size, parse_match_t *match)
             return true;
         }
         else if(c == ';')
+        {
+            match[1].eo = skip;
             break;
+        }
         else
             return false;
     }

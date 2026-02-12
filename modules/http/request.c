@@ -171,11 +171,48 @@ static const char __default_method[] = "GET";
 static const char __default_path[] = "/";
 static const char __default_version[] = "HTTP/1.1";
 
+#define HTTP_REQUEST_MAX_CHUNK_SIZE (64U * 1024U * 1024U)
+
 static const char __connection[] = "Connection: ";
 static const char __close[] = "close";
 static const char __keep_alive[] = "keep-alive";
 
 static void on_close(void *);
+
+static bool parse_match_valid(const parse_match_t *m, size_t limit)
+{
+    return (m->so <= m->eo && m->eo <= limit);
+}
+
+static bool parse_matches_valid(const parse_match_t *m, size_t count, size_t limit)
+{
+    for(size_t i = 0; i < count; ++i)
+    {
+        if(!parse_match_valid(&m[i], limit))
+            return false;
+    }
+    return true;
+}
+
+static bool parse_status_code_safe(const char *src, parse_match_t match, int *code)
+{
+    const size_t len = match.eo - match.so;
+    if(len == 0 || len >= 16)
+        return false;
+
+    char tmp[16];
+    memcpy(tmp, &src[match.so], len);
+    tmp[len] = '\0';
+
+    for(size_t i = 0; i < len; ++i)
+    {
+        if(tmp[i] < '0' || tmp[i] > '9')
+            return false;
+    }
+
+    *code = atoi(tmp);
+    return (*code >= 100 && *code <= 999);
+}
 
 static void callback(module_data_t *mod)
 {
@@ -997,6 +1034,12 @@ static void on_read(void *arg)
             on_close(mod);
             return;
         }
+        if(!parse_matches_valid(m, 4, eoh))
+        {
+            call_error(mod, "invalid response ranges");
+            on_close(mod);
+            return;
+        }
 
         lua_newtable(lua);
         const int response = lua_gettop(lua);
@@ -1009,7 +1052,12 @@ static void on_read(void *arg)
         lua_pushlstring(lua, &mod->buffer[m[1].so], m[1].eo - m[1].so);
         lua_setfield(lua, response, __version);
 
-        mod->status_code = atoi(&mod->buffer[m[2].so]);
+        if(!parse_status_code_safe(mod->buffer, m[2], &mod->status_code))
+        {
+            call_error(mod, "invalid response status code");
+            on_close(mod);
+            return;
+        }
         lua_pushnumber(lua, mod->status_code);
         lua_setfield(lua, response, __code);
 
@@ -1040,6 +1088,12 @@ static void on_read(void *arg)
                 on_close(mod);
                 return;
             }
+            if(!parse_matches_valid(m, 3, eoh - skip))
+            {
+                call_error(mod, "invalid response header ranges");
+                on_close(mod);
+                return;
+            }
 
             if(m[1].eo == 0)
             { /* empty line */
@@ -1060,7 +1114,7 @@ static void on_read(void *arg)
 
         if(mod->content)
         {
-            free(mod->content);
+            string_buffer_free(mod->content);
             mod->content = NULL;
         }
 
@@ -1168,7 +1222,7 @@ static void on_read(void *arg)
     // Transfer-Encoding: chunked
     if(mod->is_chunked)
     {
-        parse_match_t m[2];
+        parse_match_t m[2] = { 0 };
 
         while(skip < mod->buffer_skip)
         {
@@ -1180,10 +1234,22 @@ static void on_read(void *arg)
                     on_close(mod);
                     return;
                 }
+                if(!parse_matches_valid(m, 2, mod->buffer_skip - skip))
+                {
+                    call_error(mod, "invalid chunk ranges");
+                    on_close(mod);
+                    return;
+                }
 
                 mod->chunk_left = 0;
                 for(size_t i = m[1].so; i < m[1].eo; ++i)
                 {
+                    if(mod->chunk_left > (SIZE_MAX >> 4))
+                    {
+                        call_error(mod, "chunk too large");
+                        on_close(mod);
+                        return;
+                    }
                     char c = mod->buffer[skip + i];
                     if(c >= '0' && c <= '9')
                         mod->chunk_left = (mod->chunk_left << 4) | (c - '0');
@@ -1193,6 +1259,12 @@ static void on_read(void *arg)
                         mod->chunk_left = (mod->chunk_left << 4) | (c - 'A' + 0x0A);
                 }
                 skip += m[0].eo;
+                if(mod->chunk_left > HTTP_REQUEST_MAX_CHUNK_SIZE)
+                {
+                    call_error(mod, "chunk too large");
+                    on_close(mod);
+                    return;
+                }
 
                 if(!mod->chunk_left)
                 {
@@ -1212,10 +1284,16 @@ static void on_read(void *arg)
                     break;
                 }
 
+                if(mod->chunk_left > SIZE_MAX - 2)
+                {
+                    call_error(mod, "chunk overflow");
+                    on_close(mod);
+                    return;
+                }
                 mod->chunk_left += 2;
             }
 
-            const size_t tail = size - skip;
+            const size_t tail = mod->buffer_skip - skip;
             if(mod->chunk_left <= tail)
             {
                 string_buffer_addlstring(mod->content, &mod->buffer[skip], mod->chunk_left - 2);
@@ -1391,6 +1469,11 @@ static void lua_make_request(module_data_t *mod)
         for(lua_pushnil(lua); lua_next(lua, -2); lua_pop(lua, 1))
         {
             const char *h = lua_tostring(lua, -1);
+            if(!h)
+            {
+                asc_log_warning(MSG("skip non-string request header"));
+                continue;
+            }
 
             if(!strncasecmp(h, __connection, sizeof(__connection) - 1))
             {
