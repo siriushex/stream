@@ -29,6 +29,7 @@
  *      socket_size - number, socket buffer size
  *      renew       - number, renewing multicast subscription interval in seconds
  *      rtp         - boolean, use RTP instead RAW UDP
+ *      read_burst  - number, how many datagrams to drain per on_read callback (default: 1)
  *
  * Module Methods:
  *      port()      - return number, random port number
@@ -55,6 +56,7 @@ struct module_data_t
         int port;
         const char *localaddr;
         bool rtp;
+        int read_burst;
     } config;
 
     bool is_error_message;
@@ -87,36 +89,41 @@ static void on_read(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
 
-    int len = asc_socket_recv(mod->sock, mod->buffer, UDP_BUFFER_SIZE);
-    if(len <= 0)
+    int burst = mod->config.read_burst;
+    if(burst <= 0)
+        burst = 1;
+
+    for(int n = 0; n < burst; ++n)
     {
-        if(len == 0 || errno == EAGAIN || errno == EWOULDBLOCK)
-            return;
-
-        on_close(mod);
-        return;
-    }
-
-    int i = 0;
-
-    if(mod->config.rtp)
-    {
-        i = RTP_HEADER_SIZE;
-        if(RTP_IS_EXT(mod->buffer))
+        int len = asc_socket_recv(mod->sock, mod->buffer, UDP_BUFFER_SIZE);
+        if(len <= 0)
         {
-            if(len < RTP_HEADER_SIZE + 4)
+            if(len == 0 || errno == EAGAIN || errno == EWOULDBLOCK)
                 return;
-            i += RTP_EXT_SIZE(mod->buffer);
+            on_close(mod);
+            return;
         }
-    }
 
-    for(; i <= len - TS_PACKET_SIZE; i += TS_PACKET_SIZE)
-        module_stream_send(mod, &mod->buffer[i]);
+        int i = 0;
+        if(mod->config.rtp)
+        {
+            i = RTP_HEADER_SIZE;
+            if(RTP_IS_EXT(mod->buffer))
+            {
+                if(len < RTP_HEADER_SIZE + 4)
+                    continue;
+                i += RTP_EXT_SIZE(mod->buffer);
+            }
+        }
 
-    if(i != len && !mod->is_error_message)
-    {
-        asc_log_error(MSG("wrong stream format. drop %d bytes"), len - i);
-        mod->is_error_message = true;
+        for(; i <= len - TS_PACKET_SIZE; i += TS_PACKET_SIZE)
+            module_stream_send(mod, &mod->buffer[i]);
+
+        if(i != len && !mod->is_error_message)
+        {
+            asc_log_error(MSG("wrong stream format. drop %d bytes"), len - i);
+            mod->is_error_message = true;
+        }
     }
 }
 
@@ -156,6 +163,8 @@ static void module_init(module_data_t *mod)
         asc_socket_set_buffer(mod->sock, value, 0);
 
     module_option_boolean("rtp", &mod->config.rtp);
+    mod->config.read_burst = 1;
+    module_option_number("read_burst", &mod->config.read_burst);
 
     asc_socket_set_on_read(mod->sock, on_read);
     asc_socket_set_on_close(mod->sock, on_close);
