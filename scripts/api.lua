@@ -3483,6 +3483,33 @@ local function restart_service(server, client, request)
     })
 end
 
+local function apply_sharding(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not sharding or type(sharding.apply_systemd) ~= "function" then
+        return error_response(server, client, 400, "sharding module unavailable")
+    end
+    json_response(server, client, 200, { status = "applying" })
+    timer({
+        interval = 0.2,
+        callback = function(self)
+            self:close()
+            local ok, err = sharding.apply_systemd()
+            if not ok then
+                log.error("[sharding] apply failed: " .. tostring(err))
+                if config and config.add_alert then
+                    config.add_alert("ERROR", "", "SHARDING_APPLY_FAILED",
+                        tostring(err),
+                        {})
+                end
+                return
+            end
+            log.warning("[sharding] apply ok (services restarted)")
+        end,
+    })
+end
+
 local function get_settings(server, client)
     local rows = config.list_settings and config.list_settings() or {}
     local token = rows.telegram_bot_token
@@ -6158,6 +6185,10 @@ function api.handle_request(server, client, request)
 
     if path == "/api/v1/restart" and method == "POST" then
         return restart_service(server, client, request)
+    end
+
+    if path == "/api/v1/sharding/apply" and method == "POST" then
+        return apply_sharding(server, client, request)
     end
 
     if path == "/api/v1/config/validate" and method == "POST" then

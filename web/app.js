@@ -2060,6 +2060,13 @@ const SETTINGS_GENERAL_SECTIONS = [
             dependsOn: { id: 'settings-stream-sharding-enabled', value: true },
           },
           {
+            id: 'settings-stream-sharding-apply',
+            type: 'button',
+            buttonText: 'Apply (restart shards)',
+            level: 'advanced',
+            dependsOn: { id: 'settings-stream-sharding-enabled', value: true },
+          },
+          {
             type: 'heading',
             text: 'SoftCAM (performance)',
             level: 'advanced',
@@ -3974,6 +3981,7 @@ function bindGeneralElements() {
     settingsStreamShardingEnabled: 'settings-stream-sharding-enabled',
     settingsStreamShardingBasePort: 'settings-stream-sharding-base-port',
     settingsStreamShardingShards: 'settings-stream-sharding-shards',
+    settingsStreamShardingApply: 'settings-stream-sharding-apply',
     settingsSoftcamDescrambleParallel: 'settings-softcam-descramble-parallel',
     settingsSoftcamDescrambleBatch: 'settings-softcam-descramble-batch',
     settingsSoftcamDescrambleDepth: 'settings-softcam-descramble-depth',
@@ -27927,6 +27935,25 @@ function bindEvents() {
   }
   if (elements.settingsTelegramSummaryEnabled) {
     elements.settingsTelegramSummaryEnabled.addEventListener('change', updateTelegramSummaryScheduleFields);
+  }
+
+  if (elements.settingsStreamShardingApply) {
+    elements.settingsStreamShardingApply.addEventListener('click', async () => {
+      try {
+        const confirmed = window.confirm(
+          'Apply stream sharding will restart shard services.\n' +
+          'Existing HTTP sessions may be interrupted.\n\n' +
+          'Continue?'
+        );
+        if (!confirmed) return;
+        // Persist current form values first (without reloading the whole settings UI).
+        await saveSettings(collectGeneralSettings(), { reload: false, silent: true });
+        await apiJson('/api/v1/sharding/apply', { method: 'POST', body: JSON.stringify({}) });
+        setStatus('Sharding apply requested (services restarting)...', 'sticky');
+      } catch (err) {
+        setStatus(err.message || 'Failed to apply sharding');
+      }
+    });
   }
 
   if (elements.httpPlayAllow) {
