@@ -85,6 +85,19 @@ tools/perf/stream_update_scope_smoke.sh \
   --control a019
 ```
 
+## 3.4) Matrix smoke: безопасные Settings → General
+
+Запускает набор ключей из General и проверяет, что uptime выбранного стрима не падает.
+Опционально проверяет, что PID ffmpeg не меняется.
+
+```bash
+tools/perf/settings_general_matrix_smoke.py \
+  --base http://127.0.0.1:9060 \
+  --stream a014 \
+  --check-local-pid \
+  --out tools/perf/results/settings_matrix.md
+```
+
 ## 4) Hotspot-проверка таймеров (P1.2)
 
 ```bash

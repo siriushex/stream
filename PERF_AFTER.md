@@ -63,3 +63,45 @@ tools/perf/play_clients.sh "http://127.0.0.1:8000/play/<stream_id>" 200 30
 - process snapshot: `cpu_pct=8.3 rss_kb=36288 threads=4 fds=17`
 - timer hotspots: `/home/hex/astra/tools/perf/results/prod_p12_20260211_185523_timer_hotspots.txt`
 - вывод perf показал в основном kernel `hrtimer_*`; пользовательские timer symbols скрыты из-за strip бинарника.
+
+## Smoke: Settings без forced restart (Linux `.2`, 2026-02-12)
+
+Проверка выполнена после фикса `PUT /api/v1/settings -> reload_runtime(false)`.
+
+Команды:
+
+```bash
+/home/hex/astra/tools/perf/settings_no_restart_smoke.sh \
+  --base http://127.0.0.1:9060 \
+  --stream a014 \
+  --check-local-pid
+
+/home/hex/astra/tools/perf/settings_no_restart_all_streams.sh \
+  --base http://127.0.0.1:9060 \
+  --setting-key ui_status_polling_interval_sec \
+  --setting-value 0.5
+
+/home/hex/astra/tools/perf/settings_general_matrix_smoke.py \
+  --base http://127.0.0.1:9060 \
+  --stream a014 \
+  --check-local-pid
+```
+
+Результаты:
+- single smoke: `uptime 384 -> 386`, `ffmpeg pid 1890080 -> 1890080` (PASS)
+- all-streams smoke: `checked_active_streams=11`, uptime drop не обнаружен (PASS)
+- matrix smoke (safe keys):
+
+| key | uptime (a014) | ffmpeg pid | status |
+|---|---:|---|---|
+| log_level | 213→215 | 1891748→1891748 | PASS |
+| ui_status_polling_interval_sec | 215→217 | 1891748→1891748 | PASS |
+| ui_status_lite_enabled | 217→219 | 1891748→1891748 | PASS |
+| performance_aggregate_stream_timers | 219→222 | 1891748→1891748 | PASS |
+| performance_aggregate_transcode_timers | 222→224 | 1891748→1891748 | PASS |
+| observability_system_rollup_enabled | 224→226 | 1891748→1891748 | PASS |
+| lua_gc_step_units | 226→228 | 1891748→1891748 | PASS |
+
+Вывод:
+- безопасные изменения в `Settings -> General` больше не вызывают forced restart stream/transcode.
+- контрольный forced reload (`/api/v1/reload-internal` без `force=0`) по-прежнему рестартит пайплайн, как и ожидается.
