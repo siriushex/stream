@@ -166,6 +166,18 @@ OS_CODENAME="${VERSION_CODENAME:-}"
 
 ARCH="$(uname -m)"
 
+apt_has_candidate() {
+  # apt-cache show может возвращать 0 даже если пакета нет. Используем policy.
+  # Возвращает 0, если у пакета есть Candidate (не "(none)").
+  local pkg="$1"
+  if ! command -v apt-cache >/dev/null 2>&1; then
+    return 1
+  fi
+  local cand
+  cand="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/{print $2}' | head -n1)"
+  [ -n "$cand" ] && [ "$cand" != "(none)" ]
+}
+
 ensure_dirs() {
   run mkdir -p "$DATA_DIR"
   run chmod 755 "$DATA_DIR"
@@ -223,11 +235,11 @@ install_runtime_deps_debian() {
   run apt-get install -y --no-install-recommends libsqlite3-0 libpq5 libdvbcsa1 || true
   # OpenSSL runtime package name depends on Ubuntu/Debian version.
   # Не пытаемся ставить несуществующие пакеты, чтобы не засорять вывод ошибками apt.
-  if apt-cache show libssl3 >/dev/null 2>&1; then
+  if apt_has_candidate libssl3; then
     run apt-get install -y --no-install-recommends libssl3 || true
-  elif apt-cache show libssl1.1 >/dev/null 2>&1; then
+  elif apt_has_candidate libssl1.1; then
     run apt-get install -y --no-install-recommends libssl1.1 || true
-  elif apt-cache show libssl1.0.0 >/dev/null 2>&1; then
+  elif apt_has_candidate libssl1.0.0; then
     run apt-get install -y --no-install-recommends libssl1.0.0 || true
   fi
 }
@@ -401,42 +413,25 @@ install_binary() {
     return 0
   fi
 
-  # Try distro-specific build first (if we host it), then fall back to the generic one.
-  # This makes the installer work across Ubuntu versions without forcing a rebuild.
-  local urls=()
-  if [ -n "${OS_ID:-}" ] && [ -n "${OS_VER:-}" ]; then
-    urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER}-${ARCH}")
-  fi
-  urls+=("$(resolve_url)")
-
+  # По умолчанию используем только "generic" linux артефакт.
+  # Дистро-специфичные артефакты могут отсутствовать на хостинге и будут давать 404,
+  # что засоряет вывод и сбивает с толку.
   local url
-  local last_missing=""
-  local last_missing_url=""
-  for url in "${urls[@]}"; do
-    log "Downloading binary: $url"
-    if fetch_artifact "$url" "$tmp"; then
-      if ! is_elf_binary "$tmp"; then
-        warn "Downloaded file is not an ELF binary, skipping: $url"
-        continue
-      fi
-      local reason=""
-      if ! reason="$(check_runtime_binary_usable "$tmp")"; then
-        last_missing="$reason"
-        last_missing_url="$url"
-        warn "Binary is not usable here, skipping: $url ($reason)"
-        continue
-      fi
-      run install -m 755 "$tmp" "$BIN_PATH"
-      STREAM_TMP_BIN=""
-      return 0
-    fi
-    warn "Download failed: $url"
-  done
-
-  if [ -n "$last_missing" ]; then
-    die "Downloaded binaries are unusable due to missing runtime libraries: $last_missing (last tried: $last_missing_url). Install required packages or use --mode source."
+  url="$(resolve_url)"
+  log "Downloading binary: $url"
+  if ! fetch_artifact "$url" "$tmp"; then
+    die "Failed to download prebuilt binary: $url. Try --mode source, or provide --url/--artifact explicitly."
   fi
-  die "Failed to download prebuilt binary. Try --mode source, or provide --url/--artifact explicitly."
+  if ! is_elf_binary "$tmp"; then
+    die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
+  fi
+  local reason=""
+  if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+    die "Downloaded binary is not usable on this system ($reason). Install required packages or use --mode source."
+  fi
+  run install -m 755 "$tmp" "$BIN_PATH"
+  STREAM_TMP_BIN=""
+  return 0
 }
 
 check_runtime_libs() {
@@ -521,21 +516,8 @@ main() {
     die "--runtime-only requires --mode binary"
   fi
 
-  # Ubuntu 16.04 и старше часто не совместимы с современными prebuilt-бинарниками
-  # (glibc/openssl/прочие зависимости). Чтобы установка была "из коробки" рабочей,
-  # по умолчанию падаем обратно на сборку из исходников.
-  #
-  # Если очень нужно именно binary — используйте --url/--artifact (явный артефакт).
-  if [ "$MODE" = "binary" ] && [ -z "$URL" ] && [ -z "$ARTIFACT" ] && [ "${OS_ID:-}" = "ubuntu" ]; then
-    # Сейчас на stream.centv.ru гарантированно есть только один "generic" linux-бинарник.
-    # Он совместим не со всеми версиями Ubuntu. Чтобы установка работала предсказуемо,
-    # для Ubuntu, отличной от 20.04, по умолчанию используем сборку из исходников.
-    if [ "${OS_VER:-}" != "20.04" ]; then
-      warn "No compatible prebuilt binary for Ubuntu ${OS_VER}. Falling back to --mode source."
-      MODE="source"
-      RUNTIME_ONLY=0
-    fi
-  fi
+  # Важно: НЕ переключаемся автоматически на сборку из исходников.
+  # Пользователь должен явно выбрать --mode source, если бинарник не подходит.
 
   ensure_dirs
 
