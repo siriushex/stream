@@ -42,6 +42,12 @@ static void iterate_dir(const char *dir, const char *filter, void (*callback)(co
     DIR *dirp = opendir(dir);
     if(!dirp)
     {
+        /*
+         * Не шумим в логах, если DVB подсистема отсутствует (типично для серверов без /dev/dvb).
+         * Ошибки доступа и прочие реальные проблемы оставляем видимыми.
+         */
+        if(errno == ENOENT || errno == ENOTDIR)
+            return;
         printf("ERROR: opendir() failed %s [%s]\n", dir, strerror(errno));
         return;
     }

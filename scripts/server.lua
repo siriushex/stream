@@ -204,6 +204,9 @@ local opt = {
     config_path = nil,
     import_mode = "merge",
     reset_pass = false,
+    systemd_init = false,
+    systemd_remove = false,
+    no_web_auth = false,
     stream_shard_index = nil,
     stream_shard_count = nil,
 }
@@ -239,6 +242,10 @@ options_usage = [[
     --stream-shard S/C  run only a shard of streams (example: 0/4)
     -c PATH             alias for --config
     -pass               reset admin password to default (admin/admin)
+    --reset-password    alias for -pass
+    --no-web-auth       disable web ui authentication (forces http_auth_enabled=false)
+    --init              register systemd service template (stream@.service)
+    --remove            remove systemd service template (stream@.service)
     --config PATH       import config (.json or .lua) before start
     --import PATH       legacy alias for --config (json)
     --import-mode MODE  import mode: merge or replace (default: merge)
@@ -299,6 +306,22 @@ options = {
     end,
     ["-pass"] = function(idx)
         opt.reset_pass = true
+        return 0
+    end,
+    ["--reset-password"] = function(idx)
+        opt.reset_pass = true
+        return 0
+    end,
+    ["--no-web-auth"] = function(idx)
+        opt.no_web_auth = true
+        return 0
+    end,
+    ["--init"] = function(idx)
+        opt.systemd_init = true
+        return 0
+    end,
+    ["--remove"] = function(idx)
+        opt.systemd_remove = true
         return 0
     end,
     ["-\209\129"] = function(idx)
@@ -1193,6 +1216,109 @@ function main()
     log.info("Starting " .. astra_brand_version())
     math.randomseed(os.time())
 
+    local function exec_ok(cmd)
+        if not cmd or cmd == "" then
+            return false
+        end
+        local res = os.execute(cmd)
+        if res == true then
+            return true
+        end
+        if type(res) == "number" then
+            return res == 0
+        end
+        if type(res) == "table" then
+            return (res.exitcode == 0) or (res.code == 0)
+        end
+        return false
+    end
+
+    local function systemd_unit_path()
+        return "/etc/systemd/system/stream@.service"
+    end
+
+    local function ensure_dir(path)
+        if not path or path == "" then
+            return false
+        end
+        local st = utils.stat(path)
+        if st and not st.error and st.type == "directory" then
+            return true
+        end
+        -- Safe: constant paths only.
+        return exec_ok("mkdir -p " .. path)
+    end
+
+    local function systemd_init_unit()
+        if not exec_ok("command -v systemctl >/dev/null 2>&1") then
+            log.error("[server] systemctl not found (systemd required for --init)")
+            return false
+        end
+        if not ensure_dir("/etc/stream") then
+            log.error("[server] failed to create /etc/stream")
+            return false
+        end
+        local path = systemd_unit_path()
+        local st = utils.stat(path)
+        if st and not st.error and st.type == "file" then
+            log.info("[server] systemd unit already exists: " .. path)
+            exec_ok("systemctl daemon-reload >/dev/null 2>&1")
+            return true
+        end
+        local f = io.open(path, "w")
+        if not f then
+            log.error("[server] cannot write systemd unit: " .. path)
+            return false
+        end
+        f:write([[
+[Unit]
+Description=Stream server (%i)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/stream/%i.env
+WorkingDirectory=/etc/stream
+ExecStart=/usr/local/bin/stream -c /etc/stream/%i.json -p ${STREAM_PORT:-8816}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+]])
+        f:close()
+        exec_ok("systemctl daemon-reload >/dev/null 2>&1")
+        log.info("[server] systemd unit installed: " .. path)
+        return true
+    end
+
+    local function systemd_remove_unit()
+        if not exec_ok("command -v systemctl >/dev/null 2>&1") then
+            log.error("[server] systemctl not found (systemd required for --remove)")
+            return false
+        end
+        local path = systemd_unit_path()
+        local st = utils.stat(path)
+        if not st or st.error or st.type ~= "file" then
+            log.info("[server] systemd unit not found: " .. path)
+            exec_ok("systemctl daemon-reload >/dev/null 2>&1")
+            return true
+        end
+        exec_ok("rm -f " .. path)
+        exec_ok("systemctl daemon-reload >/dev/null 2>&1")
+        log.info("[server] systemd unit removed: " .. path)
+        return true
+    end
+
+    if opt.systemd_remove then
+        local ok = systemd_remove_unit()
+        os.exit(ok and 0 or 78)
+    end
+    if opt.systemd_init then
+        local ok = systemd_init_unit()
+        os.exit(ok and 0 or 78)
+    end
+
     if opt.config_path and opt.config_path ~= "" then
         -- If config is a bare name (no slashes) - default to /etc/stream.
         -- This allows a minimal start command:
@@ -1228,6 +1354,11 @@ function main()
     end
 
     config.init({ data_dir = opt.data_dir, db_path = opt.db_path })
+    if opt.no_web_auth then
+        -- CLI override: force web auth off without mutating stored settings.
+        config.runtime_overrides = config.runtime_overrides or {}
+        config.runtime_overrides.http_auth_enabled = false
+    end
     if opt.config_path and opt.config_path ~= "" and config.set_primary_config_path then
         config.set_primary_config_path(opt.config_path)
     end
