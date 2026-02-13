@@ -452,6 +452,9 @@ local function allow_throttle(now)
     return true
 end
 
+-- Forward declaration: used from enqueue_* helpers.
+local start_timer
+
 local function enqueue_text(text, opts)
     local cfg = telegram.config
     if not cfg.available then
@@ -504,10 +507,14 @@ local function enqueue_text(text, opts)
         next_try = now,
         chat_id = opts and opts.chat_id or nil,
     })
+    -- Важно: ручные действия (Send test / Send summary now) должны отправляться
+    -- даже если scheduled alerts/backup/summary выключены. Поэтому запускаем таймер
+    -- при появлении очереди.
+    start_timer()
     return true
 end
 
-local function start_timer()
+start_timer = function()
     if telegram.timer then
         return
     end
@@ -617,6 +624,7 @@ local function enqueue_document(path, caption, opts)
         bypass_throttle = opts and opts.bypass_throttle,
         chat_id = opts and opts.chat_id or nil,
     })
+    start_timer()
     return true
 end
 
@@ -906,6 +914,7 @@ local function enqueue_photo_url(url, caption, opts)
         bypass_throttle = bypass_throttle,
         chat_id = opts and opts.chat_id or nil,
     })
+    start_timer()
     return true
 end
 
