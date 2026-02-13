@@ -36,3 +36,5 @@ RUN mkdir -p /out \
  && cp -a ./astra /out/stream \
  && strip /out/stream || true
 
+FROM scratch AS artifact
+COPY --from=build /out/stream /stream
