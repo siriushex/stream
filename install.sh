@@ -17,13 +17,13 @@ Source/binary download:
   --artifact NAME          Artifact filename under base URL.
 
 Install paths:
-  --bin PATH               Install path for the binary (default: /usr/local/bin/astra).
+  --bin PATH               Install path for the binary (default: /usr/local/bin/stream).
   --data-dir DIR           Config/data root (default: /etc/astral).
-  --workdir DIR            Temporary build dir (default: /tmp/astral-build).
+  --workdir DIR            Temporary build dir (default: /tmp/stream-build).
 
 Web assets:
-  --install-web            Copy web assets to /usr/local/share/astral/web (UI enabled).
-  --no-web                 Do not install web assets (UI disabled).
+  --install-web            Copy web assets to /usr/local/share/stream/web (optional override from disk).
+  --no-web                 Do not install web assets (UI will be served from embedded bundle).
 
 Service:
   --name NAME              Instance name (creates /etc/astral/NAME.json and NAME.env).
@@ -46,9 +46,9 @@ MODE="source"
 URL=""
 BASE_URL="https://a.centv.ru"
 ARTIFACT=""
-BIN_PATH="/usr/local/bin/astra"
+BIN_PATH="/usr/local/bin/stream"
 DATA_DIR="/etc/astral"
-WORKDIR="/tmp/astral-build"
+WORKDIR="/tmp/stream-build"
 INSTALL_WEB=0
 INSTALL_FFMPEG=1
 DRY_RUN=0
@@ -139,7 +139,20 @@ ensure_dirs() {
 
 install_deps_debian() {
   run apt-get update -y
-  run apt-get install -y --no-install-recommends ca-certificates curl tar gzip xz-utils git gcc make pkg-config \
+  # Ubuntu keeps ffmpeg and some optional deps in "universe". Enable it on-demand.
+  if [ "${OS_ID:-}" = "ubuntu" ]; then
+    if ! apt-cache show ffmpeg >/dev/null 2>&1; then
+      run apt-get install -y --no-install-recommends software-properties-common
+      if command -v add-apt-repository >/dev/null 2>&1; then
+        run add-apt-repository -y universe || true
+        run apt-get update -y
+      else
+        warn "add-apt-repository not found; ffmpeg/libdvbcsa packages may be unavailable."
+      fi
+    fi
+  fi
+
+  run apt-get install -y --no-install-recommends ca-certificates curl tar gzip xz-utils git gcc make pkg-config python3 \
     openssl libssl-dev libsqlite3-dev
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
@@ -195,12 +208,13 @@ resolve_url() {
   fi
 
   if [ "$MODE" = "binary" ]; then
-    printf '%s/astral-linux-%s' "$BASE_URL" "$ARCH"
+    # Default artifact naming for prebuilt binaries. Override with --artifact/--url if needed.
+    printf '%s/stream-linux-%s' "$BASE_URL" "$ARCH"
     return 0
   fi
 
   # Default source tarball name guesses.
-  printf '%s/astral-src.tar.gz' "$BASE_URL"
+  printf '%s/stream-src.tar.gz' "$BASE_URL"
 }
 
 fetch_artifact() {
@@ -216,7 +230,7 @@ build_from_source() {
 
   run rm -rf "$WORKDIR"
   run mkdir -p "$WORKDIR"
-  local archive="$WORKDIR/astral-src.tar.gz"
+  local archive="$WORKDIR/stream-src.tar.gz"
   fetch_artifact "$url" "$archive"
 
   run tar -xf "$archive" -C "$WORKDIR"
@@ -237,8 +251,8 @@ build_from_source() {
   run install -m 755 "$src_root/astra" "$BIN_PATH"
 
   if [ "$INSTALL_WEB" -eq 1 ]; then
-    run mkdir -p /usr/local/share/astral/web
-    run cp -r "$src_root/web"/* /usr/local/share/astral/web/
+    run mkdir -p /usr/local/share/stream/web
+    run cp -r "$src_root/web"/* /usr/local/share/stream/web/
   fi
 
   run rm -rf "$WORKDIR"
@@ -254,18 +268,18 @@ install_binary() {
 }
 
 write_systemd_unit() {
-  local unit_path="/etc/systemd/system/astral@.service"
+  local unit_path="/etc/systemd/system/stream@.service"
   if [ ! -f "$unit_path" ]; then
     cat > "$unit_path" <<'UNIT'
 [Unit]
-Description=ASTRAL Streaming Server (%i)
+Description=Stream server (%i)
 After=network.target
 
 [Service]
 Type=simple
 EnvironmentFile=-/etc/astral/%i.env
 WorkingDirectory=/etc/astral
-ExecStart=/usr/local/bin/astra -c /etc/astral/%i.json -p ${ASTRAL_PORT:-8816}
+ExecStart=/usr/local/bin/stream -c /etc/astral/%i.json -p ${ASTRAL_PORT:-8816}
 Restart=always
 RestartSec=2
 
@@ -296,7 +310,7 @@ write_instance_files() {
     printf 'ASTRAL_PORT=%s\n' "$PORT"
     printf 'ASTRA_DATA_ROOT=%s\n' "$DATA_DIR"
     if [ "$INSTALL_WEB" -eq 1 ]; then
-      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/astral/web"
+      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/stream/web"
     fi
   } > "$env"
 }
@@ -305,7 +319,7 @@ maybe_enable_service() {
   if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$NAME" ]; then
     return 0
   fi
-  run systemctl enable --now "astral@${NAME}.service"
+  run systemctl enable --now "stream@${NAME}.service"
 }
 
 main() {
@@ -328,7 +342,7 @@ main() {
   fi
 
   if [ "$INSTALL_WEB" -eq 0 ]; then
-    warn "Web assets not installed. UI will be unavailable unless you set ASTRAL_WEB_DIR to a valid web path."
+    log "Web assets not installed. UI will be served from embedded bundle."
   fi
 
   write_systemd_unit
