@@ -107,6 +107,7 @@ nav:
           - HTTP Play: manual/settings-http-play.md
           - HTTP Authentication: manual/settings-http-auth.md
           - Buffer: manual/settings-buffer.md
+          - Telegram alerts: manual/settings-telegram.md
           - SoftCAM / CAS: manual/softcam.md
           - Servers: manual/settings-servers.md
           - Groups: manual/settings-groups.md
