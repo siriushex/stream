@@ -3202,6 +3202,27 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'advanced',
           },
           {
+            type: 'note',
+            tone: 'warning',
+            text: 'Важно: события детекторов отправляются как WARNING/INFO. Если в Telegram выбран уровень ERROR — детекторы не будут приходить. Поставьте WARNING (или INFO, если нужны события *_END).',
+            level: 'advanced',
+            dependsOn: () => {
+              const tgEnabled = readBoolValue('settings-telegram-enabled', false);
+              if (!tgEnabled) return false;
+              const preset = readStringValue('settings-telegram-detectors-preset', 'off');
+              const hasDefaults = preset !== 'off'
+                && (
+                  readBoolValue('settings-telegram-detectors-no-audio-enabled', false)
+                  || readBoolValue('settings-telegram-detectors-stop-video-enabled', false)
+                  || readBoolValue('settings-telegram-detectors-av-desync-enabled', false)
+                  || readBoolValue('settings-telegram-detectors-silence-enabled', false)
+                );
+              if (!hasDefaults) return false;
+              const level = readStringValue('settings-telegram-level', 'OFF');
+              return level === 'CRITICAL' || level === 'ERROR';
+            },
+          },
+          {
             id: 'settings-telegram-detectors-preset',
             label: 'Quality preset',
             type: 'select',
