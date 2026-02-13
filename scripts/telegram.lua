@@ -779,12 +779,12 @@ local function build_summary_snapshot(range_sec)
 
     -- Prefer persisted rollup metrics (fast, supports charts).
     if config and config.list_ai_metrics then
-        local metrics = config.list_ai_metrics({
+        local ok_metrics, metrics = pcall(config.list_ai_metrics, {
             since = since_ts,
             scope = "global",
             limit = 20000,
         })
-        if metrics and #metrics > 0 then
+        if ok_metrics and metrics and #metrics > 0 then
             local summary = {
                 total_bitrate_kbps = 0,
                 streams_on_air = 0,
@@ -822,11 +822,14 @@ local function build_summary_errors(range_sec, limit)
     local since_ts = os.time() - (range_sec or 86400)
 
     if config and config.list_ai_log_events then
-        local rows = config.list_ai_log_events({
+        local ok_rows, rows = pcall(config.list_ai_log_events, {
             since = since_ts,
             level = "ERROR",
             limit = limit or 20,
         })
+        if not ok_rows then
+            rows = nil
+        end
         local out = {}
         for _, row in ipairs(rows or {}) do
             table.insert(out, {
