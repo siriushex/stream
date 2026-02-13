@@ -167,11 +167,16 @@ static void on_client_close(void *arg)
         return;
     }
 
-    if(!client->sock)
-        return;
-
-    asc_socket_close(client->sock);
-    client->sock = NULL;
+    /*
+     * Важно: on_client_close() может вызываться, когда сокет уже закрыт (client->sock == NULL),
+     * например при остановке сервера или гонках закрытия. В этом случае нельзя "return",
+     * иначе клиент останется в списке mod->clients и on_server_close() зациклится/упадёт на assert.
+     */
+    if(client->sock)
+    {
+        asc_socket_close(client->sock);
+        client->sock = NULL;
+    }
 
     if(client->status == 3)
     {
@@ -926,21 +931,21 @@ static void on_server_close(void *arg)
 
     if(mod->clients)
     {
-        http_client_t *prev_client = NULL;
-        for(  asc_list_first(mod->clients)
-            ; !asc_list_eol(mod->clients)
-            ; asc_list_first(mod->clients))
+        /*
+         * Закрываем клиентов без зависимостей от того, удалил ли on_client_close() элемент из списка.
+         * Это предотвращает зависания/abort при нестандартных сценариях закрытия.
+         */
+        asc_list_t *clients = mod->clients;
+        mod->clients = NULL;
+
+        for(asc_list_first(clients); !asc_list_eol(clients); )
         {
-            http_client_t *client = (http_client_t *)asc_list_data(mod->clients);
-            asc_assert(client != prev_client
-                       , MSG("loop on on_server_close() client:%p")
-                       , (void *)client);
+            http_client_t *client = (http_client_t *)asc_list_data(clients);
+            asc_list_remove_current(clients);
             on_client_close(client);
-            prev_client = client;
         }
 
-        asc_list_destroy(mod->clients);
-        mod->clients = NULL;
+        asc_list_destroy(clients);
     }
 
     if(mod->routes)
