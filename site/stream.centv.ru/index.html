@@ -474,14 +474,29 @@ systemctl enable --now stream@prod.service</pre>
 
         <h3 style="margin: 0 0 8px; font-size: 14px;">1) Установка</h3>
         <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
-          Нужен Linux (Ubuntu/Debian) и доступ <span style="font-family: var(--mono);">root</span>.
-          Инсталлятор поставит бинарник в <span style="font-family: var(--mono);">/usr/local/bin/stream</span> и зависимости.
+          Выберите команду под вашу ОС. Инсталлятор ставит бинарник в
+          <span style="font-family: var(--mono);">/usr/local/bin/stream</span> и подтягивает зависимости.
         </p>
       </div>
-      <pre id="cmd-install">curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only</pre>
+      <pre id="cmd-install-ubuntu"># Ubuntu / Debian (быстро, готовый бинарник)
+curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only</pre>
       <div class="copyrow">
-        <div class="hint">Скачает и установит Stream Hub.</div>
-        <button class="copy" type="button" data-copy="#cmd-install">Copy</button>
+        <div class="hint">Ubuntu/Debian: скачает и установит.</div>
+        <button class="copy" type="button" data-copy="#cmd-install-ubuntu">Copy</button>
+      </div>
+
+      <pre id="cmd-install-centos"># CentOS / RHEL / Rocky / Alma (совместимо, сборка из исходников)
+curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash</pre>
+      <div class="copyrow">
+        <div class="hint">RHEL‑like: соберёт из исходников (занимает несколько минут).</div>
+        <button class="copy" type="button" data-copy="#cmd-install-centos">Copy</button>
+      </div>
+
+      <pre id="cmd-install-macos"># macOS (Apple Silicon)
+curl -fsSL https://stream.centv.ru/install-macos.sh | bash</pre>
+      <div class="copyrow">
+        <div class="hint">macOS: поставит бинарник в /usr/local/bin (попросит sudo при необходимости).</div>
+        <button class="copy" type="button" data-copy="#cmd-install-macos">Copy</button>
       </div>
 
       <div class="pad">
@@ -652,6 +667,8 @@ sudo systemctl enable --now stream@prod.service</pre>
       <div class="links">
         <span>Stream Hub</span>
         <a href="/install.sh">install.sh</a>
+        <a href="/install-centos.sh">install-centos.sh</a>
+        <a href="/install-macos.sh">install-macos.sh</a>
         <a href="/stream">download</a>
       </div>
       <div>© centv.ru</div>
