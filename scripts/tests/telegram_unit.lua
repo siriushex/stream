@@ -31,6 +31,13 @@ local msg_up = t.build_message({
 })
 assert(msg_up and msg_up:find("UP"), "stream up message")
 
+local msg_no_audio = t.build_message({
+    code = "NO_AUDIO_DETECTED",
+    stream_id = "test1",
+    meta = { stream_name = "Test Stream", input_index = 0, timeout_sec = 5, input_url = "udp://239.0.0.1:1234" },
+})
+assert(msg_no_audio and msg_no_audio:find("NO AUDIO"), "no audio message")
+
 -- Dedupe & throttle
 telegram.config.available = true
 telegram.curl_available = true

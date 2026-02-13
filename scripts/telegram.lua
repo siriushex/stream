@@ -291,6 +291,77 @@ local function build_message(event)
         return "🟠 INPUT DOWN: " .. label .. " — input" .. idx_label .. tail
     end
 
+    -- Quality detectors (input health)
+    if code == "NO_AUDIO_DETECTED" then
+        local idx = meta.input_index
+        local idx_label = idx ~= nil and tostring(idx + 1) or "?"
+        local timeout = meta.timeout_sec
+        local tail = timeout and (" > " .. tostring(timeout) .. "s") or ""
+        local line1 = "🟠 NO AUDIO: " .. label .. " — input" .. idx_label .. tail
+        local input_short = format_input_short(meta.input_url)
+        if input_short then
+            return line1 .. "\n(" .. input_short .. ")"
+        end
+        return line1
+    end
+    if code == "NO_AUDIO_END" then
+        return "ℹ️ AUDIO OK: " .. label
+    end
+    if code == "VIDEO_STOP_DETECTED" then
+        local idx = meta.input_index
+        local idx_label = idx ~= nil and tostring(idx + 1) or "?"
+        local timeout = meta.timeout_sec
+        local tail = timeout and (" > " .. tostring(timeout) .. "s") or ""
+        local line1 = "🟠 VIDEO STOP: " .. label .. " — input" .. idx_label .. tail
+        local input_short = format_input_short(meta.input_url)
+        if input_short then
+            return line1 .. "\n(" .. input_short .. ")"
+        end
+        return line1
+    end
+    if code == "VIDEO_STOP_END" then
+        return "ℹ️ VIDEO OK: " .. label
+    end
+    if code == "VIDEO_FREEZE_DETECTED" then
+        local idx = meta.input_index
+        local idx_label = idx ~= nil and tostring(idx + 1) or "?"
+        local freeze = meta.freeze_sec
+        local tail = freeze and (" > " .. tostring(freeze) .. "s") or ""
+        local line1 = "🟠 FREEZE: " .. label .. " — input" .. idx_label .. tail
+        local input_short = format_input_short(meta.input_url)
+        if input_short then
+            return line1 .. "\n(" .. input_short .. ")"
+        end
+        return line1
+    end
+    if code == "VIDEO_FREEZE_END" then
+        return "ℹ️ FREEZE END: " .. label
+    end
+    if code == "AV_DESYNC_DETECTED" then
+        local current = meta.current_ms
+        local threshold = meta.threshold_ms
+        local tail = ""
+        if current and threshold then
+            tail = " — " .. tostring(current) .. "ms (≥" .. tostring(threshold) .. "ms)"
+        elseif current then
+            tail = " — " .. tostring(current) .. "ms"
+        end
+        return "🟠 AV DESYNC: " .. label .. tail
+    end
+    if code == "AV_DESYNC_END" then
+        local current = meta.current_ms
+        local tail = current and (" — " .. tostring(current) .. "ms") or ""
+        return "ℹ️ AV SYNC OK: " .. label .. tail
+    end
+    if code == "AUDIO_SILENCE_DETECTED" then
+        local noise = meta.noise_db
+        local tail = noise and (" — " .. tostring(noise) .. " dB") or ""
+        return "🟠 SILENCE: " .. label .. tail
+    end
+    if code == "AUDIO_SILENCE_END" then
+        return "ℹ️ SILENCE END: " .. label
+    end
+
     if code == "OUTPUT_DOWN" or code == "OUTPUT_ERROR" then
         local idx = meta.output_index
         local idx_label = idx ~= nil and tostring(idx + 1) or "?"
@@ -651,19 +722,11 @@ local function format_kbps(value)
     return tostring(math.floor(num + 0.5)) .. " kbps"
 end
 
-local function build_summary_snapshot(range_sec)
-    if not config or not config.list_ai_metrics then
-        return nil, nil, "observability unavailable"
+local function compute_summary_from_runtime(since_ts)
+    if not runtime or not runtime.list_status then
+        return nil, "runtime unavailable"
     end
-    local since_ts = os.time() - (range_sec or 86400)
-    local metrics = config.list_ai_metrics({
-        since = since_ts,
-        scope = "global",
-        limit = 20000,
-    })
-    if not metrics or #metrics == 0 then
-        return nil, nil, "no metrics"
-    end
+    local status = runtime.list_status() or {}
     local summary = {
         total_bitrate_kbps = 0,
         streams_on_air = 0,
@@ -672,40 +735,129 @@ local function build_summary_snapshot(range_sec)
         input_switch = 0,
         alerts_error = 0,
     }
-    local last_bucket = 0
-    for _, row in ipairs(metrics) do
-        if row.ts_bucket and row.ts_bucket > last_bucket then
-            last_bucket = row.ts_bucket
+
+    for _, entry in pairs(status) do
+        summary.streams_total = summary.streams_total + 1
+        local on_air = entry.on_air == true or entry.transcode_state == "RUNNING"
+        if on_air then
+            summary.streams_on_air = summary.streams_on_air + 1
+        else
+            summary.streams_down = summary.streams_down + 1
         end
-    end
-    if last_bucket > 0 then
-        for _, row in ipairs(metrics) do
-            if row.ts_bucket == last_bucket and summary[row.metric_key] ~= nil then
-                summary[row.metric_key] = row.value
+
+        local bitrate = 0
+        if entry.transcode and entry.transcode.output_bitrate_kbps then
+            bitrate = tonumber(entry.transcode.output_bitrate_kbps) or 0
+        elseif entry.transcode and entry.transcode.input_bitrate_kbps then
+            bitrate = tonumber(entry.transcode.input_bitrate_kbps) or 0
+        else
+            bitrate = tonumber(entry.bitrate) or 0
+        end
+        summary.total_bitrate_kbps = summary.total_bitrate_kbps + bitrate
+
+        -- Считаем только 1 "switch" на стрим по последнему timestamp.
+        if since_ts and entry.last_switch and tonumber(entry.last_switch) then
+            local ts = tonumber(entry.last_switch)
+            if ts >= since_ts then
+                summary.input_switch = summary.input_switch + 1
             end
         end
     end
-    return summary, metrics, nil
+
+    if config and config.count_alerts then
+        summary.alerts_error = tonumber(config.count_alerts({
+            since = since_ts or 0,
+            levels = { "ERROR", "CRITICAL" },
+        })) or 0
+    end
+
+    return summary, nil
+end
+
+local function build_summary_snapshot(range_sec)
+    local since_ts = os.time() - (range_sec or 86400)
+
+    -- Prefer persisted rollup metrics (fast, supports charts).
+    if config and config.list_ai_metrics then
+        local metrics = config.list_ai_metrics({
+            since = since_ts,
+            scope = "global",
+            limit = 20000,
+        })
+        if metrics and #metrics > 0 then
+            local summary = {
+                total_bitrate_kbps = 0,
+                streams_on_air = 0,
+                streams_down = 0,
+                streams_total = 0,
+                input_switch = 0,
+                alerts_error = 0,
+            }
+            local last_bucket = 0
+            for _, row in ipairs(metrics) do
+                if row.ts_bucket and row.ts_bucket > last_bucket then
+                    last_bucket = row.ts_bucket
+                end
+            end
+            if last_bucket > 0 then
+                for _, row in ipairs(metrics) do
+                    if row.ts_bucket == last_bucket and summary[row.metric_key] ~= nil then
+                        summary[row.metric_key] = row.value
+                    end
+                end
+            end
+            return summary, metrics, nil
+        end
+    end
+
+    -- Fallback: build a lightweight snapshot directly from runtime + alerts table.
+    local summary, err = compute_summary_from_runtime(since_ts)
+    if summary then
+        return summary, nil, "no metrics (fallback)"
+    end
+    return nil, nil, err or "no data"
 end
 
 local function build_summary_errors(range_sec, limit)
-    if not config or not config.list_ai_log_events then
+    local since_ts = os.time() - (range_sec or 86400)
+
+    if config and config.list_ai_log_events then
+        local rows = config.list_ai_log_events({
+            since = since_ts,
+            level = "ERROR",
+            limit = limit or 20,
+        })
+        local out = {}
+        for _, row in ipairs(rows or {}) do
+            table.insert(out, {
+                ts = row.ts,
+                level = row.level,
+                stream_id = row.stream_id,
+                message = shorten_text(row.message, 120),
+            })
+        end
+        return out
+    end
+
+    -- Fallback: use alerts table (works even when observability is disabled).
+    if not config or not config.list_alerts then
         return {}
     end
-    local since_ts = os.time() - (range_sec or 86400)
-    local rows = config.list_ai_log_events({
+    local rows = config.list_alerts({
         since = since_ts,
-        level = "ERROR",
         limit = limit or 20,
     })
     local out = {}
     for _, row in ipairs(rows or {}) do
-        table.insert(out, {
-            ts = row.ts,
-            level = row.level,
-            stream_id = row.stream_id,
-            message = shorten_text(row.message, 120),
-        })
+        local level = tostring(row.level or "")
+        if level == "ERROR" or level == "CRITICAL" then
+            table.insert(out, {
+                ts = row.ts,
+                level = row.level,
+                stream_id = row.stream_id,
+                message = shorten_text(row.message, 120),
+            })
+        end
     end
     return out
 end
@@ -830,13 +982,15 @@ local function run_summary(now)
         end)
     end
     if cfg.summary_include_charts then
-        local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)", "rgb(90,170,229)")
-        if chart_url then
-            enqueue_photo_url(chart_url, "📈 Total bitrate (24h)", { bypass_throttle = true })
-        end
-        local down_url = build_chart_url(metrics, "streams_down", "Streams down", "rgb(224,102,102)")
-        if down_url then
-            enqueue_photo_url(down_url, "📉 Streams down (24h)", { bypass_throttle = true })
+        if metrics and type(metrics) == "table" and #metrics > 0 then
+            local chart_url = build_chart_url(metrics, "total_bitrate_kbps", "Total bitrate (kbps)", "rgb(90,170,229)")
+            if chart_url then
+                enqueue_photo_url(chart_url, "📈 Total bitrate (24h)", { bypass_throttle = true })
+            end
+            local down_url = build_chart_url(metrics, "streams_down", "Streams down", "rgb(224,102,102)")
+            if down_url then
+                enqueue_photo_url(down_url, "📉 Streams down (24h)", { bypass_throttle = true })
+            end
         end
     end
     cfg.summary_last_ts = now
@@ -1077,7 +1231,7 @@ function telegram.send_test()
     if not telegram.config.available then
         return false, "telegram disabled"
     end
-    return enqueue_text("✅ Telegram alerts: test message from Astra Clone", { bypass_throttle = true })
+    return enqueue_text("✅ Telegram alerts: test message from Stream Hub", { bypass_throttle = true })
 end
 
 function telegram.send_text(text, opts)
