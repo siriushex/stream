@@ -37,8 +37,10 @@ def main(argv):
         print("usage: build_assets_tar.py <out.tar> <dir> [<dir> ...]", file=sys.stderr)
         return 2
 
-    out_path = Path(argv[1]).resolve()
-    src_dirs = [Path(arg).resolve() for arg in argv[2:]]
+    # Path.resolve() в Python 3.5 падает, если файл ещё не существует.
+    # Нам нужен просто абсолютный путь.
+    out_path = Path(os.path.abspath(argv[1]))
+    src_dirs = [Path(os.path.abspath(arg)) for arg in argv[2:]]
 
     files = []
     for src in src_dirs:
