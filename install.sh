@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
+# При запуске через pipe (curl | bash) BASH_SOURCE может быть пустым, а set -u
+# превращает обращение к BASH_SOURCE[0] в фатальную ошибку.
 
 usage() {
   cat <<'USAGE'
