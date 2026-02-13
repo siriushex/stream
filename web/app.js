@@ -3190,6 +3190,161 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'advanced',
             dependsOn: { id: 'settings-telegram-summary-enabled', value: true },
           },
+          {
+            type: 'heading',
+            text: 'Quality detectors (defaults)',
+            level: 'advanced',
+          },
+          {
+            type: 'note',
+            tone: 'warning',
+            text: 'Это дефолты для всех входов, где в URL не указаны свои #параметры. Применяются только когда включены Telegram Alerts.',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-detectors-preset',
+            label: 'Quality preset',
+            type: 'select',
+            key: 'telegram_detectors_preset',
+            level: 'advanced',
+            options: [
+              { value: 'off', label: 'Off (no defaults)' },
+              { value: 'basic', label: 'Basic (recommended)' },
+              { value: 'full', label: 'Full (+ silence detect)' },
+              { value: 'custom', label: 'Custom' },
+            ],
+          },
+          {
+            id: 'settings-telegram-detectors-no-audio-enabled',
+            label: 'No audio detection',
+            type: 'switch',
+            key: 'telegram_detectors_no_audio_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-detectors-no-audio-timeout',
+            label: 'Timeout (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_no_audio_timeout_sec',
+            level: 'advanced',
+            placeholder: '5',
+            dependsOn: { id: 'settings-telegram-detectors-no-audio-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-stop-video-enabled',
+            label: 'Stop video detection',
+            type: 'switch',
+            key: 'telegram_detectors_stop_video_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-detectors-stop-video-timeout',
+            label: 'Timeout (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_stop_video_timeout_sec',
+            level: 'advanced',
+            placeholder: '5',
+            dependsOn: { id: 'settings-telegram-detectors-stop-video-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-av-desync-enabled',
+            label: 'Detect AV desync',
+            type: 'switch',
+            key: 'telegram_detectors_av_desync_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-detectors-av-desync-threshold',
+            label: 'Threshold (ms)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_av_desync_threshold_ms',
+            level: 'advanced',
+            placeholder: '800',
+            dependsOn: { id: 'settings-telegram-detectors-av-desync-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-av-desync-hold',
+            label: 'Hold (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_av_desync_hold_sec',
+            level: 'advanced',
+            placeholder: '3',
+            dependsOn: { id: 'settings-telegram-detectors-av-desync-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-av-desync-stable',
+            label: 'Stable (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_av_desync_stable_sec',
+            level: 'advanced',
+            placeholder: '10',
+            dependsOn: { id: 'settings-telegram-detectors-av-desync-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-av-desync-resend',
+            label: 'Resend interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_av_desync_resend_interval_sec',
+            level: 'advanced',
+            placeholder: '60',
+            dependsOn: { id: 'settings-telegram-detectors-av-desync-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-silence-enabled',
+            label: 'Silence detect (ffmpeg probe)',
+            type: 'switch',
+            key: 'telegram_detectors_silence_enabled',
+            level: 'advanced',
+          },
+          {
+            type: 'note',
+            text: 'Silence detect запускает ffmpeg‑probe. Включайте только если нужно. Параллельность ограничена silencedetect_max_probes.',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-detectors-silence-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-silence-duration',
+            label: 'Duration (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_silence_duration_sec',
+            level: 'advanced',
+            placeholder: '20',
+            dependsOn: { id: 'settings-telegram-detectors-silence-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-silence-interval',
+            label: 'Interval (sec)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_silence_interval_sec',
+            level: 'advanced',
+            placeholder: '10',
+            dependsOn: { id: 'settings-telegram-detectors-silence-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-detectors-silence-noise',
+            label: 'Noise (dB)',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_silence_noise_db',
+            level: 'advanced',
+            placeholder: '-30',
+            dependsOn: { id: 'settings-telegram-detectors-silence-enabled', value: true },
+          },
+          {
+            id: 'settings-telegram-triggers-now',
+            type: 'button',
+            buttonText: 'Отправить примеры триггеров',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-enabled', value: true },
+          },
         ],
         summary: () => {
           const enabled = readBoolValue('settings-telegram-enabled', false);
@@ -4093,6 +4248,21 @@ function bindGeneralElements() {
     settingsTelegramSummaryWeekdayField: 'settings-telegram-summary-weekday-field',
     settingsTelegramSummaryMonthdayField: 'settings-telegram-summary-monthday-field',
     settingsTelegramSummaryNow: 'settings-telegram-summary-now',
+    settingsTelegramDetectorsPreset: 'settings-telegram-detectors-preset',
+    settingsTelegramDetectorsNoAudioEnabled: 'settings-telegram-detectors-no-audio-enabled',
+    settingsTelegramDetectorsNoAudioTimeout: 'settings-telegram-detectors-no-audio-timeout',
+    settingsTelegramDetectorsStopVideoEnabled: 'settings-telegram-detectors-stop-video-enabled',
+    settingsTelegramDetectorsStopVideoTimeout: 'settings-telegram-detectors-stop-video-timeout',
+    settingsTelegramDetectorsAvDesyncEnabled: 'settings-telegram-detectors-av-desync-enabled',
+    settingsTelegramDetectorsAvDesyncThreshold: 'settings-telegram-detectors-av-desync-threshold',
+    settingsTelegramDetectorsAvDesyncHold: 'settings-telegram-detectors-av-desync-hold',
+    settingsTelegramDetectorsAvDesyncStable: 'settings-telegram-detectors-av-desync-stable',
+    settingsTelegramDetectorsAvDesyncResend: 'settings-telegram-detectors-av-desync-resend',
+    settingsTelegramDetectorsSilenceEnabled: 'settings-telegram-detectors-silence-enabled',
+    settingsTelegramDetectorsSilenceDuration: 'settings-telegram-detectors-silence-duration',
+    settingsTelegramDetectorsSilenceInterval: 'settings-telegram-detectors-silence-interval',
+    settingsTelegramDetectorsSilenceNoise: 'settings-telegram-detectors-silence-noise',
+    settingsTelegramTriggersNow: 'settings-telegram-triggers-now',
     settingsAiEnabled: 'settings-ai-enabled',
     settingsAiApiKey: 'settings-ai-api-key',
     settingsAiApiKeyHint: 'settings-ai-api-key-hint',
@@ -5053,6 +5223,58 @@ function updateTelegramSummaryScheduleFields() {
   if (elements.settingsTelegramSummaryMonthdayField) {
     elements.settingsTelegramSummaryMonthdayField.hidden = schedule !== 'MONTHLY';
   }
+}
+
+function applyTelegramDetectorsPreset(preset) {
+  const mode = String(preset || '').trim().toLowerCase();
+  if (!elements.settingsTelegramDetectorsPreset) return;
+
+  const setToggle = (el, value) => {
+    if (!el) return;
+    el.checked = !!value;
+  };
+  const setValue = (el, value) => {
+    if (!el) return;
+    el.value = String(value);
+  };
+
+  if (mode === 'off') {
+    elements.settingsTelegramDetectorsPreset.value = 'off';
+    setToggle(elements.settingsTelegramDetectorsNoAudioEnabled, false);
+    setToggle(elements.settingsTelegramDetectorsStopVideoEnabled, false);
+    setToggle(elements.settingsTelegramDetectorsAvDesyncEnabled, false);
+    setToggle(elements.settingsTelegramDetectorsSilenceEnabled, false);
+    syncGeneralSettingsUi();
+    return;
+  }
+
+  if (mode !== 'basic' && mode !== 'full') {
+    return;
+  }
+
+  setToggle(elements.settingsTelegramDetectorsNoAudioEnabled, true);
+  setValue(elements.settingsTelegramDetectorsNoAudioTimeout, 5);
+
+  setToggle(elements.settingsTelegramDetectorsStopVideoEnabled, true);
+  setValue(elements.settingsTelegramDetectorsStopVideoTimeout, 5);
+
+  setToggle(elements.settingsTelegramDetectorsAvDesyncEnabled, true);
+  setValue(elements.settingsTelegramDetectorsAvDesyncThreshold, 800);
+  setValue(elements.settingsTelegramDetectorsAvDesyncHold, 3);
+  setValue(elements.settingsTelegramDetectorsAvDesyncStable, 10);
+  setValue(elements.settingsTelegramDetectorsAvDesyncResend, 60);
+
+  const enableSilence = mode === 'full';
+  setToggle(elements.settingsTelegramDetectorsSilenceEnabled, enableSilence);
+  if (enableSilence) {
+    setValue(elements.settingsTelegramDetectorsSilenceDuration, 20);
+    setValue(elements.settingsTelegramDetectorsSilenceInterval, 10);
+    setValue(elements.settingsTelegramDetectorsSilenceNoise, -30);
+  }
+
+  // Переводим в Custom, чтобы пользователь видел выставленные значения.
+  elements.settingsTelegramDetectorsPreset.value = 'custom';
+  syncGeneralSettingsUi();
 }
 
 function updateStreamGroupOptions() {
@@ -22869,6 +23091,52 @@ function applySettingsToUI() {
   if (elements.settingsTelegramSummaryCharts) {
     elements.settingsTelegramSummaryCharts.checked = getSettingBool('telegram_summary_include_charts', true);
   }
+  if (elements.settingsTelegramDetectorsPreset) {
+    setSelectValue(
+      elements.settingsTelegramDetectorsPreset,
+      getSettingString('telegram_detectors_preset', 'off'),
+      'off'
+    );
+  }
+  if (elements.settingsTelegramDetectorsNoAudioEnabled) {
+    elements.settingsTelegramDetectorsNoAudioEnabled.checked = getSettingBool('telegram_detectors_no_audio_enabled', false);
+  }
+  if (elements.settingsTelegramDetectorsNoAudioTimeout) {
+    elements.settingsTelegramDetectorsNoAudioTimeout.value = getSettingNumber('telegram_detectors_no_audio_timeout_sec', 5);
+  }
+  if (elements.settingsTelegramDetectorsStopVideoEnabled) {
+    elements.settingsTelegramDetectorsStopVideoEnabled.checked = getSettingBool('telegram_detectors_stop_video_enabled', false);
+  }
+  if (elements.settingsTelegramDetectorsStopVideoTimeout) {
+    elements.settingsTelegramDetectorsStopVideoTimeout.value = getSettingNumber('telegram_detectors_stop_video_timeout_sec', 5);
+  }
+  if (elements.settingsTelegramDetectorsAvDesyncEnabled) {
+    elements.settingsTelegramDetectorsAvDesyncEnabled.checked = getSettingBool('telegram_detectors_av_desync_enabled', false);
+  }
+  if (elements.settingsTelegramDetectorsAvDesyncThreshold) {
+    elements.settingsTelegramDetectorsAvDesyncThreshold.value = getSettingNumber('telegram_detectors_av_desync_threshold_ms', 800);
+  }
+  if (elements.settingsTelegramDetectorsAvDesyncHold) {
+    elements.settingsTelegramDetectorsAvDesyncHold.value = getSettingNumber('telegram_detectors_av_desync_hold_sec', 3);
+  }
+  if (elements.settingsTelegramDetectorsAvDesyncStable) {
+    elements.settingsTelegramDetectorsAvDesyncStable.value = getSettingNumber('telegram_detectors_av_desync_stable_sec', 10);
+  }
+  if (elements.settingsTelegramDetectorsAvDesyncResend) {
+    elements.settingsTelegramDetectorsAvDesyncResend.value = getSettingNumber('telegram_detectors_av_desync_resend_interval_sec', 60);
+  }
+  if (elements.settingsTelegramDetectorsSilenceEnabled) {
+    elements.settingsTelegramDetectorsSilenceEnabled.checked = getSettingBool('telegram_detectors_silence_enabled', false);
+  }
+  if (elements.settingsTelegramDetectorsSilenceDuration) {
+    elements.settingsTelegramDetectorsSilenceDuration.value = getSettingNumber('telegram_detectors_silence_duration_sec', 20);
+  }
+  if (elements.settingsTelegramDetectorsSilenceInterval) {
+    elements.settingsTelegramDetectorsSilenceInterval.value = getSettingNumber('telegram_detectors_silence_interval_sec', 10);
+  }
+  if (elements.settingsTelegramDetectorsSilenceNoise) {
+    elements.settingsTelegramDetectorsSilenceNoise.value = getSettingNumber('telegram_detectors_silence_noise_db', -30);
+  }
   if (elements.settingsAiEnabled) {
     elements.settingsAiEnabled.checked = getSettingBool('ai_enabled', false);
   }
@@ -23568,6 +23836,82 @@ function collectGeneralSettings() {
   const telegramSummaryWeekday = toNumber(elements.settingsTelegramSummaryWeekday && elements.settingsTelegramSummaryWeekday.value);
   const telegramSummaryMonthday = toNumber(elements.settingsTelegramSummaryMonthday && elements.settingsTelegramSummaryMonthday.value);
   const telegramSummaryCharts = elements.settingsTelegramSummaryCharts && elements.settingsTelegramSummaryCharts.checked;
+  const telegramDetectorsPreset = elements.settingsTelegramDetectorsPreset
+    ? String(elements.settingsTelegramDetectorsPreset.value || 'off').trim().toLowerCase()
+    : 'off';
+  if (!['off', 'basic', 'full', 'custom'].includes(telegramDetectorsPreset)) {
+    throw new Error('Quality preset must be off/basic/full/custom');
+  }
+  const tgDetNoAudioEnabled = elements.settingsTelegramDetectorsNoAudioEnabled
+    && elements.settingsTelegramDetectorsNoAudioEnabled.checked;
+  const tgDetNoAudioTimeout = toNumber(elements.settingsTelegramDetectorsNoAudioTimeout
+    && elements.settingsTelegramDetectorsNoAudioTimeout.value);
+  if (tgDetNoAudioEnabled) {
+    const value = tgDetNoAudioTimeout !== undefined ? tgDetNoAudioTimeout : 5;
+    if (value < 1 || value > 600) {
+      throw new Error('No audio timeout must be 1..600 sec');
+    }
+  }
+  const tgDetStopVideoEnabled = elements.settingsTelegramDetectorsStopVideoEnabled
+    && elements.settingsTelegramDetectorsStopVideoEnabled.checked;
+  const tgDetStopVideoTimeout = toNumber(elements.settingsTelegramDetectorsStopVideoTimeout
+    && elements.settingsTelegramDetectorsStopVideoTimeout.value);
+  if (tgDetStopVideoEnabled) {
+    const value = tgDetStopVideoTimeout !== undefined ? tgDetStopVideoTimeout : 5;
+    if (value < 1 || value > 600) {
+      throw new Error('Stop video timeout must be 1..600 sec');
+    }
+  }
+  const tgDetAvEnabled = elements.settingsTelegramDetectorsAvDesyncEnabled
+    && elements.settingsTelegramDetectorsAvDesyncEnabled.checked;
+  const tgDetAvThreshold = toNumber(elements.settingsTelegramDetectorsAvDesyncThreshold
+    && elements.settingsTelegramDetectorsAvDesyncThreshold.value);
+  const tgDetAvHold = toNumber(elements.settingsTelegramDetectorsAvDesyncHold
+    && elements.settingsTelegramDetectorsAvDesyncHold.value);
+  const tgDetAvStable = toNumber(elements.settingsTelegramDetectorsAvDesyncStable
+    && elements.settingsTelegramDetectorsAvDesyncStable.value);
+  const tgDetAvResend = toNumber(elements.settingsTelegramDetectorsAvDesyncResend
+    && elements.settingsTelegramDetectorsAvDesyncResend.value);
+  if (tgDetAvEnabled) {
+    const thr = tgDetAvThreshold !== undefined ? tgDetAvThreshold : 800;
+    if (thr < 100 || thr > 10000) {
+      throw new Error('AV desync threshold must be 100..10000 ms');
+    }
+    const hold = tgDetAvHold !== undefined ? tgDetAvHold : 3;
+    if (hold < 1 || hold > 600) {
+      throw new Error('AV desync hold must be 1..600 sec');
+    }
+    const stable = tgDetAvStable !== undefined ? tgDetAvStable : 10;
+    if (stable < 1 || stable > 3600) {
+      throw new Error('AV desync stable must be 1..3600 sec');
+    }
+    const resend = tgDetAvResend !== undefined ? tgDetAvResend : 60;
+    if (resend < 1 || resend > 86400) {
+      throw new Error('AV desync resend interval must be 1..86400 sec');
+    }
+  }
+  const tgDetSilenceEnabled = elements.settingsTelegramDetectorsSilenceEnabled
+    && elements.settingsTelegramDetectorsSilenceEnabled.checked;
+  const tgDetSilenceDuration = toNumber(elements.settingsTelegramDetectorsSilenceDuration
+    && elements.settingsTelegramDetectorsSilenceDuration.value);
+  const tgDetSilenceInterval = toNumber(elements.settingsTelegramDetectorsSilenceInterval
+    && elements.settingsTelegramDetectorsSilenceInterval.value);
+  const tgDetSilenceNoise = toNumber(elements.settingsTelegramDetectorsSilenceNoise
+    && elements.settingsTelegramDetectorsSilenceNoise.value);
+  if (tgDetSilenceEnabled) {
+    const dur = tgDetSilenceDuration !== undefined ? tgDetSilenceDuration : 20;
+    if (dur < 1 || dur > 300) {
+      throw new Error('Silence duration must be 1..300 sec');
+    }
+    const interval = tgDetSilenceInterval !== undefined ? tgDetSilenceInterval : 10;
+    if (interval < 1 || interval > 3600) {
+      throw new Error('Silence interval must be 1..3600 sec');
+    }
+    const noise = tgDetSilenceNoise !== undefined ? tgDetSilenceNoise : -30;
+    if (noise < -120 || noise > 0) {
+      throw new Error('Silence noise must be between -120 and 0 dB');
+    }
+  }
   if (telegramEnabled) {
     if (!telegramChatId) {
       throw new Error('Telegram chat ID is required when alerts are enabled');
@@ -23804,6 +24148,20 @@ function collectGeneralSettings() {
   if (telegramSummaryWeekday !== undefined) payload.telegram_summary_weekday = telegramSummaryWeekday;
   if (telegramSummaryMonthday !== undefined) payload.telegram_summary_monthday = telegramSummaryMonthday;
   if (elements.settingsTelegramSummaryCharts) payload.telegram_summary_include_charts = telegramSummaryCharts;
+  if (elements.settingsTelegramDetectorsPreset) payload.telegram_detectors_preset = telegramDetectorsPreset;
+  if (elements.settingsTelegramDetectorsNoAudioEnabled) payload.telegram_detectors_no_audio_enabled = !!tgDetNoAudioEnabled;
+  if (tgDetNoAudioTimeout !== undefined) payload.telegram_detectors_no_audio_timeout_sec = Math.floor(tgDetNoAudioTimeout);
+  if (elements.settingsTelegramDetectorsStopVideoEnabled) payload.telegram_detectors_stop_video_enabled = !!tgDetStopVideoEnabled;
+  if (tgDetStopVideoTimeout !== undefined) payload.telegram_detectors_stop_video_timeout_sec = Math.floor(tgDetStopVideoTimeout);
+  if (elements.settingsTelegramDetectorsAvDesyncEnabled) payload.telegram_detectors_av_desync_enabled = !!tgDetAvEnabled;
+  if (tgDetAvThreshold !== undefined) payload.telegram_detectors_av_desync_threshold_ms = Math.floor(tgDetAvThreshold);
+  if (tgDetAvHold !== undefined) payload.telegram_detectors_av_desync_hold_sec = Math.floor(tgDetAvHold);
+  if (tgDetAvStable !== undefined) payload.telegram_detectors_av_desync_stable_sec = Math.floor(tgDetAvStable);
+  if (tgDetAvResend !== undefined) payload.telegram_detectors_av_desync_resend_interval_sec = Math.floor(tgDetAvResend);
+  if (elements.settingsTelegramDetectorsSilenceEnabled) payload.telegram_detectors_silence_enabled = !!tgDetSilenceEnabled;
+  if (tgDetSilenceDuration !== undefined) payload.telegram_detectors_silence_duration_sec = Math.floor(tgDetSilenceDuration);
+  if (tgDetSilenceInterval !== undefined) payload.telegram_detectors_silence_interval_sec = Math.floor(tgDetSilenceInterval);
+  if (tgDetSilenceNoise !== undefined) payload.telegram_detectors_silence_noise_db = Math.floor(tgDetSilenceNoise);
   if (elements.settingsAiEnabled) payload.ai_enabled = aiEnabled;
   if (elements.settingsAiApiKey) {
     const key = elements.settingsAiApiKey.value.trim();
@@ -28115,6 +28473,19 @@ function bindEvents() {
       }
     });
   }
+  if (elements.settingsTelegramTriggersNow) {
+    elements.settingsTelegramTriggersNow.addEventListener('click', async () => {
+      try {
+        await apiJson('/api/v1/notifications/telegram/triggers', {
+          method: 'POST',
+          body: JSON.stringify({}),
+        });
+        setStatus('Telegram triggers preview queued');
+      } catch (err) {
+        setStatus(err.message || 'Telegram triggers preview failed');
+      }
+    });
+  }
 
   if (elements.settingsTelegramBackupSchedule) {
     elements.settingsTelegramBackupSchedule.addEventListener('change', updateTelegramBackupScheduleFields);
@@ -28127,6 +28498,12 @@ function bindEvents() {
   }
   if (elements.settingsTelegramSummaryEnabled) {
     elements.settingsTelegramSummaryEnabled.addEventListener('change', updateTelegramSummaryScheduleFields);
+  }
+  if (elements.settingsTelegramDetectorsPreset) {
+    elements.settingsTelegramDetectorsPreset.addEventListener('change', () => {
+      const preset = elements.settingsTelegramDetectorsPreset.value || 'off';
+      applyTelegramDetectorsPreset(preset);
+    });
   }
 
   if (elements.settingsStreamShardingApply) {
