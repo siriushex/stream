@@ -1,6 +1,17 @@
 SOURCES="mixaudio.c"
 MODULES="mixaudio"
 
+# MixAudio тянет libavcodec/libavutil (FFmpeg dev libs) и сильно усложняет
+# переносимость готовых бинарников между дистрибутивами.
+# Поэтому модуль выключен по умолчанию.
+#
+# Включение (осознанно):
+#   STREAM_ENABLE_MIXAUDIO=1 ./configure.sh
+if [ "${STREAM_ENABLE_MIXAUDIO:-0}" != "1" ] ; then
+    ERROR="mixaudio disabled by default (set STREAM_ENABLE_MIXAUDIO=1 to enable)"
+    return
+fi
+
 check_cflags()
 {
     $APP_C $APP_CFLAGS $1 -x c -o /dev/null -c $MODULE/mixaudio.c >/dev/null 2>&1

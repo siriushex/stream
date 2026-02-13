@@ -363,7 +363,12 @@ openssl_test_c()
 int main(void) {
     SSL_library_init();
     SSL_load_error_strings();
+    /* OpenSSL 1.0.x does not have TLS_client_method(). */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+    const SSL_METHOD *m = SSLv23_client_method();
+#else
     const SSL_METHOD *m = TLS_client_method();
+#endif
     SSL_CTX *ctx = SSL_CTX_new(m);
     if(!ctx) return 1;
     SSL_CTX_free(ctx);
