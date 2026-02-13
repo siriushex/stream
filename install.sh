@@ -525,13 +525,14 @@ main() {
   #
   # Если очень нужно именно binary — используйте --url/--artifact (явный артефакт).
   if [ "$MODE" = "binary" ] && [ -z "$URL" ] && [ -z "$ARTIFACT" ] && [ "${OS_ID:-}" = "ubuntu" ]; then
-    case "${OS_VER:-}" in
-      16.*|15.*|14.*|13.*|12.*|11.*|10.*)
-        warn "Ubuntu ${OS_VER} is too old for generic prebuilt binaries. Falling back to --mode source."
-        MODE="source"
-        RUNTIME_ONLY=0
-        ;;
-    esac
+    # Сейчас на stream.centv.ru гарантированно есть только один "generic" linux-бинарник.
+    # Он совместим не со всеми версиями Ubuntu. Чтобы установка работала предсказуемо,
+    # для Ubuntu, отличной от 20.04, по умолчанию используем сборку из исходников.
+    if [ "${OS_VER:-}" != "20.04" ]; then
+      warn "No compatible prebuilt binary for Ubuntu ${OS_VER}. Falling back to --mode source."
+      MODE="source"
+      RUNTIME_ONLY=0
+    fi
   fi
 
   ensure_dirs
