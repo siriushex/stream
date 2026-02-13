@@ -1765,11 +1765,14 @@ function on_analyze_spts(channel_data, input_id, data)
             })
         end
 
-        local ok_det = pcall(function()
-            update_input_detectors(channel_data, input_id, input_data, total, now)
-        end)
+        local ok_det, det_err = pcall(update_input_detectors, channel_data, input_id, input_data, total, now)
         if not ok_det then
-            log.warning("[" .. input_data.config.name .. "] detector update failed")
+            -- Не спамим логами: 1 раз в минуту на input.
+            input_data.detector_error_last_ts = input_data.detector_error_last_ts or 0
+            if (now - input_data.detector_error_last_ts) >= 60 then
+                input_data.detector_error_last_ts = now
+                log.warning("[" .. input_data.config.name .. "] detector update failed: " .. tostring(det_err))
+            end
         end
 
         if data.on_air ~= input_data.on_air then
