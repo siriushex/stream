@@ -6856,7 +6856,7 @@ function api.start(opts)
     http_server({
         addr = addr,
         port = port,
-        server_name = "Astra API",
+        server_name = "Stream API",
         route = {
             { "/api/*", api.handle_request },
         },
