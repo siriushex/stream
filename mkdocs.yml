@@ -80,10 +80,40 @@ nav:
   - Руководство:
       - Обзор: manual/index.md
       - Термины: manual/terms.md
+      - Dashboard: manual/dashboard.md
+      - Streams: manual/streams.md
+      - Service и Remap: manual/service-remap.md
+      - Backup / failover: manual/backup.md
+      - MPTS: manual/mpts.md
+      - EPG: manual/epg.md
+      - Adapters: manual/adapters.md
+      - Sessions: manual/sessions.md
+      - Access: manual/access.md
+      - HLSSplitter: manual/hlssplitter.md
+      - Buffer: manual/buffer.md
       - Входы: manual/inputs.md
       - Выходы: manual/outputs.md
       - Форматы адресов: manual/address-format.md
       - Транскодирование: manual/transcoding.md
+      - Audio Fix: manual/audio-fix.md
+      - Quality detectors: manual/quality-detectors.md
+      - Observability: manual/observability.md
+      - Settings:
+          - Обзор: manual/settings.md
+          - General: manual/settings-general.md
+          - Users: manual/settings-users.md
+          - Public URLs: manual/settings-public-urls.md
+          - HLS: manual/settings-hls.md
+          - HTTP Play: manual/settings-http-play.md
+          - HTTP Authentication: manual/settings-http-auth.md
+          - Buffer: manual/settings-buffer.md
+          - SoftCAM / CAS: manual/softcam.md
+          - Servers: manual/settings-servers.md
+          - Groups: manual/settings-groups.md
+          - Import: manual/settings-import.md
+          - Config tools: manual/settings-config.md
+      - CLI и сервис: manual/cli.md
+      - API: manual/api.md
       - Логи: manual/logs.md
       - Безопасность: manual/security.md
       - Бэкап и обновление: manual/backup-update.md
