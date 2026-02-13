@@ -49,6 +49,13 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
+
+/* OpenSSL 1.0.x does not have TLS_client_method(). */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+#define STREAM_TLS_CLIENT_METHOD() SSLv23_client_method()
+#else
+#define STREAM_TLS_CLIENT_METHOD() TLS_client_method()
+#endif
 #endif
 
 #define MSG(_msg)                                       \
@@ -302,7 +309,7 @@ static bool tls_setup_ctx(module_data_t *mod)
     SSL_load_error_strings();
     OpenSSL_add_all_algorithms();
 
-    mod->tls_ctx = SSL_CTX_new(TLS_client_method());
+    mod->tls_ctx = SSL_CTX_new(STREAM_TLS_CLIENT_METHOD());
     if(!mod->tls_ctx)
     {
         tls_log_error(mod, "ssl ctx init failed");

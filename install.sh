@@ -16,6 +16,8 @@ Source/binary download:
   --url URL                Explicit URL to download (source tarball or binary).
   --base-url URL           Base URL for artifacts (default: https://stream.centv.ru).
   --artifact NAME          Artifact filename under base URL.
+  --git-url URL            Git repository URL for --mode source (default: https://github.com/siriushex/astral.git).
+  --git-ref REF            Git ref/branch/tag for --mode source (default: main).
 
 Install paths:
   --bin PATH               Install path for the binary (default: /usr/local/bin/stream).
@@ -49,6 +51,8 @@ URL=""
 # Default artifact host. Can be overridden with --base-url/--url.
 BASE_URL="https://stream.centv.ru"
 ARTIFACT=""
+GIT_URL="https://github.com/siriushex/astral.git"
+GIT_REF="main"
 BIN_PATH="/usr/local/bin/stream"
 DATA_DIR="/etc/stream"
 WORKDIR="/tmp/stream-build"
@@ -102,6 +106,10 @@ while [ "${#:-0}" -gt 0 ]; do
       BASE_URL="${2:-}"; shift 2;;
     --artifact)
       ARTIFACT="${2:-}"; shift 2;;
+    --git-url)
+      GIT_URL="${2:-}"; shift 2;;
+    --git-ref)
+      GIT_REF="${2:-}"; shift 2;;
     --bin)
       BIN_PATH="${2:-}"; shift 2;;
     --data-dir)
@@ -219,6 +227,8 @@ install_runtime_deps_debian() {
     run apt-get install -y --no-install-recommends libssl3 || true
   elif apt-cache show libssl1.1 >/dev/null 2>&1; then
     run apt-get install -y --no-install-recommends libssl1.1 || true
+  elif apt-cache show libssl1.0.0 >/dev/null 2>&1; then
+    run apt-get install -y --no-install-recommends libssl1.0.0 || true
   fi
 }
 
@@ -292,21 +302,30 @@ fetch_artifact() {
 }
 
 build_from_source() {
-  local url
-  url=$(resolve_url)
-  log "Downloading sources: $url"
-
   run rm -rf "$WORKDIR"
   run mkdir -p "$WORKDIR"
-  local archive="$WORKDIR/stream-src.tar.gz"
-  fetch_artifact "$url" "$archive"
+  local src_root=""
 
-  run tar -xf "$archive" -C "$WORKDIR"
+  if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
+    local url
+    url=$(resolve_url)
+    log "Downloading sources: $url"
 
-  local src_root
-  src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
-  if [ -z "$src_root" ]; then
-    die "Could not find configure.sh in extracted sources. Provide --url explicitly."
+    local archive="$WORKDIR/stream-src.tar.gz"
+    fetch_artifact "$url" "$archive"
+
+    run tar -xf "$archive" -C "$WORKDIR"
+    src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+    if [ -z "$src_root" ]; then
+      die "Could not find configure.sh in extracted sources. Provide --url explicitly."
+    fi
+  else
+    log "Cloning sources: $GIT_URL (ref: $GIT_REF)"
+    run git -C "$WORKDIR" clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src
+    src_root="$WORKDIR/src"
+    if [ ! -f "$src_root/configure.sh" ]; then
+      die "Could not find configure.sh in cloned sources. Try --git-ref or --url."
+    fi
   fi
 
   log "Building from: $src_root"
@@ -326,6 +345,36 @@ build_from_source() {
   run rm -rf "$WORKDIR"
 }
 
+check_runtime_binary_usable() {
+  # Проверяем, что бинарник можно запустить в этой системе:
+  # - нет missing .so
+  # - нет ошибок вида "version `GLIBC_2.xx' not found"
+  # Возвращает 0 если ок. Если нет — возвращает 1 и печатает причину в stdout.
+  local f="$1"
+  if ! command -v ldd >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local out
+  if ! out="$(ldd "$f" 2>&1)"; then
+    # Обычно сюда попадают несовместимости glibc/loader.
+    printf '%s' "$out"
+    return 1
+  fi
+  if echo "$out" | grep -qi "not a dynamic executable"; then
+    return 0
+  fi
+
+  local missing
+  missing="$(echo "$out" | awk '/not found/{print $1}' | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ -n "$missing" ]; then
+    printf 'missing libs: %s' "$missing"
+    return 1
+  fi
+
+  return 0
+}
+
 install_binary() {
   run mkdir -p "$(dirname "$BIN_PATH")"
 
@@ -341,6 +390,10 @@ install_binary() {
     if ! is_elf_binary "$tmp"; then
       die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
     fi
+    local reason=""
+    if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+      die "Downloaded binary is not usable on this system ($reason). Install required packages or use --mode source."
+    fi
     run install -m 755 "$tmp" "$BIN_PATH"
     STREAM_TMP_BIN=""
     return 0
@@ -355,11 +408,20 @@ install_binary() {
   urls+=("$(resolve_url)")
 
   local url
+  local last_missing=""
+  local last_missing_url=""
   for url in "${urls[@]}"; do
     log "Downloading binary: $url"
     if fetch_artifact "$url" "$tmp"; then
       if ! is_elf_binary "$tmp"; then
         warn "Downloaded file is not an ELF binary, skipping: $url"
+        continue
+      fi
+      local reason=""
+      if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+        last_missing="$reason"
+        last_missing_url="$url"
+        warn "Binary is not usable here, skipping: $url ($reason)"
         continue
       fi
       run install -m 755 "$tmp" "$BIN_PATH"
@@ -369,6 +431,9 @@ install_binary() {
     warn "Download failed: $url"
   done
 
+  if [ -n "$last_missing" ]; then
+    die "Downloaded binaries are unusable due to missing runtime libraries: $last_missing (last tried: $last_missing_url). Install required packages or use --mode source."
+  fi
   die "Failed to download prebuilt binary. Try --mode source, or provide --url/--artifact explicitly."
 }
 
@@ -452,6 +517,21 @@ main() {
 
   if [ "$RUNTIME_ONLY" -eq 1 ] && [ "$MODE" != "binary" ]; then
     die "--runtime-only requires --mode binary"
+  fi
+
+  # Ubuntu 16.04 и старше часто не совместимы с современными prebuilt-бинарниками
+  # (glibc/openssl/прочие зависимости). Чтобы установка была "из коробки" рабочей,
+  # по умолчанию падаем обратно на сборку из исходников.
+  #
+  # Если очень нужно именно binary — используйте --url/--artifact (явный артефакт).
+  if [ "$MODE" = "binary" ] && [ -z "$URL" ] && [ -z "$ARTIFACT" ] && [ "${OS_ID:-}" = "ubuntu" ]; then
+    case "${OS_VER:-}" in
+      16.*|15.*|14.*|13.*|12.*|11.*|10.*)
+        warn "Ubuntu ${OS_VER} is too old for generic prebuilt binaries. Falling back to --mode source."
+        MODE="source"
+        RUNTIME_ONLY=0
+        ;;
+    esac
   fi
 
   ensure_dirs
