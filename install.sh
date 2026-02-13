@@ -422,6 +422,10 @@ install_binary() {
   if ! fetch_artifact "$url" "$tmp"; then
     die "Failed to download prebuilt binary: $url. Try --mode source, or provide --url/--artifact explicitly."
   fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] would install binary to: $BIN_PATH"
+    return 0
+  fi
   if ! is_elf_binary "$tmp"; then
     die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
   fi
