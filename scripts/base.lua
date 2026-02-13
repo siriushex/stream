@@ -2319,6 +2319,21 @@ init_input_module.http = function(conf)
 	        instance.last_origin_reset_ts = nil
 
 		        local sync = conf.sync
+		        -- Совместимость с конфигами Astra: некоторые источники используют #buffer_time=10
+		        -- (ожидают более "толстый" синхронизирующий буфер). В http_request опция `sync`
+		        -- принимает число (MB буфера) или boolean. Если sync не задан, интерпретируем
+		        -- buffer_time как размер sync-буфера в MB.
+		        if sync == nil and conf.buffer_time ~= nil then
+		            local bt = tonumber(conf.buffer_time)
+		            if bt and bt > 0 then
+		                sync = math.floor(bt)
+		            else
+		                sync = 1
+		            end
+		            if sync < 1 then sync = 1 end
+		            -- защитный предел, чтобы случайное большое значение не раздувало память
+		            if sync > 256 then sync = 256 end
+		        end
 		        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
 		            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
 	            -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
@@ -2520,12 +2535,49 @@ init_input_module.http = function(conf)
                 end
 
                 if response.code == 301 or response.code == 302 then
-                    local o = parse_url(response.headers["location"])
+                    local loc = response.headers and response.headers["location"] or nil
+                    if type(loc) ~= "string" or loc == "" then
+                        instance.on_error("HTTP Error: Redirect without Location")
+                        schedule_retry("redirect_no_location")
+                        return
+                    end
+
+                    -- Совместимость: многие панели/скрипты отдают относительный Location ("/path" или "file.ts").
+                    -- parse_url ожидает абсолютный URL (scheme://...), поэтому обрабатываем относительные ссылки отдельно.
+                    local resolved = loc
+                    if not resolved:match("://") then
+                        if resolved:sub(1, 2) == "//" then
+                            local scheme = (instance.http_conf.https or instance.http_conf.ssl) and "https:" or "http:"
+                            resolved = scheme .. resolved
+                        elseif resolved:sub(1, 1) == "/" then
+                            -- абсолютный путь на том же хосте
+                            instance.http_conf.path = resolved
+                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
+                                .. ":" .. tostring(instance.http_conf.port) .. resolved)
+                            instance.start_request()
+                            return
+                        else
+                            -- относительный путь относительно текущей директории
+                            local base_dir = tostring(instance.http_conf.path or "/"):match("(.*/)")
+                            if not base_dir then base_dir = "/" end
+                            if base_dir:sub(-1) ~= "/" then base_dir = base_dir .. "/" end
+                            instance.http_conf.path = base_dir .. resolved
+                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
+                                .. ":" .. tostring(instance.http_conf.port) .. instance.http_conf.path)
+                            instance.start_request()
+                            return
+                        end
+                    end
+
+                    local o = parse_url(resolved)
                     if o then
                         instance.http_conf.host = o.host
                         instance.http_conf.port = o.port
                         instance.http_conf.path = o.path
-                        log.info("[" .. conf.name .. "] Redirect to http://" .. o.host .. ":" .. o.port .. o.path)
+                        -- Если редирект уводит на https, нужно переключить режим http_request.
+                        instance.http_conf.https = (o.format == "https") or nil
+                        instance.http_conf.ssl = (o.format == "https") or nil
+                        log.info("[" .. conf.name .. "] Redirect to " .. o.format .. "://" .. o.host .. ":" .. o.port .. o.path)
                         instance.start_request()
                     else
                         instance.on_error("HTTP Error: Redirect failed")
