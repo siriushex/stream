@@ -25,6 +25,53 @@
 }
 
 /* -----------------------------
+ * Sidebar navigation (desktop)
+ * ----------------------------- */
+
+@media screen and (min-width: 60em) {
+  /* Чуть “собираем” и визуально группируем левое меню,
+   * чтобы разделы не сливались в один длинный список. */
+
+  .md-sidebar--primary .md-nav--primary > .md-nav__list {
+    padding: 0.2rem 0.35rem 0.6rem;
+  }
+
+  /* Обычные пункты (например “Главная”) */
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item > a.md-nav__link {
+    padding: 0.15rem 0.55rem;
+    border-radius: 0.35rem;
+  }
+
+  /* Заголовки секций (например “Быстрый старт”, “Руководство”) */
+  .md-sidebar--primary .md-nav__item--section > label.md-nav__link {
+    margin-top: 0.75rem;
+    padding: 0.42rem 0.55rem;
+    border-radius: 0.55rem;
+    font-weight: 700;
+    border: 1px solid color-mix(in srgb, var(--md-primary-fg-color) 18%, transparent);
+    background: color-mix(in srgb, var(--md-primary-fg-color) 10%, transparent);
+  }
+
+  /* Разделители между секциями */
+  .md-sidebar--primary .md-nav--primary > .md-nav__list > .md-nav__item--section {
+    padding-bottom: 0.7rem;
+    margin-bottom: 0.65rem;
+    border-bottom: 1px solid color-mix(in srgb, var(--md-default-fg-color) 10%, transparent);
+  }
+
+  /* Вложенные пункты внутри секций делаем компактнее и читаемее */
+  .md-sidebar--primary .md-nav[data-md-level="1"] .md-nav__link {
+    margin-top: 0.4em; /* было 0.625em в теме */
+    padding: 0.12rem 0.55rem;
+    border-radius: 0.35rem;
+  }
+
+  .md-sidebar--primary .md-nav[data-md-level="1"] .md-nav__link:hover {
+    background: color-mix(in srgb, var(--md-default-fg-color) 7%, transparent);
+  }
+}
+
+/* -----------------------------
  * Landing page (index)
  * ----------------------------- */
 
