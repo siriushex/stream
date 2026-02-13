@@ -11,7 +11,7 @@ hide:
     <div class="sh-hero-copy">
       <h1 class="sh-title">Stream Hub</h1>
       <p class="sh-lead">
-        Веб‑панель для потоков: подключили вход, включили выход, проверили что “играет”.
+        Панель для потоков. Вставили вход. Включили выход. Проверили в плеере.
       </p>
       <div class="sh-cta">
         <a class="md-button md-button--primary" href="quick-start/">Быстрый старт</a>
@@ -19,9 +19,9 @@ hide:
         <a class="md-button" href="https://stream.centv.ru/stream">Скачать</a>
       </div>
       <div class="sh-hero-badges">
-        <span class="sh-badge">UI + API</span>
+        <span class="sh-badge">Web UI + API</span>
         <span class="sh-badge">UDP / HTTP‑TS / HLS</span>
-        <span class="sh-badge">Транскод: опционально</span>
+        <span class="sh-badge">Транскодирование: по желанию</span>
       </div>
     </div>
     <div class="sh-hero-art" aria-hidden="true">
@@ -91,6 +91,14 @@ curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode source
 ```bash
 curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
 ```
+
+<div class="sh-muted" markdown="1">
+Если `curl` ругается на сертификат, используйте HTTP для запуска установщика:
+
+```bash
+curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash
+```
+</div>
   </div>
 
   <div class="sh-card" markdown="1">
