@@ -4379,6 +4379,13 @@ local function telegram_summary(server, client)
     json_response(server, client, 200, { status = "queued" })
 end
 
+local function telegram_status(server, client)
+    if not telegram or not telegram.status then
+        return error_response(server, client, 400, "telegram notifier unavailable")
+    end
+    return json_response(server, client, 200, telegram.status())
+end
+
 local function telegram_triggers(server, client)
     if not telegram or not telegram.send_triggers_preview then
         return error_response(server, client, 400, "telegram notifier unavailable")
@@ -6808,6 +6815,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/summary" and method == "POST" then
         return telegram_summary(server, client)
+    end
+    if path == "/api/v1/notifications/telegram/status" and method == "GET" then
+        return telegram_status(server, client)
     end
     if path == "/api/v1/notifications/telegram/triggers" and method == "POST" then
         return telegram_triggers(server, client)

@@ -38,6 +38,11 @@ telegram = {
     timer = nil,
     curl_available = nil,
     last_error_ts = 0,
+    stats = {
+        last_send_ts = 0,
+        last_send_ok = nil,
+        last_send_error = "",
+    },
     backup_next_ts = nil,
     summary_next_ts = nil,
 }
@@ -1109,6 +1114,9 @@ function telegram.tick()
 
         local exit_code = status.exit_code or 0
         if exit_code == 0 then
+            telegram.stats.last_send_ts = now
+            telegram.stats.last_send_ok = true
+            telegram.stats.last_send_error = ""
             return
         end
 
@@ -1128,6 +1136,9 @@ function telegram.tick()
             reason = shorten_text(reason, 120) or "telegram send failed"
             log.warning("[telegram] send failed: " .. reason)
         end
+        telegram.stats.last_send_ts = now
+        telegram.stats.last_send_ok = false
+        telegram.stats.last_send_error = shorten_text(stderr or stdout or "send failed", 120) or "send failed"
         return
     end
 
@@ -1152,6 +1163,27 @@ function telegram.tick()
         proc = proc,
         item = item,
         started = now,
+    }
+end
+
+function telegram.status()
+    local cfg = telegram.config or {}
+    local inflight = nil
+    if telegram.inflight then
+        inflight = {
+            started = telegram.inflight.started,
+        }
+    end
+    return {
+        enabled = cfg.alerts_enabled == true,
+        available = cfg.available == true,
+        level = cfg.level or "OFF",
+        queue_len = #telegram.queue,
+        inflight = inflight,
+        last_send_ts = telegram.stats and telegram.stats.last_send_ts or 0,
+        last_send_ok = telegram.stats and telegram.stats.last_send_ok or nil,
+        last_send_error = telegram.stats and telegram.stats.last_send_error or "",
+        last_error_ts = telegram.last_error_ts or 0,
     }
 end
 
