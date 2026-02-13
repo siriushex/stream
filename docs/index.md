@@ -11,7 +11,7 @@ hide:
     <div class="sh-hero-copy">
       <h1 class="sh-title">Stream Hub</h1>
       <p class="sh-lead">
-        Панель для потоков. Вставили вход. Включили выход. Проверили в плеере.
+        Центр управления стримами: конфигурация, запуск, диагностика, API-доступ.
       </p>
       <div class="sh-cta">
         <a class="md-button md-button--primary" href="quick-start/">Быстрый старт</a>
