@@ -64,6 +64,14 @@ log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+STREAM_TMP_BIN=""
+cleanup_tmp() {
+  if [ -n "${STREAM_TMP_BIN:-}" ] && [ -f "${STREAM_TMP_BIN:-}" ]; then
+    rm -f "$STREAM_TMP_BIN" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_tmp EXIT
+
 is_elf_binary() {
   # Если вместо бинарника скачался HTML (например, index.html), не устанавливаем.
   # ELF magic: 0x7f 'E' 'L' 'F' -> 7f454c46.
@@ -206,7 +214,12 @@ install_runtime_deps_debian() {
   # Runtime libraries for dynamically linked builds.
   run apt-get install -y --no-install-recommends libsqlite3-0 libpq5 libdvbcsa1 || true
   # OpenSSL runtime package name depends on Ubuntu/Debian version.
-  run apt-get install -y --no-install-recommends libssl3 || run apt-get install -y --no-install-recommends libssl1.1 || true
+  # Не пытаемся ставить несуществующие пакеты, чтобы не засорять вывод ошибками apt.
+  if apt-cache show libssl3 >/dev/null 2>&1; then
+    run apt-get install -y --no-install-recommends libssl3 || true
+  elif apt-cache show libssl1.1 >/dev/null 2>&1; then
+    run apt-get install -y --no-install-recommends libssl1.1 || true
+  fi
 }
 
 enable_epel_rhel() {
@@ -316,10 +329,8 @@ build_from_source() {
 install_binary() {
   run mkdir -p "$(dirname "$BIN_PATH")"
 
-  local tmp
-  tmp="$(mktemp -t stream-bin.XXXXXX)"
-  # shellcheck disable=SC2064
-  trap 'rm -f "$tmp" >/dev/null 2>&1 || true' EXIT
+  STREAM_TMP_BIN="$(mktemp -t stream-bin.XXXXXX)"
+  local tmp="$STREAM_TMP_BIN"
 
   # If user provided an explicit URL or artifact name, use it as-is.
   if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
@@ -331,6 +342,7 @@ install_binary() {
       die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
     fi
     run install -m 755 "$tmp" "$BIN_PATH"
+    STREAM_TMP_BIN=""
     return 0
   fi
 
@@ -351,6 +363,7 @@ install_binary() {
         continue
       fi
       run install -m 755 "$tmp" "$BIN_PATH"
+      STREAM_TMP_BIN=""
       return 0
     fi
     warn "Download failed: $url"
