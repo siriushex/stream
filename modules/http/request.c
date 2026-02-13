@@ -1088,18 +1088,18 @@ static void on_read(void *arg)
                 on_close(mod);
                 return;
             }
-            if(!parse_matches_valid(m, 3, eoh - skip))
-            {
-                call_error(mod, "invalid response header ranges");
-                on_close(mod);
-                return;
-            }
 
             if(m[1].eo == 0)
             { /* empty line */
                 skip += m[0].eo;
                 mod->status = 2;
                 break;
+            }
+            if(!parse_matches_valid(m, 3, eoh - skip))
+            {
+                call_error(mod, "invalid response header ranges");
+                on_close(mod);
+                return;
             }
 
             lua_string_to_lower(&mod->buffer[skip], m[1].eo);
