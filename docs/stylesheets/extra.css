@@ -195,6 +195,17 @@
   .sh-hero-wires-svg {
     animation: sh-wires 14s ease-in-out infinite;
   }
+  .sh-hero-wires path {
+    stroke-dasharray: 6 18;
+    animation: sh-flow 3.6s linear infinite;
+  }
+  .sh-hero-hub {
+    animation: sh-hub 3.2s ease-in-out infinite;
+  }
+  .sh-hero-nodes circle {
+    transform-origin: center;
+    animation: sh-node 2.6s ease-in-out infinite;
+  }
 }
 
 @keyframes sh-float {
@@ -210,6 +221,21 @@
 @keyframes sh-wires {
   0%, 100% { transform: translateY(0); opacity: 0.85; }
   50% { transform: translateY(-6px); opacity: 0.95; }
+}
+
+@keyframes sh-flow {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -96; }
+}
+
+@keyframes sh-hub {
+  0%, 100% { transform: scale(1); opacity: 0.60; }
+  50% { transform: scale(1.03); opacity: 0.78; }
+}
+
+@keyframes sh-node {
+  0%, 100% { transform: scale(1); opacity: 0.55; }
+  50% { transform: scale(1.15); opacity: 0.82; }
 }
 
 .sh-section {

@@ -35,7 +35,7 @@ hide:
           </filter>
         </defs>
 
-        <g fill="none" stroke="url(#shWireG)" stroke-opacity="0.30" stroke-width="3" stroke-linecap="round">
+        <g class="sh-hero-wires" fill="none" stroke="url(#shWireG)" stroke-opacity="0.30" stroke-width="3" stroke-linecap="round">
           <path d="M150 150 C260 118, 270 186, 336 210" />
           <path d="M150 240 C252 214, 270 270, 336 286" />
           <path d="M150 330 C252 306, 276 364, 336 376" />
@@ -43,11 +43,11 @@ hide:
           <path d="M384 240 C472 270, 526 290, 610 302" />
         </g>
 
-        <g filter="url(#shWireBlur)" opacity="0.65">
+        <g class="sh-hero-hub" filter="url(#shWireBlur)" opacity="0.65">
           <circle cx="360" cy="240" r="54" fill="url(#shWireG)" fill-opacity="0.18"/>
         </g>
 
-        <g fill="url(#shWireG)" opacity="0.68">
+        <g class="sh-hero-nodes" fill="url(#shWireG)" opacity="0.68">
           <circle cx="150" cy="150" r="6"/>
           <circle cx="150" cy="240" r="6"/>
           <circle cx="150" cy="330" r="6"/>
