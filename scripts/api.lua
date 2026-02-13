@@ -4246,8 +4246,17 @@ local function set_settings(server, client, request)
     apply_config_change(server, client, request, {
         comment = "settings update",
         apply = function()
+            local reset_detector_defaults = false
             for k, v in pairs(body) do
+                if type(k) == "string" then
+                    if k == "telegram_enabled" or k:match("^telegram_detectors_") then
+                        reset_detector_defaults = true
+                    end
+                end
                 config.set_setting(k, v)
+            end
+            if reset_detector_defaults and type(stream_reset_global_detector_defaults_cache) == "function" then
+                stream_reset_global_detector_defaults_cache()
             end
             if softcam_apply and type(apply_softcam_settings) == "function" and body.softcam ~= nil then
                 apply_softcam_settings()
@@ -4364,6 +4373,17 @@ local function telegram_summary(server, client)
         return error_response(server, client, 400, "telegram notifier unavailable")
     end
     local ok, err = telegram.send_summary_now()
+    if not ok then
+        return error_response(server, client, 400, err or "telegram disabled")
+    end
+    json_response(server, client, 200, { status = "queued" })
+end
+
+local function telegram_triggers(server, client)
+    if not telegram or not telegram.send_triggers_preview then
+        return error_response(server, client, 400, "telegram notifier unavailable")
+    end
+    local ok, err = telegram.send_triggers_preview()
     if not ok then
         return error_response(server, client, 400, err or "telegram disabled")
     end
@@ -6788,6 +6808,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/notifications/telegram/summary" and method == "POST" then
         return telegram_summary(server, client)
+    end
+    if path == "/api/v1/notifications/telegram/triggers" and method == "POST" then
+        return telegram_triggers(server, client)
     end
     if path == "/api/v1/ai/logs" and method == "GET" then
         return ai_logs(server, client, request)

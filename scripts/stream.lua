@@ -884,6 +884,115 @@ local INPUT_SILENCE_NOISE_DEFAULT = -30
 local INPUT_SILENCE_PROBE_MAX_DEFAULT = 2
 local INPUT_VIDEO_FREEZE_SEC_DEFAULT = 10
 
+-- Глобальные дефолты детекторов (для Telegram Alerts).
+-- Важно: это только "дефолты", они НЕ перетирают явные опции в input URL.
+-- Чтобы не грузить CPU чтением настроек на каждый callback, кешируем на 1 секунду.
+local telegram_detectors_cache = {
+    ts = 0,
+    conf = nil,
+}
+
+-- Сброс кеша глобальных дефолтов (вызывается при изменении Settings).
+function stream_reset_global_detector_defaults_cache()
+    telegram_detectors_cache.ts = 0
+    telegram_detectors_cache.conf = nil
+end
+
+local function normalize_detectors_preset(value)
+    local text = tostring(value or ""):lower()
+    if text == "" then
+        return "off"
+    end
+    if text == "off" or text == "disabled" or text == "false" or text == "0" then
+        return "off"
+    end
+    if text == "basic" or text == "full" then
+        -- UI применяет preset в поля и переключает на custom.
+        -- На бэке оставляем только off/custom, чтобы логика была простой.
+        return "custom"
+    end
+    if text == "custom" or text == "on" or text == "enabled" or text == "true" or text == "1" then
+        return "custom"
+    end
+    return "off"
+end
+
+local function get_global_input_detector_defaults(now)
+    now = now or os.time()
+    if telegram_detectors_cache.ts == now then
+        return telegram_detectors_cache.conf
+    end
+    telegram_detectors_cache.ts = now
+    telegram_detectors_cache.conf = nil
+
+    -- Дефолты применяются только когда включены Telegram Alerts (чтобы не грузить CPU "в холостую").
+    if not setting_bool("telegram_enabled", false) then
+        return nil
+    end
+    local preset = normalize_detectors_preset(setting_string("telegram_detectors_preset", "off"))
+    if preset == "off" then
+        return nil
+    end
+
+    local defaults = {}
+
+    if setting_bool("telegram_detectors_no_audio_enabled", false) then
+        local timeout = tonumber(setting_number("telegram_detectors_no_audio_timeout_sec", INPUT_NO_AUDIO_DEFAULT_SEC))
+            or INPUT_NO_AUDIO_DEFAULT_SEC
+        if timeout < 1 then timeout = INPUT_NO_AUDIO_DEFAULT_SEC end
+        defaults.no_audio_on = timeout
+    end
+
+    if setting_bool("telegram_detectors_stop_video_enabled", false) then
+        local timeout = tonumber(setting_number("telegram_detectors_stop_video_timeout_sec", INPUT_STOP_VIDEO_DEFAULT_SEC))
+            or INPUT_STOP_VIDEO_DEFAULT_SEC
+        if timeout < 1 then timeout = INPUT_STOP_VIDEO_DEFAULT_SEC end
+        defaults.stop_video = true
+        defaults.stop_video_timeout_sec = timeout
+    end
+
+    if setting_bool("telegram_detectors_av_desync_enabled", false) then
+        local threshold = tonumber(setting_number("telegram_detectors_av_desync_threshold_ms", INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT))
+            or INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT
+        if threshold < 1 then threshold = INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT end
+        local hold = tonumber(setting_number("telegram_detectors_av_desync_hold_sec", INPUT_AV_DESYNC_HOLD_SEC_DEFAULT))
+            or INPUT_AV_DESYNC_HOLD_SEC_DEFAULT
+        if hold < 1 then hold = INPUT_AV_DESYNC_HOLD_SEC_DEFAULT end
+        local stable = tonumber(setting_number("telegram_detectors_av_desync_stable_sec", INPUT_AV_DESYNC_STABLE_SEC_DEFAULT))
+            or INPUT_AV_DESYNC_STABLE_SEC_DEFAULT
+        if stable < 1 then stable = INPUT_AV_DESYNC_STABLE_SEC_DEFAULT end
+        local resend = tonumber(setting_number("telegram_detectors_av_desync_resend_interval_sec", INPUT_AV_DESYNC_RESEND_SEC_DEFAULT))
+            or INPUT_AV_DESYNC_RESEND_SEC_DEFAULT
+        if resend < 1 then resend = INPUT_AV_DESYNC_RESEND_SEC_DEFAULT end
+        defaults.detect_av = true
+        defaults.detect_av_threshold_ms = threshold
+        defaults.detect_av_hold_sec = hold
+        defaults.detect_av_stable_sec = stable
+        defaults.detect_av_resend_interval_sec = resend
+    end
+
+    if setting_bool("telegram_detectors_silence_enabled", false) then
+        local duration = tonumber(setting_number("telegram_detectors_silence_duration_sec", INPUT_SILENCE_DURATION_DEFAULT))
+            or INPUT_SILENCE_DURATION_DEFAULT
+        if duration < 1 then duration = INPUT_SILENCE_DURATION_DEFAULT end
+        local interval = tonumber(setting_number("telegram_detectors_silence_interval_sec", INPUT_SILENCE_INTERVAL_DEFAULT))
+            or INPUT_SILENCE_INTERVAL_DEFAULT
+        if interval < 1 then interval = INPUT_SILENCE_INTERVAL_DEFAULT end
+        local noise = tonumber(setting_number("telegram_detectors_silence_noise_db", INPUT_SILENCE_NOISE_DEFAULT))
+            or INPUT_SILENCE_NOISE_DEFAULT
+        defaults.silencedetect = true
+        defaults.silencedetect_duration = duration
+        defaults.silencedetect_interval = interval
+        defaults.silencedetect_noise = noise
+    end
+
+    if next(defaults) == nil then
+        return nil
+    end
+    telegram_detectors_cache.conf = defaults
+    return defaults
+end
+
 local function is_truthy(value)
     if value == true or value == 1 then
         return true
@@ -948,9 +1057,14 @@ local function normalize_input_detectors(conf)
         return nil
     end
 
+    local defaults = get_global_input_detector_defaults()
+
     local detectors = {}
 
     local no_audio = conf.no_audio_on
+    if no_audio == nil and defaults then
+        no_audio = defaults.no_audio_on
+    end
     if no_audio ~= nil then
         local timeout = tonumber(no_audio)
         if is_truthy(no_audio) or timeout == nil then
@@ -965,6 +1079,11 @@ local function normalize_input_detectors(conf)
     end
 
     local stop_video = conf.stop_video
+    local stop_video_timeout = conf.stop_video_timeout_sec
+    if stop_video == nil and defaults then
+        stop_video = defaults.stop_video
+        stop_video_timeout = stop_video_timeout or defaults.stop_video_timeout_sec
+    end
     if stop_video ~= nil then
         local mode = "pts"
         if type(stop_video) == "string" and stop_video:lower() == "freeze" then
@@ -973,7 +1092,7 @@ local function normalize_input_detectors(conf)
             mode = nil
         end
         if mode then
-            local timeout = tonumber(conf.stop_video_timeout_sec) or INPUT_STOP_VIDEO_DEFAULT_SEC
+            local timeout = tonumber(stop_video_timeout) or INPUT_STOP_VIDEO_DEFAULT_SEC
             local freeze_sec = tonumber(conf.stop_video_freeze_sec) or INPUT_VIDEO_FREEZE_SEC_DEFAULT
             detectors.stop_video = {
                 enabled = true,
@@ -985,17 +1104,41 @@ local function normalize_input_detectors(conf)
     end
 
     local detect_av = conf.detect_av
+    if detect_av == nil and defaults then
+        detect_av = defaults.detect_av
+    end
     if detect_av ~= nil and is_truthy(detect_av) then
+        local threshold = conf.detect_av_threshold_ms or conf.av_threshold_ms
+        local hold = conf.detect_av_hold_sec or conf.av_hold_sec
+        local stable = conf.detect_av_stable_sec or conf.av_stable_sec
+        local resend = conf.detect_av_resend_interval_sec or conf.av_resend_interval_sec
+        if defaults then
+            if threshold == nil then threshold = defaults.detect_av_threshold_ms end
+            if hold == nil then hold = defaults.detect_av_hold_sec end
+            if stable == nil then stable = defaults.detect_av_stable_sec end
+            if resend == nil then resend = defaults.detect_av_resend_interval_sec end
+        end
         detectors.av_desync = {
             enabled = true,
-            threshold_ms = tonumber(conf.detect_av_threshold_ms or conf.av_threshold_ms) or INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT,
-            hold_sec = tonumber(conf.detect_av_hold_sec or conf.av_hold_sec) or INPUT_AV_DESYNC_HOLD_SEC_DEFAULT,
-            stable_sec = tonumber(conf.detect_av_stable_sec or conf.av_stable_sec) or INPUT_AV_DESYNC_STABLE_SEC_DEFAULT,
-            resend_interval_sec = tonumber(conf.detect_av_resend_interval_sec or conf.av_resend_interval_sec) or INPUT_AV_DESYNC_RESEND_SEC_DEFAULT,
+            threshold_ms = tonumber(threshold) or INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT,
+            hold_sec = tonumber(hold) or INPUT_AV_DESYNC_HOLD_SEC_DEFAULT,
+            stable_sec = tonumber(stable) or INPUT_AV_DESYNC_STABLE_SEC_DEFAULT,
+            resend_interval_sec = tonumber(resend) or INPUT_AV_DESYNC_RESEND_SEC_DEFAULT,
         }
     end
 
-    local silence = normalize_silencedetect(conf)
+    local silence = nil
+    if conf.silencedetect ~= nil or not defaults or defaults.silencedetect == nil then
+        silence = normalize_silencedetect(conf)
+    else
+        -- Мерджим только нужные поля (без мутирования исходного conf).
+        silence = normalize_silencedetect({
+            silencedetect = defaults.silencedetect,
+            silencedetect_duration = conf.silencedetect_duration or conf.silence_duration or defaults.silencedetect_duration,
+            silencedetect_interval = conf.silencedetect_interval or conf.silence_interval or defaults.silencedetect_interval,
+            silencedetect_noise = conf.silencedetect_noise or conf.silence_noise or defaults.silencedetect_noise,
+        })
+    end
     if silence then
         detectors.silence = silence
     end
@@ -1528,6 +1671,7 @@ local function update_input_detectors(channel_data, input_id, input_data, total,
     local detectors = normalize_input_detectors(input_data.config)
     input_data.detectors_config = detectors
     if not detectors then
+        stop_silence_probe(input_data)
         input_data.health = nil
         return
     end
@@ -1709,6 +1853,9 @@ local function update_input_detectors(channel_data, input_id, input_data, total,
         health.silence_state = det.state or "OK"
         health.silence_since = det.since
         health.silence_noise_db = det.noise_db
+    else
+        -- Если детектор выключен, не держим лишний ffmpeg‑probe.
+        stop_silence_probe(input_data)
     end
 end
 

@@ -1290,6 +1290,100 @@ function telegram.send_summary_now()
     return true
 end
 
+-- Отправляет в Telegram один "превью"‑сообщение с примерами основных триггеров.
+-- Используется для ручной проверки, без лишних запросов/таймеров.
+function telegram.send_triggers_preview()
+    if not telegram.config.available then
+        return false, "telegram disabled"
+    end
+
+    local sample_stream = { stream_id = "demo", meta = { stream_name = "Demo stream" } }
+    local samples = {
+        {
+            code = "STREAM_DOWN",
+            level = "CRITICAL",
+            stream_id = sample_stream.stream_id,
+            meta = {
+                stream_name = sample_stream.meta.stream_name,
+                no_data_timeout_sec = 10,
+                active_input_url = "udp://239.0.0.1:1234",
+            },
+        },
+        {
+            code = "STREAM_UP",
+            level = "INFO",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, bitrate_kbps = 2500 },
+        },
+        {
+            code = "INPUT_SWITCH",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, from_index = 0, to_index = 1 },
+        },
+        {
+            code = "INPUT_DOWN",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, input_index = 0, reason = "timeout" },
+        },
+        {
+            code = "OUTPUT_ERROR",
+            level = "ERROR",
+            stream_id = sample_stream.stream_id,
+            message = "no progress detected",
+            meta = { stream_name = sample_stream.meta.stream_name, output_index = 0 },
+        },
+        -- Quality detectors
+        {
+            code = "NO_AUDIO_DETECTED",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, input_index = 0, timeout_sec = 5, input_url = "udp://239.0.0.1:1234" },
+        },
+        {
+            code = "VIDEO_STOP_DETECTED",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, input_index = 0, timeout_sec = 5, input_url = "udp://239.0.0.1:1234" },
+        },
+        {
+            code = "AV_DESYNC_DETECTED",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, current_ms = 1600, threshold_ms = 800 },
+        },
+        {
+            code = "AUDIO_SILENCE_DETECTED",
+            level = "WARNING",
+            stream_id = sample_stream.stream_id,
+            meta = { stream_name = sample_stream.meta.stream_name, noise_db = -30 },
+        },
+        -- System events
+        { code = "CONFIG_RELOAD_FAILED", level = "CRITICAL", message = "invalid config" },
+        { code = "CONFIG_RELOAD_OK", level = "INFO", message = "config applied" },
+        { code = "AUTH_DENY_BURST", level = "WARNING", message = "login rate limited" },
+        { code = "AUTH_BACKEND_DOWN", level = "ERROR", message = "auth backend down" },
+        { code = "TRANSCODE_STALL", level = "ERROR", stream_id = sample_stream.stream_id, meta = { stream_name = sample_stream.meta.stream_name }, message = "stall" },
+        { code = "TRANSCODE_RESTART", level = "WARNING", stream_id = sample_stream.stream_id, meta = { stream_name = sample_stream.meta.stream_name }, message = "restart" },
+        { code = "TRANSCODE_RESTART_LIMIT", level = "ERROR", stream_id = sample_stream.stream_id, meta = { stream_name = sample_stream.meta.stream_name }, message = "restart limit" },
+    }
+
+    local lines = {}
+    for _, event in ipairs(samples) do
+        local msg = build_message(event)
+        if msg and msg ~= "" then
+            table.insert(lines, msg)
+        end
+    end
+    if #lines == 0 then
+        return false, "no preview messages"
+    end
+
+    local text = "📌 Примеры Telegram Alerts (Stream Hub)\n\n" .. table.concat(lines, "\n\n")
+    return enqueue_text(text, { bypass_throttle = true, bypass_dedupe = true })
+end
+
 telegram._test = {
     normalize_level = normalize_level,
     resolve_severity = resolve_severity,
