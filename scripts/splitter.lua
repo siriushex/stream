@@ -280,7 +280,7 @@ local function start_probe(instance, link, status)
         stream = true,
         timeout = instance.probe_timeout_sec,
         headers = {
-            "User-Agent: Astra",
+            "User-Agent: Stream",
             "Host: " .. output_parsed.host .. ":" .. tostring(output_parsed.port),
             "Connection: close",
         },

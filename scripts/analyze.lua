@@ -1,5 +1,4 @@
--- Astra Analyze
--- https://cesbo.com/astra/
+-- Stream Analyze (legacy)
 --
 -- Copyright (C) 2012-2014, Andrey Dyldin <and@cesbo.com>
 --

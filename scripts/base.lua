@@ -1,4 +1,4 @@
--- Astra Base Script
+-- Stream base script
 -- https://cesbo.com/astra/
 --
 -- Copyright (C) 2014-2015, Andrey Dyldin <and@cesbo.com>
@@ -411,13 +411,13 @@ function parse_url(url)
     if b then
         opts = url:sub(b + 1)
         -- Support legacy/misused option separator "#" inside the fragment.
-        -- Historically Astra uses a single "#k=v&k2=v2" fragment, but configs and
+        -- Historically this project uses a single "#k=v&k2=v2" fragment, but configs and
         -- UI sometimes use "#k=v#k2=v2". Treat extra "#" as "&" separators.
         opts = opts:gsub("#", "&")
         url = url:sub(1, b - 1)
     end
     if not opts and (data.format == "udp" or data.format == "rtp") then
-        -- Historically Astra uses "#k=v" for URL options, but ffmpeg-style UDP URLs often
+        -- Historically this project uses "#k=v" for URL options, but ffmpeg-style UDP URLs often
         -- use "?k=v". Support both to avoid "invalid input format" on common configs.
         local q = url:find("%?")
         if q then
@@ -473,7 +473,7 @@ function parse_url(url)
     end
 
     -- Важно: некоторые IPTV-панели используют путь вида `/play/...` на внешних хостах.
-    -- Поэтому auto-`sync=1` включаем только для "локального" TS fanout (Astra endpoints),
+    -- Поэтому auto-`sync=1` включаем только для "локального" TS fanout (internal endpoints),
     -- иначе можно ухудшить стабильность приёма внешних HTTP-TS источников.
     if (data.format == "http" or data.format == "https") and data.path and data.sync == nil then
         local path_only = data.path:match("^(.-)%?") or data.path
@@ -572,7 +572,7 @@ local NET_RESILIENCE_KEYS = {
             low_speed_limit_bytes_sec = 32768,
             low_speed_time_sec = 4,
             keepalive = true,
-            user_agent = "Astral/1.0",
+            user_agent = "Stream/1.0",
         },
         wan = {
             connect_timeout_ms = 5000,
@@ -586,7 +586,7 @@ local NET_RESILIENCE_KEYS = {
             low_speed_limit_bytes_sec = 16384,
             low_speed_time_sec = 6,
             keepalive = true,
-            user_agent = "Astral/1.0",
+            user_agent = "Stream/1.0",
         },
 	        bad = {
 	            connect_timeout_ms = 8000,
@@ -1421,11 +1421,11 @@ end
 
 local function http_auth_realm()
     if not config or not config.get_setting then
-        return "Astra"
+        return "Stream"
     end
     local value = config.get_setting("http_auth_realm")
     if value == nil or value == "" then
-        return "Astra"
+        return "Stream"
     end
     return tostring(value)
 end
@@ -2185,7 +2185,7 @@ end
 --  888           888   888      888         888      888
 -- o888o         o888o o888o    o888o       o888o    o888o
 
-http_user_agent = "Astra"
+http_user_agent = "Stream"
 http_input_instance_list = {}
 https_direct_instance_list = {}
 
@@ -2319,7 +2319,7 @@ init_input_module.http = function(conf)
 	        instance.last_origin_reset_ts = nil
 
 		        local sync = conf.sync
-		        -- Совместимость с конфигами Astra: некоторые источники используют #buffer_time=10
+		        -- Совместимость со старыми конфигами: некоторые источники используют #buffer_time=10
 		        -- (ожидают более "толстый" синхронизирующий буфер). В http_request опция `sync`
 		        -- принимает число (MB буфера) или boolean. Если sync не задан, интерпретируем
 		        -- buffer_time как размер sync-буфера в MB.

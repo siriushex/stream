@@ -1,4 +1,4 @@
--- Astra config export helper
+-- Stream config export helper
 
 dofile("scripts/base.lua")
 dofile("scripts/config.lua")

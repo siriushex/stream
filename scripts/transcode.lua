@@ -418,7 +418,7 @@ local function extract_play_id_from_input(entry)
     end
     -- Treat only explicit stream refs as refs (stream://id, /play/id, /stream/id, or bare id).
     -- Full http(s) URLs are treated as direct inputs even if they contain "/play/<id>" so that
-    -- external Astra/Astral instances can be used as upstream sources without being rewritten to localhost.
+    -- External instances can be used as upstream sources without being rewritten to localhost.
     local play_id = text:match("^/play/([^?#/]+)") or text:match("^/stream/([^?#/]+)")
     if play_id == "playlist.m3u8" or play_id == "playlist.xspf" then
         play_id = nil
@@ -479,7 +479,7 @@ function transcode.ensure_loop_channel(job, input_id)
 		            play_url = append_play_buffer_fill(play_url, 1)
 		            -- For localhost /play pulls we must disable http_request sync mode, otherwise it buffers a large
 		            -- PCR window before emitting any TS and /input can hang with an empty body.
-		            -- Use Astra URL opts (#k=v) so they don't get sent to /play as HTTP query params.
+		            -- Use URL opts (#k=v) so they don't get sent to /play as HTTP query params.
 		            play_url = tostring(play_url) .. "#sync=0&buffer_size=64"
 		            if type(entry) == "table" then
 		                local loop_http = {}
