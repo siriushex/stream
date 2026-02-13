@@ -34,8 +34,18 @@
 }
 
 .sh-bleed {
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
+  width: 100%;
+  margin-left: 0;
+}
+
+/* На узких экранах у Material sidebar прячется за "бургер".
+ * Тут можно делать full-bleed, чтобы landing был "на весь экран". */
+@media (max-width: 76.24em) {
+  .sh-bleed,
+  .sh-section {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+  }
 }
 
 .sh-hero {
@@ -239,8 +249,8 @@
 }
 
 .sh-section {
-  width: 100vw;
-  margin-left: calc(50% - 50vw);
+  width: 100%;
+  margin-left: 0;
   padding: 32px var(--sh-landing-pad) 40px;
 }
 
