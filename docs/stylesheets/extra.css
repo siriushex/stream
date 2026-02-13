@@ -51,6 +51,13 @@
     display: inline-block !important; /* Material скрывает на desktop */
   }
 
+  /* На главной убираем “двухколоночный” макет (sidebar + content),
+   * чтобы контент реально был на всю ширину. */
+  .sh-home .md-main__inner {
+    display: block;
+    height: auto;
+  }
+
   /* Переводим левый sidebar в режим drawer на desktop */
   [dir=ltr] .sh-home .md-sidebar--primary {
     left: -12.1rem;
@@ -89,6 +96,25 @@
     right: 0;
     scroll-snap-type: none;
     top: 0;
+  }
+
+  /* На desktop в Material overlay (затемнение) включён только для мобильного drawer.
+   * На главной хотим тот же эффект: клик по фону закрывает меню. */
+  .sh-home .md-overlay {
+    background-color: #0000008a;
+    height: 0;
+    opacity: 0;
+    position: fixed;
+    top: 0;
+    transition: width 0ms 0.25s, height 0ms 0.25s, opacity 0.25s;
+    width: 0;
+    z-index: 4;
+  }
+  .sh-home [data-md-toggle=drawer]:checked ~ .md-overlay {
+    height: 100%;
+    opacity: 1;
+    transition: width 0ms, height 0ms, opacity 0.25s;
+    width: 100%;
   }
 
   /* Убираем отступы, которые Material добавляет при видимом sidebar */
