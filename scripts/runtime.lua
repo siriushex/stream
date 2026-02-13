@@ -895,7 +895,8 @@ local function collect_output_status(channel)
                 entry.hls_active = stats.active
             end
         end
-        local audio_fix = output_data and output_data.audio_fix or nil
+        -- Audio Fix теперь stream-level (channel.audio_fix) и влияет на все outputs.
+        local audio_fix = channel and channel.audio_fix or nil
         if audio_fix then
             local cooldown = audio_fix.config and audio_fix.config.restart_cooldown_sec or 0
             local remaining = 0
