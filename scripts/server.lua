@@ -2536,8 +2536,14 @@ function main()
                     buffer_size = math.min(buffer_size, math.floor(transcode_loopback_buf_cap_kb))
                 end
                 local buffer_fill = math.min(buffer_size, math.max(1, math.floor(transcode_loopback_buf_fill_kb)))
+                local upstream = nil
+                if channel_data.transmit and type(channel_data.transmit.stream) == "function" then
+                    upstream = channel_data.transmit:stream()
+                else
+                    upstream = channel_data.tail:stream()
+                end
                 server:send(client, {
-                    upstream = channel_data.tail:stream(),
+                    upstream = upstream,
                     buffer_size = buffer_size,
                     buffer_fill = buffer_fill,
                 }, "video/MP2T")

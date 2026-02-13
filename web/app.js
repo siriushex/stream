@@ -441,6 +441,7 @@ const state = {
   streamIdAuto: false,
   adapterEditing: null,
   outputs: [],
+  streamAudioFix: null, // stream-level audio-fix config (cfg.audio_fix)
   outputEditingIndex: null,
   outputEditingKind: 'legacy',
   outputInlineDraft: null,
@@ -7049,6 +7050,15 @@ function normalizeOutputAudioFix(config) {
   };
 }
 
+function deriveLegacyAudioFixFromOutputs(outputs) {
+  // Backward compatibility: older configs stored audio_fix under UDP outputs.
+  if (!Array.isArray(outputs) || outputs.length === 0) return null;
+  const udpOutputs = outputs.filter((o) => o && typeof o === 'object' && String(o.format || '').toLowerCase() === 'udp');
+  if (!udpOutputs.length) return null;
+  const rep = udpOutputs.find((o) => normalizeOutputAudioFix(o.audio_fix).enabled) || udpOutputs.find((o) => o.audio_fix) || udpOutputs[0];
+  return normalizeOutputAudioFix((rep && rep.audio_fix) || {});
+}
+
 function getOutputAudioFixMeta(output, status) {
   const config = normalizeOutputAudioFix(output && output.audio_fix);
   const targetHex = formatAudioTypeHex(config.target_audio_type);
@@ -10985,12 +10995,6 @@ function renderOutputList() {
     const legacy = item.legacyIndex !== null && item.legacyIndex !== undefined
       ? state.outputs[item.legacyIndex]
       : null;
-    const isUdp = legacy && String(legacy.format || '').toLowerCase() === 'udp';
-    let audioFixMeta = null;
-    if (isUdp) {
-      const status = getEditingOutputStatus(item.legacyIndex);
-      audioFixMeta = getOutputAudioFixMeta(legacy, status);
-    }
 
     const editor = document.createElement('div');
     editor.className = 'list-input output-inline-editor';
@@ -11100,40 +11104,20 @@ function renderOutputList() {
 }
 
 function getStreamAudioFixStats() {
-  let total = 0;
-  let enabled = 0;
-  state.outputs.forEach((output) => {
-    if (!output || typeof output !== 'object') return;
-    if (String(output.format || '').toLowerCase() !== 'udp') return;
-    total += 1;
-    const normalized = normalizeOutputAudioFix(output.audio_fix);
-    if (normalized.enabled) enabled += 1;
-  });
-  return { total, enabled };
+  const config = normalizeOutputAudioFix(state.streamAudioFix || {});
+  return { enabled: config.enabled, config };
 }
 
 function updateStreamAudioFixControls() {
   if (!elements.streamAudioFixControls || !elements.btnStreamAudioFixToggle) return;
   const stats = getStreamAudioFixStats();
-  if (!stats.total) {
-    elements.streamAudioFixControls.classList.add('is-hidden');
-    return;
-  }
-
   elements.streamAudioFixControls.classList.remove('is-hidden');
 
-  let label = 'Audio Fix: OFF';
-  let cls = 'is-off';
-  if (stats.enabled === stats.total) {
-    label = 'Audio Fix: ON';
-    cls = 'is-on';
-  } else if (stats.enabled > 0) {
-    label = 'Audio Fix: MIXED';
-    cls = 'is-mixed';
-  }
-
+  const enabled = !!stats.enabled;
+  const label = enabled ? 'Audio Fix: ON' : 'Audio Fix: OFF';
+  const cls = enabled ? 'is-on' : 'is-off';
   elements.btnStreamAudioFixToggle.textContent = label;
-  elements.btnStreamAudioFixToggle.title = `Toggle Audio Fix for all UDP outputs (${stats.enabled}/${stats.total} enabled)`;
+  elements.btnStreamAudioFixToggle.title = 'Toggle Audio Fix for this stream';
   elements.btnStreamAudioFixToggle.classList.remove('is-on', 'is-off', 'is-mixed');
   elements.btnStreamAudioFixToggle.classList.add(cls);
 
@@ -11143,25 +11127,14 @@ function updateStreamAudioFixControls() {
 }
 
 function toggleStreamAudioFixAll() {
-  const stats = getStreamAudioFixStats();
-  if (!stats.total) return;
-  const nextEnabled = stats.enabled !== stats.total;
-  state.outputs.forEach((output, index) => {
-    if (!output || typeof output !== 'object') return;
-    if (String(output.format || '').toLowerCase() !== 'udp') return;
-    const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
-    state.outputs[index] = { ...output, audio_fix: { ...current, enabled: nextEnabled } };
-  });
-  renderOutputList();
+  const current = normalizeOutputAudioFix(state.streamAudioFix || {});
+  const nextEnabled = !current.enabled;
+  state.streamAudioFix = { ...current, enabled: nextEnabled };
+  updateStreamAudioFixControls();
 }
 
 function getStreamAudioFixRepresentativeConfig() {
-  const udpOutputs = state.outputs.filter((o) => o && typeof o === 'object' && String(o.format || '').toLowerCase() === 'udp');
-  if (!udpOutputs.length) {
-    return normalizeOutputAudioFix({ enabled: false });
-  }
-  const rep = udpOutputs.find((o) => normalizeOutputAudioFix(o.audio_fix).enabled) || udpOutputs[0];
-  return normalizeOutputAudioFix(rep.audio_fix);
+  return normalizeOutputAudioFix(state.streamAudioFix || {});
 }
 
 function closeAudioFixModal() {
@@ -11171,9 +11144,6 @@ function closeAudioFixModal() {
 }
 
 function openAudioFixModal() {
-  const stats = getStreamAudioFixStats();
-  if (!stats.total) return;
-
   const config = getStreamAudioFixRepresentativeConfig();
   if (elements.audioFixEnabled) elements.audioFixEnabled.checked = config.enabled;
   if (elements.audioFixForce) elements.audioFixForce.checked = config.force_on;
@@ -11239,13 +11209,9 @@ function readAudioFixForm() {
 }
 
 function applyAudioFixConfigToAllUdpOutputs(config) {
-  state.outputs.forEach((output, index) => {
-    if (!output || typeof output !== 'object') return;
-    if (String(output.format || '').toLowerCase() !== 'udp') return;
-    const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
-    // Preserve unknown/advanced keys in audio_fix (round-trip safety).
-    state.outputs[index] = { ...output, audio_fix: { ...current, ...config } };
-  });
+  const current = (state.streamAudioFix && typeof state.streamAudioFix === 'object') ? state.streamAudioFix : {};
+  // Preserve unknown/advanced keys in audio_fix (round-trip safety).
+  state.streamAudioFix = { ...current, ...config };
 }
 
 function getEditingOutputStatus(index) {
@@ -17448,6 +17414,8 @@ function openEditor(stream, isNew) {
 
   state.outputs = normalizeOutputs(config.output || [], stream.id || '');
   state.outputInlineDraft = null;
+  // Audio Fix теперь stream-level: cfg.audio_fix. Для совместимости читаем legacy output.audio_fix (UDP) если нужно.
+  state.streamAudioFix = normalizeOutputAudioFix(config.audio_fix || deriveLegacyAudioFixFromOutputs(state.outputs) || {});
   renderOutputList();
   renderTranscodeOutputList();
   updateEditorTranscodeOutputStatus();
@@ -17614,6 +17582,10 @@ function readStreamForm() {
     description: description || undefined,
     mpts: elements.streamMpts.checked || undefined,
   };
+  if (state.streamAudioFix && typeof state.streamAudioFix === 'object') {
+    // Сохраняем audio-fix как stream-level настройку (cfg.audio_fix) независимо от transcoding.
+    config.audio_fix = normalizeOutputAudioFix(state.streamAudioFix);
+  }
   const group = (elements.streamGroup && elements.streamGroup.value || '').trim();
   if (group) {
     config.group = group;
@@ -28826,7 +28798,7 @@ function bindEvents() {
         return;
       }
       applyAudioFixConfigToAllUdpOutputs(parsed.value);
-      renderOutputList();
+      updateStreamAudioFixControls();
       closeAudioFixModal();
     });
   }

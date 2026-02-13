@@ -4468,52 +4468,46 @@ local function is_ffmpeg_url_supported(url)
     return false
 end
 
-	local function build_audio_fix_play_url(channel_data)
-	    if not (channel_data and channel_data.config and channel_data.config.id) then
-	        return nil
-	    end
-	    if not (config and config.get_setting) then
-	        return nil
-	    end
-	    local http_port = tonumber(config.get_setting("http_port"))
-	    local play_port = tonumber(config.get_setting("http_play_port"))
-	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
-	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
-	    local http_play_enabled = http_play_allow or http_play_hls
-	    local port = http_port
-	    -- Only use the separate http_play_port when /play is actually exposed there.
-	    -- When http_play_allow is disabled, /play is served internal-only from the main server.
-	    if http_play_enabled and http_play_allow and play_port and play_port > 0 then
-	        port = play_port
-	    end
-	    if not port or port <= 0 then
-	        return nil
-	    end
-	    local stream_id = tostring(channel_data.config.id)
-	    if stream_id == "" then
-	        return nil
-	    end
-	    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /play (see http_auth_check()).
-	    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. stream_id .. "?internal=1"
-	end
+local function build_audio_fix_input_url(channel_data)
+    if not (channel_data and channel_data.config and channel_data.config.id) then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    -- /input должен быть "сырой" стадией для внутренних ffmpeg потребителей (transcode/audio-fix),
+    -- поэтому всегда используем основной http_port (а не http_play_port).
+    local port = tonumber(config.get_setting("http_port"))
+    if not port or port <= 0 then
+        return nil
+    end
+    local stream_id = tostring(channel_data.config.id)
+    if stream_id == "" then
+        return nil
+    end
+    -- Pass internal=1 so localhost ffmpeg can bypass http auth for /input (см. http_auth_check()).
+    return "http://127.0.0.1:" .. tostring(port) .. "/input/" .. stream_id .. "?internal=1"
+end
 
 local function resolve_audio_fix_input_url(channel_data, audio_fix)
-    local play_url = build_audio_fix_play_url(channel_data)
-    if play_url then
-        -- Loopback buffering is enforced server-side for /play. Keep the ffmpeg input URL stable.
-        return play_url, nil
-    end
     if audio_fix and audio_fix.config and audio_fix.config.input_url and audio_fix.config.input_url ~= "" then
         return strip_url_hash(audio_fix.config.input_url), nil
     end
+
+    local loop_url = build_audio_fix_input_url(channel_data)
+    if loop_url then
+        -- Loopback buffering is enforced server-side for /input. Keep the ffmpeg input URL stable.
+        return loop_url, nil
+    end
+
     local active = get_active_input_source_url(channel_data)
     if active and is_ffmpeg_url_supported(active) then
         return strip_url_hash(active), nil
     end
     if active and active ~= "" then
-        return nil, "play input unavailable; no ffmpeg-compatible input url (active=" .. tostring(active) .. ")"
+        return nil, "input unavailable; no ffmpeg-compatible input url (active=" .. tostring(active) .. ")"
     end
-    return nil, "play input unavailable; active input url is required"
+    return nil, "input unavailable; active input url is required"
 end
 
 local function set_udp_output_passthrough(channel_data, output_id, enabled)
@@ -4538,8 +4532,7 @@ local function release_audio_fix_slot(probe)
     probe.analyze_slot = false
 end
 
-local function stop_audio_fix_probe(output_data)
-    local audio_fix = output_data.audio_fix
+local function stop_audio_fix_probe(audio_fix)
     if not audio_fix or not audio_fix.probe then
         return
     end
@@ -4555,8 +4548,7 @@ local function stop_audio_fix_probe(output_data)
     audio_fix.probe = nil
 end
 
-local function stop_audio_fix_input_probe(output_data)
-    local audio_fix = output_data.audio_fix
+local function stop_audio_fix_input_probe(audio_fix)
     if not audio_fix or not audio_fix.input_probe then
         return
     end
@@ -4568,8 +4560,7 @@ local function stop_audio_fix_input_probe(output_data)
     audio_fix.input_probe = nil
 end
 
-local function stop_audio_fix_drift_probe(output_data)
-    local audio_fix = output_data.audio_fix
+local function stop_audio_fix_drift_probe(audio_fix)
     local probe = audio_fix and audio_fix.drift_probe or nil
     if not probe then
         return
@@ -4587,12 +4578,8 @@ local function stop_audio_fix_drift_probe(output_data)
     audio_fix.drift_probe = nil
 end
 
-local function stop_audio_fix_process(channel_data, output_id, output_data, enable_passthrough)
-    local audio_fix = output_data.audio_fix
+local function stop_audio_fix_process(channel_data, audio_fix)
     if not audio_fix then
-        if enable_passthrough then
-            set_udp_output_passthrough(channel_data, output_id, true)
-        end
         return
     end
     local warm = audio_fix.warm_restart
@@ -4621,14 +4608,8 @@ local function stop_audio_fix_process(channel_data, output_id, output_data, enab
     end
     audio_fix.proc_input_url = nil
     audio_fix.proc_output_url = nil
-    -- Audio-fix may use a local UDP proxy (udp_switch + udp_output) to keep output pacing
-    -- consistent with udp_output settings (sync/cbr/socket_size/etc).
-    audio_fix.proxy_output = nil
     audio_fix.proxy_switch = nil
     audio_fix.proxy_listen_port = nil
-    if enable_passthrough then
-        set_udp_output_passthrough(channel_data, output_id, true)
-    end
 end
 
 local function is_audio_fix_cooldown_active(audio_fix, now)
@@ -4762,10 +4743,41 @@ local function build_audio_fix_ffmpeg_args(bin, input_url, output_url, audio_fix
     return args
 end
 
-local function start_audio_fix_process(channel_data, output_id, output_data, reason, opts)
+local function set_audio_fix_tail_upstream(channel_data, upstream)
+    if not channel_data or not upstream then
+        return
+    end
+    local tail = channel_data.audio_fix_transmit
+    if tail and type(tail.set_upstream) == "function" then
+        pcall(tail.set_upstream, tail, upstream)
+    end
+end
+
+local function get_audio_fix_raw_upstream(channel_data)
+    if channel_data and channel_data.transmit and type(channel_data.transmit.stream) == "function" then
+        return channel_data.transmit:stream()
+    end
+    return nil
+end
+
+local function apply_audio_fix_upstream(channel_data)
+    if not channel_data then
+        return
+    end
+    local audio_fix = channel_data.audio_fix
+    local upstream = nil
+    if audio_fix and audio_fix.proc and audio_fix.proxy_switch and type(audio_fix.proxy_switch.stream) == "function" then
+        upstream = audio_fix.proxy_switch:stream()
+    else
+        upstream = get_audio_fix_raw_upstream(channel_data)
+    end
+    set_audio_fix_tail_upstream(channel_data, upstream)
+end
+
+local function start_audio_fix_process(channel_data, reason, opts)
     opts = opts or {}
-    local audio_fix = output_data.audio_fix
-    if not audio_fix or not audio_fix.config.enabled then
+    local audio_fix = channel_data and channel_data.audio_fix or nil
+    if not audio_fix or not audio_fix.config or audio_fix.config.enabled ~= true then
         return false
     end
     if not process or type(process.spawn) ~= "function" then
@@ -4773,21 +4785,20 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: process module not available")
         return false
     end
+    if not udp_switch then
+        audio_fix.last_error = "udp_switch module not available"
+        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: udp_switch module not available")
+        return false
+    end
+
     local input_url, input_err = resolve_audio_fix_input_url(channel_data, audio_fix)
     if not input_url or input_url == "" then
         audio_fix.last_error = input_err or "active input url is required"
         log.warning("[stream " .. get_stream_label(channel_data) .. "] audio-fix: " .. tostring(audio_fix.last_error))
         return false
     end
-    local dest_url = format_udp_output_url(output_data.config, true)
-    if not dest_url then
-        audio_fix.last_error = "output url is required"
-        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: output url missing")
-        return false
-    end
 
-    stop_audio_fix_process(channel_data, output_id, output_data, false)
-    set_udp_output_passthrough(channel_data, output_id, false)
+    stop_audio_fix_process(channel_data, audio_fix)
 
     local bin = resolve_tool_path("ffmpeg", {
         setting_key = "ffmpeg_path",
@@ -4801,48 +4812,18 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     audio_fix.effective_mode = effective_mode
     audio_fix.silence_active = effective_mode == "silence"
 
-    -- Proxy output through udp_output so output pacing (sync) works the same way as normal udp outputs.
-    if not udp_switch or not udp_output then
-        audio_fix.last_error = "udp modules not available"
-        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: udp modules not available")
-        set_udp_output_passthrough(channel_data, output_id, true)
-        return false
-    end
-
     local proxy_switch = udp_switch({
         addr = "127.0.0.1",
         port = 0,
-        socket_size = output_data.config.socket_size,
     })
     local listen_port = proxy_switch and proxy_switch:port() or nil
     if not listen_port or listen_port <= 0 then
         audio_fix.last_error = "udp_switch init failed"
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: udp_switch init failed")
-        set_udp_output_passthrough(channel_data, output_id, true)
         return false
     end
 
-    local localaddr = resolve_output_localaddr(output_data.config) or output_data.config.localaddr
-    local sync = output_data.config.sync
-    if sync == nil then
-        -- Match udp_output defaults: do not enable PCR-based pacing unless user asked for it.
-        -- Some sources (or ffmpeg remux) may not provide stable PCR, which would stall sync mode.
-        sync = 0
-    end
-    local proxy_output = udp_output({
-        upstream = proxy_switch:stream(),
-        addr = output_data.config.addr,
-        port = output_data.config.port,
-        ttl = output_data.config.ttl,
-        localaddr = localaddr,
-        socket_size = output_data.config.socket_size,
-        rtp = (output_data.config.format == "rtp"),
-        sync = sync,
-        cbr = output_data.config.cbr,
-    })
-
     audio_fix.proxy_switch = proxy_switch
-    audio_fix.proxy_output = proxy_output
     audio_fix.proxy_listen_port = listen_port
 
     local output_url = "udp://127.0.0.1:" .. tostring(listen_port) .. "?pkt_size=1316"
@@ -4852,8 +4833,8 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     if not ok or not proc then
         audio_fix.last_error = "ffmpeg spawn failed"
         log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg spawn failed")
-        stop_audio_fix_process(channel_data, output_id, output_data, true)
-        set_udp_output_passthrough(channel_data, output_id, true)
+        stop_audio_fix_process(channel_data, audio_fix)
+        apply_audio_fix_upstream(channel_data)
         return false
     end
 
@@ -4869,14 +4850,15 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     audio_fix.last_restart_ts = now
     audio_fix.mismatch_since = nil
     audio_fix.last_restart_reason = reason or "mismatch"
-    log.info("[stream " .. get_stream_label(channel_data) .. "] audio-fix: start output #" ..
-        tostring(output_id) .. " (" .. tostring(reason or "mismatch") .. ")")
+
+    apply_audio_fix_upstream(channel_data)
+    log.info("[stream " .. get_stream_label(channel_data) .. "] audio-fix: start (" .. tostring(reason or "mismatch") .. ")")
     return true
 end
 
-local function restart_audio_fix_process(channel_data, output_id, output_data, reason, opts)
+local function restart_audio_fix_process(channel_data, reason, opts)
     opts = opts or {}
-    local audio_fix = output_data.audio_fix
+    local audio_fix = channel_data and channel_data.audio_fix or nil
     if not audio_fix then
         return false
     end
@@ -4885,16 +4867,16 @@ local function restart_audio_fix_process(channel_data, output_id, output_data, r
         audio_fix.state = "COOLDOWN"
         return false
     end
-    stop_audio_fix_process(channel_data, output_id, output_data, false)
-    if start_audio_fix_process(channel_data, output_id, output_data, reason or "restart", opts) then
+    stop_audio_fix_process(channel_data, audio_fix)
+    apply_audio_fix_upstream(channel_data)
+    if start_audio_fix_process(channel_data, reason or "restart", opts) then
         return true
     end
-    set_udp_output_passthrough(channel_data, output_id, true)
+    apply_audio_fix_upstream(channel_data)
     return false
 end
 
-local function abort_audio_fix_warm_restart(output_data)
-    local audio_fix = output_data and output_data.audio_fix or nil
+local function abort_audio_fix_warm_restart(audio_fix)
     local warm = audio_fix and audio_fix.warm_restart or nil
     if not warm then
         return
@@ -4914,9 +4896,9 @@ local function abort_audio_fix_warm_restart(output_data)
     audio_fix.warm_restart = nil
 end
 
-local function start_audio_fix_warm_restart(channel_data, output_id, output_data, reason, opts)
+local function start_audio_fix_warm_restart(channel_data, reason, opts)
     opts = opts or {}
-    local audio_fix = output_data.audio_fix
+    local audio_fix = channel_data and channel_data.audio_fix or nil
     if not audio_fix or not audio_fix.proc or audio_fix.warm_restart then
         return false
     end
@@ -4993,8 +4975,8 @@ local function start_audio_fix_warm_restart(channel_data, output_id, output_data
     return true
 end
 
-local function tick_audio_fix_warm_restart(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function tick_audio_fix_warm_restart(channel_data, now)
+    local audio_fix = channel_data and channel_data.audio_fix or nil
     local warm = audio_fix and audio_fix.warm_restart or nil
     if not warm then
         return
@@ -5002,7 +4984,8 @@ local function tick_audio_fix_warm_restart(channel_data, output_id, output_data,
 
     -- If config was disabled while warm restart was in-flight, stop the standby proc.
     if not (audio_fix and audio_fix.config and audio_fix.config.enabled) then
-        abort_audio_fix_warm_restart(output_data)
+        abort_audio_fix_warm_restart(audio_fix)
+        apply_audio_fix_upstream(channel_data)
         return
     end
 
@@ -5136,8 +5119,7 @@ local function build_ffprobe_input_audio_args(url, ffprobe_bin)
     }
 end
 
-local function start_audio_fix_input_probe(channel_data, output_id, output_data)
-    local audio_fix = output_data.audio_fix
+local function start_audio_fix_input_probe(channel_data, audio_fix)
     if not audio_fix or not audio_fix.config.enabled then
         return
     end
@@ -5171,16 +5153,14 @@ local function start_audio_fix_input_probe(channel_data, output_id, output_data)
     }
 end
 
-local function handle_audio_fix_input_probe_result(output_data, info, err, now)
-    local audio_fix = output_data.audio_fix
+local function handle_audio_fix_input_probe_result(audio_fix, info, err, now)
     audio_fix.input_probe_ts = now
     audio_fix.input_probe_error = err
     audio_fix.input_audio = info
     audio_fix.input_audio_missing = info and info.missing or false
 end
 
-local function tick_audio_fix_input_probe(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function tick_audio_fix_input_probe(channel_data, audio_fix, now)
     local probe = audio_fix and audio_fix.input_probe or nil
     if not probe or not probe.proc then
         return
@@ -5236,7 +5216,7 @@ local function tick_audio_fix_input_probe(channel_data, output_id, output_data, 
                 err = "ffprobe_failed"
             end
         end
-        handle_audio_fix_input_probe_result(output_data, info, err, now)
+        handle_audio_fix_input_probe_result(audio_fix, info, err, now)
         audio_fix.next_input_probe_ts = now + (audio_fix.config.probe_interval_sec or AUDIO_FIX_PROBE_INTERVAL_DEFAULT)
     end
 end
@@ -5258,8 +5238,22 @@ local function build_ffprobe_pts_args(url, stream_spec, ffprobe_bin)
     }
 end
 
-local function start_audio_fix_drift_probe(output_data)
-    local audio_fix = output_data.audio_fix
+local function build_audio_fix_output_url(channel_data)
+    if not (channel_data and channel_data.config and channel_data.config.id) then
+        return nil
+    end
+    if not (config and config.get_setting) then
+        return nil
+    end
+    local port = tonumber(config.get_setting("http_port"))
+    if not port or port <= 0 then
+        return nil
+    end
+    -- /play — это "выходной" поток (включая audio-fix, если он активен).
+    return "http://127.0.0.1:" .. tostring(port) .. "/play/" .. tostring(channel_data.config.id) .. "?internal=1"
+end
+
+local function start_audio_fix_drift_probe(channel_data, audio_fix)
     if not audio_fix or not audio_fix.config or not audio_fix.config.drift_probe_enabled then
         return
     end
@@ -5269,7 +5263,8 @@ local function start_audio_fix_drift_probe(output_data)
     if not process or type(process.spawn) ~= "function" then
         return
     end
-    local url = format_udp_output_url(output_data.config, false)
+    -- Drift probe не должен конкурировать за UDP порт с udp_switch. Используем внутренний /play loopback.
+    local url = build_audio_fix_output_url(channel_data)
     if not url then
         return
     end
@@ -5313,8 +5308,7 @@ local function parse_pts_lines(target, chunk)
     end
 end
 
-local function finalize_audio_fix_drift_probe(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function finalize_audio_fix_drift_probe(channel_data, audio_fix, now)
     local probe = audio_fix and audio_fix.drift_probe or nil
     if not probe then
         return
@@ -5338,14 +5332,13 @@ local function finalize_audio_fix_drift_probe(channel_data, output_id, output_da
         audio_fix.drift_fail_streak = (audio_fix.drift_fail_streak or 0) + 1
         if audio_fix.drift_fail_streak >= max_fail then
             emit_stream_alert(channel_data, "WARNING", "AUDIO_FIX_DRIFT_HIGH", "audio drift too high", {
-                output_index = output_id - 1,
                 drift_ms = drift_ms,
                 threshold_ms = threshold,
             })
             if audio_fix.config.restart_on_drift then
                 local restart_opts = { ignore_cooldown = true }
-                if not start_audio_fix_warm_restart(channel_data, output_id, output_data, "audio_drift", restart_opts) then
-                    restart_audio_fix_process(channel_data, output_id, output_data, "audio_drift", restart_opts)
+                if not start_audio_fix_warm_restart(channel_data, "audio_drift", restart_opts) then
+                    restart_audio_fix_process(channel_data, "audio_drift", restart_opts)
                 end
             end
             audio_fix.drift_fail_streak = 0
@@ -5355,8 +5348,7 @@ local function finalize_audio_fix_drift_probe(channel_data, output_id, output_da
     end
 end
 
-local function tick_audio_fix_drift_probe(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function tick_audio_fix_drift_probe(channel_data, audio_fix, now)
     local probe = audio_fix and audio_fix.drift_probe or nil
     if not probe then
         return
@@ -5407,12 +5399,12 @@ local function tick_audio_fix_drift_probe(channel_data, output_id, output_data, 
             probe.video.proc:close()
             probe.video.proc = nil
         end
-        finalize_audio_fix_drift_probe(channel_data, output_id, output_data, now)
+        finalize_audio_fix_drift_probe(channel_data, audio_fix, now)
         return
     end
 
     if a_done and v_done then
-        finalize_audio_fix_drift_probe(channel_data, output_id, output_data, now)
+        finalize_audio_fix_drift_probe(channel_data, audio_fix, now)
     end
 end
 
@@ -5435,8 +5427,7 @@ local function extract_first_audio_type_id(info)
     return nil
 end
 
-local function start_audio_fix_probe(channel_data, output_id, output_data)
-    local audio_fix = output_data.audio_fix
+local function start_audio_fix_probe(channel_data, audio_fix)
     if not audio_fix or not audio_fix.config.enabled then
         return
     end
@@ -5457,8 +5448,8 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
     local upstream = nil
     if audio_fix.proc and audio_fix.proxy_switch and type(audio_fix.proxy_switch.stream) == "function" then
         upstream = audio_fix.proxy_switch:stream()
-    elseif channel_data and channel_data.tail and type(channel_data.tail.stream) == "function" then
-        upstream = channel_data.tail:stream()
+    else
+        upstream = get_audio_fix_raw_upstream(channel_data)
     end
     if not upstream then
         audio_fix.last_error = "probe upstream unavailable"
@@ -5476,7 +5467,7 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
 
     local ok, analyzer = pcall(analyze, {
         upstream = upstream,
-        name = get_stream_label(channel_data) .. ":audio-fix:" .. tostring(output_id),
+        name = get_stream_label(channel_data) .. ":audio-fix",
         join_pid = true,
         callback = function(data)
             if type(data) ~= "table" then
@@ -5504,8 +5495,7 @@ local function start_audio_fix_probe(channel_data, output_id, output_data)
     audio_fix.probe = probe
 end
 
-local function handle_audio_fix_probe_result(channel_data, output_id, output_data, detected_type, err, now)
-    local audio_fix = output_data.audio_fix
+local function handle_audio_fix_probe_result(channel_data, audio_fix, detected_type, err, now)
     audio_fix.last_probe_ts = now
     audio_fix.detected_audio_type = detected_type
     audio_fix.detected_audio_type_hex = format_audio_type_hex(detected_type)
@@ -5527,9 +5517,9 @@ local function handle_audio_fix_probe_result(channel_data, output_id, output_dat
         local restart_opts = { effective_mode = "aac" }
         -- Use restart helper for both start and restart paths so restart_cooldown_sec is respected
         -- and we don't thrash when ffmpeg exits quickly.
-        local restarted = start_audio_fix_warm_restart(channel_data, output_id, output_data, "audio_mismatch", restart_opts)
+        local restarted = start_audio_fix_warm_restart(channel_data, "audio_mismatch", restart_opts)
         if not restarted then
-            restarted = restart_audio_fix_process(channel_data, output_id, output_data, "audio_mismatch", restart_opts)
+            restarted = restart_audio_fix_process(channel_data, "audio_mismatch", restart_opts)
         end
         if restarted then
             audio_fix.state = "RUNNING"
@@ -5542,13 +5532,13 @@ local function handle_audio_fix_probe_result(channel_data, output_id, output_dat
 
     if audio_fix.proc and audio_fix.config.auto_disable_when_ok and detected_type ~= nil and not mismatch
         and not is_audio_fix_force_run(audio_fix.config) then
-        stop_audio_fix_process(channel_data, output_id, output_data, true)
+        stop_audio_fix_process(channel_data, audio_fix)
+        apply_audio_fix_upstream(channel_data)
         audio_fix.state = "PROBING"
     end
 end
 
-local function tick_audio_fix_probe(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function tick_audio_fix_probe(channel_data, audio_fix, now)
     local probe = audio_fix and audio_fix.probe or nil
     if not probe or not probe.analyzer then
         return
@@ -5559,18 +5549,17 @@ local function tick_audio_fix_probe(channel_data, output_id, output_data, now)
     end
     local detected = probe.detected_type
     local perr = probe.last_error
-    stop_audio_fix_probe(output_data)
+    stop_audio_fix_probe(audio_fix)
 
     local err = nil
     if not detected then
         err = perr or "audio_type_not_found"
     end
-    handle_audio_fix_probe_result(channel_data, output_id, output_data, detected, err, now)
+    handle_audio_fix_probe_result(channel_data, audio_fix, detected, err, now)
     audio_fix.next_probe_ts = now + (audio_fix.config.probe_interval_sec or AUDIO_FIX_PROBE_INTERVAL_DEFAULT)
 end
 
-local function tick_audio_fix_process(channel_data, output_id, output_data, now)
-    local audio_fix = output_data.audio_fix
+local function tick_audio_fix_process(channel_data, audio_fix, now)
     if not audio_fix or not audio_fix.proc then
         return
     end
@@ -5588,8 +5577,8 @@ local function tick_audio_fix_process(channel_data, output_id, output_data, now)
         audio_fix.proc = nil
         audio_fix.last_error = audio_fix.last_error or "ffmpeg exited"
         audio_fix.last_exit_status = status
-        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg exited for output #" ..
-            tostring(output_id) .. " (" .. tostring(audio_fix.last_error) .. ", status=" .. tostring(status) .. ")")
+        log.error("[stream " .. get_stream_label(channel_data) .. "] audio-fix: ffmpeg exited (" ..
+            tostring(audio_fix.last_error) .. ", status=" .. tostring(status) .. ")")
         local warm = audio_fix.warm_restart
         if warm and warm.switched then
             -- New proc died right after cutover. Try to revert to the old proc (if still alive).
@@ -5615,9 +5604,11 @@ local function tick_audio_fix_process(channel_data, output_id, output_data, now)
                 end
             end
             -- Revert failed; fall back to passthrough.
-            stop_audio_fix_process(channel_data, output_id, output_data, true)
+            stop_audio_fix_process(channel_data, audio_fix)
+            apply_audio_fix_upstream(channel_data)
         elseif not warm then
-            stop_audio_fix_process(channel_data, output_id, output_data, true)
+            stop_audio_fix_process(channel_data, audio_fix)
+            apply_audio_fix_upstream(channel_data)
         end
     end
 end
@@ -5687,134 +5678,138 @@ end
 
 local function audio_fix_tick(channel_data)
     local now = os.time()
-    local any_enabled = false
-    for output_id, output_data in ipairs(channel_data.output or {}) do
-        if output_data and output_data.config and output_data.config.format == "udp" then
-            if not output_data.audio_fix then
-                output_data.audio_fix = {
-                    config = normalize_audio_fix_config(output_data.config.audio_fix),
-                    state = "OFF",
-                    detected_audio_type = nil,
-                    detected_audio_type_hex = nil,
-                    last_probe_ts = nil,
-                    last_error = nil,
-                    mismatch_since = nil,
-                    next_probe_ts = nil,
-                    next_input_probe_ts = nil,
-                    next_drift_probe_ts = nil,
-                    proc = nil,
-                    probe = nil,
-                    input_probe = nil,
-                    input_probe_ts = nil,
-                    input_probe_error = nil,
-                    input_audio = nil,
-                    input_audio_missing = false,
-                    effective_mode = "aac",
-                    silence_active = false,
-                    last_restart_reason = nil,
-                    last_drift_ms = nil,
-                    last_drift_ts = nil,
-                    drift_fail_streak = 0,
-                    drift_probe = nil,
-                    cooldown_active = false,
-                    last_fix_start_ts = nil,
-                    last_restart_ts = nil,
-                }
-            end
+    local audio_fix = channel_data and channel_data.audio_fix or nil
+    if not audio_fix then
+        -- Инициализация должна происходить в channel_audio_fix_init(), но на всякий случай
+        -- делаем защиту для старых/частично созданных каналов.
+        audio_fix = {
+            config = normalize_audio_fix_config(channel_data and channel_data.config and channel_data.config.audio_fix or nil),
+            state = "OFF",
+            detected_audio_type = nil,
+            detected_audio_type_hex = nil,
+            last_probe_ts = nil,
+            last_error = nil,
+            mismatch_since = nil,
+            next_probe_ts = nil,
+            next_input_probe_ts = nil,
+            next_drift_probe_ts = nil,
+            proc = nil,
+            proc_args = nil,
+            proc_input_url = nil,
+            proc_output_url = nil,
+            probe = nil,
+            input_probe = nil,
+            input_probe_ts = nil,
+            input_probe_error = nil,
+            input_audio = nil,
+            input_audio_missing = false,
+            effective_mode = "aac",
+            silence_active = false,
+            last_restart_reason = nil,
+            last_drift_ms = nil,
+            last_drift_ts = nil,
+            drift_fail_streak = 0,
+            drift_probe = nil,
+            cooldown_active = false,
+            last_fix_start_ts = nil,
+            last_restart_ts = nil,
+            warm_restart = nil,
+        }
+        channel_data.audio_fix = audio_fix
+    end
 
-            local audio_fix = output_data.audio_fix
-            audio_fix.config = normalize_audio_fix_config(output_data.config.audio_fix)
-            if audio_fix.cooldown_active and not is_audio_fix_cooldown_active(audio_fix, now) then
-                audio_fix.cooldown_active = false
-            end
+    -- Обновляем конфиг из stream-level cfg.audio_fix.
+    audio_fix.config = normalize_audio_fix_config(channel_data and channel_data.config and channel_data.config.audio_fix or audio_fix.config)
+    if audio_fix.cooldown_active and not is_audio_fix_cooldown_active(audio_fix, now) then
+        audio_fix.cooldown_active = false
+    end
 
-            if not audio_fix.config.enabled then
-                abort_audio_fix_warm_restart(output_data)
-                stop_audio_fix_probe(output_data)
-                stop_audio_fix_input_probe(output_data)
-                stop_audio_fix_drift_probe(output_data)
-                stop_audio_fix_process(channel_data, output_id, output_data, true)
-                audio_fix.state = "OFF"
-                audio_fix.mismatch_since = nil
-                audio_fix.next_probe_ts = nil
-                audio_fix.next_input_probe_ts = nil
-                audio_fix.next_drift_probe_ts = nil
-            else
-                any_enabled = true
-                if audio_fix.state == "OFF" then
-                    audio_fix.state = "PROBING"
-                end
-                tick_audio_fix_warm_restart(channel_data, output_id, output_data, now)
-                tick_audio_fix_process(channel_data, output_id, output_data, now)
-                tick_audio_fix_probe(channel_data, output_id, output_data, now)
-                tick_audio_fix_input_probe(channel_data, output_id, output_data, now)
-                tick_audio_fix_drift_probe(channel_data, output_id, output_data, now)
+    if not audio_fix.config.enabled then
+        abort_audio_fix_warm_restart(audio_fix)
+        stop_audio_fix_probe(audio_fix)
+        stop_audio_fix_input_probe(audio_fix)
+        stop_audio_fix_drift_probe(audio_fix)
+        stop_audio_fix_process(channel_data, audio_fix)
+        apply_audio_fix_upstream(channel_data)
 
-                if audio_fix.analyze_pending and audio_fix.probe == nil then
-                    start_audio_fix_probe(channel_data, output_id, output_data)
-                end
+        audio_fix.state = "OFF"
+        audio_fix.mismatch_since = nil
+        audio_fix.next_probe_ts = nil
+        audio_fix.next_input_probe_ts = nil
+        audio_fix.next_drift_probe_ts = nil
 
-                if audio_fix.probe == nil and (audio_fix.next_probe_ts == nil or now >= audio_fix.next_probe_ts) then
-                    start_audio_fix_probe(channel_data, output_id, output_data)
-                end
+        if channel_data.audio_fix_timer then
+            channel_data.audio_fix_timer:close()
+            channel_data.audio_fix_timer = nil
+        end
+        channel_data.__need_audio_fix_tick = nil
+        return
+    end
 
-                local need_input_probe = audio_fix.config.mode == "auto" or audio_fix.config.silence_fallback == true
-                if need_input_probe and audio_fix.input_probe == nil and
-                    (audio_fix.next_input_probe_ts == nil or now >= audio_fix.next_input_probe_ts) then
-                    start_audio_fix_input_probe(channel_data, output_id, output_data)
-                end
+    if audio_fix.state == "OFF" then
+        audio_fix.state = "PROBING"
+    end
 
-                if audio_fix.config.drift_probe_enabled then
-                    if audio_fix.next_drift_probe_ts == nil then
-                        audio_fix.next_drift_probe_ts = now + (audio_fix.config.drift_probe_interval_sec or AUDIO_FIX_DRIFT_PROBE_INTERVAL_DEFAULT)
-                    end
-                    if audio_fix.drift_probe == nil and now >= audio_fix.next_drift_probe_ts then
-                        start_audio_fix_drift_probe(output_data)
-                        audio_fix.next_drift_probe_ts = now + (audio_fix.config.drift_probe_interval_sec or AUDIO_FIX_DRIFT_PROBE_INTERVAL_DEFAULT)
-                    end
-                else
-                    audio_fix.next_drift_probe_ts = nil
-                end
+    tick_audio_fix_warm_restart(channel_data, now)
+    tick_audio_fix_process(channel_data, audio_fix, now)
+    tick_audio_fix_probe(channel_data, audio_fix, now)
+    tick_audio_fix_input_probe(channel_data, audio_fix, now)
+    tick_audio_fix_drift_probe(channel_data, audio_fix, now)
 
-                local desired_mode = pick_audio_fix_effective_mode(audio_fix)
-                if is_audio_fix_force_run(audio_fix.config) then
-                    if desired_mode == "silence" and not audio_fix.silence_active then
-                        emit_stream_alert(channel_data, "WARNING", "AUDIO_FIX_SILENCE_FALLBACK",
-                            "audio missing, injecting silence", {
-                                output_index = output_id - 1,
-                            })
-                    end
-                    if not audio_fix.proc then
-                        start_audio_fix_process(channel_data, output_id, output_data, "force_on", {
-                            effective_mode = desired_mode,
-                        })
-                    elseif desired_mode ~= (audio_fix.effective_mode or "aac") and not is_audio_fix_cooldown_active(audio_fix, now) then
-                        if not start_audio_fix_warm_restart(channel_data, output_id, output_data, "mode_change", {
-                                effective_mode = desired_mode,
-                            }) then
-                            restart_audio_fix_process(channel_data, output_id, output_data, "mode_change", {
-                                effective_mode = desired_mode,
-                            })
-                        end
-                    end
-                end
+    if audio_fix.analyze_pending and audio_fix.probe == nil then
+        start_audio_fix_probe(channel_data, audio_fix)
+    end
 
-                if audio_fix.proc then
-                    audio_fix.state = audio_fix.cooldown_active and "COOLDOWN" or "RUNNING"
-                else
-                    audio_fix.state = audio_fix.cooldown_active and "COOLDOWN" or "PROBING"
-                end
+    if audio_fix.probe == nil and (audio_fix.next_probe_ts == nil or now >= audio_fix.next_probe_ts) then
+        start_audio_fix_probe(channel_data, audio_fix)
+    end
+
+    local need_input_probe = audio_fix.config.mode == "auto" or audio_fix.config.silence_fallback == true
+    if need_input_probe and audio_fix.input_probe == nil and
+        (audio_fix.next_input_probe_ts == nil or now >= audio_fix.next_input_probe_ts) then
+        start_audio_fix_input_probe(channel_data, audio_fix)
+    end
+
+    if audio_fix.config.drift_probe_enabled then
+        if audio_fix.next_drift_probe_ts == nil then
+            audio_fix.next_drift_probe_ts = now + (audio_fix.config.drift_probe_interval_sec or AUDIO_FIX_DRIFT_PROBE_INTERVAL_DEFAULT)
+        end
+        if audio_fix.drift_probe == nil and now >= audio_fix.next_drift_probe_ts then
+            start_audio_fix_drift_probe(channel_data, audio_fix)
+            audio_fix.next_drift_probe_ts = now + (audio_fix.config.drift_probe_interval_sec or AUDIO_FIX_DRIFT_PROBE_INTERVAL_DEFAULT)
+        end
+    else
+        audio_fix.next_drift_probe_ts = nil
+    end
+
+    local desired_mode = pick_audio_fix_effective_mode(audio_fix)
+    if is_audio_fix_force_run(audio_fix.config) then
+        if desired_mode == "silence" and not audio_fix.silence_active then
+            emit_stream_alert(channel_data, "WARNING", "AUDIO_FIX_SILENCE_FALLBACK",
+                "audio missing, injecting silence", {})
+        end
+        if not audio_fix.proc then
+            start_audio_fix_process(channel_data, "force_on", {
+                effective_mode = desired_mode,
+            })
+        elseif desired_mode ~= (audio_fix.effective_mode or "aac") and not is_audio_fix_cooldown_active(audio_fix, now) then
+            if not start_audio_fix_warm_restart(channel_data, "mode_change", {
+                    effective_mode = desired_mode,
+                }) then
+                restart_audio_fix_process(channel_data, "mode_change", {
+                    effective_mode = desired_mode,
+                })
             end
         end
     end
 
-    if not any_enabled and channel_data.audio_fix_timer then
-        channel_data.audio_fix_timer:close()
-        channel_data.audio_fix_timer = nil
+    if audio_fix.proc then
+        audio_fix.state = audio_fix.cooldown_active and "COOLDOWN" or "RUNNING"
+    else
+        audio_fix.state = audio_fix.cooldown_active and "COOLDOWN" or "PROBING"
     end
-    if not any_enabled then
-        channel_data.__need_audio_fix_tick = nil
-    end
+
+    apply_audio_fix_upstream(channel_data)
 end
 
 local audio_fix_housekeeping_timer = nil
@@ -5879,13 +5874,11 @@ function stream_reconfigure_timer_mode()
                     channel_data.audio_fix_timer:close()
                     channel_data.audio_fix_timer = nil
                 end
-                for _, output_data in ipairs(channel_data.output or {}) do
-                    local audio_fix = output_data and output_data.audio_fix or nil
-                    if audio_fix and audio_fix.config and audio_fix.config.enabled then
-                        channel_data.__need_audio_fix_tick = true
-                        need_audio_fix = true
-                        break
-                    end
+                channel_data.__need_audio_fix_tick = nil
+                local audio_fix = channel_data.audio_fix
+                if audio_fix and audio_fix.config and audio_fix.config.enabled then
+                    channel_data.__need_audio_fix_tick = true
+                    need_audio_fix = true
                 end
             end
         end
@@ -5915,59 +5908,72 @@ function stream_reconfigure_timer_mode()
             end
 
             channel_data.__need_audio_fix_tick = nil
-            for _, output_data in ipairs(channel_data.output or {}) do
-                local audio_fix = output_data and output_data.audio_fix or nil
-                if audio_fix and audio_fix.config and audio_fix.config.enabled then
-                    ensure_audio_fix_timer(channel_data)
-                    break
-                end
+            local audio_fix = channel_data.audio_fix
+            if audio_fix and audio_fix.config and audio_fix.config.enabled then
+                ensure_audio_fix_timer(channel_data)
             end
         end
     end
 end
 
-local function channel_audio_fix_init(channel_data)
-    local any_enabled = false
-    for output_id, output_data in ipairs(channel_data.output or {}) do
-        if output_data and output_data.config and output_data.config.format == "udp" then
-            output_data.audio_fix = {
-                config = normalize_audio_fix_config(output_data.config.audio_fix),
-                state = "OFF",
-                detected_audio_type = nil,
-                detected_audio_type_hex = nil,
-                last_probe_ts = nil,
-                last_error = nil,
-                mismatch_since = nil,
-                next_probe_ts = os.time(),
-                next_input_probe_ts = os.time(),
-                next_drift_probe_ts = nil,
-                proc = nil,
-                probe = nil,
-                input_probe = nil,
-                input_probe_ts = nil,
-                input_probe_error = nil,
-                input_audio = nil,
-                input_audio_missing = false,
-                effective_mode = "aac",
-                silence_active = false,
-                last_restart_reason = nil,
-                last_drift_ms = nil,
-                last_drift_ts = nil,
-                drift_fail_streak = 0,
-                drift_probe = nil,
-                cooldown_active = false,
-                last_fix_start_ts = nil,
-                last_restart_ts = nil,
-            }
-            if output_data.audio_fix.config.enabled then
-                any_enabled = true
-            end
+local function derive_legacy_audio_fix_config(channel_data)
+    for _, output_data in ipairs(channel_data.output or {}) do
+        local conf = output_data and output_data.config and output_data.config.audio_fix or nil
+        if type(conf) == "table" then
+            return conf
         end
     end
-    if any_enabled then
+    return nil
+end
+
+local function channel_audio_fix_init(channel_data)
+    local raw = nil
+    if channel_data and channel_data.config and type(channel_data.config.audio_fix) == "table" then
+        raw = channel_data.config.audio_fix
+    else
+        -- Backward compatibility: старые конфиги хранили audio_fix внутри UDP output.
+        raw = derive_legacy_audio_fix_config(channel_data)
+    end
+
+    channel_data.audio_fix = {
+        config = normalize_audio_fix_config(raw),
+        state = "OFF",
+        detected_audio_type = nil,
+        detected_audio_type_hex = nil,
+        last_probe_ts = nil,
+        last_error = nil,
+        mismatch_since = nil,
+        next_probe_ts = os.time(),
+        next_input_probe_ts = os.time(),
+        next_drift_probe_ts = nil,
+        proc = nil,
+        proc_args = nil,
+        proc_input_url = nil,
+        proc_output_url = nil,
+        probe = nil,
+        input_probe = nil,
+        input_probe_ts = nil,
+        input_probe_error = nil,
+        input_audio = nil,
+        input_audio_missing = false,
+        effective_mode = "aac",
+        silence_active = false,
+        last_restart_reason = nil,
+        last_drift_ms = nil,
+        last_drift_ts = nil,
+        drift_fail_streak = 0,
+        drift_probe = nil,
+        cooldown_active = false,
+        last_fix_start_ts = nil,
+        last_restart_ts = nil,
+        warm_restart = nil,
+    }
+
+    if channel_data.audio_fix.config.enabled then
         ensure_audio_fix_timer(channel_data)
     else
         channel_data.__need_audio_fix_tick = nil
+        apply_audio_fix_upstream(channel_data)
     end
 end
 
@@ -5977,49 +5983,50 @@ local function channel_audio_fix_cleanup(channel_data)
         channel_data.audio_fix_timer:close()
         channel_data.audio_fix_timer = nil
     end
-    for output_id, output_data in ipairs(channel_data.output or {}) do
-        if output_data and output_data.audio_fix then
-            stop_audio_fix_probe(output_data)
-            stop_audio_fix_input_probe(output_data)
-            stop_audio_fix_drift_probe(output_data)
-            stop_audio_fix_process(channel_data, output_id, output_data, false)
-            output_data.audio_fix = nil
-        end
+    local audio_fix = channel_data.audio_fix
+    if audio_fix then
+        abort_audio_fix_warm_restart(audio_fix)
+        stop_audio_fix_probe(audio_fix)
+        stop_audio_fix_input_probe(audio_fix)
+        stop_audio_fix_drift_probe(audio_fix)
+        stop_audio_fix_process(channel_data, audio_fix)
+        channel_data.audio_fix = nil
     end
+    apply_audio_fix_upstream(channel_data)
 end
 
 channel_audio_fix_on_input_switch = function(channel_data, prev_id, input_id, reason)
-    for output_id, output_data in ipairs(channel_data.output or {}) do
-        local audio_fix = output_data and output_data.audio_fix or nil
-        if audio_fix and audio_fix.config and audio_fix.config.enabled then
-            audio_fix.input_audio = nil
-            audio_fix.input_audio_missing = false
-            audio_fix.next_input_probe_ts = os.time()
-            stop_audio_fix_input_probe(output_data)
+    local audio_fix = channel_data and channel_data.audio_fix or nil
+    if not (audio_fix and audio_fix.config and audio_fix.config.enabled) then
+        return
+    end
 
-            local force_run = is_audio_fix_force_run(audio_fix.config)
-            local needs_restart = false
-            if audio_fix.proc then
-                -- When audio-fix reads the loopback /play URL, input switching happens inside the same
-                -- HTTP stream and ffmpeg does not need a restart. Restarting causes visible "jerks".
-                local base_play = build_audio_fix_play_url(channel_data)
-                local cur_input = audio_fix.proc_input_url
-                local using_play = base_play and cur_input and cur_input:sub(1, #base_play) == base_play
-                needs_restart = not using_play
-            elseif force_run then
-                needs_restart = true
-            end
-            if needs_restart then
-                log.info("[stream " .. get_stream_label(channel_data) .. "] audio-fix: restart output #" ..
-                    tostring(output_id) .. " due to input switch (" .. tostring(reason) .. ")")
-                local restart_opts = {
-                    ignore_cooldown = true,
-                    effective_mode = "aac",
-                }
-                if not start_audio_fix_warm_restart(channel_data, output_id, output_data, "input_switch", restart_opts) then
-                    restart_audio_fix_process(channel_data, output_id, output_data, "input_switch", restart_opts)
-                end
-            end
+    audio_fix.input_audio = nil
+    audio_fix.input_audio_missing = false
+    audio_fix.next_input_probe_ts = os.time()
+    stop_audio_fix_input_probe(audio_fix)
+
+    local force_run = is_audio_fix_force_run(audio_fix.config)
+    local needs_restart = false
+    if audio_fix.proc then
+        -- When audio-fix reads the loopback /input URL, input switching happens inside the same
+        -- HTTP stream and ffmpeg does not need a restart. Restarting causes visible "jerks".
+        local base_input = build_audio_fix_input_url(channel_data)
+        local cur_input = audio_fix.proc_input_url
+        local using_loop = base_input and cur_input and cur_input:sub(1, #base_input) == base_input
+        needs_restart = not using_loop
+    elseif force_run then
+        needs_restart = true
+    end
+
+    if needs_restart then
+        log.info("[stream " .. get_stream_label(channel_data) .. "] audio-fix: restart due to input switch (" .. tostring(reason) .. ")")
+        local restart_opts = {
+            ignore_cooldown = true,
+            effective_mode = "aac",
+        }
+        if not start_audio_fix_warm_restart(channel_data, "input_switch", restart_opts) then
+            restart_audio_fix_process(channel_data, "input_switch", restart_opts)
         end
     end
 end
@@ -6751,8 +6758,12 @@ function make_channel(channel_config)
     }
 
     channel_data.active_input_id = 0
+    -- transmit: выбирает активный input (failover/switching) и всегда выдаёт "сырой" TS.
     channel_data.transmit = transmit()
-    channel_data.tail = channel_data.transmit
+    -- tail: отдельный transmit для переключения "сырой" vs "audio-fix" без пересоздания outputs.
+    channel_data.audio_fix_transmit = transmit()
+    channel_data.audio_fix_transmit:set_upstream(channel_data.transmit:stream())
+    channel_data.tail = channel_data.audio_fix_transmit
 
     if channel_data.clients > 0 then
         if channel_data.failover.enabled then

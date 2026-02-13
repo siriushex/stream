@@ -9,3 +9,20 @@
 /modules/inscript/inscript.h
 /contrib/build
 .DS_Store
+
+# Embedded assets build artifacts (generated at build time).
+/assets.tar
+/assets_tar.o
+/assets_tar_blob.c
+/assets_tar_blob.o
+
+# Local binaries/build outputs.
+/stream
+
+# Local sqlite runtime artifacts (do not commit).
+/data/*.db-wal
+/data/*.db-shm
+/data/*.db.bak.*
+
+# Perf tool outputs.
+/tools/perf/results/
