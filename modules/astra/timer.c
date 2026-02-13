@@ -23,7 +23,7 @@
  *      timer
  *
  * Module Options:
- *      interval    - number, sets the interval between triggers, in seconds
+ *      interval    - number|string, sets the interval between triggers, in seconds (can be fractional)
  *      callback    - function, handler is called when the timer is triggered
  */
 
@@ -78,9 +78,35 @@ static int method_close(module_data_t *mod)
 
 static void module_init(module_data_t *mod)
 {
-    int interval = 0;
-    module_option_number("interval", &interval);
-    asc_assert(interval > 0, "[timer] option 'interval' must be greater than 0");
+    /*
+     * Важно: в Lua-коде используются дробные интервалы (например 0.2/0.5 секунды)
+     * для быстрых retry/poll циклов. module_option_number() читает int и режет "0.2" -> 0,
+     * что приводило к assert/abort процесса. Читаем как lua_Number и конвертируем в ms.
+     */
+    double interval_sec = 0.0;
+    if(lua_type(lua, MODULE_OPTIONS_IDX) == LUA_TTABLE)
+    {
+        lua_getfield(lua, MODULE_OPTIONS_IDX, "interval");
+        const int t = lua_type(lua, -1);
+        if(t == LUA_TNUMBER)
+        {
+            interval_sec = lua_tonumber(lua, -1);
+        }
+        else if(t == LUA_TSTRING)
+        {
+            const char *s = lua_tostring(lua, -1);
+            if(s && *s)
+                interval_sec = strtod(s, NULL);
+        }
+        else if(t == LUA_TBOOLEAN)
+        {
+            interval_sec = lua_toboolean(lua, -1) ? 1.0 : 0.0;
+        }
+        lua_pop(lua, 1);
+    }
+
+    const int interval_ms = (int)(interval_sec * 1000.0 + 0.5);
+    asc_assert(interval_ms > 0, "[timer] option 'interval' must be greater than 0");
 
     lua_getfield(lua, MODULE_OPTIONS_IDX, "callback");
     asc_assert(lua_isfunction(lua, -1), "[timer] option 'callback' is required");
@@ -90,7 +116,7 @@ static void module_init(module_data_t *mod)
     lua_pushvalue(lua, 3);
     mod->idx_self = luaL_ref(lua, LUA_REGISTRYINDEX);
 
-    mod->timer = asc_timer_init(interval * 1000, timer_callback, mod);
+    mod->timer = asc_timer_init(interval_ms, timer_callback, mod);
 }
 
 static void module_destroy(module_data_t *mod)
