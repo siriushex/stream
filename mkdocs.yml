@@ -92,9 +92,11 @@ nav:
       - HLSSplitter: manual/hlssplitter.md
       - Buffer: manual/buffer.md
       - Входы: manual/inputs.md
+      - Устойчивость входа: manual/input-resilience.md
       - Выходы: manual/outputs.md
       - Форматы адресов: manual/address-format.md
       - Транскодирование: manual/transcoding.md
+      - Ladder + publish: manual/transcode-ladder.md
       - Audio Fix: manual/audio-fix.md
       - Quality detectors: manual/quality-detectors.md
       - Observability: manual/observability.md
@@ -113,8 +115,11 @@ nav:
           - Groups: manual/settings-groups.md
           - Import: manual/settings-import.md
           - Config tools: manual/settings-config.md
+          - Watchdog: manual/watchdog.md
+          - Sharding: manual/sharding.md
       - CLI и сервис: manual/cli.md
       - API: manual/api.md
+      - Метрики: manual/metrics.md
       - Логи: manual/logs.md
       - Безопасность: manual/security.md
       - Бэкап и обновление: manual/backup-update.md
