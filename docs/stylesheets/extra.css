@@ -1,0 +1,24 @@
+/* Stream Hub docs tweaks.
+ * Мягкие правки: чуть шире контент, чуть больше воздуха.
+ */
+
+:root {
+  --md-typeset-max-width: 78rem;
+}
+
+.md-typeset h1 {
+  margin-bottom: 0.35em;
+}
+
+.md-typeset h2 {
+  margin-top: 1.4em;
+}
+
+.md-typeset p {
+  margin: 0.55em 0;
+}
+
+.md-typeset pre > code {
+  font-size: 0.85em;
+}
+

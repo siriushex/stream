@@ -1,0 +1,94 @@
+site_name: Stream Hub
+site_url: https://stream.centv.ru/
+
+theme:
+  name: material
+  language: ru
+  logo: assets/logo.svg
+  features:
+    - navigation.sections
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.select
+  palette:
+    # По умолчанию: светлая тема.
+    - scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Тёмная тема
+    - scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Светлая тема
+
+plugins:
+  - search:
+      lang: ru
+
+# В репозитории есть инженерные заметки в docs/*.md.
+# Публичная документация Stream Hub должна быть компактной, поэтому исключаем их из сборки.
+exclude_docs: |
+  API.md
+  ARCHITECTURE.md
+  ASTRAL_AI.md
+  CLI.md
+  OPERATIONS.md
+  PARITY.md
+  ROADMAP.md
+  TESTING.md
+  TRANSCODE_BUNDLE.md
+  hls_memfd.md
+  input_resilience.md
+  mpts_design.md
+  mpts_summary.md
+  softcam_descramble_parallel.md
+  transcode_publish.md
+  update_names_from_sdt.md
+  engineering/*
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - attr_list
+
+extra_css:
+  - stylesheets/extra.css
+extra_javascript:
+  - javascripts/extra.js
+
+nav:
+  - Главная: index.md
+  - Быстрый старт:
+      - Обзор: quick-start/index.md
+      - Установка: quick-start/installation.md
+      - Запуск: quick-start/run.md
+      - Web UI: quick-start/web-ui.md
+      - Первый канал: quick-start/first-stream.md
+      - Проверка: quick-start/check-playback.md
+      - Запуск как сервис: quick-start/run-as-service.md
+  - Руководство:
+      - Обзор: manual/index.md
+      - Термины: manual/terms.md
+      - Входы: manual/inputs.md
+      - Выходы: manual/outputs.md
+      - Форматы адресов: manual/address-format.md
+      - Транскодирование: manual/transcoding.md
+      - Логи: manual/logs.md
+      - Безопасность: manual/security.md
+      - Бэкап и обновление: manual/backup-update.md
+      - Если не работает: manual/troubleshooting.md
+  - FAQ: faq.md
+  - Changelog: changelog.md
+  - Скачать: https://stream.centv.ru/stream
+  - install.sh: https://stream.centv.ru/install.sh
