@@ -12,6 +12,13 @@
 .env
 .env.*
 
+# Python / MkDocs
+.venv/
+__pycache__/
+
+# MkDocs build output
+/site/
+
 # Embedded assets build artifacts (generated at build time).
 /assets.tar
 /assets_tar.o
