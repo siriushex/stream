@@ -149,8 +149,8 @@
 }
 
 .sh-section {
-  max-width: 96rem;
-  margin: 0 auto;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
   padding: 32px var(--sh-landing-pad) 40px;
 }
 
