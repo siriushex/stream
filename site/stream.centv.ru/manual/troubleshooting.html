@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+
+  <title>Stream Hub — если не работает</title>
+  <meta name="description" content="Stream Hub: частые проблемы и быстрые проверки." />
+
+  <link rel="stylesheet" href="/assets/site.css" />
+  <script defer src="/assets/site.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div class="title">
+        <b>Stream Hub</b>
+        <span>Если не работает</span>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Навигация">
+      <a href="/">Главная</a>
+      <a href="/quick-start/">Быстрый старт</a>
+      <a class="primary" href="/manual/">Руководство</a>
+      <a href="/stream">Скачать</a>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <section class="doc" aria-label="Если не работает">
+      <aside class="sidebar" aria-label="Разделы">
+        <a href="/manual/">Обзор</a>
+        <a href="/manual/inputs.html">Входы</a>
+        <a href="/manual/outputs.html">Выходы</a>
+        <a href="/manual/transcoding.html">Транскодирование</a>
+        <a class="active" href="/manual/troubleshooting.html">Если не работает</a>
+      </aside>
+
+      <main class="docmain">
+        <div class="pad">
+          <h1>Если не работает</h1>
+          <p>Здесь — короткие проверки. Начинайте сверху. Обычно проблема находится быстро.</p>
+
+          <h2>1) Не открывается Web UI</h2>
+          <ul>
+            <li>Проверьте, что процесс запущен и слушает порт.</li>
+            <li>Проверьте firewall (порт должен быть открыт).</li>
+          </ul>
+        </div>
+
+        <pre class="code" id="ts-ui-check"># Порт 9060 (пример)
+ss -lntp | grep ':9060' || true
+
+# Если вы запускаете как systemd сервис
+systemctl status stream@prod.service --no-pager</pre>
+        <div class="copyrow">
+          <div class="hint">Если порта нет — Stream Hub не запущен или упал.</div>
+          <button class="copy" type="button" data-copy="#ts-ui-check">Copy</button>
+        </div>
+
+        <div class="pad">
+          <h2>2) Канал OFFLINE / битрейт 0</h2>
+          <ul>
+            <li>Сначала проверьте Input (адрес, интерфейс, доступ).</li>
+            <li>Если UDP multicast — часто причина в маршрутах или выборе интерфейса.</li>
+            <li>Если HTTP — проверьте, что источник реально отдаёт поток.</li>
+          </ul>
+
+          <h2>3) Выход “включён”, но не играет</h2>
+          <ul>
+            <li>Если вход не живой — выход тоже не будет играть.</li>
+            <li>UDP multicast: проверьте, что клиент в нужной сети.</li>
+            <li>HTTP‑TS/HLS: проверьте порт в firewall.</li>
+          </ul>
+
+          <h2>4) Транскодирование включили — и стало плохо</h2>
+          <ul>
+            <li>Проверьте, что <span style="font-family: var(--mono);">ffmpeg</span> установлен.</li>
+            <li>Проверьте CPU в Observability.</li>
+            <li>Выберите более лёгкий пресет.</li>
+          </ul>
+
+          <h2>Логи (самый быстрый способ понять причину)</h2>
+          <p>Если запускали из консоли — логи уже перед вами. Если как сервис:</p>
+        </div>
+
+        <pre class="code" id="ts-logs"># Логи сервиса (пример: prod)
+journalctl -u stream@prod.service -f</pre>
+        <div class="copyrow">
+          <div class="hint">Ищите строки ERROR/WARNING рядом по времени с проблемой.</div>
+          <button class="copy" type="button" data-copy="#ts-logs">Copy</button>
+        </div>
+      </main>
+    </section>
+
+    <footer>
+      <div>
+        <a href="/manual/">Руководство</a> · <a href="/quick-start/">Быстрый старт</a> · <a href="/stream">Скачать</a>
+      </div>
+      <div>© centv.ru</div>
+    </footer>
+  </div>
+</body>
+</html>
+
