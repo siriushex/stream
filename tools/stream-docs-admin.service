@@ -1,0 +1,20 @@
+[Unit]
+Description=Stream Hub Docs Admin (MkDocs editor)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hex/astra
+Environment=PYTHONUNBUFFERED=1
+# Важно: сервис слушает только localhost, доступ извне делается через nginx + basic auth.
+ExecStart=/opt/stream-docs-admin/.venv/bin/python /home/hex/astra/tools/docs_admin_server.py --bind 127.0.0.1 --port 9377 --repo /home/hex/astra --publish-dir /var/www/stream.centv.ru --mkdocs-python /opt/stream-docs-admin/.venv/bin/python
+Restart=on-failure
+RestartSec=2
+
+# Простое hardening, без сложных ограничений (сервис должен писать в publish-dir).
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+
