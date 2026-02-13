@@ -787,7 +787,10 @@ ASSETS_OBJ  = assets_tar.o
 ASSETS_BLOB_C = assets_tar_blob.c
 ASSETS_BLOB_OBJ = assets_tar_blob.o
 
-\$(ASSETS_TAR): tools/build_assets_tar.py
+# NOTE: embedded assets must be rebuilt when any file under scripts/ or web/ changes.
+ASSETS_SRC := \$(shell find scripts web -type f -print 2>/dev/null)
+
+\$(ASSETS_TAR): tools/build_assets_tar.py \$(ASSETS_SRC)
 	@echo "  TAR: \$@"
 	@python3 tools/build_assets_tar.py \$@ scripts web
 
