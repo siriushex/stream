@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+
+  <title>Stream Hub — транскодирование</title>
+  <meta name="description" content="Как включить транскодирование в Stream Hub и что это даёт." />
+
+  <link rel="stylesheet" href="/assets/site.css" />
+  <script defer src="/assets/site.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"></div>
+      <div class="title">
+        <b>Stream Hub</b>
+        <span>Транскодирование</span>
+      </div>
+    </div>
+    <nav class="nav" aria-label="Навигация">
+      <a href="/">Главная</a>
+      <a href="/quick-start/">Быстрый старт</a>
+      <a class="primary" href="/manual/">Руководство</a>
+      <a href="/stream">Скачать</a>
+    </nav>
+  </header>
+
+  <div class="wrap">
+    <section class="doc" aria-label="Транскодирование">
+      <aside class="sidebar" aria-label="Разделы">
+        <a href="/manual/">Обзор</a>
+        <a href="/manual/inputs.html">Входы</a>
+        <a href="/manual/outputs.html">Выходы</a>
+        <a class="active" href="/manual/transcoding.html">Транскодирование</a>
+        <a href="/manual/troubleshooting.html">Если не работает</a>
+      </aside>
+
+      <main class="docmain">
+        <div class="pad">
+          <h1>Транскодирование</h1>
+          <p>
+            Транскодирование нужно, когда вы хотите поменять качество (например сделать 720p вместо 1080p),
+            уменьшить битрейт или сделать несколько вариантов качества.
+          </p>
+          <p>
+            Важно: транскодирование даёт нагрузку на CPU/GPU. Если вам оно не нужно — лучше держать выключенным.
+          </p>
+
+          <h2>Что нужно</h2>
+          <ul>
+            <li>В системе должен быть установлен <b>ffmpeg</b>.</li>
+            <li>Проверьте: <span style="font-family: var(--mono);">ffmpeg -version</span></li>
+          </ul>
+
+          <h2>Как включить</h2>
+          <ol class="steps">
+            <li>Откройте канал (Edit stream).</li>
+            <li>В блоке <b>Transcoding</b> включите <b>Enable transcoding</b>.</li>
+            <li>Перейдите на вкладку <b>Transcode</b> и выберите пресет (для начала CPU 720p).</li>
+            <li>Нажмите <b>Save</b>.</li>
+          </ol>
+
+          <h2>Если стало хуже</h2>
+          <ul>
+            <li>Проверьте нагрузку CPU в Observability.</li>
+            <li>Выберите пресет попроще (меньше разрешение/битрейт).</li>
+            <li>Если сервер слабый — лучше не включать транскодирование на всех каналах сразу.</li>
+          </ul>
+        </div>
+      </main>
+    </section>
+
+    <footer>
+      <div>
+        <a href="/manual/">Руководство</a> · <a href="/manual/outputs.html">Выходы</a> · <a href="/manual/troubleshooting.html">Если не работает</a>
+      </div>
+      <div>© centv.ru</div>
+    </footer>
+  </div>
+</body>
+</html>
+
