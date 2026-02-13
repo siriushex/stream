@@ -2581,6 +2581,61 @@ function main()
                 client_data.shard_live_proxy_req = nil
                 client_data.shard_live_proxy_port = nil
             end
+
+            -- Passthrough /live/<stream_id> uses the same client accounting model as /play.
+            -- Be defensive: streams can be rebuilt while clients are connected.
+            if client_data and client_data.output_data and client_data.output_data.channel_data then
+                local channel_data = client_data.output_data.channel_data
+                local clients = tonumber(channel_data.clients or 0) or 0
+                clients = clients - 1
+                if clients < 0 then
+                    clients = 0
+                end
+                channel_data.clients = clients
+                if channel_data.keep_timer then
+                    channel_data.keep_timer:close()
+                    channel_data.keep_timer = nil
+                end
+                local inputs = channel_data.input
+                local has_input = (type(inputs) == "table" and inputs[1] and inputs[1].input ~= nil)
+                if clients == 0 and has_input then
+                    local keep_active = tonumber((channel_data.config and channel_data.config.http_keep_active) or 0) or 0
+                    if keep_active == 0 then
+                        for input_id, input_data in ipairs(inputs) do
+                            if input_data and input_data.input then
+                                channel_kill_input(channel_data, input_id)
+                            end
+                        end
+                        channel_data.active_input_id = 0
+                    elseif keep_active > 0 then
+                        channel_data.keep_timer = timer({
+                            interval = keep_active,
+                            callback = function(self)
+                                self:close()
+                                channel_data.keep_timer = nil
+                                local cur_clients = tonumber(channel_data.clients or 0) or 0
+                                local cur_inputs = channel_data.input
+                                if cur_clients == 0 and type(cur_inputs) == "table" then
+                                    for input_id, input_data in ipairs(cur_inputs) do
+                                        if input_data and input_data.input then
+                                            channel_kill_input(channel_data, input_id)
+                                        end
+                                    end
+                                    channel_data.active_input_id = 0
+                                end
+                            end,
+                        })
+                    end
+                end
+
+                http_output_client(server, client, nil)
+                if client_data.auth_session_id and auth and auth.unregister_client then
+                    auth.unregister_client(client_data.auth_session_id, server, client)
+                    client_data.auth_session_id = nil
+                end
+                client_data.output_data = nil
+            end
+
             local meta = client_data and client_data.live_meta or nil
             if meta and meta.stream_id and meta.profile_id then
                 local job = transcode and transcode.jobs and transcode.jobs[meta.stream_id] or nil
@@ -2625,6 +2680,265 @@ function main()
                 return true
             end
             return false
+        end
+
+        -- /live supports two modes:
+        -- 1) Ladder transcode: /live/<stream_id>~<profile_id> (or legacy /live/<stream_id>_<profile_id>)
+        -- 2) Passthrough HTTP-TS: /live/<stream_id>
+        --
+        -- UI historically uses /live/<stream_id> for HTTP-TS outputs. Stream ids often contain "_",
+        -- which is ambiguous with the legacy ladder delimiter. To avoid false 404s:
+        -- - If the full suffix matches an existing stream id, treat it as passthrough.
+        -- - Otherwise try ladder parsing.
+        local path_only = request.path and (request.path:match("^([^?]+)") or request.path) or ""
+        local rest = nil
+        if path_only:sub(1, 6) == "/live/" then
+            rest = path_only:sub(7)
+        end
+        if rest and rest ~= "" then
+            rest = rest:gsub("%.ts$", "")
+        end
+
+        local function config_stream_exists(stream_id)
+            if not stream_id or stream_id == "" then
+                return false
+            end
+            if runtime and runtime.streams and runtime.streams[stream_id] then
+                return true
+            end
+            if config and config.get_stream then
+                local row = config.get_stream(stream_id)
+                return row ~= nil and (tonumber(row.enabled) or 0) ~= 0
+            end
+            return false
+        end
+
+        local function passthrough_live(stream_id)
+            -- Stream sharding: proxy passthrough /live/<stream_id> via loopback /play on the owning shard.
+            if sharding and type(sharding.is_active) == "function" and sharding.is_active()
+                and type(sharding.get_stream_shard_port) == "function"
+                and http_request
+            then
+                local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+                local target_port = sharding.get_stream_shard_port(stream_id)
+                if target_port and target_port ~= local_port then
+                    local internal = is_internal_live_request(request)
+
+                    local function proxy_allowed()
+                        local proxy_path = "/play/" .. tostring(stream_id)
+                        if not proxy_path:find("internal=", 1, true) then
+                            proxy_path = proxy_path .. "?internal=1"
+                        end
+                        local ok, req = pcall(http_request, {
+                            host = "127.0.0.1",
+                            port = target_port,
+                            path = proxy_path,
+                            method = "GET",
+                            headers = {
+                                "Host: 127.0.0.1:" .. tostring(target_port),
+                                "Connection: close",
+                            },
+                            stream = true,
+                            sync = false,
+                            connect_timeout_ms = 200,
+                            read_timeout_ms = 800,
+                            stall_timeout_ms = 2000,
+                            callback = function(self, response)
+                                if not response then
+                                    server:abort(client, 503)
+                                    return
+                                end
+                                local code = tonumber(response.code) or 0
+                                if code ~= 200 then
+                                    server:abort(client, code > 0 and code or 502)
+                                    return
+                                end
+
+                                client_data.shard_live_proxy_req = self
+                                client_data.shard_live_proxy_port = target_port
+
+                                local buffer_size = math.max(128, http_play_buffer_kb)
+                                if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                                    buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                                end
+                                local buffer_fill = math.floor(buffer_size / 4)
+                                if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                                    buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                                end
+                                server:send(client, {
+                                    upstream = self:stream(),
+                                    buffer_size = buffer_size,
+                                    buffer_fill = buffer_fill,
+                                }, "video/MP2T")
+                            end,
+                        })
+                        if not ok or not req then
+                            server:abort(client, 503)
+                            return
+                        end
+                    end
+
+                    if internal then
+                        proxy_allowed()
+                        return nil
+                    end
+
+                    local row = config and config.get_stream and config.get_stream(stream_id) or nil
+                    local stream_cfg = row and row.config or nil
+                    local stream_name = (stream_cfg and stream_cfg.name) or stream_id
+                    local token = auth and auth.get_token and auth.get_token(request) or nil
+                    ensure_token_auth(server, client, request, {
+                        stream_id = stream_id,
+                        stream_name = stream_name,
+                        stream_cfg = stream_cfg,
+                        proto = "http_ts",
+                        token = token,
+                    }, function(_session)
+                        proxy_allowed()
+                    end)
+                    return nil
+                end
+            end
+
+            local entry = runtime and runtime.streams and runtime.streams[stream_id] or nil
+            if not entry then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local channel = entry.channel
+
+            -- Same behavior as /play: if a transcode job exists, prefer its output.
+            local job = entry.job
+            if not job and transcode and transcode.jobs then
+                job = transcode.jobs[stream_id]
+            end
+            local transcode_upstream = nil
+            if job then
+                if job.ladder_enabled == true then
+                    local first = job.profiles and job.profiles[1] or nil
+                    local pid = first and first.id or nil
+                    local bus = pid and job.profile_buses and job.profile_buses[pid] or nil
+                    if bus and bus.switch then
+                        transcode_upstream = bus.switch:stream()
+                    end
+                elseif job.process_per_output == true then
+                    local worker = job.workers and job.workers[1] or nil
+                    if worker and worker.proxy_enabled == true and worker.proxy_switch then
+                        transcode_upstream = worker.proxy_switch:stream()
+                    end
+                end
+                if transcode_upstream then
+                    channel = nil
+                else
+                    server:send(client, {
+                        code = 503,
+                        headers = {
+                            "Content-Type: text/plain",
+                            "Cache-Control: no-store",
+                            "Pragma: no-cache",
+                            "Retry-After: 1",
+                            "Connection: close",
+                        },
+                        content = "transcode output not ready",
+                    })
+                    return nil
+                end
+            end
+            if not channel and not transcode_upstream then
+                server:abort(client, 404)
+                return nil
+            end
+
+            local function allow_stream(session)
+                if channel then
+                    client_data.output_data = { channel_data = channel }
+                else
+                    client_data.output_data = {}
+                end
+                http_output_client(server, client, request, client_data.output_data)
+
+                if session and session.session_id and auth and auth.register_client then
+                    auth.register_client(session.session_id, server, client)
+                    client_data.auth_session_id = session.session_id
+                end
+
+                local upstream = transcode_upstream
+                if channel then
+                    local channel_data = channel
+                    if channel_data.keep_timer then
+                        channel_data.keep_timer:close()
+                        channel_data.keep_timer = nil
+                    end
+                    local cur_clients = tonumber(channel_data.clients or 0) or 0
+                    channel_data.clients = cur_clients + 1
+
+                    local inputs = channel_data.input
+                    if type(inputs) ~= "table" or not inputs[1] then
+                        channel_data.clients = cur_clients
+                        server:abort(client, 503)
+                        return nil
+                    end
+                    if not inputs[1].input then
+                        channel_init_input(channel_data, 1)
+                    end
+                    upstream = channel_data.tail:stream()
+                end
+
+                local buffer_size = math.max(128, http_play_buffer_kb)
+                if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                    buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+                end
+                local buffer_fill = math.floor(buffer_size / 4)
+                if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                    buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                end
+                local query = request and request.query or nil
+                if query then
+                    local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
+                    if qbuf and qbuf > 0 then
+                        buffer_size = math.max(128, math.floor(qbuf))
+                        buffer_fill = math.floor(buffer_size / 4)
+                        if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                            buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                        end
+                    end
+                    local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
+                    if qfill and qfill > 0 then
+                        buffer_fill = math.min(buffer_size, math.floor(qfill))
+                    end
+                end
+                server:send(client, {
+                    upstream = upstream,
+                    buffer_size = buffer_size,
+                    buffer_fill = buffer_fill,
+                }, "video/MP2T")
+            end
+
+            local internal = is_internal_live_request(request)
+            if internal then
+                allow_stream(nil)
+                return nil
+            end
+
+            local row = config and config.get_stream and config.get_stream(stream_id) or nil
+            local stream_cfg = row and row.config or nil
+            local stream_name = (stream_cfg and stream_cfg.name) or stream_id
+            local token = auth and auth.get_token and auth.get_token(request) or nil
+            ensure_token_auth(server, client, request, {
+                stream_id = stream_id,
+                stream_name = stream_name,
+                stream_cfg = stream_cfg,
+                proto = "http_ts",
+                token = token,
+            }, function(session)
+                allow_stream(session)
+            end)
+            return nil
+        end
+
+        if rest and rest ~= "" and config_stream_exists(rest) then
+            return passthrough_live(rest)
         end
 
         local stream_id, profile_id = http_live_stream_ids(request.path)
