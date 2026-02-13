@@ -45,7 +45,8 @@ USAGE
 
 MODE="source"
 URL=""
-BASE_URL="https://a.centv.ru"
+# Default artifact host. Can be overridden with --base-url/--url.
+BASE_URL="https://stream.centv.ru"
 ARTIFACT=""
 BIN_PATH="/usr/local/bin/stream"
 DATA_DIR="/etc/stream"
@@ -250,7 +251,6 @@ resolve_url() {
   fi
 
   if [ "$MODE" = "binary" ]; then
-    # Default artifact naming for prebuilt binaries. Override with --artifact/--url if needed.
     printf '%s/stream-linux-%s' "$BASE_URL" "$ARCH"
     return 0
   fi
@@ -301,12 +301,37 @@ build_from_source() {
 }
 
 install_binary() {
-  local url
-  url=$(resolve_url)
-  log "Downloading binary: $url"
   run mkdir -p "$(dirname "$BIN_PATH")"
-  fetch_artifact "$url" "$BIN_PATH"
-  run chmod 755 "$BIN_PATH"
+
+  # If user provided an explicit URL or artifact name, use it as-is.
+  if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
+    local url
+    url=$(resolve_url)
+    log "Downloading binary: $url"
+    fetch_artifact "$url" "$BIN_PATH"
+    run chmod 755 "$BIN_PATH"
+    return 0
+  fi
+
+  # Try distro-specific build first (if we host it), then fall back to the generic one.
+  # This makes the installer work across Ubuntu versions without forcing a rebuild.
+  local urls=()
+  if [ -n "${OS_ID:-}" ] && [ -n "${OS_VER:-}" ]; then
+    urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER}-${ARCH}")
+  fi
+  urls+=("$(resolve_url)")
+
+  local url
+  for url in "${urls[@]}"; do
+    log "Downloading binary: $url"
+    if fetch_artifact "$url" "$BIN_PATH"; then
+      run chmod 755 "$BIN_PATH"
+      return 0
+    fi
+    warn "Download failed: $url"
+  done
+
+  die "Failed to download prebuilt binary. Try --mode source, or provide --url/--artifact explicitly."
 }
 
 check_runtime_libs() {
