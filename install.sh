@@ -60,7 +60,7 @@ INSTALL_WEB=0
 INSTALL_FFMPEG=1
 RUNTIME_ONLY=0
 DRY_RUN=0
-NAME=""
+INSTANCE_NAME=""
 PORT=""
 ENABLE_SERVICE=0
 
@@ -127,7 +127,7 @@ while [ "${#:-0}" -gt 0 ]; do
     --dry-run)
       DRY_RUN=1; shift;;
     --name)
-      NAME="${2:-}"; shift 2;;
+      INSTANCE_NAME="${2:-}"; shift 2;;
     --port)
       PORT="${2:-}"; shift 2;;
     --enable)
@@ -481,12 +481,12 @@ UNIT
 }
 
 write_instance_files() {
-  if [ -z "$NAME" ]; then
+  if [ -z "$INSTANCE_NAME" ]; then
     return 0
   fi
 
-  local cfg="$DATA_DIR/${NAME}.json"
-  local env="$DATA_DIR/${NAME}.env"
+  local cfg="$DATA_DIR/${INSTANCE_NAME}.json"
+  local env="$DATA_DIR/${INSTANCE_NAME}.env"
 
   if [ ! -f "$cfg" ]; then
     printf '{}' > "$cfg"
@@ -505,10 +505,10 @@ write_instance_files() {
 }
 
 maybe_enable_service() {
-  if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$NAME" ]; then
+  if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then
     return 0
   fi
-  run systemctl enable --now "stream@${NAME}.service"
+  run systemctl enable --now "stream@${INSTANCE_NAME}.service"
 }
 
 main() {
