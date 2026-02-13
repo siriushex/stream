@@ -60,9 +60,9 @@
     a { color: inherit; }
 
     .wrap {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 28px 18px 64px;
+      max-width: none;
+      margin: 0;
+      padding: 0 0 64px;
     }
 
     header {
@@ -73,7 +73,7 @@
       padding: 14px 14px;
       border: 1px solid var(--line);
       background: linear-gradient(180deg, var(--card), transparent);
-      border-radius: var(--r);
+      border-radius: 0;
       backdrop-filter: blur(10px);
     }
 
@@ -161,7 +161,7 @@
       display: grid;
       grid-template-columns: 1.25fr .75fr;
       gap: 18px;
-      margin-top: 18px;
+      margin-top: 0;
       align-items: stretch;
     }
 
@@ -310,6 +310,8 @@
       gap: 10px;
       align-items: center;
       justify-content: space-between;
+      padding-left: 14px;
+      padding-right: 14px;
     }
 
     .links {
@@ -332,6 +334,10 @@
       .card.span8 { grid-column: span 12; }
       nav { justify-content: flex-start; }
     }
+
+    /* Full-width sections: keep content readable with internal padding only. */
+    .section { border-left: 0; border-right: 0; border-radius: 0; }
+    .section + .section { border-top: 0; }
   </style>
 </head>
 <body>
@@ -352,7 +358,7 @@
     </header>
 
     <section class="hero">
-      <div class="panel">
+      <div class="panel section">
         <div class="pad">
           <h2>Один <span class="accent">хаб</span> для потоков.</h2>
           <p class="lead">
@@ -382,7 +388,7 @@ systemctl enable --now stream@prod.service</pre>
         </div>
       </div>
 
-      <div class="panel">
+      <div class="panel section">
         <div class="pad">
           <div aria-hidden="true" style="display:flex; justify-content:center; padding: 6px 0 10px;">
             <svg width="280" height="280" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" style="max-width: 100%; height: auto;">
@@ -454,6 +460,117 @@ systemctl enable --now stream@prod.service</pre>
             <li>Набор модулей: входы/выходы/буферы/аналитика</li>
           </ul>
         </div>
+      </div>
+    </section>
+
+    <section class="panel section" id="guide" style="margin-top: 18px;">
+      <div class="pad">
+        <h3 style="margin: 0; font-size: 18px;">Быстрый старт (для первого запуска)</h3>
+        <p style="margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5;">
+          Ниже — простой путь “установил → запустил → добавил канал → проверил”. Без лишних терминов.
+        </p>
+
+        <div style="height: 14px"></div>
+
+        <h3 style="margin: 0 0 8px; font-size: 14px;">1) Установка</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Нужен Linux (Ubuntu/Debian) и доступ <span style="font-family: var(--mono);">root</span>.
+          Инсталлятор поставит бинарник в <span style="font-family: var(--mono);">/usr/local/bin/stream</span> и зависимости.
+        </p>
+      </div>
+      <pre id="cmd-install">curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only</pre>
+      <div class="copyrow">
+        <div class="hint">Скачает и установит Stream Hub.</div>
+        <button class="copy" type="button" data-copy="#cmd-install">Copy</button>
+      </div>
+
+      <div class="pad">
+        <h3 style="margin: 0 0 8px; font-size: 14px;">2) Первый запуск</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Создайте пустой конфиг и запустите сервер на нужном порту (пример: <span style="font-family: var(--mono);">9060</span>).
+        </p>
+      </div>
+      <pre id="cmd-run">sudo mkdir -p /etc/stream
+sudo sh -c 'echo {} > /etc/stream/prod.json'
+
+sudo /usr/local/bin/stream -c /etc/stream/prod.json -p 9060</pre>
+      <div class="copyrow">
+        <div class="hint">После старта откройте Web UI: <span style="font-family: var(--mono);">http://SERVER:9060</span></div>
+        <button class="copy" type="button" data-copy="#cmd-run">Copy</button>
+      </div>
+
+      <div class="pad">
+        <h3 style="margin: 0 0 8px; font-size: 14px;">3) Вход в Web UI</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Откройте <span style="font-family: var(--mono);">http://SERVER:9060</span>.
+          Если вы запускаете впервые, система может создать пользователя по умолчанию (смотрите лог старта).
+        </p>
+
+        <div style="height: 14px"></div>
+
+        <h3 style="margin: 0 0 8px; font-size: 14px;">4) Создайте канал (Stream)</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          В <b>Dashboard</b> нажмите <b>New Stream</b>. Дальше:
+        </p>
+        <ul style="margin: 8px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          <li><b>Name</b> — имя канала (как вы хотите видеть его в списке).</li>
+          <li><b>ID</b> — короткий идентификатор (латиница/цифры, без пробелов). По нему строятся URL.</li>
+          <li><b>INPUT LIST</b> → <b>NEW INPUT</b> — вставьте адрес источника (например <span style="font-family: var(--mono);">udp://239.0.0.1:1234</span> или <span style="font-family: var(--mono);">http://...</span>).</li>
+          <li><b>OUTPUT LIST</b> → <b>NEW OUTPUT</b> — добавьте выход. Для начала проще всего: UDP.</li>
+        </ul>
+
+        <div style="height: 14px"></div>
+
+        <h3 style="margin: 0 0 8px; font-size: 14px;">5) Проверьте, что поток выдаётся</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Самый быстрый тест — открыть выход в плеере (например VLC/ffplay).
+          Для HTTP‑TS обычно используется URL вида <span style="font-family: var(--mono);">/live/&lt;id&gt;</span>.
+        </p>
+      </div>
+      <pre id="cmd-test"># Пример: проверка HTTP-TS
+ffplay -fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 http://SERVER:9060/live/STREAM_ID
+
+# Пример: проверка UDP
+ffplay -fflags nobuffer -flags low_delay udp://239.0.0.1:1234</pre>
+      <div class="copyrow">
+        <div class="hint">Если плеер не запускается — смотрите логи и статус входа в Dashboard.</div>
+        <button class="copy" type="button" data-copy="#cmd-test">Copy</button>
+      </div>
+
+      <div class="pad">
+        <h3 style="margin: 0 0 8px; font-size: 14px;">6) Transcoding (опционально)</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Транскодирование использует FFmpeg. Включайте его только если нужно поменять кодек/разрешение/битрейт или сделать несколько профилей.
+          В <b>Edit stream</b> включите <b>Enable transcoding</b> и выберите профиль в вкладке <b>Transcode</b>.
+        </p>
+
+        <div style="height: 14px"></div>
+
+        <h3 style="margin: 0 0 8px; font-size: 14px;">7) Запуск как сервис (systemd)</h3>
+        <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          Если хотите автозапуск после перезагрузки, зарегистрируйте шаблон сервиса и включите инстанс.
+        </p>
+      </div>
+      <pre id="cmd-systemd">sudo /usr/local/bin/stream --init
+
+# Создать /etc/stream/prod.env (пример порта)
+sudo sh -c 'echo STREAM_PORT=9060 > /etc/stream/prod.env'
+
+# Включить и запустить
+sudo systemctl enable --now stream@prod.service</pre>
+      <div class="copyrow">
+        <div class="hint">Сервис читает конфиг: <span style="font-family: var(--mono);">/etc/stream/prod.json</span></div>
+        <button class="copy" type="button" data-copy="#cmd-systemd">Copy</button>
+      </div>
+
+      <div class="pad">
+        <h3 style="margin: 0 0 8px; font-size: 14px;">Если что-то не работает</h3>
+        <ul style="margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45;">
+          <li><b>Порт занят</b>: выберите другой <span style="font-family: var(--mono);">-p</span> или остановите процесс, который слушает порт.</li>
+          <li><b>Нет сигнала</b>: проверьте вход (битрейт/ошибки), сетевой интерфейс и multicast‑маршрутизацию.</li>
+          <li><b>Транскод не стартует</b>: убедитесь, что <span style="font-family: var(--mono);">ffmpeg</span> установлен и доступен в <span style="font-family: var(--mono);">PATH</span>.</li>
+          <li><b>Забыли пароль</b>: <span style="font-family: var(--mono);">stream --reset-password</span> (или <span style="font-family: var(--mono);">-pass</span>).</li>
+        </ul>
       </div>
     </section>
 
