@@ -307,6 +307,31 @@ resolve_url() {
   printf '%s/stream-src.tar.gz' "$BASE_URL"
 }
 
+binary_url_candidates() {
+  # Пытаемся подобрать "наиболее совместимый" артефакт.
+  # Правило: сначала дистро-специфичный, затем generic.
+  #
+  # Это важно для старых Ubuntu/Debian, где:
+  # - другой glibc
+  # - другие версии libssl/libcrypto
+  # - нет libavcodec.so.58 и т.п.
+  local urls=()
+
+  # Ubuntu / Debian
+  if [ -n "${OS_ID:-}" ] && [ -n "${OS_VER:-}" ]; then
+    case "${OS_ID:-}" in
+      ubuntu|debian)
+        urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER}-${ARCH}")
+        ;;
+    esac
+  fi
+
+  # Generic fallback
+  urls+=("${BASE_URL}/stream-linux-${ARCH}")
+
+  printf '%s\n' "${urls[@]}"
+}
+
 fetch_artifact() {
   local url="$1"
   local out="$2"
@@ -413,29 +438,37 @@ install_binary() {
     return 0
   fi
 
-  # По умолчанию используем только "generic" linux артефакт.
-  # Дистро-специфичные артефакты могут отсутствовать на хостинге и будут давать 404,
-  # что засоряет вывод и сбивает с толку.
-  local url
-  url="$(resolve_url)"
-  log "Downloading binary: $url"
-  if ! fetch_artifact "$url" "$tmp"; then
-    die "Failed to download prebuilt binary: $url. Try --mode source, or provide --url/--artifact explicitly."
-  fi
-  if [ "$DRY_RUN" -eq 1 ]; then
-    log "[dry-run] would install binary to: $BIN_PATH"
+  local last_err=""
+  local url=""
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    log "Downloading binary: $url"
+    if ! fetch_artifact "$url" "$tmp"; then
+      warn "Download failed: $url"
+      last_err="download failed"
+      continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log "[dry-run] would install binary to: $BIN_PATH"
+      return 0
+    fi
+    if ! is_elf_binary "$tmp"; then
+      warn "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
+      last_err="not an ELF binary"
+      continue
+    fi
+    local reason=""
+    if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+      warn "Downloaded binary is not usable on this system ($reason): $url"
+      last_err="$reason"
+      continue
+    fi
+    run install -m 755 "$tmp" "$BIN_PATH"
+    STREAM_TMP_BIN=""
     return 0
-  fi
-  if ! is_elf_binary "$tmp"; then
-    die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
-  fi
-  local reason=""
-  if ! reason="$(check_runtime_binary_usable "$tmp")"; then
-    die "Downloaded binary is not usable on this system ($reason). Install required packages or use --mode source."
-  fi
-  run install -m 755 "$tmp" "$BIN_PATH"
-  STREAM_TMP_BIN=""
-  return 0
+  done < <(binary_url_candidates)
+
+  die "Failed to download a usable prebuilt binary (last error: ${last_err:-unknown}). Try --mode source, or provide --url/--artifact explicitly."
 }
 
 check_runtime_libs() {
@@ -458,6 +491,12 @@ check_runtime_libs() {
 }
 
 write_systemd_unit() {
+  # В контейнерах (Docker) и некоторых минимальных окружениях systemd не работает.
+  # Установку бинарника и конфигов делаем всё равно, а сервис пропускаем.
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    warn "systemd not detected; skipping unit install"
+    return 0
+  fi
   local unit_path="/etc/systemd/system/stream@.service"
   if [ ! -f "$unit_path" ]; then
     cat > "$unit_path" <<UNIT
@@ -506,6 +545,10 @@ write_instance_files() {
 
 maybe_enable_service() {
   if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    warn "systemd not detected; skipping enable/start"
     return 0
   fi
   run systemctl enable --now "stream@${INSTANCE_NAME}.service"

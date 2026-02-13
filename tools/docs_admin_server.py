@@ -173,6 +173,8 @@ class DocsAdmin:
                 "--exclude=install-centos.sh",
                 "--exclude=install-macos.sh",
                 "--exclude=stream-macos-arm64",
+                # Linux release artifacts (binary mode installer downloads these).
+                "--exclude=stream-linux-*",
                 str(self.site_dir) + "/",
                 str(self.publish_dir) + "/",
             ]
@@ -309,4 +311,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
