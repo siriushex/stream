@@ -27,6 +27,9 @@ hide:
         <span class="sh-hero-contact-sep" aria-hidden="true">•</span>
         <a class="sh-hero-contact" href="https://t.me/Serhiidevel" target="_blank" rel="noopener">Автор</a>
       </div>
+      <div class="sh-hero-note">
+        Проект бесплатный и с открытым кодом (GPLv3). Обсуждение функций — в чате. Нужна новая фича — напишите, если это реально, добавим.
+      </div>
     </div>
     <div class="sh-hero-art" aria-hidden="true">
       <svg viewBox="0 0 720 480" class="sh-hero-wires-svg" aria-hidden="true">
