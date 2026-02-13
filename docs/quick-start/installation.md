@@ -18,6 +18,14 @@ curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --
 curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
 ```
 
+!!! note "Если HTTPS не работает"
+    На некоторых минимальных образах CentOS/RHEL нет актуального набора CA‑сертификатов.
+    Тогда `curl` может ругаться на сертификат. В этом случае используйте HTTP для запуска установщика:
+
+    ```bash
+    curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash
+    ```
+
 ## macOS (для тестов/демо)
 
 ```bash
@@ -30,4 +38,3 @@ curl -fsSL https://stream.centv.ru/install-macos.sh | bash
 ## Следующий шаг
 
 - [Запуск](run.md)
-
