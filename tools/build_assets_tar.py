@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Собирает детерминированный TAR-бандл из каталогов scripts/ и web/."""
 
-from __future__ import annotations
-
 import os
 import stat
 import sys
@@ -10,16 +8,17 @@ import tarfile
 from pathlib import Path
 
 
-def collect_files(root: Path) -> list[Path]:
-    files: list[Path] = []
-    for path in root.rglob("*"):
-        if path.is_file():
-            files.append(path)
+def collect_files(root):
+    # Python 3.5 compatible (Ubuntu 16.04 build image uses python3.5).
+    files = []
+    for dirpath, _, filenames in os.walk(str(root)):
+        for name in filenames:
+            files.append(Path(dirpath) / name)
     files.sort(key=lambda p: p.as_posix())
     return files
 
 
-def add_file(tf: tarfile.TarFile, path: Path, arcname: str) -> None:
+def add_file(tf, path, arcname):
     st = path.stat()
     info = tarfile.TarInfo(name=arcname)
     info.size = st.st_size
@@ -33,7 +32,7 @@ def add_file(tf: tarfile.TarFile, path: Path, arcname: str) -> None:
         tf.addfile(info, fh)
 
 
-def main(argv: list[str]) -> int:
+def main(argv):
     if len(argv) < 3:
         print("usage: build_assets_tar.py <out.tar> <dir> [<dir> ...]", file=sys.stderr)
         return 2
@@ -41,15 +40,15 @@ def main(argv: list[str]) -> int:
     out_path = Path(argv[1]).resolve()
     src_dirs = [Path(arg).resolve() for arg in argv[2:]]
 
-    files: list[tuple[Path, str]] = []
+    files = []
     for src in src_dirs:
         if not src.exists() or not src.is_dir():
-            print(f"source directory not found: {src}", file=sys.stderr)
+            print("source directory not found: {}".format(src), file=sys.stderr)
             return 1
         base_name = src.name
         for item in collect_files(src):
             rel = item.relative_to(src).as_posix()
-            arcname = f"{base_name}/{rel}"
+            arcname = "{}/{}".format(base_name, rel)
             files.append((item, arcname))
 
     files.sort(key=lambda item: item[1])
