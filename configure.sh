@@ -177,11 +177,19 @@ cpucheck()
 }
 
 if [ $ARG_CC -eq 0 ]; then
-    CPUFLAGS=`cpucheck`
-    if [ -n "$CPUFLAGS" ] ; then
-        $APP_C $CFLAGS $CPUFLAGS -E -x c /dev/null >/dev/null 2>&1
-        if [ $? -eq 0 ] ; then
-            CFLAGS="$CFLAGS $CPUFLAGS"
+    # Если собираем "generic" бинарник (например, --arch=x86-64), не добавляем
+    # CPU-специфичные флаги из cpuid. Иначе релизный бинарник может получить
+    # инструкции (SSE4.x и т.п.), которых нет на целевой машине, и упасть с
+    # Illegal instruction.
+    #
+    # Исторически это поведение было безопасно только для --arch=native.
+    if [ "$ARG_ARCH" = "native" ]; then
+        CPUFLAGS=`cpucheck`
+        if [ -n "$CPUFLAGS" ] ; then
+            $APP_C $CFLAGS $CPUFLAGS -E -x c /dev/null >/dev/null 2>&1
+            if [ $? -eq 0 ] ; then
+                CFLAGS="$CFLAGS $CPUFLAGS"
+            fi
         fi
     fi
 elif [ $ISx86 -eq 0 ]; then
