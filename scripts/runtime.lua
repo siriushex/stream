@@ -418,7 +418,7 @@ local function influx_send_snapshot()
         return
     end
     local headers = {
-        "User-Agent: Astra",
+        "User-Agent: Stream",
         "Host: " .. cfg.host .. ":" .. cfg.port,
         "Content-Type: text/plain",
         "Content-Length: " .. tostring(#line),

@@ -1,4 +1,4 @@
--- Astra config lint helper
+-- Stream config lint helper
 
 dofile("scripts/base.lua")
 dofile("scripts/config.lua")

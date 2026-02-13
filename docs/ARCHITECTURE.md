@@ -17,7 +17,7 @@ HTTP, HLS, UDP, MPEG-TS analysis, and optional components (DVB, softcam, buffer)
 
 ## Processes
 - Single main process (`./astra`) for API/UI + runtime management.
-- Optional external process: `hlssplitter` (managed by Astra if configured).
+- Optional external process: `hlssplitter` (managed by Stream Hub if configured).
 - Optional external processes: `ffmpeg` for transcode (spawned by runtime).
 
 ## Data Flow (Streams)

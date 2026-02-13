@@ -11,7 +11,7 @@ astral --stream -p 8000 --config /path/to/config.json
 ```
 
 ### `--relay`
-Релей потоков через HTTP (legacy режим Astra).
+Релей потоков через HTTP (legacy режим).
 ```bash
 astral --relay
 ```

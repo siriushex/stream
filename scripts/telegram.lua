@@ -472,8 +472,11 @@ local function enqueue_text(text, opts)
 
     local now = os.time()
     local dedupe_window = cfg.dedupe_window_sec or 60
-    if telegram.dedupe[message] and (now - telegram.dedupe[message]) < dedupe_window then
-        return false, "dedupe"
+    local bypass_dedupe = opts and opts.bypass_dedupe
+    if not bypass_dedupe then
+        if telegram.dedupe[message] and (now - telegram.dedupe[message]) < dedupe_window then
+            return false, "dedupe"
+        end
     end
 
     local bypass_throttle = opts and opts.bypass_throttle
@@ -492,7 +495,9 @@ local function enqueue_text(text, opts)
         return false, "queue full"
     end
 
-    telegram.dedupe[message] = now
+    if not bypass_dedupe then
+        telegram.dedupe[message] = now
+    end
     table.insert(telegram.queue, {
         text = message,
         attempts = 0,
@@ -926,7 +931,7 @@ local function summary_due(now)
     return telegram.summary_next_ts and now >= telegram.summary_next_ts
 end
 
-local function run_summary(now)
+local function run_summary(now, opts)
     local cfg = telegram.config
     local summary, metrics, err = build_summary_snapshot(24 * 3600)
     if not summary then
@@ -944,7 +949,14 @@ local function run_summary(now)
         "Switches: " .. tostring(summary.input_switch or 0) .. ", Alerts: " .. tostring(summary.alerts_error or 0),
     }
     local message = table.concat(lines, "\n")
-    enqueue_text(message, { bypass_throttle = true })
+    local ok_msg, msg_err = enqueue_text(message, { bypass_throttle = true, bypass_dedupe = opts and opts.bypass_dedupe })
+    if not ok_msg then
+        if (now - telegram.last_error_ts) > 60 then
+            telegram.last_error_ts = now
+            log.warning("[telegram] summary send failed: " .. tostring(msg_err or "unknown"))
+        end
+        return false
+    end
     local function join_list(list, max_items)
         if type(list) ~= "table" then
             return ""
@@ -981,7 +993,7 @@ local function run_summary(now)
                 table.insert(ai_lines, "Suggestions: " .. suggestions_text)
             end
             local ai_message = table.concat(ai_lines, "\n")
-            enqueue_text(ai_message, { bypass_throttle = true })
+            enqueue_text(ai_message, { bypass_throttle = true, bypass_dedupe = opts and opts.bypass_dedupe })
         end)
     end
     if cfg.summary_include_charts then
@@ -1072,7 +1084,7 @@ function telegram.tick()
         run_backup(now)
     end
     if summary_due(now) then
-        run_summary(now)
+        run_summary(now, nil)
     end
 
     if telegram.inflight then
@@ -1234,7 +1246,8 @@ function telegram.send_test()
     if not telegram.config.available then
         return false, "telegram disabled"
     end
-    return enqueue_text("✅ Telegram alerts: test message from Stream Hub", { bypass_throttle = true })
+    return enqueue_text("✅ Telegram alerts: test message from Stream Hub",
+        { bypass_throttle = true, bypass_dedupe = true })
 end
 
 function telegram.send_text(text, opts)
@@ -1261,7 +1274,7 @@ function telegram.send_summary_now()
         return false, "telegram disabled"
     end
     local now = os.time()
-    local ok = run_summary(now)
+    local ok = run_summary(now, { bypass_dedupe = true })
     if not ok then
         return false, "summary failed"
     end

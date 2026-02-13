@@ -8466,7 +8466,7 @@ function applyOutputPreset(key) {
     return;
   }
 
-  // Legacy outputs are configured via the advanced fields (Astra output modules).
+  // Legacy outputs are configured via the advanced fields (legacy output modules).
   if (!meta.legacy_supported) {
     if (elements.outputHint) {
       elements.outputHint.textContent = 'This output preset requires Transcoding publish. Enable Transcoding to use it.';
@@ -9427,7 +9427,7 @@ function buildInputUrl(data) {
 function isEditingLadderTranscodeStream() {
   // Ladder/publish mode is enabled when transcoding is enabled AND ladder profiles are configured.
   // Keep legacy transcode (tc.outputs) compatible: when ladder is not enabled, OUTPUT LIST remains
-  // the legacy Astra output list.
+  // the legacy output list.
   if (!elements.streamTranscodeEnabled || !elements.streamTranscodeEnabled.checked) return false;
   if (elements.streamTranscodeLadderEnabled) return Boolean(elements.streamTranscodeLadderEnabled.checked);
   return hasNonEmptyJsonArray(

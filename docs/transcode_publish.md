@@ -6,12 +6,12 @@
 
 1) **Legacy transcode (Phase 2)**
 - Конфиг: `stream.type = "transcode"` + `stream.transcode.outputs`.
-- Astra запускает ffmpeg и пишет напрямую в `outputs[]` (UDP/RTP/HTTP и т.д. как настроено).
+- Stream Hub запускает ffmpeg и пишет напрямую в `outputs[]` (UDP/RTP/HTTP и т.д. как настроено).
 - Опции: `process_per_output=true`, `seamless_udp_proxy=true`.
 
 2) **Ladder+Publish (Phase 3)**
 - Конфиг: `stream.type = "transcode"` + `stream.transcode.profiles` (непустой массив).
-- Astra строит 2-3 профиля (720/540/360 и т.п.), а публикации (HLS/DASH/RTMP/RTSP/UDP) работают от внутренней шины.
+- Stream Hub строит 2-3 профиля (720/540/360 и т.п.), а публикации (HLS/DASH/RTMP/RTSP/UDP) работают от внутренней шины.
 - Legacy `transcode.outputs` может оставаться в конфиге, но **не используется** в ladder режиме.
 
 ## Конфигурация Ladder (profiles)

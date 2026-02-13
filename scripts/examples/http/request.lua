@@ -21,7 +21,7 @@ http_request({
     host = "ya.ru",
     port = 80,
     headers = {
-        "User-Agent: Astra",
+        "User-Agent: Stream",
         "Host: ya.ru",
         "Connection: close"
     },

@@ -1,4 +1,4 @@
--- Astra API server entrypoint
+-- API server entrypoint
 
 local script_dir = "scripts/"
 do
@@ -772,7 +772,7 @@ local function http_auth_reject(server, client, info)
         "Connection: close",
     }
     if info and info.basic then
-        local realm = info.realm or "Astra"
+        local realm = info.realm or "Stream"
         table.insert(headers, 'WWW-Authenticate: Basic realm="' .. realm .. '"')
     end
     server:send(client, {
@@ -1847,7 +1847,7 @@ WantedBy=multi-user.target
     local http_play_arrange = setting_string("http_play_arrange", "tv")
     local http_play_buffer_kb = setting_number("http_play_buffer_kb", 4000)
     -- Smaller fill reduces "bursty" /play delivery and prevents long idle gaps that can cause
-    -- downstream HTTP clients (ffmpeg/Astra http input) to time out.
+    -- downstream HTTP clients (ffmpeg/http input) to time out.
     local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 32)
     local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 512)
     -- Buffer defaults for internal /input loopback (ffmpeg/transcode).
@@ -2403,7 +2403,7 @@ WantedBy=multi-user.target
             local buffer_fill = math.floor(buffer_size / 4)
             -- Cap buffer_fill so /play is less bursty. This matters for:
             -- - players that expect near-realtime delivery
-            -- - Astra http inputs with sync=0 (event-driven) which can time out on long gaps.
+            -- - http inputs with sync=0 (event-driven) which can time out on long gaps.
             if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
                 buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
             end

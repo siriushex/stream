@@ -26,7 +26,7 @@ hr {
 </style>
 </head>
 <body>
-<h1>Astra WebSocket test</h1>
+<h1>Stream WebSocket test</h1>
 <hr>
 <div class="buttons">
 <input type="button" value="Start Timer" id="start_timer" />
@@ -36,7 +36,7 @@ hr {
 </body>
 <script>
 $log = $('#log');
-$log.append("Astra WebSocket test is started...\n");
+$log.append("Stream WebSocket test is started...\n");
 
 ws = new WebSocket("ws://]] .. server_addr .. ":" .. server_port .. [[/api");
 ws.onopen = function(evt) { $log.append("Connection established\n"); };

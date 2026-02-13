@@ -1,4 +1,4 @@
--- Astra Stream
+-- Stream runtime
 -- https://cesbo.com/astra/
 --
 -- Copyright (C) 2013-2015, Andrey Dyldin <and@cesbo.com>
@@ -2147,7 +2147,7 @@ local function channel_prepare_input(channel_data, input_id, opts)
                 ip = ip,
                 token = token,
                 uri = source_url or "",
-                user_agent = http_user_agent or "Astra",
+                user_agent = http_user_agent or "Stream",
             }, function(allowed_result)
                 if not allowed_result then
                     log.warning("[" .. input_data.config.name .. "] publish denied by backend")
@@ -3833,7 +3833,7 @@ local function http_output_auth(server, client, request)
         "Connection: close",
     }
     if info and info.basic then
-        local realm = info.realm or "Astra"
+        local realm = info.realm or "Stream"
         table.insert(headers, 'WWW-Authenticate: Basic realm="' .. realm .. '"')
     end
     server:send(client, {
@@ -6862,7 +6862,7 @@ end
 -- o88oooo888    o888o    o888o  88o8 o888ooo8888 o88o  o888o o88o  8  o88o
 
 options_usage = [[
-    FILE                Astra script
+    FILE                Stream script
 ]]
 
 options = {

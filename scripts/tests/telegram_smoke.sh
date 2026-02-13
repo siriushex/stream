@@ -13,7 +13,7 @@ MOCK_PID=$!
 trap 'kill "$MOCK_PID" >/dev/null 2>&1 || true' EXIT
 
 echo "Mock running on http://$MOCK_HOST:$MOCK_PORT"
-echo "NOTE: Start Astra with TELEGRAM_API_BASE_URL=http://$MOCK_HOST:$MOCK_PORT before running this test."
+echo "NOTE: Start Stream Hub with TELEGRAM_API_BASE_URL=http://$MOCK_HOST:$MOCK_PORT before running this test."
 
 TOKEN=$(
   curl -i -s -X POST "$API/api/v1/auth/login" \

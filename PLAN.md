@@ -1,14 +1,14 @@
-# Astra Clone - Feature Map and Development Plan
+# Stream Hub - Feature Map and Development Plan
 
 ## Goal
-Build a Linux-first (Ubuntu) streaming platform based on this codebase that matches Cesbo Astra features and web UI behavior, with HLS and web interface as the highest priority.
+Build a Linux-first (Ubuntu) streaming platform based on this codebase, with HLS and web interface as the highest priority.
 
 ## Source of truth
 - Parity matrix: `docs/PARITY.md`
 - Roadmap: `docs/ROADMAP.md`
 - If there is a mismatch, update `docs/PARITY.md` first, then sync this plan in the same change.
 
-## Feature Map (Cesbo reference; target parity)
+## Feature Map (reference; target parity)
 ### Adapter Configuration
 - Adapter id for dvb:// references, adapter index, FE device.
 - DVB standards: S, S2, T, T2, C, C/AC, C/B, C/A, C/C, ATSC, ASI.

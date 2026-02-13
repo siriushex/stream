@@ -1,5 +1,4 @@
--- Astra DVB frontend monitor
--- https://cesbo.com/astra/
+-- Stream DVB frontend monitor (legacy)
 --
 -- Copyright (C) 2015, Andrey Dyldin <and@cesbo.com>
 --

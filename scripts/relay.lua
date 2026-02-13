@@ -1,4 +1,4 @@
--- Astra Relay
+-- Stream Relay
 -- https://cesbo.com/astra/
 --
 -- Copyright (C) 2012-2015, Andrey Dyldin <and@cesbo.com>
@@ -96,7 +96,7 @@ function render_stat_html()
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <title>Astra Relay : Statistics</title>
+    <title>Stream Relay : Statistics</title>
     <style type="text/css">
 body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #333333; }
 table { width: 600px; margin: auto; }
@@ -108,8 +108,8 @@ table { width: 600px; margin: auto; }
     <table border="0">
         <tbody>
             <tr>
-                <td class="brand">Astra Relay</td>
-                <td class="version">Astra v.]] .. astra.version .. [[</td>
+                <td class="brand">Stream Relay</td>
+                <td class="version">Stream v.]] .. astra.version .. [[</td>
             </tr>
         </tbody>
     </table>
@@ -151,7 +151,7 @@ function on_request_stat(server, client, request)
             server:send(client, {
                 code = 401,
                 headers = {
-                    "WWW-Authenticate: Basic realm=\"Astra Relay\"",
+                    "WWW-Authenticate: Basic realm=\"Stream Relay\"",
                     "Content-Length: 0",
                     "Connection: close",
                 }
@@ -432,7 +432,7 @@ function main()
     end
 
     log.info("Starting " .. astra_brand_version())
-    log.info("Astra Relay started on " .. relay_addr .. ":" .. relay_port)
+    log.info("Stream Relay started on " .. relay_addr .. ":" .. relay_port)
 
     local route = {
         { "/stat/", on_request_stat },
@@ -461,7 +461,7 @@ function main()
     http_server({
         addr = relay_addr,
         port = relay_port,
-        server_name = "Astra Relay",
+        server_name = "Stream Relay",
         route = route
     })
 end

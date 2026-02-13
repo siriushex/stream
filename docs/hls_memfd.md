@@ -42,7 +42,7 @@ Per-stream override is supported via the HLS output config (`storage`, `on_deman
 ```
 
 ## Verification (minimal)
-1. Start a test input and Astra:
+1. Start a test input and Stream Hub:
    - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
        -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts \
        "udp://127.0.0.1:13000?pkt_size=1316" &`
@@ -63,7 +63,7 @@ Per-stream override is supported via the HLS output config (`storage`, `on_deman
   - `for i in $(seq 1 10); do curl -s "http://127.0.0.1:9027/hls/hls_demo/${segment}" >/dev/null & done`
 
 ## Notes / limitations
-- `memfd` is Linux-only; when unavailable, Astra falls back to in-memory buffers with a warning.
+- `memfd` is Linux-only; when unavailable, Stream Hub falls back to in-memory buffers with a warning.
 - Disk HLS (`hls_storage="disk"`) is unchanged and still served by `http_static`.
 - On-demand mode suppresses HLS generation until a `/hls/<id>/...` request is seen.
 - `debug_hold_sec` is a test-only option and is available only when compiled with `-DHLS_MEMFD_DEBUG`.
