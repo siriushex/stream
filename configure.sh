@@ -394,11 +394,19 @@ check_openssl()
     fi
 }
 
-if check_openssl "$CFLAGS" "$LDFLAGS -lssl -lcrypto" ; then
-    echo "OpenSSL detected (auto)" >&2
-    OPENSSL=1
-    CFLAGS="$CFLAGS -DHAVE_OPENSSL=1"
-    LDFLAGS="$LDFLAGS -lssl -lcrypto"
+# В некоторых сборках (portable binaries) нам важно НЕ линковаться с OpenSSL,
+# чтобы не получить зависимость на конкретный libssl soname (1.0/1.1/3) из дистрибутива сборки.
+# Включается явно:
+#   STREAM_DISABLE_OPENSSL=1 ./configure.sh
+if [ "${STREAM_DISABLE_OPENSSL:-0}" = "1" ] ; then
+    echo "OpenSSL disabled via STREAM_DISABLE_OPENSSL=1" >&2
+else
+    if check_openssl "$CFLAGS" "$LDFLAGS -lssl -lcrypto" ; then
+        echo "OpenSSL detected (auto)" >&2
+        OPENSSL=1
+        CFLAGS="$CFLAGS -DHAVE_OPENSSL=1"
+        LDFLAGS="$LDFLAGS -lssl -lcrypto"
+    fi
 fi
 
 #
