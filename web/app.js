@@ -1458,6 +1458,7 @@ const elements = {
   btnMptsBulkApply: $('#btn-mpts-bulk-apply'),
   btnAddOutput: $('#btn-add-output'),
   btnAddOutputInline: $('#btn-add-output-inline'),
+  btnOutputAudioFixAll: $('#btn-output-audio-fix-all'),
   btnApplyStream: $('#btn-apply'),
   btnDelete: $('#btn-delete'),
   btnClone: $('#btn-clone'),
@@ -11082,14 +11083,59 @@ function renderOutputList() {
 
     elements.outputList.appendChild(row);
   });
+
+  updateOutputAudioFixAllButton();
 }
 
 function toggleOutputAudioFix(index) {
   const output = state.outputs[index];
   if (!output || String(output.format || '').toLowerCase() !== 'udp') return;
-  const audioFix = normalizeOutputAudioFix(output.audio_fix);
-  audioFix.enabled = !audioFix.enabled;
-  output.audio_fix = audioFix;
+  const normalized = normalizeOutputAudioFix(output.audio_fix);
+  const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
+  // Preserve unknown/advanced keys in audio_fix (round-trip safety).
+  output.audio_fix = { ...current, enabled: !normalized.enabled };
+  renderOutputList();
+}
+
+function getUdpLegacyOutputAudioFixStats() {
+  let total = 0;
+  let enabled = 0;
+  state.outputs.forEach((output) => {
+    if (!output || typeof output !== 'object') return;
+    if (String(output.format || '').toLowerCase() !== 'udp') return;
+    total += 1;
+    const normalized = normalizeOutputAudioFix(output.audio_fix);
+    if (normalized.enabled) enabled += 1;
+  });
+  return { total, enabled };
+}
+
+function updateOutputAudioFixAllButton() {
+  if (!elements.btnOutputAudioFixAll) return;
+  const stats = getUdpLegacyOutputAudioFixStats();
+  if (!stats.total) {
+    elements.btnOutputAudioFixAll.classList.add('is-hidden');
+    return;
+  }
+  elements.btnOutputAudioFixAll.classList.remove('is-hidden');
+  let label = 'Audio Fix';
+  if (stats.enabled === 0) label = 'Audio Fix: OFF';
+  else if (stats.enabled === stats.total) label = 'Audio Fix: ON';
+  else label = 'Audio Fix: MIXED';
+  elements.btnOutputAudioFixAll.textContent = label;
+  elements.btnOutputAudioFixAll.title = `Toggle Audio Fix for all UDP outputs (${stats.enabled}/${stats.total} enabled)`;
+}
+
+function toggleAllUdpOutputAudioFix() {
+  const stats = getUdpLegacyOutputAudioFixStats();
+  if (!stats.total) return;
+  const nextEnabled = stats.enabled !== stats.total;
+  state.outputs.forEach((output, index) => {
+    if (!output || typeof output !== 'object') return;
+    if (String(output.format || '').toLowerCase() !== 'udp') return;
+    const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
+    state.outputs[index] = { ...output, audio_fix: { ...current, enabled: nextEnabled } };
+  });
   renderOutputList();
 }
 
@@ -28676,6 +28722,12 @@ function bindEvents() {
         state.outputInlineDraft = createOutputInlineDraft(kind, streamId);
       }
       renderOutputList();
+    });
+  }
+
+  if (elements.btnOutputAudioFixAll) {
+    elements.btnOutputAudioFixAll.addEventListener('click', () => {
+      toggleAllUdpOutputAudioFix();
     });
   }
 
