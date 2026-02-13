@@ -4825,8 +4825,9 @@ local function start_audio_fix_process(channel_data, output_id, output_data, rea
     local localaddr = resolve_output_localaddr(output_data.config) or output_data.config.localaddr
     local sync = output_data.config.sync
     if sync == nil then
-        -- Keep audio-fix output pacing stable by default when the output sync buffer is not set.
-        sync = 1
+        -- Match udp_output defaults: do not enable PCR-based pacing unless user asked for it.
+        -- Some sources (or ffmpeg remux) may not provide stable PCR, which would stall sync mode.
+        sync = 0
     end
     local proxy_output = udp_output({
         upstream = proxy_switch:stream(),

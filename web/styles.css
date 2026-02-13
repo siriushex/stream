@@ -2791,6 +2791,10 @@ details.fold[open] > .fold-summary::after {
   cursor: not-allowed;
 }
 
+.text-link.is-hidden {
+  display: none;
+}
+
 .list {
   display: grid;
   gap: 6px;
