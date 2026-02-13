@@ -56,7 +56,8 @@ def main(argv):
     files.sort(key=lambda item: item[1])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(out_path, "w", format=tarfile.USTAR_FORMAT) as tf:
+    # Python 3.5 tarfile.open не принимает pathlib.Path.
+    with tarfile.open(str(out_path), "w", format=tarfile.USTAR_FORMAT) as tf:
         for src, arcname in files:
             add_file(tf, src, arcname)
 
