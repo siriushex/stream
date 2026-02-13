@@ -34,17 +34,69 @@
 }
 
 .sh-bleed {
-  width: 100%;
-  margin-left: 0;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
 }
 
-/* На узких экранах у Material sidebar прячется за "бургер".
- * Тут можно делать full-bleed, чтобы landing был "на весь экран". */
-@media (max-width: 76.24em) {
-  .sh-bleed,
-  .sh-section {
-    width: 100vw;
-    margin-left: calc(50% - 50vw);
+/* -----------------------------
+ * Home page navigation (drawer)
+ * ----------------------------- */
+
+/* На главной хотим:
+ * - контент на всю ширину
+ * - навигацию скрытой по умолчанию
+ * - появление по клику на бургер (как drawer) даже на desktop */
+@media screen and (min-width: 76.25em) {
+  .sh-home label.md-header__button[for="__drawer"] {
+    display: inline-block !important; /* Material скрывает на desktop */
+  }
+
+  /* Переводим левый sidebar в режим drawer на desktop */
+  [dir=ltr] .sh-home .md-sidebar--primary {
+    left: -12.1rem;
+  }
+  [dir=rtl] .sh-home .md-sidebar--primary {
+    right: -12.1rem;
+    left: auto;
+  }
+
+  .sh-home .md-sidebar--primary {
+    background-color: var(--md-default-bg-color);
+    display: block;
+    height: 100%;
+    position: fixed;
+    top: 0;
+    transform: translateX(0);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s;
+    width: 12.1rem;
+    z-index: 5;
+  }
+
+  .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+    box-shadow: var(--md-shadow-z3);
+    transform: translateX(12.1rem);
+  }
+  [dir=rtl] .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+    transform: translateX(-12.1rem);
+  }
+
+  .sh-home .md-sidebar--primary .md-sidebar__scrollwrap {
+    bottom: 0;
+    left: 0;
+    margin: 0;
+    overflow: hidden;
+    position: absolute;
+    right: 0;
+    scroll-snap-type: none;
+    top: 0;
+  }
+
+  /* Убираем отступы, которые Material добавляет при видимом sidebar */
+  [dir=ltr] .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+    margin-left: 0 !important;
+  }
+  [dir=rtl] .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+    margin-right: 0 !important;
   }
 }
 
@@ -276,8 +328,8 @@
 }
 
 .sh-section {
-  width: 100%;
-  margin-left: 0;
+  width: 100vw;
+  margin-left: calc(50% - 50vw);
   padding: 32px var(--sh-landing-pad) 40px;
 }
 

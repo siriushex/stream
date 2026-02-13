@@ -7,6 +7,10 @@
 
   function initLandingFx() {
     const landing = document.querySelector(".sh-landing");
+    // Маркер для CSS: главная страница = “витрина”.
+    // На ней мы хотим скрытую навигацию (drawer по кнопке) и full-bleed секции.
+    document.body.classList.toggle("sh-home", !!landing);
+
     if (!landing) return;
 
     // Reveal-on-scroll
