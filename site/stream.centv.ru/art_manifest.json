@@ -1,0 +1,17 @@
+{
+  "assets": [
+    {
+      "asset_id": "stream-hub-hero",
+      "type": "illustration",
+      "intent": "hero",
+      "quality": "high",
+      "size": "1024x1024",
+      "background": "transparent",
+      "folder_path": "site/stream.centv.ru/assets",
+      "file_name": "hero_hub.png",
+      "prompt_mode": "raw",
+      "prompt": "Minimal vector-like hero illustration for a streaming server landing page. A central hub node with 4-6 flowing lines representing streams going in and out. Clean geometric lines, rounded ends, smooth gradients in cyan/teal + mint + warm amber. Subtle glow, lots of negative space, centered composition. Modern tech aesthetic. Transparent background. No text.",
+      "negative_prompt": "text, letters, numbers, watermark, logo, frame, photorealistic, noisy, busy, messy, blurry"
+    }
+  ]
+}

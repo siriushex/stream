@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+
+  <title>Stream Hub</title>
+  <meta name="description" content="Stream Hub — сервер для IPTV/стриминга. Входы UDP/HTTP/RTSP/SRT/DVB, выходы UDP/HLS/DASH/HTTP-TS, транскодирование через FFmpeg, failover, SoftCAM, мониторинг и Web UI." />
+
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --card: rgba(255,255,255,.06);
+      --card2: rgba(255,255,255,.10);
+      --fg: rgba(255,255,255,.92);
+      --muted: rgba(255,255,255,.64);
+      --muted2: rgba(255,255,255,.42);
+      --line: rgba(255,255,255,.12);
+      --accent: #64d2ff;
+      --accent2: #a7f3d0;
+      --warn: #fbbf24;
+      --shadow: 0 24px 70px rgba(0,0,0,.45);
+      --r: 16px;
+
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f7fafc;
+        --card: rgba(0,0,0,.04);
+        --card2: rgba(0,0,0,.06);
+        --fg: rgba(0,0,0,.88);
+        --muted: rgba(0,0,0,.62);
+        --muted2: rgba(0,0,0,.42);
+        --line: rgba(0,0,0,.10);
+        --accent: #0066ff;
+        --accent2: #10b981;
+        --shadow: 0 18px 60px rgba(0,0,0,.12);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--fg);
+      background:
+        radial-gradient(900px 520px at 18% 18%, rgba(100,210,255,.22), transparent 55%),
+        radial-gradient(980px 560px at 82% 14%, rgba(167,243,208,.18), transparent 58%),
+        radial-gradient(1200px 700px at 50% 110%, rgba(251,191,36,.10), transparent 55%),
+        var(--bg);
+    }
+
+    a { color: inherit; }
+
+    .wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 28px 18px 64px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 14px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, var(--card), transparent);
+      border-radius: var(--r);
+      backdrop-filter: blur(10px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: radial-gradient(circle at 35% 35%, rgba(100,210,255,.95), rgba(100,210,255,.0) 55%),
+                  radial-gradient(circle at 65% 35%, rgba(167,243,208,.95), rgba(167,243,208,.0) 58%),
+                  radial-gradient(circle at 50% 75%, rgba(251,191,36,.90), rgba(251,191,36,.0) 60%),
+                  rgba(255,255,255,.06);
+      box-shadow: 0 0 0 1px var(--line) inset;
+      position: relative;
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+
+    .logo::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(180px 80px at 50% 0%, rgba(255,255,255,.22), transparent 60%);
+      transform: translateY(-22%);
+    }
+
+    .brand h1 {
+      font-size: 15px;
+      line-height: 1.1;
+      margin: 0;
+      letter-spacing: .2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .brand p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .pill {
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      font-size: 13px;
+      color: var(--fg);
+      transition: transform .12s ease, background-color .12s ease;
+      user-select: none;
+    }
+
+    .pill:hover { transform: translateY(-1px); background: rgba(255,255,255,.06); }
+
+    .pill.primary {
+      border-color: transparent;
+      background: linear-gradient(135deg, rgba(100,210,255,.22), rgba(167,243,208,.18));
+      box-shadow: 0 8px 28px rgba(100,210,255,.12);
+    }
+
+    .pill code { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 1.25fr .75fr;
+      gap: 18px;
+      margin-top: 18px;
+      align-items: stretch;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: linear-gradient(180deg, var(--card), transparent);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel .pad { padding: 18px; }
+
+    .hero h2 {
+      margin: 0;
+      font-size: 34px;
+      letter-spacing: -0.6px;
+      line-height: 1.02;
+    }
+
+    .hero h2 .accent {
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+
+    .lead {
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .kpi {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .kpi .tile {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,.03);
+      min-width: 0;
+    }
+
+    .tile b { display: block; font-size: 13px; }
+    .tile span { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+    pre {
+      margin: 0;
+      padding: 14px 14px;
+      background: rgba(0,0,0,.22);
+      border-top: 1px solid var(--line);
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-x: auto;
+    }
+
+    @media (prefers-color-scheme: light) {
+      pre { background: rgba(0,0,0,.05); }
+    }
+
+    .copyrow {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .copyrow .hint { font-size: 12px; color: var(--muted2); }
+
+    button.copy {
+      font-family: var(--sans);
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.04);
+      color: var(--fg);
+      border-radius: 999px;
+      padding: 8px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    button.copy:hover { background: rgba(255,255,255,.06); }
+
+    .grid {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .card {
+      grid-column: span 6;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: rgba(255,255,255,.03);
+      padding: 14px;
+      min-height: 130px;
+    }
+
+    .card h3 { margin: 0 0 6px; font-size: 14px; }
+    .card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+
+    .card ul { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .card li { margin: 4px 0; }
+
+    .card.span4 { grid-column: span 4; min-height: 160px; }
+    .card.span8 { grid-column: span 8; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      border-radius: 999px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 10px;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(100,210,255,.16);
+    }
+
+    footer {
+      margin-top: 26px;
+      padding-top: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .links a {
+      color: var(--muted);
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(255,255,255,.18);
+    }
+
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: 1fr; }
+      .card { grid-column: span 12; }
+      .card.span4 { grid-column: span 12; }
+      .card.span8 { grid-column: span 12; }
+      nav { justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true"></div>
+        <div>
+          <h1>Stream Hub</h1>
+          <p>Сервер IPTV/стриминга: входы → обработка → выходы. Web UI + API.</p>
+        </div>
+      </div>
+      <nav>
+        <a class="pill primary" href="/install.sh">Install script</a>
+        <a class="pill" href="/stream">Download</a>
+        <a class="pill" href="#quickstart">Quick start</a>
+      </nav>
+    </header>
+
+    <section class="hero">
+      <div class="panel">
+        <div class="pad">
+          <h2>Один <span class="accent">хаб</span> для потоков.</h2>
+          <p class="lead">
+            Stream Hub — это сервер для управления MPEG‑TS/OTT потоками: входы (UDP/HTTP/RTSP/SRT/DVB),
+            выходы (UDP, HLS, DASH, HTTP‑TS), транскодирование через FFmpeg, failover,
+            SoftCAM, анализ и наблюдаемость.
+          </p>
+
+          <div class="kpi" aria-label="Ключевые возможности">
+            <div class="tile"><b>Passthrough</b><span>минимальная задержка</span></div>
+            <div class="tile"><b>Transcode</b><span>профили и ladder</span></div>
+            <div class="tile"><b>Observability</b><span>статусы и метрики</span></div>
+          </div>
+        </div>
+        <pre id="quickstart"># Установка (Ubuntu/Debian)
+curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only
+
+# Запуск (пример)
+/usr/local/bin/stream -c /etc/stream/prod.json -p 9060
+
+# Systemd (опционально)
+/usr/local/bin/stream --init
+systemctl enable --now stream@prod.service</pre>
+        <div class="copyrow">
+          <div class="hint">Команды выше можно копировать и вставлять в терминал.</div>
+          <button class="copy" type="button" data-copy="#quickstart">Copy</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="pad">
+          <div aria-hidden="true" style="display:flex; justify-content:center; padding: 6px 0 10px;">
+            <svg width="280" height="280" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" style="max-width: 100%; height: auto;">
+              <defs>
+                <linearGradient id="g1" x1="40" y1="40" x2="280" y2="280" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#64d2ff" stop-opacity="0.95"/>
+                  <stop offset="0.55" stop-color="#a7f3d0" stop-opacity="0.85"/>
+                  <stop offset="1" stop-color="#fbbf24" stop-opacity="0.85"/>
+                </linearGradient>
+                <linearGradient id="g2" x1="280" y1="40" x2="40" y2="280" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#a7f3d0" stop-opacity="0.90"/>
+                  <stop offset="1" stop-color="#64d2ff" stop-opacity="0.90"/>
+                </linearGradient>
+                <filter id="glow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
+                  <feGaussianBlur stdDeviation="6" result="b"/>
+                  <feColorMatrix in="b" type="matrix"
+                    values="1 0 0 0 0
+                            0 1 0 0 0
+                            0 0 1 0 0
+                            0 0 0 0.55 0"/>
+                  <feMerge>
+                    <feMergeNode/>
+                    <feMergeNode in="SourceGraphic"/>
+                  </feMerge>
+                </filter>
+              </defs>
+
+              <!-- soft orbit -->
+              <circle cx="160" cy="160" r="118" stroke="url(#g2)" stroke-opacity="0.22" stroke-width="10"/>
+              <circle cx="160" cy="160" r="118" stroke="url(#g1)" stroke-opacity="0.12" stroke-width="2" stroke-dasharray="6 10"/>
+
+              <!-- stream paths -->
+              <g filter="url(#glow)" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M52 112 C 98 64, 126 72, 156 134" stroke="url(#g2)" stroke-width="6"/>
+                <path d="M70 214 C 112 260, 138 246, 158 190" stroke="url(#g1)" stroke-width="6"/>
+                <path d="M268 102 C 228 60, 194 74, 170 134" stroke="url(#g1)" stroke-width="6"/>
+                <path d="M248 220 C 206 270, 188 250, 166 192" stroke="url(#g2)" stroke-width="6"/>
+              </g>
+
+              <!-- nodes -->
+              <g filter="url(#glow)">
+                <circle cx="160" cy="160" r="26" fill="url(#g1)" fill-opacity="0.22" stroke="url(#g1)" stroke-width="3"/>
+                <circle cx="52" cy="112" r="10" fill="url(#g2)" fill-opacity="0.20" stroke="url(#g2)" stroke-width="3"/>
+                <circle cx="70" cy="214" r="10" fill="url(#g1)" fill-opacity="0.20" stroke="url(#g1)" stroke-width="3"/>
+                <circle cx="268" cy="102" r="10" fill="url(#g1)" fill-opacity="0.20" stroke="url(#g1)" stroke-width="3"/>
+                <circle cx="248" cy="220" r="10" fill="url(#g2)" fill-opacity="0.20" stroke="url(#g2)" stroke-width="3"/>
+              </g>
+            </svg>
+          </div>
+          <div class="badge"><span class="dot"></span>Стабильность: ограничения, watchdog, перезапуски</div>
+          <div style="height: 10px"></div>
+          <div class="badge"><span class="dot" style="background: var(--accent2)"></span>Один бинарник: UI + scripts внутри</div>
+          <div style="height: 10px"></div>
+          <div class="badge"><span class="dot" style="background: var(--warn); box-shadow: 0 0 0 3px rgba(251,191,36,.18)"></span>Transcode требует FFmpeg в системе</div>
+
+          <div style="height: 16px"></div>
+          <h3 style="margin: 0 0 8px; font-size: 14px;">Скачать</h3>
+          <p style="margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45;">
+            Бинарник: <a href="/stream">/stream</a><br/>
+            Инсталлятор: <a href="/install.sh">/install.sh</a><br/>
+            Prebuilt: <a href="/stream-linux-x86_64">/stream-linux-x86_64</a>
+          </p>
+
+          <div style="height: 16px"></div>
+          <h3 style="margin: 0 0 8px; font-size: 14px;">Что внутри</h3>
+          <ul style="margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.45;">
+            <li>Web UI: Dashboard, Streams, Settings, Sessions, Logs</li>
+            <li>API: управление потоками и статусами</li>
+            <li>Набор модулей: входы/выходы/буферы/аналитика</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid" aria-label="Возможности">
+      <div class="card span8">
+        <h3>Streams (потоки)</h3>
+        <p>Один поток = вход(ы) + правила обработки + выход(ы). Поддерживается backup/failover и переключение входов.</p>
+        <ul>
+          <li>INPUT LIST: несколько источников, приоритет, быстрый порядок</li>
+          <li>OUTPUT LIST: несколько выходов на один поток</li>
+          <li>Analyze: быстрый анализ PIDs/битрейта/CC/PES ошибок</li>
+        </ul>
+      </div>
+
+      <div class="card span4">
+        <h3>Входы</h3>
+        <p>Основные типы зависят от сборки/модулей, но обычно доступны:</p>
+        <ul>
+          <li>UDP / RTP</li>
+          <li>HTTP/HTTPS</li>
+          <li>RTSP / SRT</li>
+          <li>DVB (если есть /dev/dvb)</li>
+        </ul>
+      </div>
+
+      <div class="card span4">
+        <h3>Выходы</h3>
+        <p>Passthrough или транскодированный поток.</p>
+        <ul>
+          <li>UDP</li>
+          <li>HLS / DASH</li>
+          <li>HTTP‑TS (/live/&lt;id&gt;)</li>
+          <li>Embed page (если включено)</li>
+        </ul>
+      </div>
+
+      <div class="card span8">
+        <h3>Transcoding</h3>
+        <p>Запускается через FFmpeg. Профили качества (CPU/NVENC), single profile или multi‑bitrate ladder.</p>
+        <ul>
+          <li>Профили: 540p/720p/1080p, CPU/Nvidia</li>
+          <li>Логика ladder: для нескольких профилей — варианты (variants)</li>
+          <li>Audio Fix (если включено): исправление типовых проблем со звуком</li>
+        </ul>
+      </div>
+
+      <div class="card span8">
+        <h3>Наблюдаемость и стабильность</h3>
+        <p>Без лишней нагрузки: метрики по запросу или редкий rollup. Ограничения и перезапуски защищают инстанс.</p>
+        <ul>
+          <li>Observability: CPU/MEM/Disk/Network + метрики потоков</li>
+          <li>Логи и события ошибок</li>
+          <li>Watchdog/limits: защита от перегрузки и restart‑storm</li>
+        </ul>
+      </div>
+
+      <div class="card span4">
+        <h3>Access / Sessions</h3>
+        <p>Контроль доступа к UI/API и просмотр клиентов.</p>
+        <ul>
+          <li>Сессии клиентов</li>
+          <li>Токены/ACL (если включено)</li>
+          <li>Опция запуска: <span style="font-family: var(--mono);">--no-web-auth</span></li>
+        </ul>
+      </div>
+
+      <div class="card span6">
+        <h3>SoftCAM (опционально)</h3>
+        <p>Интеграция descrambling в пайплайн. Опции задаются в input URL. Поведение зависит от конфигурации SoftCAM.</p>
+      </div>
+
+      <div class="card span6">
+        <h3>HLSSplitter / Buffer (опционально)</h3>
+        <p>Доп. инструменты для распределения и буферизации потоков. Включаются в UI настройками интерфейса.</p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="links">
+        <span>Stream Hub</span>
+        <a href="/install.sh">install.sh</a>
+        <a href="/stream">download</a>
+      </div>
+      <div>© centv.ru</div>
+    </footer>
+  </div>
+
+  <script>
+    (function () {
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text);
+        }
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'absolute';
+        ta.style.left = '-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        return Promise.resolve();
+      }
+
+      document.addEventListener('click', function (e) {
+        var btn = e.target.closest && e.target.closest('button[data-copy]');
+        if (!btn) return;
+        var sel = btn.getAttribute('data-copy');
+        var el = document.querySelector(sel);
+        if (!el) return;
+        copyText(el.innerText || el.textContent || '').then(function () {
+          var prev = btn.textContent;
+          btn.textContent = 'Copied';
+          setTimeout(function () { btn.textContent = prev; }, 900);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

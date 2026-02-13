@@ -9,6 +9,8 @@
 /modules/inscript/inscript.h
 /contrib/build
 .DS_Store
+.env
+.env.*
 
 # Embedded assets build artifacts (generated at build time).
 /assets.tar
