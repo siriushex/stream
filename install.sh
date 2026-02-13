@@ -14,7 +14,7 @@ Modes:
 
 Source/binary download:
   --url URL                Explicit URL to download (source tarball or binary).
-  --base-url URL           Base URL for artifacts (default: https://a.centv.ru).
+  --base-url URL           Base URL for artifacts (default: https://stream.centv.ru).
   --artifact NAME          Artifact filename under base URL.
 
 Install paths:
@@ -63,6 +63,18 @@ ENABLE_SERVICE=0
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+is_elf_binary() {
+  # Если вместо бинарника скачался HTML (например, index.html), не устанавливаем.
+  # ELF magic: 0x7f 'E' 'L' 'F' -> 7f454c46.
+  local f="$1"
+  if [ ! -f "$f" ]; then
+    return 1
+  fi
+  local magic
+  magic="$(dd if="$f" bs=1 count=4 2>/dev/null | od -An -t x1 | tr -d ' \n' || true)"
+  [ "$magic" = "7f454c46" ]
+}
 
 run() {
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -304,13 +316,21 @@ build_from_source() {
 install_binary() {
   run mkdir -p "$(dirname "$BIN_PATH")"
 
+  local tmp
+  tmp="$(mktemp -t stream-bin.XXXXXX)"
+  # shellcheck disable=SC2064
+  trap 'rm -f "$tmp" >/dev/null 2>&1 || true' EXIT
+
   # If user provided an explicit URL or artifact name, use it as-is.
   if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
     local url
     url=$(resolve_url)
     log "Downloading binary: $url"
-    fetch_artifact "$url" "$BIN_PATH"
-    run chmod 755 "$BIN_PATH"
+    fetch_artifact "$url" "$tmp"
+    if ! is_elf_binary "$tmp"; then
+      die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
+    fi
+    run install -m 755 "$tmp" "$BIN_PATH"
     return 0
   fi
 
@@ -325,8 +345,12 @@ install_binary() {
   local url
   for url in "${urls[@]}"; do
     log "Downloading binary: $url"
-    if fetch_artifact "$url" "$BIN_PATH"; then
-      run chmod 755 "$BIN_PATH"
+    if fetch_artifact "$url" "$tmp"; then
+      if ! is_elf_binary "$tmp"; then
+        warn "Downloaded file is not an ELF binary, skipping: $url"
+        continue
+      fi
+      run install -m 755 "$tmp" "$BIN_PATH"
       return 0
     fi
     warn "Download failed: $url"
