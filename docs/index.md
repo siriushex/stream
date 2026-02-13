@@ -22,6 +22,11 @@ hide:
         <span class="sh-badge">UDP / HTTP‑TS / HLS</span>
         <span class="sh-badge">Транскодирование: по желанию</span>
       </div>
+      <div class="sh-hero-contacts" aria-label="Контакты">
+        <a class="sh-hero-contact" href="https://t.me/streamhubfree" target="_blank" rel="noopener">Чат в Telegram</a>
+        <span class="sh-hero-contact-sep" aria-hidden="true">•</span>
+        <a class="sh-hero-contact" href="https://t.me/Serhiidevel" target="_blank" rel="noopener">Автор</a>
+      </div>
     </div>
     <div class="sh-hero-art" aria-hidden="true">
       <svg viewBox="0 0 720 480" class="sh-hero-wires-svg" aria-hidden="true">
