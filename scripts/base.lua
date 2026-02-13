@@ -196,7 +196,7 @@ end
 function astra_brand_version()
     local name = os.getenv("ASTRAL_NAME")
         or os.getenv("ASTRA_NAME")
-        or "Astral"
+        or "Stream"
     local version = os.getenv("ASTRAL_VERSION")
         or os.getenv("ASTRA_VERSION")
         or "1.0"
@@ -3889,19 +3889,22 @@ function astra_usage()
     log.info(astra_brand_version())
     print([[
 
-Usage: astra APP [OPTIONS]
+Usage: stream APP [OPTIONS]
 
 Available Applications:
-    --stream            Astra Stream is a main application for
-                        the digital television streaming
-    --relay             Astra Relay  is an application for
-                        the digital television relaying
-                        via the HTTP protocol
-    --analyze           Astra Analyze is a MPEG-TS stream analyzer
-    --dvbls             DVB Adapters information list
-    SCRIPT              launch Astra script
+    --stream            Main streaming server (Web UI + API + outputs)
+    --relay             HTTP relay / proxy mode
+    --analyze           MPEG-TS analyzer
+    --dvbls             DVB adapters information list
+    --femon             DVB signal status monitor
+    SCRIPT              launch Lua script
 
-Astra Options:
+Commands:
+    --init              Register systemd service template (stream@.service)
+    --remove            Remove systemd service template (stream@.service)
+    --reset-password    Reset admin password to default (admin/admin)
+
+Global Options:
     -h, --help          command line arguments
     -v, --version       version number
     --pid FILE          create PID-file
