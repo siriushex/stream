@@ -17,6 +17,9 @@
   --shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
   --radius: 6px;
   --radius-lg: 10px;
+  /* Code blocks/editors keep a dark surface for readability in both themes. */
+  --code-bg: #22262c;
+  --code-text: #cfd5dd;
 }
 
 :root.theme-light {
@@ -36,6 +39,8 @@
   --border: #e1e6ee;
   --border-strong: #d5dbe6;
   --shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+  --code-bg: #22262c;
+  --code-text: #cfd5dd;
 }
 
 :root.theme-dark {
@@ -60,6 +65,8 @@
     --border: #e1e6ee;
     --border-strong: #d5dbe6;
     --shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+    --code-bg: #22262c;
+    --code-text: #cfd5dd;
   }
 }
 
@@ -4840,7 +4847,8 @@ button.stream-audio-fix-toggle:disabled {
 }
 
 .code-block {
-  background: #22262c;
+  background: var(--code-bg);
+  color: var(--code-text);
   border-radius: 4px;
   padding: 12px;
   overflow: auto;
@@ -4850,10 +4858,10 @@ button.stream-audio-fix-toggle:disabled {
 .code-editor {
   width: 100%;
   min-height: 420px;
-  background: #22262c;
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  color: var(--text);
+  color: var(--code-text);
   padding: 12px;
   font-family: "IBM Plex Mono", "Menlo", "SFMono-Regular", monospace;
   font-size: 12px;
