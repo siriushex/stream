@@ -329,7 +329,9 @@ build_from_source() {
   fi
 
   log "Building from: $src_root"
-  (cd "$src_root" && ./configure.sh && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
+  # Стараемся собирать максимально полный функционал (softcam/descramble),
+  # даже если в системе нет libdvbcsa-dev.
+  (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
 
   if [ ! -x "$src_root/astra" ]; then
     die "Build succeeded but binary 'astra' not found."
