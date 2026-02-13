@@ -1359,6 +1359,9 @@ local function ensure_detector_state(input_data)
     return input_data.detector_state
 end
 
+-- Forward declaration: used from detector helpers above stream lifecycle.
+local emit_stream_alert
+
 local function emit_detector_event(channel_data, input_id, input_data, detector_key, level, code, message, meta, now, resend_sec)
     local state = ensure_detector_state(input_data)
     state[detector_key] = state[detector_key] or {}
@@ -1869,7 +1872,7 @@ local function get_stream_label(channel_data)
     return "stream"
 end
 
-local function emit_stream_alert(channel_data, level, code, message, meta)
+emit_stream_alert = function(channel_data, level, code, message, meta)
     if not (config and config.add_alert) then
         return
     end
