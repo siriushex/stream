@@ -309,6 +309,25 @@ install_binary() {
   run chmod 755 "$BIN_PATH"
 }
 
+check_runtime_libs() {
+  if ! command -v ldd >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Static binaries print "not a dynamic executable" - that's OK.
+  local out
+  out="$(ldd "$BIN_PATH" 2>&1 || true)"
+  if echo "$out" | grep -qi "not a dynamic executable"; then
+    return 0
+  fi
+
+  local missing
+  missing="$(echo "$out" | awk '/not found/{print $1}' | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ -n "$missing" ]; then
+    die "Missing runtime libraries for $BIN_PATH: $missing. Install the required packages or use --mode source."
+  fi
+}
+
 write_systemd_unit() {
   local unit_path="/etc/systemd/system/stream@.service"
   if [ ! -f "$unit_path" ]; then
@@ -392,6 +411,7 @@ main() {
     build_from_source
   else
     install_binary
+    check_runtime_libs
   fi
 
   if [ "$INSTALL_WEB" -eq 0 ]; then
