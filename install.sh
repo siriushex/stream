@@ -312,16 +312,16 @@ install_binary() {
 write_systemd_unit() {
   local unit_path="/etc/systemd/system/stream@.service"
   if [ ! -f "$unit_path" ]; then
-    cat > "$unit_path" <<'UNIT'
+    cat > "$unit_path" <<UNIT
 [Unit]
 Description=Stream server (%i)
 After=network.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/stream/%i.env
-WorkingDirectory=/etc/stream
-ExecStart=/usr/local/bin/stream -c /etc/stream/%i.json -p ${STREAM_PORT:-8816}
+EnvironmentFile=-${DATA_DIR}/%i.env
+WorkingDirectory=${DATA_DIR}
+ExecStart=${BIN_PATH} -c ${DATA_DIR}/%i.json -p \${STREAM_PORT:-8816}
 Restart=always
 RestartSec=2
 
