@@ -16,7 +16,7 @@ Source/binary download:
   --url URL                Explicit URL to download (source tarball or binary).
   --base-url URL           Base URL for artifacts (default: https://stream.centv.ru).
   --artifact NAME          Artifact filename under base URL.
-  --git-url URL            Git repository URL for --mode source (default: https://github.com/siriushex/astral.git).
+  --git-url URL            Git repository URL for --mode source (default: https://github.com/siriushex/stream.git).
   --git-ref REF            Git ref/branch/tag for --mode source (default: main).
 
 Install paths:
@@ -51,7 +51,7 @@ URL=""
 # Default artifact host. Can be overridden with --base-url/--url.
 BASE_URL="https://stream.centv.ru"
 ARTIFACT=""
-GIT_URL="https://github.com/siriushex/astral.git"
+GIT_URL="https://github.com/siriushex/stream.git"
 GIT_REF="main"
 BIN_PATH="/usr/local/bin/stream"
 DATA_DIR="/etc/stream"
