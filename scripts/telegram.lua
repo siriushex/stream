@@ -473,7 +473,17 @@ local function enqueue_text(text, opts)
         return false, "curl unavailable"
     end
 
-    local message = trim_text(text, 300)
+    local max_len = 300
+    if opts and opts.max_len ~= nil then
+        local n = tonumber(opts.max_len)
+        if n and n > 0 then
+            -- Telegram text limit is 4096, keep some headroom for UTF-8 edge cases.
+            if n > 3500 then n = 3500 end
+            if n < 80 then n = 80 end
+            max_len = math.floor(n)
+        end
+    end
+    local message = trim_text(text, max_len)
     if message == "" then
         return false, "empty"
     end
@@ -1413,7 +1423,7 @@ function telegram.send_triggers_preview()
     end
 
     local text = "📌 Примеры Telegram Alerts (Stream Hub)\n\n" .. table.concat(lines, "\n\n")
-    return enqueue_text(text, { bypass_throttle = true, bypass_dedupe = true })
+    return enqueue_text(text, { bypass_throttle = true, bypass_dedupe = true, max_len = 3500 })
 end
 
 telegram._test = {
