@@ -1197,6 +1197,9 @@ const elements = {
   streamName: $('#stream-name'),
   streamEnabled: $('#stream-enabled'),
   streamTranscodeEnabled: $('#stream-transcode-enabled'),
+  streamAudioFixControls: $('#stream-audio-fix-controls'),
+  btnStreamAudioFixToggle: $('#btn-stream-audio-fix-toggle'),
+  btnStreamAudioFixEdit: $('#btn-stream-audio-fix-edit'),
   streamMpts: $('#stream-mpts'),
   streamDesc: $('#stream-desc'),
   streamGroup: $('#stream-group'),
@@ -1458,7 +1461,6 @@ const elements = {
   btnMptsBulkApply: $('#btn-mpts-bulk-apply'),
   btnAddOutput: $('#btn-add-output'),
   btnAddOutputInline: $('#btn-add-output-inline'),
-  btnOutputAudioFixAll: $('#btn-output-audio-fix-all'),
   btnApplyStream: $('#btn-apply'),
   btnDelete: $('#btn-delete'),
   btnClone: $('#btn-clone'),
@@ -1549,6 +1551,25 @@ const elements = {
   outputFileM2ts: $('#output-file-m2ts'),
   outputFileAio: $('#output-file-aio'),
   outputFileDirectio: $('#output-file-directio'),
+  audioFixOverlay: $('#audio-fix-overlay'),
+  audioFixForm: $('#audio-fix-form'),
+  audioFixClose: $('#audio-fix-close'),
+  audioFixCancel: $('#audio-fix-cancel'),
+  audioFixSave: $('#audio-fix-save'),
+  audioFixError: $('#audio-fix-error'),
+  audioFixEnabled: $('#audio-fix-enabled'),
+  audioFixForce: $('#audio-fix-force'),
+  audioFixMode: $('#audio-fix-mode'),
+  audioFixProfile: $('#audio-fix-profile'),
+  audioFixBitrate: $('#audio-fix-bitrate'),
+  audioFixSampleRate: $('#audio-fix-sr'),
+  audioFixChannels: $('#audio-fix-ch'),
+  audioFixAsync: $('#audio-fix-async'),
+  audioFixSilence: $('#audio-fix-silence'),
+  audioFixInterval: $('#audio-fix-interval'),
+  audioFixDuration: $('#audio-fix-duration'),
+  audioFixHold: $('#audio-fix-hold'),
+  audioFixCooldown: $('#audio-fix-cooldown'),
   inputOverlay: $('#input-overlay'),
   splitterLinkOverlay: $('#splitter-link-overlay'),
   splitterLinkForm: $('#splitter-link-form'),
@@ -11070,34 +11091,15 @@ function renderOutputList() {
 
     row.appendChild(idx);
     row.appendChild(editor);
-    if (isUdp) {
-      const audioFix = audioFixMeta ? audioFixMeta.config : normalizeOutputAudioFix(legacy.audio_fix);
-      const audioToggle = document.createElement('button');
-      audioToggle.type = 'button';
-      audioToggle.className = `output-audio-toggle ${audioFix.enabled ? 'is-on' : 'is-off'}`;
-      audioToggle.dataset.action = 'output-audio-fix';
-      audioToggle.textContent = audioFix.enabled ? 'Audio Fix: ON' : 'Audio Fix: OFF';
-      actions.prepend(audioToggle);
-    }
     row.appendChild(actions);
 
     elements.outputList.appendChild(row);
   });
 
-  updateOutputAudioFixAllButton();
+  updateStreamAudioFixControls();
 }
 
-function toggleOutputAudioFix(index) {
-  const output = state.outputs[index];
-  if (!output || String(output.format || '').toLowerCase() !== 'udp') return;
-  const normalized = normalizeOutputAudioFix(output.audio_fix);
-  const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
-  // Preserve unknown/advanced keys in audio_fix (round-trip safety).
-  output.audio_fix = { ...current, enabled: !normalized.enabled };
-  renderOutputList();
-}
-
-function getUdpLegacyOutputAudioFixStats() {
+function getStreamAudioFixStats() {
   let total = 0;
   let enabled = 0;
   state.outputs.forEach((output) => {
@@ -11110,24 +11112,38 @@ function getUdpLegacyOutputAudioFixStats() {
   return { total, enabled };
 }
 
-function updateOutputAudioFixAllButton() {
-  if (!elements.btnOutputAudioFixAll) return;
-  const stats = getUdpLegacyOutputAudioFixStats();
+function updateStreamAudioFixControls() {
+  if (!elements.streamAudioFixControls || !elements.btnStreamAudioFixToggle) return;
+  const stats = getStreamAudioFixStats();
   if (!stats.total) {
-    elements.btnOutputAudioFixAll.classList.add('is-hidden');
+    elements.streamAudioFixControls.classList.add('is-hidden');
     return;
   }
-  elements.btnOutputAudioFixAll.classList.remove('is-hidden');
-  let label = 'Audio Fix';
-  if (stats.enabled === 0) label = 'Audio Fix: OFF';
-  else if (stats.enabled === stats.total) label = 'Audio Fix: ON';
-  else label = 'Audio Fix: MIXED';
-  elements.btnOutputAudioFixAll.textContent = label;
-  elements.btnOutputAudioFixAll.title = `Toggle Audio Fix for all UDP outputs (${stats.enabled}/${stats.total} enabled)`;
+
+  elements.streamAudioFixControls.classList.remove('is-hidden');
+
+  let label = 'Audio Fix: OFF';
+  let cls = 'is-off';
+  if (stats.enabled === stats.total) {
+    label = 'Audio Fix: ON';
+    cls = 'is-on';
+  } else if (stats.enabled > 0) {
+    label = 'Audio Fix: MIXED';
+    cls = 'is-mixed';
+  }
+
+  elements.btnStreamAudioFixToggle.textContent = label;
+  elements.btnStreamAudioFixToggle.title = `Toggle Audio Fix for all UDP outputs (${stats.enabled}/${stats.total} enabled)`;
+  elements.btnStreamAudioFixToggle.classList.remove('is-on', 'is-off', 'is-mixed');
+  elements.btnStreamAudioFixToggle.classList.add(cls);
+
+  if (elements.btnStreamAudioFixEdit) {
+    elements.btnStreamAudioFixEdit.disabled = false;
+  }
 }
 
-function toggleAllUdpOutputAudioFix() {
-  const stats = getUdpLegacyOutputAudioFixStats();
+function toggleStreamAudioFixAll() {
+  const stats = getStreamAudioFixStats();
   if (!stats.total) return;
   const nextEnabled = stats.enabled !== stats.total;
   state.outputs.forEach((output, index) => {
@@ -11137,6 +11153,99 @@ function toggleAllUdpOutputAudioFix() {
     state.outputs[index] = { ...output, audio_fix: { ...current, enabled: nextEnabled } };
   });
   renderOutputList();
+}
+
+function getStreamAudioFixRepresentativeConfig() {
+  const udpOutputs = state.outputs.filter((o) => o && typeof o === 'object' && String(o.format || '').toLowerCase() === 'udp');
+  if (!udpOutputs.length) {
+    return normalizeOutputAudioFix({ enabled: false });
+  }
+  const rep = udpOutputs.find((o) => normalizeOutputAudioFix(o.audio_fix).enabled) || udpOutputs[0];
+  return normalizeOutputAudioFix(rep.audio_fix);
+}
+
+function closeAudioFixModal() {
+  if (!elements.audioFixOverlay) return;
+  if (elements.audioFixError) elements.audioFixError.textContent = '';
+  setOverlay(elements.audioFixOverlay, false);
+}
+
+function openAudioFixModal() {
+  const stats = getStreamAudioFixStats();
+  if (!stats.total) return;
+
+  const config = getStreamAudioFixRepresentativeConfig();
+  if (elements.audioFixEnabled) elements.audioFixEnabled.checked = config.enabled;
+  if (elements.audioFixForce) elements.audioFixForce.checked = config.force_on;
+  if (elements.audioFixMode) elements.audioFixMode.value = config.mode;
+  if (elements.audioFixProfile) elements.audioFixProfile.value = config.aac_profile || '';
+  if (elements.audioFixBitrate) elements.audioFixBitrate.value = config.aac_bitrate_kbps;
+  if (elements.audioFixSampleRate) elements.audioFixSampleRate.value = config.aac_sample_rate;
+  if (elements.audioFixChannels) elements.audioFixChannels.value = config.aac_channels;
+  if (elements.audioFixAsync) elements.audioFixAsync.value = config.aresample_async;
+  if (elements.audioFixSilence) elements.audioFixSilence.checked = config.silence_fallback;
+  if (elements.audioFixInterval) elements.audioFixInterval.value = config.probe_interval_sec;
+  if (elements.audioFixDuration) elements.audioFixDuration.value = config.probe_duration_sec;
+  if (elements.audioFixHold) elements.audioFixHold.value = config.mismatch_hold_sec;
+  if (elements.audioFixCooldown) elements.audioFixCooldown.value = config.restart_cooldown_sec;
+  if (elements.audioFixError) elements.audioFixError.textContent = '';
+
+  setOverlay(elements.audioFixOverlay, true);
+}
+
+function readAudioFixForm() {
+  const toInt = (el) => {
+    if (!el) return undefined;
+    const v = toNumber(el.value);
+    return Number.isFinite(v) ? v : undefined;
+  };
+  const profile = elements.audioFixProfile ? String(elements.audioFixProfile.value || '').trim() : '';
+  const src = {
+    enabled: elements.audioFixEnabled ? elements.audioFixEnabled.checked : false,
+    force_on: elements.audioFixForce ? elements.audioFixForce.checked : false,
+    mode: elements.audioFixMode ? elements.audioFixMode.value : OUTPUT_AUDIO_FIX_DEFAULTS.mode,
+    aac_profile: profile,
+    aac_bitrate_kbps: toInt(elements.audioFixBitrate),
+    aac_sample_rate: toInt(elements.audioFixSampleRate),
+    aac_channels: toInt(elements.audioFixChannels),
+    aresample_async: toInt(elements.audioFixAsync),
+    silence_fallback: elements.audioFixSilence ? elements.audioFixSilence.checked : false,
+    probe_interval_sec: toInt(elements.audioFixInterval),
+    probe_duration_sec: toInt(elements.audioFixDuration),
+    mismatch_hold_sec: toInt(elements.audioFixHold),
+    restart_cooldown_sec: toInt(elements.audioFixCooldown),
+    target_audio_type: OUTPUT_AUDIO_FIX_DEFAULTS.target_audio_type,
+  };
+
+  const normalized = normalizeOutputAudioFix(src);
+
+  const checkRange = (value, min, max, label) => {
+    if (!Number.isFinite(value)) return null;
+    if (value < min || value > max) return `${label} must be between ${min} and ${max}`;
+    return null;
+  };
+
+  const err = checkRange(normalized.aac_bitrate_kbps, 8, 10240, 'AAC bitrate (kbit/s)')
+    || checkRange(normalized.aac_sample_rate, 8000, 192000, 'AAC sample rate (Hz)')
+    || checkRange(normalized.aac_channels, 1, 16, 'AAC channels')
+    || checkRange(normalized.aresample_async, 0, 1000, 'Aresample async')
+    || checkRange(normalized.probe_interval_sec, 1, 86400, 'Probe interval (sec)')
+    || checkRange(normalized.probe_duration_sec, 1, 60, 'Probe duration (sec)')
+    || checkRange(normalized.mismatch_hold_sec, 0, 3600, 'Mismatch hold (sec)')
+    || checkRange(normalized.restart_cooldown_sec, 0, 86400, 'Restart cooldown (sec)');
+
+  if (err) return { ok: false, error: err, value: null };
+  return { ok: true, error: null, value: normalized };
+}
+
+function applyAudioFixConfigToAllUdpOutputs(config) {
+  state.outputs.forEach((output, index) => {
+    if (!output || typeof output !== 'object') return;
+    if (String(output.format || '').toLowerCase() !== 'udp') return;
+    const current = (output.audio_fix && typeof output.audio_fix === 'object') ? output.audio_fix : {};
+    // Preserve unknown/advanced keys in audio_fix (round-trip safety).
+    state.outputs[index] = { ...output, audio_fix: { ...current, ...config } };
+  });
 }
 
 function getEditingOutputStatus(index) {
@@ -12272,16 +12381,11 @@ function setOutputHttpMode(mode) {
 }
 
 function updateOutputAudioFixVisibility() {
+  // Audio Fix is configured globally per stream (General → Transcoding).
+  // Keep the legacy per-output editor hidden to avoid duplicated/conflicting UX.
   if (!elements.outputUdpAudioFixBlock) return;
-  const presetKey = elements.outputPreset ? String(elements.outputPreset.value || '') : '';
-  const isUdp = presetKey === 'udp_multicast';
-  elements.outputUdpAudioFixBlock.classList.toggle('is-hidden', !isUdp);
-  if (!isUdp) {
-    elements.outputUdpAudioFixBlock.classList.remove('is-enabled');
-    return;
-  }
-  const enabled = elements.outputUdpAudioFixEnabled && elements.outputUdpAudioFixEnabled.checked;
-  elements.outputUdpAudioFixBlock.classList.toggle('is-enabled', enabled);
+  elements.outputUdpAudioFixBlock.classList.add('is-hidden');
+  elements.outputUdpAudioFixBlock.classList.remove('is-enabled');
 }
 
 function getLegacyOutputPreset(output) {
@@ -12623,35 +12727,6 @@ function readOutputForm() {
       sync: toNumber(elements.outputUdpSync.value),
       cbr: toNumber(elements.outputUdpCbr.value),
     });
-    if (format === 'udp' && elements.outputUdpAudioFixEnabled) {
-      payload.audio_fix = {
-        enabled: elements.outputUdpAudioFixEnabled.checked,
-        force_on: elements.outputUdpAudioFixForce ? elements.outputUdpAudioFixForce.checked : false,
-        mode: elements.outputUdpAudioFixMode ? elements.outputUdpAudioFixMode.value : OUTPUT_AUDIO_FIX_DEFAULTS.mode,
-        target_audio_type: OUTPUT_AUDIO_FIX_DEFAULTS.target_audio_type,
-        probe_interval_sec: toNumber(elements.outputUdpAudioFixInterval.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.probe_interval_sec,
-        probe_duration_sec: toNumber(elements.outputUdpAudioFixDuration.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.probe_duration_sec,
-        mismatch_hold_sec: toNumber(elements.outputUdpAudioFixHold.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.mismatch_hold_sec,
-        restart_cooldown_sec: toNumber(elements.outputUdpAudioFixCooldown.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.restart_cooldown_sec,
-        aac_bitrate_kbps: toNumber(elements.outputUdpAudioFixBitrate && elements.outputUdpAudioFixBitrate.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_bitrate_kbps,
-        aac_sample_rate: toNumber(elements.outputUdpAudioFixSampleRate && elements.outputUdpAudioFixSampleRate.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_sample_rate,
-        aac_channels: toNumber(elements.outputUdpAudioFixChannels && elements.outputUdpAudioFixChannels.value)
-          || OUTPUT_AUDIO_FIX_DEFAULTS.aac_channels,
-        aac_profile: elements.outputUdpAudioFixProfile
-          ? (elements.outputUdpAudioFixProfile.value || '').trim()
-          : OUTPUT_AUDIO_FIX_DEFAULTS.aac_profile,
-        aresample_async: elements.outputUdpAudioFixAsync && toNumber(elements.outputUdpAudioFixAsync.value) !== undefined
-          ? toNumber(elements.outputUdpAudioFixAsync.value)
-          : OUTPUT_AUDIO_FIX_DEFAULTS.aresample_async,
-        silence_fallback: elements.outputUdpAudioFixSilence ? elements.outputUdpAudioFixSilence.checked : false,
-      };
-    }
     return payload;
   }
 
@@ -28725,9 +28800,34 @@ function bindEvents() {
     });
   }
 
-  if (elements.btnOutputAudioFixAll) {
-    elements.btnOutputAudioFixAll.addEventListener('click', () => {
-      toggleAllUdpOutputAudioFix();
+  if (elements.btnStreamAudioFixToggle) {
+    elements.btnStreamAudioFixToggle.addEventListener('click', () => {
+      toggleStreamAudioFixAll();
+    });
+  }
+  if (elements.btnStreamAudioFixEdit) {
+    elements.btnStreamAudioFixEdit.addEventListener('click', () => {
+      openAudioFixModal();
+    });
+  }
+  if (elements.audioFixClose) {
+    elements.audioFixClose.addEventListener('click', closeAudioFixModal);
+  }
+  if (elements.audioFixCancel) {
+    elements.audioFixCancel.addEventListener('click', closeAudioFixModal);
+  }
+  if (elements.audioFixForm) {
+    elements.audioFixForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      if (elements.audioFixError) elements.audioFixError.textContent = '';
+      const parsed = readAudioFixForm();
+      if (!parsed.ok) {
+        if (elements.audioFixError) elements.audioFixError.textContent = parsed.error || 'Invalid settings.';
+        return;
+      }
+      applyAudioFixConfigToAllUdpOutputs(parsed.value);
+      renderOutputList();
+      closeAudioFixModal();
     });
   }
 
@@ -28775,13 +28875,6 @@ function bindEvents() {
         url = getPublishOutputPublicUrl(publishEntry, streamId);
       }
       if (url) copyText(url);
-      return;
-    }
-
-    if (action.dataset.action === 'output-audio-fix') {
-      if (hasLegacy) {
-        toggleOutputAudioFix(legacyIndex);
-      }
       return;
     }
 
@@ -29028,6 +29121,23 @@ function bindEvents() {
 
     const output = readOutputForm();
     if (!output) return;
+
+    // Audio Fix is a global stream setting (General → Transcoding) and is stored on UDP legacy outputs.
+    // Output modal should not override it; preserve existing config on edits, and inherit when adding
+    // a new UDP output while Audio Fix is already enabled globally for all UDP outputs.
+    if (String(output.format || '').toLowerCase() === 'udp') {
+      const idx = state.outputEditingIndex;
+      const prev = (idx !== null && idx !== undefined) ? state.outputs[idx] : null;
+      if (prev && prev.audio_fix && typeof prev.audio_fix === 'object') {
+        output.audio_fix = prev.audio_fix;
+      } else {
+        const stats = getStreamAudioFixStats();
+        if (stats.total > 0 && stats.enabled === stats.total) {
+          output.audio_fix = getStreamAudioFixRepresentativeConfig();
+        }
+      }
+    }
+
     if (state.outputEditingIndex === null || state.outputEditingIndex === undefined) {
       state.outputs.push(output);
     } else {

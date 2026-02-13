@@ -1673,18 +1673,30 @@
             <div class="form-subsection stream-transcode-setting" id="stream-transcode-general">
               <div class="stream-transcode-setting-main">
                 <div class="stream-transcode-setting-title">Transcoding</div>
+                <div class="stream-transcode-setting-sub">
+                  <div class="stream-transcode-setting-subtitle">Audio Fix</div>
+                  <div class="stream-transcode-setting-subhint">Fix common audio issues (sync/dropouts/pauses).</div>
+                </div>
               </div>
               <div class="stream-transcode-setting-controls">
-                <label class="stream-transcode-toggle" for="stream-transcode-enabled">
-                  <span class="switch-text">Enable transcoding</span>
-                  <span class="switch">
-                    <input type="checkbox" id="stream-transcode-enabled" role="switch" aria-label="Enable transcoding"
-                      aria-checked="false" />
-                    <span class="switch-slider"></span>
-                  </span>
-                </label>
-                <span class="pill stream-transcode-status-pill is-disabled" id="stream-transcode-status-pill"
-                  aria-live="polite">Disabled</span>
+                <div class="stream-transcode-setting-row">
+                  <label class="stream-transcode-toggle" for="stream-transcode-enabled">
+                    <span class="switch-text">Enable transcoding</span>
+                    <span class="switch">
+                      <input type="checkbox" id="stream-transcode-enabled" role="switch" aria-label="Enable transcoding"
+                        aria-checked="false" />
+                      <span class="switch-slider"></span>
+                    </span>
+                  </label>
+                  <span class="pill stream-transcode-status-pill is-disabled" id="stream-transcode-status-pill"
+                    aria-live="polite">Disabled</span>
+                </div>
+                <div class="stream-transcode-setting-row stream-audio-fix-controls" id="stream-audio-fix-controls">
+                  <button class="pill stream-audio-fix-toggle is-off" type="button" id="btn-stream-audio-fix-toggle"
+                    title="Toggle Audio Fix for all UDP outputs">Audio Fix: OFF</button>
+                  <button class="btn ghost tiny" type="button" id="btn-stream-audio-fix-edit"
+                    title="Edit Audio Fix settings">Edit</button>
+                </div>
               </div>
             </div>
 
@@ -1713,7 +1725,6 @@
               <div class="list-actions">
                 <button class="text-link" type="button" id="btn-add-output">NEW OUTPUT</button>
                 <button class="text-link btn-inline-add" type="button" id="btn-add-output-inline">+</button>
-                <button class="text-link" type="button" id="btn-output-audio-fix-all" title="Toggle Audio Fix for all UDP outputs">Audio Fix</button>
               </div>
             </div>
             <div class="list" id="output-list"></div>
@@ -2661,7 +2672,7 @@
             <span>CBR (Kbit/s)</span>
             <input type="number" id="output-udp-cbr" placeholder="0" />
           </label>
-          <div class="output-audio-fix" id="output-udp-audio-fix">
+          <div class="output-audio-fix is-hidden" id="output-udp-audio-fix">
             <label class="checkline">
               <input type="checkbox" id="output-udp-audio-fix-enabled" />
               <span>Audio fix (normalize to AAC)</span>
@@ -2720,6 +2731,9 @@
 	            <div class="form-hint">
 	              Checks the UDP output audio type; if not AAC (0x0F), Stream Hub starts an AAC normalize pass.
 	            </div>
+          </div>
+          <div class="form-hint output-audio-fix-global-hint" id="output-audio-fix-global-hint">
+            Audio Fix is configured globally in General → Transcoding.
           </div>
         </div>
 
@@ -2838,6 +2852,90 @@
         <div class="modal-footer">
           <button class="btn" type="submit" id="output-save">OK</button>
           <button class="btn ghost" type="button" id="output-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="audio-fix-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title">Audio Fix</div>
+        <button class="icon-btn" id="audio-fix-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="audio-fix-form">
+        <div class="modal-body-scroll">
+          <div class="form-subsection">
+            <div class="form-grid">
+              <label class="checkline span-6">
+                <input type="checkbox" id="audio-fix-enabled" />
+                <span>Enable</span>
+              </label>
+              <label class="checkline span-6">
+                <input type="checkbox" id="audio-fix-force" />
+                <span>Force on (always run, copy when possible)</span>
+              </label>
+              <label class="field span-6">
+                <span>Mode</span>
+                <select id="audio-fix-mode">
+                  <option value="aac">AAC (always transcode)</option>
+                  <option value="auto">Auto (copy if already AAC + matches params)</option>
+                </select>
+              </label>
+              <label class="field span-6">
+                <span>AAC profile (optional)</span>
+                <input type="text" id="audio-fix-profile" placeholder="(auto)" />
+              </label>
+              <label class="field span-4">
+                <span>AAC bitrate (kbit/s)</span>
+                <input type="number" id="audio-fix-bitrate" placeholder="128" />
+              </label>
+              <label class="field span-4">
+                <span>AAC sample rate (Hz)</span>
+                <input type="number" id="audio-fix-sr" placeholder="48000" />
+              </label>
+              <label class="field span-4">
+                <span>AAC channels</span>
+                <input type="number" id="audio-fix-ch" placeholder="2" />
+              </label>
+              <label class="field span-4">
+                <span>Aresample async (0 to disable)</span>
+                <input type="number" id="audio-fix-async" placeholder="1" />
+              </label>
+              <label class="checkline span-8">
+                <input type="checkbox" id="audio-fix-silence" />
+                <span>Silence fallback (inject silence when audio missing)</span>
+              </label>
+              <label class="field span-4">
+                <span>Probe interval (sec)</span>
+                <input type="number" id="audio-fix-interval" placeholder="30" />
+              </label>
+              <label class="field span-4">
+                <span>Probe duration (sec)</span>
+                <input type="number" id="audio-fix-duration" placeholder="2" />
+              </label>
+              <label class="field span-4">
+                <span>Mismatch hold (sec)</span>
+                <input type="number" id="audio-fix-hold" placeholder="10" />
+              </label>
+              <label class="field span-4">
+                <span>Restart cooldown (sec)</span>
+                <input type="number" id="audio-fix-cooldown" placeholder="1200" />
+              </label>
+            </div>
+            <div class="form-hint">
+              Applies to UDP outputs of this stream.
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="audio-fix-save">Save</button>
+            <button class="btn ghost" type="button" id="audio-fix-cancel">X</button>
+            <div class="form-note" id="audio-fix-error"></div>
+          </div>
         </div>
       </form>
     </div>
