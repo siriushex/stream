@@ -426,11 +426,18 @@ local function default_data_dir(config_path)
         base = "data"
     end
     local root = os.getenv("ASTRA_DATA_ROOT") or os.getenv("ASTRAL_DATA_ROOT")
+    -- Default behavior:
+    -- - if config has a directory, keep data next to config (safe + backwards compatible)
+    -- - if config is a bare name, use /etc/stream as the default root
     if not root or root == "" then
-        root = "/etc/astral"
+        if dir and dir ~= "" and dir ~= "." then
+            root = dir
+        else
+            root = "/etc/stream"
+        end
     end
     if not root or root == "" then
-        return join_path(dir, base .. ".data")
+        root = dir
     end
     return join_path(root, base .. ".data")
 end
@@ -1187,6 +1194,14 @@ function main()
     math.randomseed(os.time())
 
     if opt.config_path and opt.config_path ~= "" then
+        -- If config is a bare name (no slashes) - default to /etc/stream.
+        -- This allows a minimal start command:
+        --   stream -c prod.json -p 9060
+        -- (config resolves to /etc/stream/prod.json)
+        if not opt.config_path:match("[/\\]") and not opt.config_path:match("^/") then
+            opt.config_path = join_path("/etc/stream", opt.config_path)
+        end
+
         if not opt.data_dir_set then
             opt.data_dir = default_data_dir(opt.config_path)
         end

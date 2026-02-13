@@ -18,7 +18,7 @@ Source/binary download:
 
 Install paths:
   --bin PATH               Install path for the binary (default: /usr/local/bin/stream).
-  --data-dir DIR           Config/data root (default: /etc/astral).
+  --data-dir DIR           Config/data root (default: /etc/stream).
   --workdir DIR            Temporary build dir (default: /tmp/stream-build).
 
 Web assets:
@@ -26,12 +26,13 @@ Web assets:
   --no-web                 Do not install web assets (UI will be served from embedded bundle).
 
 Service:
-  --name NAME              Instance name (creates /etc/astral/NAME.json and NAME.env).
+  --name NAME              Instance name (creates /etc/stream/NAME.json and NAME.env).
   --port PORT              HTTP port for the instance (requires --name).
   --enable                 Enable+start systemd unit after install (requires --name).
 
 Deps:
   --no-ffmpeg              Skip installing ffmpeg/ffprobe + dev libs.
+  --runtime-only           Install only runtime deps (no compiler toolchain). Requires --mode binary.
   --dry-run                Print actions without running them.
   -h, --help               Show help.
 
@@ -47,10 +48,11 @@ URL=""
 BASE_URL="https://a.centv.ru"
 ARTIFACT=""
 BIN_PATH="/usr/local/bin/stream"
-DATA_DIR="/etc/astral"
+DATA_DIR="/etc/stream"
 WORKDIR="/tmp/stream-build"
 INSTALL_WEB=0
 INSTALL_FFMPEG=1
+RUNTIME_ONLY=0
 DRY_RUN=0
 NAME=""
 PORT=""
@@ -90,6 +92,8 @@ while [ "${#:-0}" -gt 0 ]; do
       INSTALL_WEB=0; shift;;
     --no-ffmpeg)
       INSTALL_FFMPEG=0; shift;;
+    --runtime-only)
+      RUNTIME_ONLY=1; shift;;
     --dry-run)
       DRY_RUN=1; shift;;
     --name)
@@ -163,6 +167,34 @@ install_deps_debian() {
   run apt-get install -y --no-install-recommends libdvbcsa-dev libpq-dev || true
 }
 
+install_runtime_deps_debian() {
+  run apt-get update -y
+
+  # Ubuntu: ensure universe for ffmpeg/libdvbcsa runtime packages.
+  if [ "${OS_ID:-}" = "ubuntu" ]; then
+    if ! apt-cache show ffmpeg >/dev/null 2>&1; then
+      run apt-get install -y --no-install-recommends software-properties-common
+      if command -v add-apt-repository >/dev/null 2>&1; then
+        run add-apt-repository -y universe || true
+        run apt-get update -y
+      else
+        warn "add-apt-repository not found; some packages may be unavailable."
+      fi
+    fi
+  fi
+
+  run apt-get install -y --no-install-recommends ca-certificates curl
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    run apt-get install -y --no-install-recommends ffmpeg
+  fi
+
+  # Runtime libraries for dynamically linked builds.
+  run apt-get install -y --no-install-recommends libsqlite3-0 libpq5 libdvbcsa1 || true
+  # OpenSSL runtime package name depends on Ubuntu/Debian version.
+  run apt-get install -y --no-install-recommends libssl3 || run apt-get install -y --no-install-recommends libssl1.1 || true
+}
+
 enable_epel_rhel() {
   if [ -f /etc/redhat-release ] && ! rpm -q epel-release >/dev/null 2>&1; then
     run "$PKG_MGR" -y install epel-release || true
@@ -193,6 +225,16 @@ install_deps_rhel() {
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
     enable_rpmfusion
     run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+  fi
+}
+
+install_runtime_deps_rhel() {
+  enable_epel_rhel
+  run "$PKG_MGR" -y install ca-certificates curl sqlite-libs openssl-libs || true
+  run "$PKG_MGR" -y install libdvbcsa postgresql-libs || true
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    enable_rpmfusion
+    run "$PKG_MGR" -y install ffmpeg || true
   fi
 }
 
@@ -277,9 +319,9 @@ After=network.target
 
 [Service]
 Type=simple
-EnvironmentFile=-/etc/astral/%i.env
-WorkingDirectory=/etc/astral
-ExecStart=/usr/local/bin/stream -c /etc/astral/%i.json -p ${ASTRAL_PORT:-8816}
+EnvironmentFile=-/etc/stream/%i.env
+WorkingDirectory=/etc/stream
+ExecStart=/usr/local/bin/stream -c /etc/stream/%i.json -p ${STREAM_PORT:-8816}
 Restart=always
 RestartSec=2
 
@@ -307,8 +349,7 @@ write_instance_files() {
   fi
 
   {
-    printf 'ASTRAL_PORT=%s\n' "$PORT"
-    printf 'ASTRA_DATA_ROOT=%s\n' "$DATA_DIR"
+    printf 'STREAM_PORT=%s\n' "$PORT"
     if [ "$INSTALL_WEB" -eq 1 ]; then
       printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/stream/web"
     fi
@@ -327,12 +368,24 @@ main() {
     die "Unsupported --mode: $MODE (use source or binary)"
   fi
 
+  if [ "$RUNTIME_ONLY" -eq 1 ] && [ "$MODE" != "binary" ]; then
+    die "--runtime-only requires --mode binary"
+  fi
+
   ensure_dirs
 
   if [ "$PKG_MGR" = "apt" ]; then
-    install_deps_debian
+    if [ "$RUNTIME_ONLY" -eq 1 ]; then
+      install_runtime_deps_debian
+    else
+      install_deps_debian
+    fi
   else
-    install_deps_rhel
+    if [ "$RUNTIME_ONLY" -eq 1 ]; then
+      install_runtime_deps_rhel
+    else
+      install_deps_rhel
+    fi
   fi
 
   if [ "$MODE" = "source" ]; then
