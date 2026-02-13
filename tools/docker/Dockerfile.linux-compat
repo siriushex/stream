@@ -1,0 +1,38 @@
+FROM ubuntu:16.04 AS build
+
+# Ubuntu 16.04 is EOL, so we use old-releases mirrors.
+RUN sed -i \
+      -e 's|http://archive.ubuntu.com/ubuntu|http://old-releases.ubuntu.com/ubuntu|g' \
+      -e 's|http://security.ubuntu.com/ubuntu|http://old-releases.ubuntu.com/ubuntu|g' \
+      /etc/apt/sources.list \
+ && apt-get update -y \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      git \
+      gcc \
+      make \
+      python3 \
+      pkg-config \
+      binutils \
+      tar \
+      gzip \
+      xz-utils \
+      libsqlite3-dev \
+      libpq-dev \
+      libdvbcsa-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . /src
+
+# Build a portable x86_64 binary:
+# - arch=x86-64 to avoid -march=native
+# - do NOT install libssl-dev in this image, so OpenSSL is not linked
+#   (this keeps runtime deps smaller and avoids libssl soname issues on older systems)
+RUN ./configure.sh --arch=x86-64 --with-libdvbcsa \
+ && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)"
+
+RUN mkdir -p /out \
+ && cp -a ./astra /out/stream \
+ && strip /out/stream || true
+
