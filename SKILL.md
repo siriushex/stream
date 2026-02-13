@@ -1,6 +1,7 @@
 # SKILL — Astral (fork Astra)
 
 ## Scope
+- Canonical repo: https://github.com/siriushex/stream (work on this repo going forward).
 - Astral — форк Astra с целью паритета функционала и близкого UX, без регрессий.
 - Ничего из уже работающего не ломаем. Все новые фичи — add‑only, с безопасными дефолтами.
 - Брендинг: Astral. Astra упоминать только при ссылках на документацию.

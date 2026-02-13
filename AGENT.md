@@ -1,6 +1,7 @@
 # AGENT
 
 ## Scope
+- Canonical repo: https://github.com/siriushex/stream (work on this repo going forward).
 - Testing and final verification must run on the DEV/TEST server in `/home/hex`.
 - DEV/TEST (only): `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.2`
 - PROD: `178.212.236.6` is production. Do not use it for development/testing or deploys from Codex.
