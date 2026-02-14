@@ -6,6 +6,10 @@
   --md-typeset-max-width: 78rem;
   --sh-landing-pad: clamp(16px, 2.5vw, 32px);
   --sh-landing-radius: 18px;
+  /* Ширина drawer-меню на витрине.
+   * В px, чтобы на сверхшироких экранах (Material увеличивает базовый font-size)
+   * меню не раздувалось вместе с rem и не “ломало” композицию. */
+  --sh-drawer-width: clamp(220px, 18vw, 300px);
 }
 
 .md-typeset h1 {
@@ -129,7 +133,7 @@
   /* Переводим левый sidebar в режим drawer на desktop */
   .sh-home .md-sidebar--primary {
     /* HTML по умолчанию без dir=..., поэтому не используем [dir=ltr] селектор. */
-    left: -12.1rem;
+    left: calc(-1 * var(--sh-drawer-width));
     right: auto;
     background-color: var(--md-default-bg-color);
     display: block;
@@ -138,20 +142,20 @@
     top: 0;
     transform: translateX(0);
     transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s;
-    width: 12.1rem;
+    width: var(--sh-drawer-width);
     z-index: 5;
   }
 
   .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
     box-shadow: var(--md-shadow-z3);
-    transform: translateX(12.1rem);
+    transform: translateX(var(--sh-drawer-width));
   }
   html[dir=rtl] .sh-home .md-sidebar--primary {
-    right: -12.1rem;
+    right: calc(-1 * var(--sh-drawer-width));
     left: auto;
   }
   html[dir=rtl] .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
-    transform: translateX(-12.1rem);
+    transform: translateX(calc(-1 * var(--sh-drawer-width)));
   }
 
   .sh-home .md-sidebar--primary .md-sidebar__scrollwrap {
