@@ -587,32 +587,37 @@ local NET_RESILIENCE_KEYS = {
             low_speed_time_sec = 6,
             keepalive = true,
             user_agent = "Stream/1.0",
-        },
+	        },
 	        bad = {
 	            connect_timeout_ms = 8000,
-	            read_timeout_ms = 25000,
-	            stall_timeout_ms = 10000,
+	            -- Профиль для «плохих» HTTP/HLS источников.
+	            -- Главный принцип: лучше пережить краткий провал сети буфером, чем
+	            -- рвать соединение и вызывать заметные паузы у клиента.
+	            read_timeout_ms = 45000,
+	            stall_timeout_ms = 20000,
 	            max_retries = 0,
             backoff_min_ms = 1000,
             backoff_max_ms = 20000,
             backoff_jitter_pct = 30,
             cooldown_sec = 45,
-	            low_speed_limit_bytes_sec = 8192,
-	            low_speed_time_sec = 10,
+	            low_speed_limit_bytes_sec = 4096,
+	            low_speed_time_sec = 15,
 	            keepalive = true,
 	            user_agent = "VLC/3.0.20",
 	        },
 	        max = {
 	            connect_timeout_ms = 12000,
-	            read_timeout_ms = 40000,
-            stall_timeout_ms = 20000,
+	            -- Максимальная устойчивость (цена: задержка). Подходит для панелей,
+	            -- которые «замирают» на 5–15 секунд.
+	            read_timeout_ms = 60000,
+            stall_timeout_ms = 30000,
             max_retries = 0,
             backoff_min_ms = 1500,
             backoff_max_ms = 30000,
             backoff_jitter_pct = 35,
             cooldown_sec = 60,
-	            low_speed_limit_bytes_sec = 4096,
-	            low_speed_time_sec = 15,
+	            low_speed_limit_bytes_sec = 2048,
+	            low_speed_time_sec = 25,
 	            keepalive = true,
 	            user_agent = "VLC/3.0.20",
 	        },
@@ -645,8 +650,10 @@ local NET_RESILIENCE_KEYS = {
 	        wan = 400,
 	        -- Для нестабильных HTTP-TS/HLS источников лучше иметь ощутимый запас буфера,
 	        -- иначе клиент видит частые паузы на коротких сетевых дырах.
-	        bad = 2000,
-	        max = 3000,
+	        -- bad/max: ориентир на «панели», которые могут выдавать поток рывками.
+	        -- Даёт стабильное вещание ценой увеличения задержки.
+	        bad = 10000,
+	        max = 15000,
 	        -- "С запасом" для источников, которые могут подвисать на десятки секунд.
 	        -- Даёт стабильное вещание ценой увеличения задержки.
 	        superbad = 20000,
@@ -655,8 +662,10 @@ local NET_RESILIENCE_KEYS = {
 	    jitter_assumed_mbps = {
 	        dc = 20,
 	        wan = 12,
-	        bad = 16,
-	        max = 20,
+	        -- Эти значения используются только для авто-оценки лимита jitter-буфера (MB),
+	        -- чтобы не раздувать память на «плохих» источниках по умолчанию.
+	        bad = 8,
+	        max = 8,
 	        superbad = 20,
 	    },
 	    -- Жёсткий авто-лимит памяти jitter буфера (MB) при включённых профилях.
