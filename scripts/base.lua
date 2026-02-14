@@ -2328,6 +2328,21 @@ init_input_module.http = function(conf)
 	        instance.last_origin_reset_ts = nil
 
 		        local sync = conf.sync
+		        -- Если sync задан флагом (например, `#sync` без значения), то в Lua это boolean=true.
+		        -- http_request трактует boolean как 1 (1MB буфера), но для "плохих" источников этого часто
+		        -- недостаточно: PCR может отсутствовать несколько секунд, и тогда sync начинает постоянно
+		        -- уходить в buffering. Для профилей bad/max/superbad считаем такой sync "дефолтным" и
+		        -- повышаем размер буфера (MB), чтобы переживать длинные дырки по PCR.
+		        if sync == true and res and res.enabled == true then
+		            local p = res.profile_effective
+		            if p == "bad" then
+		                sync = 8
+		            elseif p == "max" then
+		                sync = 16
+		            elseif p == "superbad" then
+		                sync = 32
+		            end
+		        end
 		        -- Совместимость со старыми конфигами: некоторые источники используют #buffer_time=10
 		        -- (ожидают более "толстый" синхронизирующий буфер). В http_request опция `sync`
 		        -- принимает число (MB буфера) или boolean. Если sync не задан, интерпретируем
@@ -2349,14 +2364,18 @@ init_input_module.http = function(conf)
 	            -- makes consumption stable for downstream pipelines.
 	            sync = 1
 	        end
-	        -- Для профильного режима (bad/max/superbad) включаем sync по умолчанию:
-	        -- это помогает переживать переподключения, когда поток может начатьcя не с границы TS-пакета.
-	        if sync == nil and res and res.enabled == true then
-	            local p = res.profile_effective
-	            if p == "bad" or p == "max" or p == "superbad" then
-	                sync = 1
-	            end
-	        end
+		        -- Для профильного режима (bad/max/superbad) включаем sync по умолчанию:
+		        -- это помогает переживать переподключения, когда поток может начатьcя не с границы TS-пакета.
+		        if sync == nil and res and res.enabled == true then
+		            local p = res.profile_effective
+		            if p == "bad" then
+		                sync = 8
+		            elseif p == "max" then
+		                sync = 16
+		            elseif p == "superbad" then
+		                sync = 32
+		            end
+		        end
 	        local timeout = conf.timeout
 	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
 	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
