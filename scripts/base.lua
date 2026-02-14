@@ -4003,7 +4003,7 @@ Commands:
     --init              Register systemd service template (stream@.service)
     --remove            Remove systemd service template (stream@.service)
     --reset-password    Reset admin password to default (admin/admin)
-                        If used with -c/-p, creates instance files in /etc/stream and shows stream@NAME.
+                        Use --init with -c/-p to create instance files in /etc/stream and enable stream@NAME.
 
 Global Options:
     -h, --help          command line arguments

@@ -255,7 +255,7 @@ options_usage = [[
     --reset-password    alias for -pass
     --no-web-auth       disable web ui authentication (forces http_auth_enabled=false)
     --init              register systemd service template (stream@.service)
-                       (use with -c/-p to create /etc/stream/<name>.json and .env)
+                       (use with -c/-p to create /etc/stream/<name>.json/.env and enable stream@<name>)
     --remove            remove systemd service template (stream@.service)
     --config PATH       import config (.json or .lua) before start
     --import PATH       legacy alias for --config (json)
@@ -1367,6 +1367,11 @@ WantedBy=multi-user.target
                 end
             end
             log.info("[server] systemd instance ready: stream@" .. instance_name)
+            if exec_ok("systemctl enable --now stream@" .. instance_name .. " >/dev/null 2>&1") then
+                log.info("[server] systemd instance enabled: stream@" .. instance_name)
+            else
+                log.warning("[server] failed to enable instance (try: systemctl enable --now stream@" .. instance_name .. ")")
+            end
         end
 
         return true
