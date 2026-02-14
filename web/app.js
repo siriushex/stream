@@ -3264,6 +3264,31 @@ const SETTINGS_GENERAL_SECTIONS = [
             ],
           },
           {
+            id: 'settings-telegram-detectors-cc-limit-enabled',
+            label: 'CC errors limit',
+            type: 'switch',
+            key: 'telegram_detectors_cc_limit_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-telegram-detectors-cc-limit',
+            label: 'Limit',
+            type: 'input',
+            inputType: 'number',
+            key: 'telegram_detectors_cc_limit',
+            level: 'advanced',
+            placeholder: '1',
+            min: 1,
+            max: 50,
+            dependsOn: { id: 'settings-telegram-detectors-cc-limit-enabled', value: true },
+          },
+          {
+            type: 'note',
+            text: 'CC limit влияет на флаг "on air" и может переводить вход в DOWN при ошибках.',
+            level: 'advanced',
+            dependsOn: { id: 'settings-telegram-detectors-cc-limit-enabled', value: true },
+          },
+          {
             id: 'settings-telegram-detectors-no-audio-enabled',
             label: 'No audio detection',
             type: 'switch',
@@ -4300,6 +4325,8 @@ function bindGeneralElements() {
     settingsTelegramSummaryMonthdayField: 'settings-telegram-summary-monthday-field',
     settingsTelegramSummaryNow: 'settings-telegram-summary-now',
     settingsTelegramDetectorsPreset: 'settings-telegram-detectors-preset',
+    settingsTelegramDetectorsCcLimitEnabled: 'settings-telegram-detectors-cc-limit-enabled',
+    settingsTelegramDetectorsCcLimit: 'settings-telegram-detectors-cc-limit',
     settingsTelegramDetectorsNoAudioEnabled: 'settings-telegram-detectors-no-audio-enabled',
     settingsTelegramDetectorsNoAudioTimeout: 'settings-telegram-detectors-no-audio-timeout',
     settingsTelegramDetectorsStopVideoEnabled: 'settings-telegram-detectors-stop-video-enabled',
@@ -5291,6 +5318,7 @@ function applyTelegramDetectorsPreset(preset) {
 
   if (mode === 'off') {
     elements.settingsTelegramDetectorsPreset.value = 'off';
+    setToggle(elements.settingsTelegramDetectorsCcLimitEnabled, false);
     setToggle(elements.settingsTelegramDetectorsNoAudioEnabled, false);
     setToggle(elements.settingsTelegramDetectorsStopVideoEnabled, false);
     setToggle(elements.settingsTelegramDetectorsAvDesyncEnabled, false);
@@ -5302,6 +5330,9 @@ function applyTelegramDetectorsPreset(preset) {
   if (mode !== 'basic' && mode !== 'full') {
     return;
   }
+
+  setToggle(elements.settingsTelegramDetectorsCcLimitEnabled, true);
+  setValue(elements.settingsTelegramDetectorsCcLimit, 1);
 
   setToggle(elements.settingsTelegramDetectorsNoAudioEnabled, true);
   setValue(elements.settingsTelegramDetectorsNoAudioTimeout, 5);
@@ -23155,6 +23186,12 @@ function applySettingsToUI() {
       'off'
     );
   }
+  if (elements.settingsTelegramDetectorsCcLimitEnabled) {
+    elements.settingsTelegramDetectorsCcLimitEnabled.checked = getSettingBool('telegram_detectors_cc_limit_enabled', false);
+  }
+  if (elements.settingsTelegramDetectorsCcLimit) {
+    elements.settingsTelegramDetectorsCcLimit.value = getSettingNumber('telegram_detectors_cc_limit', 1);
+  }
   if (elements.settingsTelegramDetectorsNoAudioEnabled) {
     elements.settingsTelegramDetectorsNoAudioEnabled.checked = getSettingBool('telegram_detectors_no_audio_enabled', false);
   }
@@ -23901,6 +23938,16 @@ function collectGeneralSettings() {
   if (!['off', 'basic', 'full', 'custom'].includes(telegramDetectorsPreset)) {
     throw new Error('Quality preset must be off/basic/full/custom');
   }
+  const tgDetCcLimitEnabled = elements.settingsTelegramDetectorsCcLimitEnabled
+    && elements.settingsTelegramDetectorsCcLimitEnabled.checked;
+  const tgDetCcLimit = toNumber(elements.settingsTelegramDetectorsCcLimit
+    && elements.settingsTelegramDetectorsCcLimit.value);
+  if (tgDetCcLimitEnabled) {
+    const value = tgDetCcLimit !== undefined ? tgDetCcLimit : 1;
+    if (value < 1 || value > 50) {
+      throw new Error('CC errors limit must be 1..50');
+    }
+  }
   const tgDetNoAudioEnabled = elements.settingsTelegramDetectorsNoAudioEnabled
     && elements.settingsTelegramDetectorsNoAudioEnabled.checked;
   const tgDetNoAudioTimeout = toNumber(elements.settingsTelegramDetectorsNoAudioTimeout
@@ -24208,6 +24255,8 @@ function collectGeneralSettings() {
   if (telegramSummaryMonthday !== undefined) payload.telegram_summary_monthday = telegramSummaryMonthday;
   if (elements.settingsTelegramSummaryCharts) payload.telegram_summary_include_charts = telegramSummaryCharts;
   if (elements.settingsTelegramDetectorsPreset) payload.telegram_detectors_preset = telegramDetectorsPreset;
+  if (elements.settingsTelegramDetectorsCcLimitEnabled) payload.telegram_detectors_cc_limit_enabled = !!tgDetCcLimitEnabled;
+  if (tgDetCcLimit !== undefined) payload.telegram_detectors_cc_limit = Math.floor(tgDetCcLimit);
   if (elements.settingsTelegramDetectorsNoAudioEnabled) payload.telegram_detectors_no_audio_enabled = !!tgDetNoAudioEnabled;
   if (tgDetNoAudioTimeout !== undefined) payload.telegram_detectors_no_audio_timeout_sec = Math.floor(tgDetNoAudioTimeout);
   if (elements.settingsTelegramDetectorsStopVideoEnabled) payload.telegram_detectors_stop_video_enabled = !!tgDetStopVideoEnabled;

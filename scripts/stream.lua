@@ -878,6 +878,7 @@ local INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT = 800
 local INPUT_AV_DESYNC_HOLD_SEC_DEFAULT = 3
 local INPUT_AV_DESYNC_STABLE_SEC_DEFAULT = 10
 local INPUT_AV_DESYNC_RESEND_SEC_DEFAULT = 60
+local INPUT_CC_LIMIT_DEFAULT = 1
 local INPUT_SILENCE_DURATION_DEFAULT = 20
 local INPUT_SILENCE_INTERVAL_DEFAULT = 10
 local INPUT_SILENCE_NOISE_DEFAULT = -30
@@ -935,6 +936,16 @@ local function get_global_input_detector_defaults(now)
     end
 
     local defaults = {}
+
+    -- CC limit не относится к детекторам (это опция анализатора), но для удобства
+    -- поддерживаем общий дефолт из Telegram Alerts (чтобы не править каждый input URL).
+    if setting_bool("telegram_detectors_cc_limit_enabled", false) then
+        local limit = tonumber(setting_number("telegram_detectors_cc_limit", INPUT_CC_LIMIT_DEFAULT))
+            or INPUT_CC_LIMIT_DEFAULT
+        if limit < 1 then limit = INPUT_CC_LIMIT_DEFAULT end
+        if limit > 50 then limit = 50 end
+        defaults.cc_limit = limit
+    end
 
     if setting_bool("telegram_detectors_no_audio_enabled", false) then
         local timeout = tonumber(setting_number("telegram_detectors_no_audio_timeout_sec", INPUT_NO_AUDIO_DEFAULT_SEC))
@@ -2246,10 +2257,17 @@ local function channel_prepare_input(channel_data, input_id, opts)
         -- Важно: если на входе включен carrier/playout (NULL stuffing), анализатор должен смотреть
         -- ДО него, иначе поток будет выглядеть "on_air" даже при полном отсутствии контента.
         local analyze_tail = input_data.input and (input_data.input.analyze_tail or input_data.input.tail) or nil
+        local cc_limit = input_data.config.cc_limit
+        if cc_limit == nil then
+            local defaults = get_global_input_detector_defaults()
+            if defaults and defaults.cc_limit ~= nil then
+                cc_limit = defaults.cc_limit
+            end
+        end
         local analyze_opts = {
             upstream = analyze_tail and analyze_tail:stream() or input_data.input.tail:stream(),
             name = input_data.config.name,
-            cc_limit = input_data.config.cc_limit,
+            cc_limit = cc_limit,
             bitrate_limit = input_data.config.bitrate_limit,
             callback = function(data)
                 on_analyze_spts(channel_data, input_id, data)
