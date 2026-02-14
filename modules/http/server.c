@@ -107,6 +107,20 @@ static const char __connection_close[] = "Connection: close";
 static void on_server_accept(void *arg);
 static void on_accept_resume(void *arg);
 
+/*
+ * Важно: для диагностики 500 в проде логируем traceback.
+ * Это минимальная обёртка над luaL_traceback().
+ */
+static int http_route_traceback(lua_State *L)
+{
+    const char *msg = lua_tostring(L, 1);
+    if(msg)
+        luaL_traceback(L, L, msg, 1);
+    else
+        luaL_traceback(L, L, "error", 1);
+    return 1;
+}
+
 static size_t find_line_end(const char *buf, size_t size)
 {
     for(size_t i = 0; i < size; ++i)
@@ -135,6 +149,10 @@ static size_t find_line_end(const char *buf, size_t size)
 static void callback(http_client_t *client)
 {
     module_data_t *mod = client->mod;
+
+    lua_pushcfunction(lua, http_route_traceback);
+    const int errfunc = lua_gettop(lua);
+
     lua_rawgeti(lua, LUA_REGISTRYINDEX, client->idx_callback);
     lua_rawgeti(lua, LUA_REGISTRYINDEX, client->mod->idx_self);
     lua_pushlightuserdata(lua, client);
@@ -142,7 +160,8 @@ static void callback(http_client_t *client)
         lua_rawgeti(lua, LUA_REGISTRYINDEX, client->idx_request);
     else
         lua_pushnil(lua);
-    if(lua_pcall(lua, 3, 0, 0) != 0)
+
+    if(lua_pcall(lua, 3, 0, errfunc) != 0)
     {
         const char *err = lua_tostring(lua, -1);
         asc_log_error(MSG("route callback failed: %s"), err ? err : "unknown error");
@@ -150,6 +169,8 @@ static void callback(http_client_t *client)
         if(client->sock)
             http_client_abort(client, 500, "handler error");
     }
+
+    lua_remove(lua, errfunc);
 }
 
 static void on_client_close(void *arg)

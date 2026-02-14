@@ -222,6 +222,18 @@ static void callback(module_data_t *mod)
 {
     asc_assert((lua_type(lua, -1) == LUA_TTABLE), "table required");
 
+    /*
+     * Важно: после ошибки callback мы делаем luaL_unref() и отключаем callback.
+     * Раньше idx_callback сбрасывался в 0, а callback() продолжал вызываться,
+     * из-за чего происходил lua_rawgeti(..., 0) и попытка вызвать registry[0]
+     * (что приводило к бесконечному спаму "attempt to call a number value").
+     */
+    if(mod->idx_callback <= 0)
+    {
+        lua_pop(lua, 1); // data
+        return;
+    }
+
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_callback);
     lua_pushvalue(lua, -2);
     if(lua_pcall(lua, 1, 0, 0) != 0)
@@ -229,10 +241,10 @@ static void callback(module_data_t *mod)
         const char *msg = lua_tostring(lua, -1);
         asc_log_error("[analyze] callback error: %s", msg ? msg : "unknown");
         lua_pop(lua, 1);
-        if(mod->idx_callback)
+        if(mod->idx_callback > 0)
         {
             luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_callback);
-            mod->idx_callback = 0;
+            mod->idx_callback = LUA_NOREF;
         }
     }
 
@@ -1553,10 +1565,10 @@ static void module_destroy(module_data_t *mod)
 {
     module_stream_destroy(mod);
 
-    if(mod->idx_callback)
+    if(mod->idx_callback > 0)
     {
         luaL_unref(lua, LUA_REGISTRYINDEX, mod->idx_callback);
-        mod->idx_callback = 0;
+        mod->idx_callback = LUA_NOREF;
     }
 
     for(int i = 0; i < MAX_PID; ++i)
