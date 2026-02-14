@@ -2263,6 +2263,240 @@
             </div>
             <div class="form-hint">Apply preset overwrites transcoding profiles. Publish outputs are configured in the OUTPUT LIST (General tab).</div>
           </div>
+
+          <div class="form-subsection pngts-block" id="stream-pngts-block">
+            <div class="pngts-header">
+              <div class="pngts-title">PNG to Stream</div>
+              <div class="form-hint">Generate a reserve MPEG-TS from a PNG and audio for backup inputs.</div>
+            </div>
+            <div class="form-grid">
+              <label class="field">
+                <span>PNG file</span>
+                <input type="file" id="pngts-image-file" accept="image/png" />
+              </label>
+              <label class="field">
+                <span>Source URL (for analyze)</span>
+                <input type="text" id="pngts-source-url" placeholder="auto from input #1" />
+              </label>
+            </div>
+            <div class="form-grid pngts-audio-grid">
+              <label class="field">
+                <span>Audio mode</span>
+                <select id="pngts-audio-mode">
+                  <option value="silence">Silence</option>
+                  <option value="beep">Beep</option>
+                  <option value="mp3">MP3 file</option>
+                </select>
+              </label>
+              <label class="field" id="pngts-beep-field">
+                <span>Beep preset</span>
+                <select id="pngts-beep-preset">
+                  <option value="sine_440">Sine 440 Hz</option>
+                  <option value="sine_1000">Sine 1000 Hz</option>
+                  <option value="beep_1s">Beep every second</option>
+                  <option value="pink_noise">Pink noise</option>
+                </select>
+              </label>
+              <label class="field" id="pngts-mp3-field">
+                <span>MP3 file</span>
+                <input type="file" id="pngts-mp3-file" accept=".mp3,audio/mpeg" />
+              </label>
+            </div>
+            <details class="fold pngts-advanced">
+              <summary class="fold-summary">Output settings</summary>
+              <div class="fold-body">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Video codec</span>
+                    <select id="pngts-video-codec">
+                      <option value="">Auto (from analyze)</option>
+                      <option value="h264">H.264 (libx264)</option>
+                      <option value="hevc">HEVC (libx265)</option>
+                      <option value="mpeg2">MPEG-2</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Width</span>
+                    <input type="number" id="pngts-video-width" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Height</span>
+                    <input type="number" id="pngts-video-height" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>FPS</span>
+                    <input type="text" id="pngts-video-fps" placeholder="Auto (25)" />
+                  </label>
+                  <label class="field">
+                    <span>Pixel format</span>
+                    <input type="text" id="pngts-video-pixfmt" placeholder="yuv420p" />
+                  </label>
+                  <label class="field">
+                    <span>Profile</span>
+                    <input type="text" id="pngts-video-profile" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Level</span>
+                    <input type="text" id="pngts-video-level" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Video bitrate (optional)</span>
+                    <input type="text" id="pngts-video-bitrate" placeholder="5M" />
+                  </label>
+                  <label class="field">
+                    <span>Duration (sec)</span>
+                    <input type="number" id="pngts-duration" placeholder="10" min="1" />
+                  </label>
+                  <label class="field">
+                    <span>Output path</span>
+                    <input type="text" id="pngts-output-path-input" placeholder="Auto (data/streams/&lt;id&gt;/backup/...)" />
+                  </label>
+                </div>
+              </div>
+            </details>
+            <div class="pngts-actions">
+              <button class="btn ghost" type="button" id="btn-pngts-analyze">Analyze main stream</button>
+              <button class="btn primary" type="button" id="btn-pngts-generate">Generate TS</button>
+              <button class="btn ghost" type="button" id="btn-pngts-add-backup" disabled>Add to INPUT LIST</button>
+            </div>
+            <div class="form-hint" id="pngts-status"></div>
+            <div class="form-hint pngts-output" id="pngts-output-path"></div>
+            <pre class="form-hint form-hint-pre pngts-logs" id="pngts-logs"></pre>
+          </div>
+
+          <div class="form-subsection radio-block" id="stream-radio-block">
+            <div class="radio-header">
+              <div class="radio-title">Create radio (Audio + PNG → UDP TS)</div>
+              <div class="form-hint">Generate a live UDP MPEG-TS with static PNG video and audio stream.</div>
+            </div>
+            <div class="form-grid">
+              <label class="field span-6">
+                <span>Audio URL</span>
+                <input type="text" id="radio-audio-url" placeholder="http://example.com/stream.mp3" />
+              </label>
+              <label class="field span-6">
+                <span>PNG file path</span>
+                <input type="text" id="radio-png-path" placeholder="/path/to/logo.png" />
+              </label>
+            </div>
+            <div class="form-grid">
+              <label class="checkline">
+                <input type="checkbox" id="radio-use-curl" checked />
+                <span>Use CURL pipe (recommended for ICY/MP3)</span>
+              </label>
+              <label class="field">
+                <span>User-Agent (optional)</span>
+                <input type="text" id="radio-user-agent" placeholder="vlc/3.0.0" />
+              </label>
+            </div>
+            <details class="fold">
+              <summary class="fold-summary">Advanced</summary>
+              <div class="fold-body">
+                <label class="field">
+                  <span>Extra headers (one per line)</span>
+                  <textarea id="radio-extra-headers" class="textarea-grow" rows="2" placeholder="Authorization: Bearer ..."></textarea>
+                </label>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>FPS</span>
+                    <input type="number" id="radio-fps" placeholder="25" />
+                  </label>
+                  <label class="field">
+                    <span>Width</span>
+                    <input type="number" id="radio-width" placeholder="270" />
+                  </label>
+                  <label class="field">
+                    <span>Height</span>
+                    <input type="number" id="radio-height" placeholder="270" />
+                  </label>
+                  <label class="field">
+                    <span>Keep aspect</span>
+                    <select id="radio-keep-aspect">
+                      <option value="false">No</option>
+                      <option value="true">Yes</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Video codec</span>
+                    <input type="text" id="radio-vcodec" placeholder="libx264" />
+                  </label>
+                  <label class="field">
+                    <span>Preset</span>
+                    <input type="text" id="radio-preset" placeholder="veryfast" />
+                  </label>
+                  <label class="field">
+                    <span>Video bitrate</span>
+                    <input type="text" id="radio-video-bitrate" placeholder="1400k" />
+                  </label>
+                  <label class="field">
+                    <span>GOP</span>
+                    <input type="number" id="radio-gop" placeholder="50" />
+                  </label>
+                  <label class="field">
+                    <span>Pixel format</span>
+                    <input type="text" id="radio-pixfmt" placeholder="yuv420p" />
+                  </label>
+                  <label class="field">
+                    <span>Tune stillimage</span>
+                    <select id="radio-tune-stillimage">
+                      <option value="true">Yes</option>
+                      <option value="false">No</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Audio codec</span>
+                    <input type="text" id="radio-acodec" placeholder="aac" />
+                  </label>
+                  <label class="field">
+                    <span>Audio bitrate</span>
+                    <input type="text" id="radio-audio-bitrate" placeholder="256k" />
+                  </label>
+                  <label class="field">
+                    <span>Channels</span>
+                    <input type="number" id="radio-channels" placeholder="2" />
+                  </label>
+                  <label class="field">
+                    <span>Sample rate</span>
+                    <input type="number" id="radio-sample-rate" placeholder="48000" />
+                  </label>
+                  <label class="field">
+                    <span>Output UDP URL</span>
+                    <input type="text" id="radio-output-url" placeholder="udp://234.1.1.13:1234" />
+                  </label>
+                  <label class="field">
+                    <span>Log file path</span>
+                    <input type="text" id="radio-log-path" placeholder="data/streams/&lt;id&gt;/logs/radio.log" />
+                  </label>
+                  <label class="field">
+                    <span>pkt_size</span>
+                    <input type="number" id="radio-pkt-size" placeholder="1316" />
+                  </label>
+                  <label class="field">
+                    <span>pcr_period</span>
+                    <input type="number" id="radio-pcr-period" placeholder="30" />
+                  </label>
+                  <label class="field">
+                    <span>max_interleave_delta</span>
+                    <input type="number" id="radio-max-interleave" placeholder="0" />
+                  </label>
+                  <label class="field">
+                    <span>muxdelay</span>
+                    <input type="text" id="radio-muxdelay" placeholder="0.7" />
+                  </label>
+                </div>
+              </div>
+            </details>
+            <div class="radio-actions">
+              <button class="btn primary" type="button" id="btn-radio-start">Start</button>
+              <button class="btn ghost" type="button" id="btn-radio-stop">Stop</button>
+              <button class="btn ghost" type="button" id="btn-radio-restart">Restart</button>
+              <button class="btn ghost" type="button" id="btn-radio-use-input">Use as input</button>
+            </div>
+            <div class="form-hint" id="radio-status"></div>
+            <div class="form-hint" id="radio-output-hint"></div>
+            <pre class="form-hint form-hint-pre radio-logs" id="radio-logs"></pre>
+          </div>
+
           <details class="fold">
             <summary class="fold-summary">Advanced</summary>
             <div class="fold-body">

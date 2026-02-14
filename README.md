@@ -56,6 +56,18 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Theme can be Light, Dark, or Auto (system); both view/theme are stored in
   localStorage keys `astra.viewMode` and `astra.theme`.
 
+## PNG to Stream (reserve TS)
+- UI: Edit stream → Transcode → PNG to Stream.
+- Generate a short MPEG-TS from a PNG + audio (silence/beep/MP3).
+- Use "Analyze main stream" to pull default codec/resolution/fps via ffprobe.
+- After "Generate TS", add the file to INPUT LIST as a backup source (file://...).
+
+## Create radio (audio + PNG → UDP TS)
+- UI: Edit stream → Transcode → Create radio.
+- Starts ffmpeg to mux audio stream with a static PNG into UDP MPEG-TS.
+- Use Start/Stop/Restart to control the background process.
+- Output URL can be added to INPUT LIST for backup/bridge workflows.
+
 ## CLI apps (public)
 - Global options (from `scripts/base.lua`): `-h/--help`, `-v/--version`, `--pid`,
   `--syslog`, `--log`, `--no-stdout`, `--color`, `--debug`.

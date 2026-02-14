@@ -453,6 +453,62 @@ const state = {
   transcodeProfiles: [],
   transcodeProfileEditingIndex: null,
   transcodeWatchdogDefaults: null,
+  pngts: {
+    imageDataUrl: '',
+    imageName: '',
+    mp3DataUrl: '',
+    mp3Name: '',
+    audioMode: 'silence',
+    beepPreset: 'sine_440',
+    sourceUrl: '',
+    sourceAuto: true,
+    codec: '',
+    width: '',
+    height: '',
+    fps: '',
+    pixFmt: '',
+    profile: '',
+    level: '',
+    videoBitrate: '',
+    duration: 10,
+    outputPath: '',
+    jobId: null,
+    generateJobId: null,
+    lastOutputPath: '',
+    busy: false,
+    status: '',
+    logs: '',
+  },
+  radio: {
+    audioUrl: '',
+    pngPath: '',
+    useCurl: true,
+    userAgent: '',
+    extraHeaders: '',
+    fps: 25,
+    width: 270,
+    height: 270,
+    keepAspect: false,
+    vcodec: 'libx264',
+    preset: 'veryfast',
+    videoBitrate: '1400k',
+    gop: 50,
+    pixFmt: 'yuv420p',
+    tuneStill: true,
+    acodec: 'aac',
+    audioBitrate: '256k',
+    channels: 2,
+    sampleRate: 48000,
+    outputUrl: '',
+    logPath: '',
+    pktSize: 1316,
+    pcrPeriod: 30,
+    maxInterleave: 0,
+    muxdelay: 0.7,
+    status: 'stopped',
+    logs: '',
+    busy: false,
+  },
   inputs: [],
   mptsServices: [],
   mptsCa: [],
@@ -487,6 +543,7 @@ const state = {
   generalActiveSection: '',
   aiApplyConfirmTarget: null,
   aiApplyConfirmPending: false,
+  radioPollTimer: null,
   player: null,
   playerStreamId: null,
   playerMode: null,
@@ -1388,6 +1445,63 @@ const elements = {
   streamTranscodeWarmup: $('#stream-transcode-warmup'),
   streamTranscodeRestart: $('#stream-transcode-restart'),
   streamTranscodeStderr: $('#stream-transcode-stderr'),
+  pngtsBlock: $('#stream-pngts-block'),
+  pngtsImageFile: $('#pngts-image-file'),
+  pngtsSourceUrl: $('#pngts-source-url'),
+  pngtsAudioMode: $('#pngts-audio-mode'),
+  pngtsBeepField: $('#pngts-beep-field'),
+  pngtsBeepPreset: $('#pngts-beep-preset'),
+  pngtsMp3Field: $('#pngts-mp3-field'),
+  pngtsMp3File: $('#pngts-mp3-file'),
+  pngtsVideoCodec: $('#pngts-video-codec'),
+  pngtsVideoWidth: $('#pngts-video-width'),
+  pngtsVideoHeight: $('#pngts-video-height'),
+  pngtsVideoFps: $('#pngts-video-fps'),
+  pngtsVideoPixFmt: $('#pngts-video-pixfmt'),
+  pngtsVideoProfile: $('#pngts-video-profile'),
+  pngtsVideoLevel: $('#pngts-video-level'),
+  pngtsVideoBitrate: $('#pngts-video-bitrate'),
+  pngtsDuration: $('#pngts-duration'),
+  pngtsOutputPathInput: $('#pngts-output-path-input'),
+  btnPngtsAnalyze: $('#btn-pngts-analyze'),
+  btnPngtsGenerate: $('#btn-pngts-generate'),
+  btnPngtsAddBackup: $('#btn-pngts-add-backup'),
+  pngtsStatus: $('#pngts-status'),
+  pngtsOutputPath: $('#pngts-output-path'),
+  pngtsLogs: $('#pngts-logs'),
+  radioBlock: $('#stream-radio-block'),
+  radioAudioUrl: $('#radio-audio-url'),
+  radioPngPath: $('#radio-png-path'),
+  radioUseCurl: $('#radio-use-curl'),
+  radioUserAgent: $('#radio-user-agent'),
+  radioExtraHeaders: $('#radio-extra-headers'),
+  radioFps: $('#radio-fps'),
+  radioWidth: $('#radio-width'),
+  radioHeight: $('#radio-height'),
+  radioKeepAspect: $('#radio-keep-aspect'),
+  radioVcodec: $('#radio-vcodec'),
+  radioPreset: $('#radio-preset'),
+  radioVideoBitrate: $('#radio-video-bitrate'),
+  radioGop: $('#radio-gop'),
+  radioPixFmt: $('#radio-pixfmt'),
+  radioTuneStill: $('#radio-tune-stillimage'),
+  radioAcodec: $('#radio-acodec'),
+  radioAudioBitrate: $('#radio-audio-bitrate'),
+  radioChannels: $('#radio-channels'),
+  radioSampleRate: $('#radio-sample-rate'),
+  radioOutputUrl: $('#radio-output-url'),
+  radioLogPath: $('#radio-log-path'),
+  radioPktSize: $('#radio-pkt-size'),
+  radioPcrPeriod: $('#radio-pcr-period'),
+  radioMaxInterleave: $('#radio-max-interleave'),
+  radioMuxdelay: $('#radio-muxdelay'),
+  btnRadioStart: $('#btn-radio-start'),
+  btnRadioStop: $('#btn-radio-stop'),
+  btnRadioRestart: $('#btn-radio-restart'),
+  btnRadioUseInput: $('#btn-radio-use-input'),
+  radioStatus: $('#radio-status'),
+  radioOutputHint: $('#radio-output-hint'),
+  radioLogs: $('#radio-logs'),
   transcodeOutputList: $('#transcode-output-list'),
   btnAddTranscodeOutput: $('#btn-add-transcode-output'),
   transcodeOutputOverlay: $('#transcode-output-overlay'),
@@ -11892,6 +12006,742 @@ function renderInputList() {
   });
 }
 
+function stripInputHash(value) {
+  if (!value) return '';
+  const text = String(value);
+  const idx = text.indexOf('#');
+  return idx >= 0 ? text.slice(0, idx) : text;
+}
+
+function normalizePngtsState() {
+  if (!state.pngts) {
+    state.pngts = {};
+  }
+  const pngts = state.pngts;
+  pngts.imageDataUrl = pngts.imageDataUrl || '';
+  pngts.imageName = pngts.imageName || '';
+  pngts.mp3DataUrl = pngts.mp3DataUrl || '';
+  pngts.mp3Name = pngts.mp3Name || '';
+  pngts.audioMode = pngts.audioMode || 'silence';
+  pngts.beepPreset = pngts.beepPreset || 'sine_440';
+  pngts.sourceUrl = pngts.sourceUrl || '';
+  pngts.sourceAuto = pngts.sourceAuto !== false;
+  pngts.codec = pngts.codec || '';
+  pngts.width = pngts.width || '';
+  pngts.height = pngts.height || '';
+  pngts.fps = pngts.fps || '';
+  pngts.pixFmt = pngts.pixFmt || '';
+  pngts.profile = pngts.profile || '';
+  pngts.level = pngts.level || '';
+  pngts.videoBitrate = pngts.videoBitrate || '';
+  pngts.duration = Number.isFinite(pngts.duration) ? pngts.duration : 10;
+  pngts.outputPath = pngts.outputPath || '';
+  pngts.jobId = pngts.jobId || null;
+  pngts.generateJobId = pngts.generateJobId || null;
+  pngts.lastOutputPath = pngts.lastOutputPath || '';
+  pngts.busy = pngts.busy === true;
+  pngts.status = pngts.status || '';
+  pngts.logs = pngts.logs || '';
+  return pngts;
+}
+
+function setPngtsStatus(message, isError) {
+  const pngts = normalizePngtsState();
+  pngts.status = message || '';
+  if (elements.pngtsStatus) {
+    elements.pngtsStatus.textContent = pngts.status;
+    elements.pngtsStatus.classList.toggle('is-error', Boolean(isError));
+  }
+}
+
+function setPngtsLogs(text) {
+  const pngts = normalizePngtsState();
+  pngts.logs = text || '';
+  if (elements.pngtsLogs) {
+    elements.pngtsLogs.textContent = pngts.logs;
+  }
+}
+
+function updatePngtsAudioVisibility() {
+  if (elements.pngtsBeepField) {
+    elements.pngtsBeepField.classList.toggle('pngts-field-hidden', !(state.pngts.audioMode === 'beep'));
+  }
+  if (elements.pngtsMp3Field) {
+    elements.pngtsMp3Field.classList.toggle('pngts-field-hidden', !(state.pngts.audioMode === 'mp3'));
+  }
+}
+
+function updatePngtsButtons() {
+  const pngts = normalizePngtsState();
+  const hasImage = Boolean(pngts.imageDataUrl || (elements.pngtsImageFile && elements.pngtsImageFile.files && elements.pngtsImageFile.files.length));
+  if (elements.btnPngtsGenerate) {
+    elements.btnPngtsGenerate.disabled = pngts.busy || !hasImage;
+  }
+  if (elements.btnPngtsAnalyze) {
+    elements.btnPngtsAnalyze.disabled = pngts.busy;
+  }
+  if (elements.btnPngtsAddBackup) {
+    elements.btnPngtsAddBackup.disabled = pngts.busy || !pngts.lastOutputPath;
+  }
+}
+
+function updatePngtsUiFromState() {
+  if (!elements.pngtsBlock) return;
+  const pngts = normalizePngtsState();
+  if (elements.pngtsSourceUrl) elements.pngtsSourceUrl.value = pngts.sourceUrl || '';
+  if (elements.pngtsAudioMode) elements.pngtsAudioMode.value = pngts.audioMode || 'silence';
+  if (elements.pngtsBeepPreset) elements.pngtsBeepPreset.value = pngts.beepPreset || 'sine_440';
+  if (elements.pngtsVideoCodec) elements.pngtsVideoCodec.value = pngts.codec || '';
+  if (elements.pngtsVideoWidth) elements.pngtsVideoWidth.value = pngts.width || '';
+  if (elements.pngtsVideoHeight) elements.pngtsVideoHeight.value = pngts.height || '';
+  if (elements.pngtsVideoFps) elements.pngtsVideoFps.value = pngts.fps || '';
+  if (elements.pngtsVideoPixFmt) elements.pngtsVideoPixFmt.value = pngts.pixFmt || '';
+  if (elements.pngtsVideoProfile) elements.pngtsVideoProfile.value = pngts.profile || '';
+  if (elements.pngtsVideoLevel) elements.pngtsVideoLevel.value = pngts.level || '';
+  if (elements.pngtsVideoBitrate) elements.pngtsVideoBitrate.value = pngts.videoBitrate || '';
+  if (elements.pngtsDuration) elements.pngtsDuration.value = pngts.duration || '';
+  if (elements.pngtsOutputPathInput) elements.pngtsOutputPathInput.value = pngts.outputPath || '';
+  if (elements.pngtsOutputPath) {
+    elements.pngtsOutputPath.textContent = pngts.lastOutputPath ? `Generated: ${pngts.lastOutputPath}` : '';
+  }
+  setPngtsStatus(pngts.status || '');
+  setPngtsLogs(pngts.logs || '');
+  updatePngtsAudioVisibility();
+  updatePngtsButtons();
+}
+
+function resetPngtsStateFromStream(stream) {
+  const pngts = normalizePngtsState();
+  pngts.imageDataUrl = '';
+  pngts.imageName = '';
+  pngts.mp3DataUrl = '';
+  pngts.mp3Name = '';
+  pngts.audioMode = 'silence';
+  pngts.beepPreset = 'sine_440';
+  pngts.codec = '';
+  pngts.width = '';
+  pngts.height = '';
+  pngts.fps = '';
+  pngts.pixFmt = '';
+  pngts.profile = '';
+  pngts.level = '';
+  pngts.videoBitrate = '';
+  pngts.duration = 10;
+  pngts.outputPath = '';
+  pngts.jobId = null;
+  pngts.generateJobId = null;
+  pngts.lastOutputPath = '';
+  pngts.busy = false;
+  pngts.status = '';
+  pngts.logs = '';
+  const inputs = (stream && stream.config && Array.isArray(stream.config.input) && stream.config.input) || state.inputs || [];
+  const primary = inputs[0] ? stripInputHash(inputs[0]) : '';
+  pngts.sourceUrl = primary;
+  pngts.sourceAuto = true;
+  if (elements.pngtsImageFile) elements.pngtsImageFile.value = '';
+  if (elements.pngtsMp3File) elements.pngtsMp3File.value = '';
+  updatePngtsUiFromState();
+}
+
+function resetRadioStateFromStream(stream) {
+  const radio = normalizeRadioState();
+  const cfg = stream && stream.config ? stream.config : {};
+  const rcfg = cfg && cfg.radio ? cfg.radio : {};
+  radio.audioUrl = rcfg.audio_url || '';
+  radio.pngPath = rcfg.png_path || '';
+  radio.useCurl = rcfg.use_curl !== false;
+  radio.userAgent = rcfg.user_agent || '';
+  radio.extraHeaders = rcfg.extra_headers || '';
+  radio.fps = Number(rcfg.fps) || 25;
+  radio.width = Number(rcfg.width) || 270;
+  radio.height = Number(rcfg.height) || 270;
+  radio.keepAspect = rcfg.keep_aspect === true;
+  radio.vcodec = rcfg.vcodec || 'libx264';
+  radio.preset = rcfg.preset || 'veryfast';
+  radio.videoBitrate = rcfg.video_bitrate || '1400k';
+  radio.gop = Number(rcfg.gop) || Math.floor(radio.fps * 2);
+  radio.pixFmt = rcfg.pix_fmt || 'yuv420p';
+  radio.tuneStill = rcfg.tune_stillimage !== false;
+  radio.acodec = rcfg.acodec || 'aac';
+  radio.audioBitrate = rcfg.audio_bitrate || '256k';
+  radio.channels = Number(rcfg.channels) || 2;
+  radio.sampleRate = Number(rcfg.sample_rate) || 48000;
+  radio.outputUrl = rcfg.output_url || '';
+  radio.logPath = rcfg.log_path || '';
+  radio.pktSize = Number(rcfg.pkt_size) || 1316;
+  radio.pcrPeriod = Number(rcfg.pcr_period) || 30;
+  radio.maxInterleave = Number(rcfg.max_interleave_delta) || 0;
+  radio.muxdelay = rcfg.muxdelay || 0.7;
+  radio.status = 'stopped';
+  radio.logs = '';
+  updateRadioUiFromState();
+  refreshRadioStatus();
+}
+
+function stopRadioPoll() {
+  if (state.radioPollTimer) {
+    clearTimeout(state.radioPollTimer);
+    state.radioPollTimer = null;
+  }
+}
+
+function parseFfprobeFps(value) {
+  if (!value) return '';
+  const text = String(value);
+  const match = text.match(/(\d+)\s*\/\s*(\d+)/);
+  if (match) {
+    const num = Number(match[1]);
+    const den = Number(match[2]);
+    if (Number.isFinite(num) && Number.isFinite(den) && den > 0) {
+      const fps = num / den;
+      return fps.toFixed(3).replace(/\.?0+$/, '');
+    }
+  }
+  const num = Number(text);
+  if (Number.isFinite(num)) return String(num);
+  return '';
+}
+
+function applyPngtsProbeResult(payload) {
+  const pngts = normalizePngtsState();
+  const streams = payload && payload.streams ? payload.streams : [];
+  const video = streams.find((entry) => entry && entry.codec_type === 'video');
+  if (!video) {
+    setPngtsStatus('ffprobe: video stream not found', true);
+    return;
+  }
+  const codec = String(video.codec_name || '').toLowerCase();
+  if (codec.includes('hevc') || codec.includes('h265')) pngts.codec = 'hevc';
+  else if (codec.includes('mpeg2')) pngts.codec = 'mpeg2';
+  else if (codec) pngts.codec = 'h264';
+
+  pngts.width = video.width ? String(video.width) : pngts.width;
+  pngts.height = video.height ? String(video.height) : pngts.height;
+  pngts.fps = parseFfprobeFps(video.r_frame_rate || video.avg_frame_rate || '');
+  pngts.pixFmt = video.pix_fmt ? String(video.pix_fmt) : pngts.pixFmt;
+  pngts.profile = video.profile ? String(video.profile) : pngts.profile;
+  if (video.level !== undefined && video.level !== null && video.level !== 0) {
+    pngts.level = String(video.level);
+  }
+  updatePngtsUiFromState();
+}
+
+function readPngtsForm() {
+  const pngts = normalizePngtsState();
+  pngts.sourceUrl = elements.pngtsSourceUrl ? elements.pngtsSourceUrl.value.trim() : '';
+  pngts.audioMode = elements.pngtsAudioMode ? elements.pngtsAudioMode.value : 'silence';
+  pngts.beepPreset = elements.pngtsBeepPreset ? elements.pngtsBeepPreset.value : 'sine_440';
+  pngts.codec = elements.pngtsVideoCodec ? elements.pngtsVideoCodec.value.trim() : '';
+  pngts.width = elements.pngtsVideoWidth ? elements.pngtsVideoWidth.value.trim() : '';
+  pngts.height = elements.pngtsVideoHeight ? elements.pngtsVideoHeight.value.trim() : '';
+  pngts.fps = elements.pngtsVideoFps ? elements.pngtsVideoFps.value.trim() : '';
+  pngts.pixFmt = elements.pngtsVideoPixFmt ? elements.pngtsVideoPixFmt.value.trim() : '';
+  pngts.profile = elements.pngtsVideoProfile ? elements.pngtsVideoProfile.value.trim() : '';
+  pngts.level = elements.pngtsVideoLevel ? elements.pngtsVideoLevel.value.trim() : '';
+  pngts.videoBitrate = elements.pngtsVideoBitrate ? elements.pngtsVideoBitrate.value.trim() : '';
+  pngts.duration = elements.pngtsDuration ? Number(elements.pngtsDuration.value) || 10 : 10;
+  pngts.outputPath = elements.pngtsOutputPathInput ? elements.pngtsOutputPathInput.value.trim() : '';
+  return pngts;
+}
+
+async function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handlePngtsImageFileChange() {
+  const pngts = normalizePngtsState();
+  if (!elements.pngtsImageFile || !elements.pngtsImageFile.files || !elements.pngtsImageFile.files[0]) {
+    pngts.imageDataUrl = '';
+    pngts.imageName = '';
+    updatePngtsButtons();
+    return;
+  }
+  const file = elements.pngtsImageFile.files[0];
+  if (!file.name.toLowerCase().endsWith('.png')) {
+    setPngtsStatus('PNG file is required', true);
+    pngts.imageDataUrl = '';
+    pngts.imageName = '';
+    updatePngtsButtons();
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    pngts.imageDataUrl = dataUrl;
+    pngts.imageName = file.name;
+    setPngtsStatus('PNG loaded');
+  } catch (err) {
+    setPngtsStatus('Failed to read PNG', true);
+    pngts.imageDataUrl = '';
+    pngts.imageName = '';
+  }
+  updatePngtsButtons();
+}
+
+async function handlePngtsMp3FileChange() {
+  const pngts = normalizePngtsState();
+  if (!elements.pngtsMp3File || !elements.pngtsMp3File.files || !elements.pngtsMp3File.files[0]) {
+    pngts.mp3DataUrl = '';
+    pngts.mp3Name = '';
+    updatePngtsButtons();
+    return;
+  }
+  const file = elements.pngtsMp3File.files[0];
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    pngts.mp3DataUrl = dataUrl;
+    pngts.mp3Name = file.name;
+    setPngtsStatus('MP3 loaded');
+  } catch (err) {
+    setPngtsStatus('Failed to read MP3', true);
+    pngts.mp3DataUrl = '';
+    pngts.mp3Name = '';
+  }
+  updatePngtsButtons();
+}
+
+async function pollPngtsJob(jobId, kind) {
+  if (!jobId) return;
+  const pngts = normalizePngtsState();
+  try {
+    const payload = await apiJson(`/api/v1/pngts/jobs/${jobId}`);
+    const job = payload && payload.job ? payload.job : null;
+    if (!job) throw new Error('Job not found');
+    if (job.logs) setPngtsLogs(job.logs);
+    if (job.status === 'running') {
+      pngts.busy = true;
+      updatePngtsButtons();
+      setTimeout(() => pollPngtsJob(jobId, kind), 500);
+      return;
+    }
+    pngts.busy = false;
+    if (job.status === 'done') {
+      setPngtsStatus(kind === 'ffprobe' ? 'Analyze complete' : 'TS generated');
+      if (kind === 'ffprobe' && job.result) {
+        applyPngtsProbeResult(job.result);
+      }
+      if (kind === 'generate' && job.result && job.result.output_path) {
+        pngts.lastOutputPath = job.result.output_path;
+        pngts.outputPath = pngts.lastOutputPath;
+        if (elements.pngtsOutputPathInput) {
+          elements.pngtsOutputPathInput.value = pngts.outputPath;
+        }
+        if (elements.pngtsOutputPath) {
+          elements.pngtsOutputPath.textContent = `Generated: ${pngts.lastOutputPath}`;
+        }
+      }
+    } else {
+      setPngtsStatus(job.error || 'Job failed', true);
+    }
+  } catch (err) {
+    pngts.busy = false;
+    setPngtsStatus(err.message || 'Job failed', true);
+  }
+  updatePngtsButtons();
+}
+
+async function runPngtsAnalyze() {
+  if (!state.editing || !state.editing.stream) return;
+  const pngts = readPngtsForm();
+  collectInputs();
+  let source = pngts.sourceUrl;
+  if (pngts.sourceAuto) {
+    source = (state.inputs && state.inputs[0] ? stripInputHash(state.inputs[0]) : '') || pngts.sourceUrl;
+  }
+  if (!source) {
+    setPngtsStatus('Source URL is required for analyze', true);
+    return;
+  }
+  pngts.busy = true;
+  setPngtsLogs('');
+  updatePngtsButtons();
+  setPngtsStatus('Running ffprobe...');
+  try {
+    const payload = await apiJson(`/api/v1/streams/${state.editing.stream.id}/pngts/ffprobe`, {
+      method: 'POST',
+      body: JSON.stringify({ input_url: source }),
+    });
+    const job = payload.job;
+    pngts.jobId = job && job.id;
+    if (pngts.jobId) {
+      pollPngtsJob(pngts.jobId, 'ffprobe');
+    } else {
+      pngts.busy = false;
+      setPngtsStatus('ffprobe start failed', true);
+    }
+  } catch (err) {
+    pngts.busy = false;
+    setPngtsStatus(err.message || 'ffprobe failed', true);
+  }
+  updatePngtsButtons();
+}
+
+async function runPngtsGenerate() {
+  if (!state.editing || !state.editing.stream) return;
+  const pngts = readPngtsForm();
+  if (!pngts.imageDataUrl) {
+    setPngtsStatus('PNG file is required', true);
+    return;
+  }
+  if (pngts.audioMode === 'mp3' && !pngts.mp3DataUrl) {
+    setPngtsStatus('MP3 file is required', true);
+    return;
+  }
+  pngts.busy = true;
+  setPngtsLogs('');
+  updatePngtsButtons();
+  setPngtsStatus('Generating TS...');
+  const payload = {
+    image_data_url: pngts.imageDataUrl,
+    audio_mode: pngts.audioMode,
+    beep_preset: pngts.beepPreset,
+    mp3_data_url: pngts.audioMode === 'mp3' ? pngts.mp3DataUrl : undefined,
+    codec: pngts.codec || undefined,
+    width: pngts.width || undefined,
+    height: pngts.height || undefined,
+    fps: pngts.fps || undefined,
+    pix_fmt: pngts.pixFmt || undefined,
+    profile: pngts.profile || undefined,
+    level: pngts.level || undefined,
+    duration: pngts.duration || undefined,
+    output_path: pngts.outputPath || undefined,
+    video_bitrate: pngts.videoBitrate || undefined,
+  };
+  try {
+    const result = await apiJson(`/api/v1/streams/${state.editing.stream.id}/pngts/generate`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const job = result.job;
+    pngts.generateJobId = job && job.id;
+    if (pngts.generateJobId) {
+      pollPngtsJob(pngts.generateJobId, 'generate');
+    } else {
+      pngts.busy = false;
+      setPngtsStatus('ffmpeg start failed', true);
+    }
+  } catch (err) {
+    pngts.busy = false;
+    setPngtsStatus(err.message || 'ffmpeg failed', true);
+  }
+  updatePngtsButtons();
+}
+
+function addPngtsOutputToInputs() {
+  const pngts = normalizePngtsState();
+  if (!pngts.lastOutputPath) return;
+  const path = pngts.lastOutputPath;
+  const inputUrl = path.startsWith('file://') ? path : `file://${path}`;
+  collectInputs();
+  state.inputs.push(inputUrl);
+  renderInputList();
+  setPngtsStatus('Added generated TS to INPUT LIST');
+  updatePngtsButtons();
+}
+
+function normalizeRadioState() {
+  if (!state.radio) state.radio = {};
+  const radio = state.radio;
+  radio.audioUrl = radio.audioUrl || '';
+  radio.pngPath = radio.pngPath || '';
+  radio.useCurl = radio.useCurl !== false;
+  radio.userAgent = radio.userAgent || '';
+  radio.extraHeaders = radio.extraHeaders || '';
+  radio.fps = Number(radio.fps) || 25;
+  radio.width = Number(radio.width) || 270;
+  radio.height = Number(radio.height) || 270;
+  radio.keepAspect = radio.keepAspect === true;
+  radio.vcodec = radio.vcodec || 'libx264';
+  radio.preset = radio.preset || 'veryfast';
+  radio.videoBitrate = radio.videoBitrate || '1400k';
+  radio.gop = Number(radio.gop) || Math.floor(radio.fps * 2);
+  radio.pixFmt = radio.pixFmt || 'yuv420p';
+  radio.tuneStill = radio.tuneStill !== false;
+  radio.acodec = radio.acodec || 'aac';
+  radio.audioBitrate = radio.audioBitrate || '256k';
+  radio.channels = Number(radio.channels) || 2;
+  radio.sampleRate = Number(radio.sampleRate) || 48000;
+  radio.outputUrl = radio.outputUrl || '';
+  radio.logPath = radio.logPath || '';
+  radio.pktSize = Number(radio.pktSize) || 1316;
+  radio.pcrPeriod = Number(radio.pcrPeriod) || 30;
+  radio.maxInterleave = Number(radio.maxInterleave) || 0;
+  radio.muxdelay = radio.muxdelay || 0.7;
+  radio.status = radio.status || 'stopped';
+  radio.logs = radio.logs || '';
+  radio.busy = radio.busy === true;
+  return radio;
+}
+
+function buildRadioOutputUrl() {
+  const radio = normalizeRadioState();
+  if (!radio.outputUrl) return '';
+  if (radio.outputUrl.includes('pkt_size=')) return radio.outputUrl;
+  const separator = radio.outputUrl.includes('?') ? '&' : '?';
+  return `${radio.outputUrl}${separator}pkt_size=${radio.pktSize}`;
+}
+
+function setRadioStatus(message, isError) {
+  const radio = normalizeRadioState();
+  radio.status = message || '';
+  if (elements.radioStatus) {
+    elements.radioStatus.textContent = radio.status;
+    elements.radioStatus.classList.toggle('is-error', Boolean(isError));
+  }
+}
+
+function setRadioLogs(text) {
+  const radio = normalizeRadioState();
+  radio.logs = text || '';
+  if (elements.radioLogs) {
+    elements.radioLogs.textContent = radio.logs;
+  }
+}
+
+function updateRadioUiFromState() {
+  if (!elements.radioBlock) return;
+  const radio = normalizeRadioState();
+  if (elements.radioAudioUrl) elements.radioAudioUrl.value = radio.audioUrl;
+  if (elements.radioPngPath) elements.radioPngPath.value = radio.pngPath;
+  if (elements.radioUseCurl) elements.radioUseCurl.checked = radio.useCurl;
+  if (elements.radioUserAgent) elements.radioUserAgent.value = radio.userAgent;
+  if (elements.radioExtraHeaders) elements.radioExtraHeaders.value = radio.extraHeaders;
+  if (elements.radioFps) elements.radioFps.value = radio.fps;
+  if (elements.radioWidth) elements.radioWidth.value = radio.width;
+  if (elements.radioHeight) elements.radioHeight.value = radio.height;
+  if (elements.radioKeepAspect) elements.radioKeepAspect.value = radio.keepAspect ? 'true' : 'false';
+  if (elements.radioVcodec) elements.radioVcodec.value = radio.vcodec;
+  if (elements.radioPreset) elements.radioPreset.value = radio.preset;
+  if (elements.radioVideoBitrate) elements.radioVideoBitrate.value = radio.videoBitrate;
+  if (elements.radioGop) elements.radioGop.value = radio.gop;
+  if (elements.radioPixFmt) elements.radioPixFmt.value = radio.pixFmt;
+  if (elements.radioTuneStill) elements.radioTuneStill.value = radio.tuneStill ? 'true' : 'false';
+  if (elements.radioAcodec) elements.radioAcodec.value = radio.acodec;
+  if (elements.radioAudioBitrate) elements.radioAudioBitrate.value = radio.audioBitrate;
+  if (elements.radioChannels) elements.radioChannels.value = radio.channels;
+  if (elements.radioSampleRate) elements.radioSampleRate.value = radio.sampleRate;
+  if (elements.radioOutputUrl) elements.radioOutputUrl.value = radio.outputUrl;
+  if (elements.radioLogPath) elements.radioLogPath.value = radio.logPath;
+  if (elements.radioPktSize) elements.radioPktSize.value = radio.pktSize;
+  if (elements.radioPcrPeriod) elements.radioPcrPeriod.value = radio.pcrPeriod;
+  if (elements.radioMaxInterleave) elements.radioMaxInterleave.value = radio.maxInterleave;
+  if (elements.radioMuxdelay) elements.radioMuxdelay.value = radio.muxdelay;
+  if (elements.radioOutputHint) {
+    const full = buildRadioOutputUrl();
+    elements.radioOutputHint.textContent = full ? `Output: ${full}` : '';
+  }
+  setRadioStatus(radio.status || '');
+  setRadioLogs(radio.logs || '');
+}
+
+function readRadioForm() {
+  const radio = normalizeRadioState();
+  radio.audioUrl = elements.radioAudioUrl ? elements.radioAudioUrl.value.trim() : '';
+  radio.pngPath = elements.radioPngPath ? elements.radioPngPath.value.trim() : '';
+  radio.useCurl = elements.radioUseCurl ? elements.radioUseCurl.checked : true;
+  radio.userAgent = elements.radioUserAgent ? elements.radioUserAgent.value.trim() : '';
+  radio.extraHeaders = elements.radioExtraHeaders ? elements.radioExtraHeaders.value.trim() : '';
+  radio.fps = Number(elements.radioFps && elements.radioFps.value) || 25;
+  radio.width = Number(elements.radioWidth && elements.radioWidth.value) || 270;
+  radio.height = Number(elements.radioHeight && elements.radioHeight.value) || 270;
+  radio.keepAspect = elements.radioKeepAspect ? elements.radioKeepAspect.value === 'true' : false;
+  radio.vcodec = elements.radioVcodec ? elements.radioVcodec.value.trim() : 'libx264';
+  radio.preset = elements.radioPreset ? elements.radioPreset.value.trim() : 'veryfast';
+  radio.videoBitrate = elements.radioVideoBitrate ? elements.radioVideoBitrate.value.trim() : '1400k';
+  radio.gop = Number(elements.radioGop && elements.radioGop.value) || Math.floor(radio.fps * 2);
+  radio.pixFmt = elements.radioPixFmt ? elements.radioPixFmt.value.trim() : 'yuv420p';
+  radio.tuneStill = elements.radioTuneStill ? elements.radioTuneStill.value === 'true' : true;
+  radio.acodec = elements.radioAcodec ? elements.radioAcodec.value.trim() : 'aac';
+  radio.audioBitrate = elements.radioAudioBitrate ? elements.radioAudioBitrate.value.trim() : '256k';
+  radio.channels = Number(elements.radioChannels && elements.radioChannels.value) || 2;
+  radio.sampleRate = Number(elements.radioSampleRate && elements.radioSampleRate.value) || 48000;
+  radio.outputUrl = elements.radioOutputUrl ? elements.radioOutputUrl.value.trim() : '';
+  radio.logPath = elements.radioLogPath ? elements.radioLogPath.value.trim() : '';
+  radio.pktSize = Number(elements.radioPktSize && elements.radioPktSize.value) || 1316;
+  radio.pcrPeriod = Number(elements.radioPcrPeriod && elements.radioPcrPeriod.value) || 30;
+  radio.maxInterleave = Number(elements.radioMaxInterleave && elements.radioMaxInterleave.value) || 0;
+  radio.muxdelay = elements.radioMuxdelay ? elements.radioMuxdelay.value.trim() : '0.7';
+  updateRadioUiFromState();
+  return radio;
+}
+
+function radioSettingsPayload() {
+  const radio = readRadioForm();
+  return {
+    audio_url: radio.audioUrl,
+    png_path: radio.pngPath,
+    use_curl: radio.useCurl,
+    extra_headers: radio.extraHeaders,
+    user_agent: radio.userAgent,
+    fps: radio.fps,
+    width: radio.width,
+    height: radio.height,
+    keep_aspect: radio.keepAspect,
+    vcodec: radio.vcodec,
+    preset: radio.preset,
+    video_bitrate: radio.videoBitrate,
+    gop: radio.gop,
+    pix_fmt: radio.pixFmt,
+    tune_stillimage: radio.tuneStill,
+    acodec: radio.acodec,
+    audio_bitrate: radio.audioBitrate,
+    channels: radio.channels,
+    sample_rate: radio.sampleRate,
+    output_url: radio.outputUrl,
+    log_path: radio.logPath,
+    pkt_size: radio.pktSize,
+    pcr_period: radio.pcrPeriod,
+    max_interleave_delta: radio.maxInterleave,
+    muxdelay: radio.muxdelay,
+  };
+}
+
+async function refreshRadioStatus() {
+  if (!state.editing || !state.editing.stream) return;
+  if (!elements.radioBlock) return;
+  stopRadioPoll();
+  try {
+    const payload = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/status`);
+    const status = payload && payload.status ? payload.status : null;
+    if (status) {
+      const radio = normalizeRadioState();
+      radio.status = status.status || 'stopped';
+      radio.logs = status.logs || '';
+      if (status.settings && typeof status.settings === 'object') {
+        const s = status.settings;
+        radio.audioUrl = s.audio_url || radio.audioUrl;
+        radio.pngPath = s.png_path || radio.pngPath;
+        radio.useCurl = s.use_curl !== false;
+        radio.userAgent = s.user_agent || radio.userAgent;
+        radio.extraHeaders = s.extra_headers || radio.extraHeaders;
+        radio.fps = Number(s.fps) || radio.fps;
+        radio.width = Number(s.width) || radio.width;
+        radio.height = Number(s.height) || radio.height;
+        radio.keepAspect = s.keep_aspect === true;
+        radio.vcodec = s.vcodec || radio.vcodec;
+        radio.preset = s.preset || radio.preset;
+        radio.videoBitrate = s.video_bitrate || radio.videoBitrate;
+        radio.gop = Number(s.gop) || radio.gop;
+        radio.pixFmt = s.pix_fmt || radio.pixFmt;
+        radio.tuneStill = s.tune_stillimage !== false;
+        radio.acodec = s.acodec || radio.acodec;
+        radio.audioBitrate = s.audio_bitrate || radio.audioBitrate;
+        radio.channels = Number(s.channels) || radio.channels;
+        radio.sampleRate = Number(s.sample_rate) || radio.sampleRate;
+        radio.outputUrl = s.output_url || radio.outputUrl;
+        radio.logPath = s.log_path || radio.logPath;
+        radio.pktSize = Number(s.pkt_size) || radio.pktSize;
+        radio.pcrPeriod = Number(s.pcr_period) || radio.pcrPeriod;
+        radio.maxInterleave = Number(s.max_interleave_delta) || radio.maxInterleave;
+        radio.muxdelay = s.muxdelay || radio.muxdelay;
+      }
+      updateRadioUiFromState();
+      if (status.status === 'running') {
+        state.radioPollTimer = setTimeout(() => {
+          refreshRadioStatus();
+        }, 2000);
+      }
+    }
+  } catch (err) {
+    setRadioStatus(err.message || 'Radio status error', true);
+  }
+}
+
+async function startRadio() {
+  if (!state.editing || !state.editing.stream) return;
+  const payload = radioSettingsPayload();
+  if (!payload.audio_url) {
+    setRadioStatus('Audio URL is required', true);
+    return;
+  }
+  if (!payload.png_path) {
+    setRadioStatus('PNG path is required', true);
+    return;
+  }
+  if (!payload.output_url) {
+    setRadioStatus('Output UDP URL is required', true);
+    return;
+  }
+  setRadioStatus('Starting...');
+  setRadioLogs('');
+  try {
+    const res = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/start`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const status = res && res.status;
+    if (status) {
+      const radio = normalizeRadioState();
+      radio.status = status.status || 'running';
+      radio.logs = status.logs || '';
+      updateRadioUiFromState();
+    }
+    refreshRadioStatus();
+  } catch (err) {
+    setRadioStatus(err.message || 'Start failed', true);
+  }
+}
+
+async function stopRadio() {
+  if (!state.editing || !state.editing.stream) return;
+  setRadioStatus('Stopping...');
+  setRadioLogs('');
+  try {
+    const res = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/stop`, {
+      method: 'POST',
+    });
+    const status = res && res.status;
+    if (status) {
+      const radio = normalizeRadioState();
+      radio.status = status.status || 'stopped';
+      radio.logs = status.logs || '';
+      updateRadioUiFromState();
+    }
+    stopRadioPoll();
+  } catch (err) {
+    setRadioStatus(err.message || 'Stop failed', true);
+  }
+}
+
+async function restartRadio() {
+  if (!state.editing || !state.editing.stream) return;
+  setRadioStatus('Restarting...');
+  setRadioLogs('');
+  try {
+    const payload = radioSettingsPayload();
+    const res = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/restart`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    const status = res && res.status;
+    if (status) {
+      const radio = normalizeRadioState();
+      radio.status = status.status || 'running';
+      radio.logs = status.logs || '';
+      updateRadioUiFromState();
+    }
+    refreshRadioStatus();
+  } catch (err) {
+    setRadioStatus(err.message || 'Restart failed', true);
+  }
+}
+
+function useRadioAsInput() {
+  const full = buildRadioOutputUrl();
+  if (!full) {
+    setRadioStatus('Output URL is required', true);
+    return;
+  }
+  collectInputs();
+  state.inputs.push(full);
+  renderInputList();
+  setRadioStatus('Added UDP output to INPUT LIST');
+}
+
 function normalizeMptsServices(list) {
   if (!Array.isArray(list)) return [];
   return list.map((item) => {
@@ -17730,12 +18580,15 @@ function openEditor(stream, isNew) {
   setTab('general', 'stream-editor');
   setOverlay(elements.editorOverlay, true);
   updateEditorTranscodeStatus();
+  resetPngtsStateFromStream(stream);
+  resetRadioStateFromStream(stream);
 }
 
 function closeEditor() {
   state.editing = null;
   state.transcodeOutputMonitorIndex = null;
   state.outputInlineDraft = null;
+  stopRadioPoll();
   setOverlay(elements.editorOverlay, false);
 }
 
@@ -17896,6 +18749,40 @@ function readStreamForm() {
   }
   if (outputs.length) {
     config.output = outputs;
+  }
+
+  // Радио-генератор (audio + PNG → UDP TS). Храним в конфиге, чтобы UI заполнялся автоматически.
+  if (elements.radioBlock) {
+    const radio = readRadioForm();
+    if (radio.audioUrl || radio.pngPath || radio.outputUrl) {
+      config.radio = {
+        audio_url: radio.audioUrl || undefined,
+        png_path: radio.pngPath || undefined,
+        use_curl: radio.useCurl !== false,
+        user_agent: radio.userAgent || undefined,
+        extra_headers: radio.extraHeaders || undefined,
+        fps: radio.fps,
+        width: radio.width,
+        height: radio.height,
+        keep_aspect: radio.keepAspect === true,
+        vcodec: radio.vcodec,
+        preset: radio.preset,
+        video_bitrate: radio.videoBitrate,
+        gop: radio.gop,
+        pix_fmt: radio.pixFmt,
+        tune_stillimage: radio.tuneStill !== false,
+        acodec: radio.acodec,
+        audio_bitrate: radio.audioBitrate,
+        channels: radio.channels,
+        sample_rate: radio.sampleRate,
+        output_url: radio.outputUrl,
+        log_path: radio.logPath,
+        pkt_size: radio.pktSize,
+        pcr_period: radio.pcrPeriod,
+        max_interleave_delta: radio.maxInterleave,
+        muxdelay: radio.muxdelay,
+      };
+    }
   }
 
   const timeout = toNumber(elements.streamTimeout && elements.streamTimeout.value);
@@ -29028,6 +29915,121 @@ function bindEvents() {
   if (elements.streamTranscodePresetApply && elements.streamTranscodePreset) {
     elements.streamTranscodePresetApply.addEventListener('click', () => {
       applyStreamTranscodePreset(elements.streamTranscodePreset.value);
+    });
+  }
+  if (elements.pngtsImageFile) {
+    elements.pngtsImageFile.addEventListener('change', () => {
+      handlePngtsImageFileChange();
+    });
+  }
+  if (elements.pngtsMp3File) {
+    elements.pngtsMp3File.addEventListener('change', () => {
+      handlePngtsMp3FileChange();
+    });
+  }
+  if (elements.pngtsAudioMode) {
+    elements.pngtsAudioMode.addEventListener('change', () => {
+      readPngtsForm();
+      updatePngtsAudioVisibility();
+      updatePngtsButtons();
+    });
+  }
+  if (elements.pngtsBeepPreset) {
+    elements.pngtsBeepPreset.addEventListener('change', () => {
+      readPngtsForm();
+    });
+  }
+  if (elements.pngtsSourceUrl) {
+    elements.pngtsSourceUrl.addEventListener('input', () => {
+      if (state.pngts) {
+        state.pngts.sourceAuto = false;
+      }
+      readPngtsForm();
+    });
+  }
+  [
+    elements.pngtsVideoCodec,
+    elements.pngtsVideoWidth,
+    elements.pngtsVideoHeight,
+    elements.pngtsVideoFps,
+    elements.pngtsVideoPixFmt,
+    elements.pngtsVideoProfile,
+    elements.pngtsVideoLevel,
+    elements.pngtsVideoBitrate,
+    elements.pngtsDuration,
+    elements.pngtsOutputPathInput,
+  ].forEach((el) => {
+    if (!el) return;
+    el.addEventListener('input', () => {
+      readPngtsForm();
+    });
+  });
+  if (elements.btnPngtsAnalyze) {
+    elements.btnPngtsAnalyze.addEventListener('click', () => {
+      runPngtsAnalyze();
+    });
+  }
+  if (elements.btnPngtsGenerate) {
+    elements.btnPngtsGenerate.addEventListener('click', () => {
+      runPngtsGenerate();
+    });
+  }
+  if (elements.btnPngtsAddBackup) {
+    elements.btnPngtsAddBackup.addEventListener('click', () => {
+      addPngtsOutputToInputs();
+    });
+  }
+  [
+    elements.radioAudioUrl,
+    elements.radioPngPath,
+    elements.radioUseCurl,
+    elements.radioUserAgent,
+    elements.radioExtraHeaders,
+    elements.radioFps,
+    elements.radioWidth,
+    elements.radioHeight,
+    elements.radioKeepAspect,
+    elements.radioVcodec,
+    elements.radioPreset,
+    elements.radioVideoBitrate,
+    elements.radioGop,
+    elements.radioPixFmt,
+    elements.radioTuneStill,
+    elements.radioAcodec,
+    elements.radioAudioBitrate,
+    elements.radioChannels,
+    elements.radioSampleRate,
+    elements.radioOutputUrl,
+    elements.radioLogPath,
+    elements.radioPktSize,
+    elements.radioPcrPeriod,
+    elements.radioMaxInterleave,
+    elements.radioMuxdelay,
+  ].forEach((el) => {
+    if (!el) return;
+    const ev = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input';
+    el.addEventListener(ev, () => {
+      readRadioForm();
+    });
+  });
+  if (elements.btnRadioStart) {
+    elements.btnRadioStart.addEventListener('click', () => {
+      startRadio();
+    });
+  }
+  if (elements.btnRadioStop) {
+    elements.btnRadioStop.addEventListener('click', () => {
+      stopRadio();
+    });
+  }
+  if (elements.btnRadioRestart) {
+    elements.btnRadioRestart.addEventListener('click', () => {
+      restartRadio();
+    });
+  }
+  if (elements.btnRadioUseInput) {
+    elements.btnRadioUseInput.addEventListener('click', () => {
+      useRadioAsInput();
     });
   }
   elements.streamForm.addEventListener('submit', saveStream);
