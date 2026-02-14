@@ -10,6 +10,12 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-14
+- Changes:
+  - Input resilience: tune `bad`/`max` network profiles for unstable HTTP/HLS sources (bigger timeouts + larger default jitter buffer).
+  - UI: update Input settings “Apply preset” defaults to match the tuned `bad`/`max` profiles.
+- Tests:
+  - `node --check web/app.js`
 ### 2026-02-10
 - Changes:
   - Input settings: detect Basic/Full quality preset when detector values match defaults.
