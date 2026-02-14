@@ -12247,7 +12247,8 @@ function resetRadioStateFromStream(stream) {
   radio.logs = '';
   if (elements.radioPngFile) elements.radioPngFile.value = '';
   updateRadioUiFromState();
-  refreshRadioStatus();
+  // Статус радио-генератора подгружаем только когда пользователь откроет Input settings → Type: Create radio.
+  stopRadioPoll();
 }
 
 function stopRadioPoll() {
@@ -12780,9 +12781,13 @@ async function refreshRadioStatus() {
       }
       updateRadioUiFromState();
       if (status.status === 'running') {
-        state.radioPollTimer = setTimeout(() => {
-          refreshRadioStatus();
-        }, 2000);
+        const overlayOpen = elements.inputOverlay && elements.inputOverlay.classList.contains('active');
+        const wantsPoll = overlayOpen && isInputRadioType(elements.inputType && elements.inputType.value);
+        if (wantsPoll) {
+          state.radioPollTimer = setTimeout(() => {
+            refreshRadioStatus();
+          }, 2000);
+        }
       }
     }
   } catch (err) {
@@ -12876,10 +12881,36 @@ function useRadioAsInput(silent) {
     setRadioStatus('Output URL is required', true);
     return;
   }
+  const parsed = parseUdpLikeUrl(full, 'udp');
+  const normalized = parsed
+    ? buildInputUrl({
+      format: 'udp',
+      iface: parsed.localaddr || '',
+      addr: parsed.addr || '',
+      port: parsed.port !== undefined && parsed.port !== null ? String(parsed.port) : '',
+      options: parsed.options || {},
+    })
+    : full;
   collectInputs();
-  const existing = (state.inputs || []).some((entry) => String(entry || '') === full);
+  const isEditingInput = elements.inputOverlay
+    && elements.inputOverlay.classList.contains('active')
+    && state.inputEditingIndex !== null
+    && isInputRadioType(elements.inputType && elements.inputType.value);
+  if (isEditingInput) {
+    state.inputs[state.inputEditingIndex] = normalized;
+    renderInputList();
+    if (elements.inputRaw) {
+      setInputRawValue(normalized);
+      setInputRawError('');
+    }
+    if (!silent) {
+      setRadioStatus('Selected as stream input');
+    }
+    return;
+  }
+  const existing = (state.inputs || []).some((entry) => String(entry || '') === normalized);
   if (!existing) {
-    state.inputs.push(full);
+    state.inputs.push(normalized);
     renderInputList();
     if (!silent) {
       setRadioStatus('Added UDP output to INPUT LIST');
@@ -14182,6 +14213,17 @@ function setInputGroup(group) {
   });
 }
 
+function isInputRadioType(type) {
+  return String(type || '').toLowerCase() === 'radio';
+}
+
+function setInputRadioVisibility(format) {
+  const show = isInputRadioType(format);
+  if (elements.radioBlock) {
+    elements.radioBlock.hidden = !show;
+  }
+}
+
 function isInputHttpLikeType(type) {
   const value = String(type || '').toLowerCase();
   return value === 'http' || value === 'https' || value === 'hls';
@@ -14194,6 +14236,7 @@ function isInputBufferingType(type) {
     || value === 'hls'
     || value === 'udp'
     || value === 'rtp'
+    || value === 'radio'
     || value === 'srt'
     || value === 'rtsp';
 }
@@ -14418,11 +14461,14 @@ function fillInputFormFromParsed(parsed, index) {
   if (elements.inputPreset) elements.inputPreset.value = '';
   const format = parsed.format || 'udp';
   elements.inputType.value = format;
-  const group = (format === 'rtp') ? 'udp'
-    : ((format === 'http' || format === 'https' || format === 'hls') ? 'http'
-      : (format === 'srt' || format === 'rtsp' ? 'bridge' : format));
+  const effectiveFormat = isInputRadioType(format) ? 'udp' : format;
+  const group = isInputRadioType(format) ? 'radio'
+    : (effectiveFormat === 'rtp') ? 'udp'
+      : ((effectiveFormat === 'http' || effectiveFormat === 'https' || effectiveFormat === 'hls') ? 'http'
+        : (effectiveFormat === 'srt' || effectiveFormat === 'rtsp' ? 'bridge' : effectiveFormat));
   setInputGroup(group);
-  setInputAdvancedFoldVisibility(format);
+  setInputAdvancedFoldVisibility(effectiveFormat);
+  setInputRadioVisibility(format);
 
   const opts = parsed.options || {};
   const knownOptions = new Set([
@@ -14582,7 +14628,7 @@ function fillInputFormFromParsed(parsed, index) {
   }
 
   elements.inputBridgeUrl.value = parsed.url || '';
-  const bridgeDefault = (format === 'srt' || format === 'rtsp') ? '14000' : '';
+  const bridgeDefault = (effectiveFormat === 'srt' || effectiveFormat === 'rtsp') ? '14000' : '';
   elements.inputBridgePort.value = opts.bridge_port || bridgeDefault;
 
   elements.inputFileName.value = parsed.file || '';
@@ -14973,6 +15019,30 @@ function ensureDetectorDefaults() {
   }
 }
 
+function getEditingRadioOutputUrl() {
+  const radio = state.radio;
+  if (radio && radio.outputUrl) {
+    return String(radio.outputUrl || '').trim();
+  }
+  const stream = state.editing && state.editing.stream;
+  const cfg = stream && stream.config ? stream.config : null;
+  const rcfg = cfg && cfg.radio ? cfg.radio : null;
+  return rcfg && rcfg.output_url ? String(rcfg.output_url || '').trim() : '';
+}
+
+function isRadioInputUrl(url) {
+  const outUrl = getEditingRadioOutputUrl();
+  if (!outUrl) return false;
+  const inputParsed = parseUdpLikeUrl(url, 'udp');
+  const outParsed = parseUdpLikeUrl(outUrl, 'udp');
+  if (!inputParsed || !outParsed) return false;
+  const inIface = String(inputParsed.localaddr || '');
+  const outIface = String(outParsed.localaddr || '');
+  if (inIface && outIface && inIface !== outIface) return false;
+  return String(inputParsed.addr || '') === String(outParsed.addr || '')
+    && Number(inputParsed.port || 0) === Number(outParsed.port || 0);
+}
+
 function applyInputRawToForm(raw) {
   if (!raw) {
     setInputRawError('');
@@ -14982,6 +15052,9 @@ function applyInputRawToForm(raw) {
   if (!parsed.format) {
     setInputRawError('Invalid input URL');
     return;
+  }
+  if (isRadioInputUrl(raw)) {
+    parsed.format = 'radio';
   }
   setInputRawError('');
   fillInputFormFromParsed(parsed, state.inputEditingIndex);
@@ -15022,6 +15095,9 @@ function scheduleInputRawSync() {
 function openInputModal(index) {
   const url = state.inputs[index] || '';
   const parsed = parseInputUrl(url);
+  if (isRadioInputUrl(url)) {
+    parsed.format = 'radio';
+  }
   state.inputEditingIndex = index;
   fillInputFormFromParsed(parsed, index);
   setInputAdvancedVisible(false);
@@ -15034,12 +15110,16 @@ function openInputModal(index) {
   validateInputDetectors();
   syncInputSaveState();
   setOverlay(elements.inputOverlay, true);
+  if (isInputRadioType(elements.inputType && elements.inputType.value)) {
+    refreshRadioStatus();
+  }
 }
 
 function closeInputModal() {
   state.inputEditingIndex = null;
   state.inputRawInvalid = false;
   state.inputDetectorsInvalid = false;
+  stopRadioPoll();
   setOverlay(elements.inputOverlay, false);
 }
 
@@ -15270,6 +15350,25 @@ function readInputForm(opts = {}) {
       options[key] = extras[key];
     }
   });
+
+  if (isInputRadioType(format)) {
+    const base = buildRadioOutputUrl();
+    const parsed = parseUdpLikeUrl(base, 'udp');
+    if (!parsed || !parsed.addr) {
+      if (!allowPartial) {
+        throw new Error('Output UDP URL is required');
+      }
+      return '';
+    }
+    const merged = { ...(parsed.options || {}), ...options };
+    return buildInputUrl({
+      format: 'udp',
+      iface: parsed.localaddr || '',
+      addr: parsed.addr || '',
+      port: parsed.port !== undefined && parsed.port !== null ? String(parsed.port) : '',
+      options: merged,
+    });
+  }
 
   return buildInputUrl(data);
 }
@@ -31057,11 +31156,23 @@ function bindEvents() {
   if (elements.inputType) {
     elements.inputType.addEventListener('change', () => {
       const type = elements.inputType.value;
-      const group = (type === 'rtp') ? 'udp'
-        : ((type === 'http' || type === 'https' || type === 'hls') ? 'http'
-          : (type === 'srt' || type === 'rtsp' ? 'bridge' : type));
+      const effectiveType = isInputRadioType(type) ? 'udp' : type;
+      const group = isInputRadioType(type) ? 'radio'
+        : (effectiveType === 'rtp') ? 'udp'
+          : ((effectiveType === 'http' || effectiveType === 'https' || effectiveType === 'hls') ? 'http'
+            : (effectiveType === 'srt' || effectiveType === 'rtsp' ? 'bridge' : effectiveType));
       setInputGroup(group);
-      setInputAdvancedFoldVisibility(type);
+      setInputAdvancedFoldVisibility(effectiveType);
+      setInputRadioVisibility(type);
+      if (isInputRadioType(type)) {
+        if (elements.inputRaw && !buildRadioOutputUrl()) {
+          setInputRawValue('');
+          setInputRawError('');
+        }
+        refreshRadioStatus();
+      } else {
+        stopRadioPoll();
+      }
     });
   }
   if (elements.inputAdvancedToggle) {
