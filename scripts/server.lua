@@ -226,7 +226,13 @@ if auth then
         if not entry or not entry.session_id then
             return
         end
-        local list = auth.clients[entry.session_id]
+        local list = nil
+        if auth.drop_all_clients then
+            list = auth.drop_all_clients(entry.session_id)
+        else
+            list = auth.clients[entry.session_id]
+            auth.clients[entry.session_id] = nil
+        end
         if not list then
             return
         end
@@ -235,7 +241,6 @@ if auth then
                 item.server:close(item.client)
             end
         end
-        auth.clients[entry.session_id] = nil
     end
 end
 

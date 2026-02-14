@@ -80,6 +80,7 @@ do
         auth_backends = {
             main = {
                 allow_default = false,
+                mode = "parallel",
                 backends = {
                     { url = "http://backend-deny/on_play" },
                     { url = "http://backend-allow/on_play" },
@@ -103,6 +104,38 @@ do
         assert_eq(allowed, true, "multi allow")
         assert_eq(entry.status, "ALLOW", "status allow")
         assert(entry.expires_at and entry.expires_at > os.time(), "ttl set")
+    end)
+end
+
+-- 2b) Sequential mode: 403 then 200 -> allow (try next backend)
+do
+    config._settings = {
+        auth_backends = {
+            main = {
+                allow_default = false,
+                mode = "sequential",
+                backends = {
+                    { url = "http://backend-deny/on_play" },
+                    { url = "http://backend-allow/on_play" },
+                },
+            }
+        },
+        auth_allow_no_token = true,
+    }
+    responses_by_host["backend-deny"] = { code = 403, headers = {} }
+    responses_by_host["backend-allow"] = { code = 200, headers = {} }
+
+    local ctx = {
+        stream_id = "test",
+        stream_name = "Test",
+        stream_cfg = { on_play = "auth://main" },
+        proto = "http_ts",
+        request = make_request({ ["user-agent"] = "UA" }, { token = "t1" }),
+        ip = "1.2.3.4",
+    }
+    auth.check_play(ctx, function(allowed, entry)
+        assert_eq(allowed, true, "sequential allow")
+        assert_eq(entry.status, "ALLOW", "status allow")
     end)
 end
 
@@ -215,4 +248,3 @@ end
 
 print("auth_backend_unit: ok")
 astra.exit()
-

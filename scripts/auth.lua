@@ -4,6 +4,10 @@ auth = {
     cache = {},
     inflight = {},
     clients = {},
+    stream_clients = {},
+    total_clients = 0,
+    backend_inflight = 0,
+    recheck_timer = nil,
 }
 
 local function now()
@@ -436,6 +440,14 @@ local function normalize_backend_list(value)
     return out
 end
 
+local function normalize_backend_mode(value)
+    local mode = tostring(value or ""):lower()
+    if mode == "sequential" or mode == "seq" then
+        return "sequential"
+    end
+    return "parallel"
+end
+
 local function resolve_backend(mode, stream_cfg)
     local spec = ""
     if stream_cfg and mode == "play" and stream_cfg.on_play and stream_cfg.on_play ~= "" then
@@ -537,12 +549,34 @@ local function build_session_values(ctx, session_keys)
     return values
 end
 
-local function session_from_cache(session_id)
+local function session_from_cache(session_id, opts)
     local entry = auth.cache[session_id]
     if not entry then
         return nil
     end
-    if entry.expires_at and entry.expires_at <= now() then
+    local ts = now()
+    local allow_stale = false
+    local stale_grace = 0
+    if opts and type(opts) == "table" then
+        allow_stale = opts.allow_stale == true
+        stale_grace = tonumber(opts.stale_grace_sec) or 0
+    end
+    if stale_grace <= 0 then
+        stale_grace = setting_number("auth_stale_grace_sec", 30)
+        if stale_grace == nil or stale_grace < 0 then
+            stale_grace = 0
+        end
+    end
+    entry._stale = nil
+    if entry.expires_at and entry.expires_at <= ts then
+        local keep_until = entry.expires_at + stale_grace
+        if stale_grace > 0 and keep_until > ts then
+            if allow_stale then
+                entry._stale = true
+                return entry
+            end
+            return nil
+        end
         auth.cache[session_id] = nil
         return nil
     end
@@ -551,9 +585,16 @@ end
 
 local function prune_expired()
     local ts = now()
+    local stale_grace = setting_number("auth_stale_grace_sec", 30)
+    if stale_grace == nil or stale_grace < 0 then
+        stale_grace = 0
+    end
     for session_id, entry in pairs(auth.cache) do
         if entry.expires_at and entry.expires_at <= ts then
-            auth.cache[session_id] = nil
+            local keep_until = entry.expires_at + stale_grace
+            if stale_grace <= 0 or keep_until <= ts then
+                auth.cache[session_id] = nil
+            end
         end
     end
 end
@@ -656,7 +697,14 @@ local function enforce_unique(entry, opts)
     end
 end
 
-local function build_backend_request(url, params, method, body, timeout_ms)
+local function sanitize_header_part(value)
+    local text = tostring(value or "")
+    text = text:gsub("[\r\n]+", " ")
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    return text
+end
+
+local function build_backend_request(url, params, method, body, timeout_ms, extra_headers)
     local parsed = parse_url(url)
     if not parsed then
         return nil, "invalid backend url"
@@ -682,6 +730,15 @@ local function build_backend_request(url, params, method, body, timeout_ms)
         "Host: " .. tostring(parsed.host) .. ":" .. tostring(parsed.port),
         "Connection: close",
     }
+    if type(extra_headers) == "table" then
+        for k, v in pairs(extra_headers) do
+            local name = sanitize_header_part(k)
+            local value = sanitize_header_part(v)
+            if name ~= "" and value ~= "" and not name:find(":", 1, true) then
+                table.insert(headers, name .. ": " .. value)
+            end
+        end
+    end
     if body then
         table.insert(headers, "Content-Type: application/json")
         table.insert(headers, "Content-Length: " .. tostring(#body))
@@ -764,6 +821,13 @@ function auth.register_client(session_id, server, client)
         auth.clients[session_id] = list
     end
     table.insert(list, { server = server, client = client })
+    auth.total_clients = math.max(0, (tonumber(auth.total_clients) or 0) + 1)
+    local cached = auth.cache and auth.cache[session_id] or nil
+    local stream_id = cached and cached.stream_id or nil
+    if stream_id and stream_id ~= "" then
+        local cur = tonumber(auth.stream_clients[stream_id] or 0) or 0
+        auth.stream_clients[stream_id] = cur + 1
+    end
 end
 
 function auth.unregister_client(session_id, server, client)
@@ -780,11 +844,55 @@ function auth.unregister_client(session_id, server, client)
             table.insert(keep, entry)
         end
     end
+    local removed = #list - #keep
     if #keep == 0 then
         auth.clients[session_id] = nil
     else
         auth.clients[session_id] = keep
     end
+    if removed > 0 then
+        auth.total_clients = math.max(0, (tonumber(auth.total_clients) or 0) - removed)
+        local cached = auth.cache and auth.cache[session_id] or nil
+        local stream_id = cached and cached.stream_id or nil
+        if stream_id and stream_id ~= "" then
+            local cur = tonumber(auth.stream_clients[stream_id] or 0) or 0
+            cur = cur - removed
+            if cur <= 0 then
+                auth.stream_clients[stream_id] = nil
+            else
+                auth.stream_clients[stream_id] = cur
+            end
+        end
+    end
+end
+
+-- Снимает все HTTP-клиенты сессии и корректирует счётчики.
+-- Используется при "kick" (deny/update_session), чтобы не держать лишние ссылки.
+function auth.drop_all_clients(session_id)
+    if not session_id then
+        return nil
+    end
+    local list = auth.clients[session_id]
+    if not list then
+        return nil
+    end
+    auth.clients[session_id] = nil
+    local removed = #list
+    if removed > 0 then
+        auth.total_clients = math.max(0, (tonumber(auth.total_clients) or 0) - removed)
+        local cached = auth.cache and auth.cache[session_id] or nil
+        local stream_id = cached and cached.stream_id or nil
+        if stream_id and stream_id ~= "" then
+            local cur = tonumber(auth.stream_clients[stream_id] or 0) or 0
+            cur = cur - removed
+            if cur <= 0 then
+                auth.stream_clients[stream_id] = nil
+            else
+                auth.stream_clients[stream_id] = cur
+            end
+        end
+    end
+    return list
 end
 
 local function create_entry(ctx, session_id, status, ttl, meta)
@@ -802,6 +910,11 @@ local function create_entry(ctx, session_id, status, ttl, meta)
     entry.expires_at = now() + ttl
     entry.session_keys = ctx.session_keys
     entry.token_hash = ctx.token_hash
+    entry.user_agent = ctx.user_agent
+    entry.referer = ctx.referer
+    entry.host = ctx.host
+    entry.country = ctx.country
+    entry.playback_session_id = ctx.playback_session_id
     if status == "ALLOW" and ctx.token and ctx.token ~= "" then
         entry.token = ctx.token
     end
@@ -826,6 +939,14 @@ local function backend_defaults_for(ctx)
 
     local cfg = ctx and ctx.backend_cfg or nil
     if type(cfg) == "table" then
+        if cfg.fail_policy ~= nil and cfg.allow_default == nil then
+            local fp = tostring(cfg.fail_policy or ""):lower()
+            if fp == "open" then
+                allow_default = true
+            elseif fp == "closed" then
+                allow_default = false
+            end
+        end
         if cfg.allow_default ~= nil then
             allow_default = normalize_bool(cfg.allow_default, allow_default)
         end
@@ -928,6 +1049,16 @@ local function check_backend_one(ctx, session_id, backend, callback)
         return
     end
 
+    -- Защита от всплеска запросов (DDOS/шторм сегментов HLS).
+    local max_inflight = setting_number("auth_backend_max_concurrency", 0)
+    if max_inflight and max_inflight > 0 then
+        local cur = tonumber(auth.backend_inflight or 0) or 0
+        if cur >= max_inflight then
+            callback({ url = backend_url, error = "backend_overload" })
+            return
+        end
+    end
+
     local request_type = tostring(ctx.request_type or "open_session")
     local request_number = tonumber(ctx.request_number) or 1
 
@@ -956,8 +1087,9 @@ local function check_backend_one(ctx, session_id, backend, callback)
             dvr = ctx.dvr == true and "1" or "0",
             playback_session_id = ctx.playback_session_id or "",
         }
-        if type(backend.params) == "table" then
-            for k, v in pairs(backend.params) do
+        local static_params = backend.params or backend.static_params
+        if type(static_params) == "table" then
+            for k, v in pairs(static_params) do
                 params[k] = tostring(v or "")
             end
         end
@@ -975,13 +1107,27 @@ local function check_backend_one(ctx, session_id, backend, callback)
         })
     end
 
-    local req, err = build_backend_request(backend_url, params, method, body, backend and backend.timeout_ms or nil)
+    local cfg = ctx and ctx.backend_cfg or nil
+    local cfg_timeout = type(cfg) == "table" and tonumber(cfg.timeout_ms) or nil
+    local cfg_total_timeout = type(cfg) == "table" and tonumber(cfg.total_timeout_ms) or nil
+    local timeout_ms = tonumber(backend.timeout_ms or backend.timeout) or cfg_timeout or nil
+    local total_timeout_ms = cfg_total_timeout
+    if total_timeout_ms and total_timeout_ms > 0 then
+        if not timeout_ms or timeout_ms > total_timeout_ms then
+            timeout_ms = total_timeout_ms
+        end
+    end
+    local extra_headers = backend.static_headers or backend.headers
+
+    local req, err = build_backend_request(backend_url, params, method, body, timeout_ms, extra_headers)
     if not req then
         callback({ url = backend_url, error = err or "backend_config_error" })
         return
     end
 
+    auth.backend_inflight = math.max(0, (tonumber(auth.backend_inflight) or 0) + 1)
     req.callback = function(self, response)
+        auth.backend_inflight = math.max(0, (tonumber(auth.backend_inflight) or 1) - 1)
         local backend_error = classify_backend_error(response)
         callback({
             url = backend_url,
@@ -994,23 +1140,7 @@ local function check_backend_one(ctx, session_id, backend, callback)
     http_request(req)
 end
 
-local function check_backend_group(ctx, session_id, backend_desc, callback)
-    local backends = {}
-    if backend_desc and backend_desc.kind == "auth_backend" then
-        ctx.backend_cfg = backend_desc.cfg
-        local cfg = backend_desc.cfg
-        if type(cfg) == "table" then
-            backends = normalize_backend_list(cfg.backends)
-        end
-    elseif backend_desc and backend_desc.kind == "http_backend" then
-        backends = backend_desc.backends or {}
-    end
-
-    if type(backends) ~= "table" or backends[1] == nil then
-        callback({ decision = "DENY", reason = "backend_missing" })
-        return
-    end
-
+local function check_backend_group_parallel(ctx, session_id, backends, callback)
     local pending = #backends
     local done = false
     local results = {}
@@ -1097,6 +1227,109 @@ local function check_backend_group(ctx, session_id, backend_desc, callback)
             end
         end)
     end
+end
+
+local function check_backend_group_sequential(ctx, session_id, backends, callback)
+    local index = 1
+    local results = {}
+    local saw_4xx = false
+
+    local function finalize()
+        local all_error = true
+        for _, res in ipairs(results) do
+            if res and res.response and res.response.code then
+                local code = tonumber(res.response.code) or 0
+                if code > 0 and code < 500 then
+                    all_error = false
+                elseif code >= 500 then
+                    -- keep all_error=true unless we saw something else
+                end
+            end
+            if res and res.error == nil and res.response ~= nil and res.response.code ~= nil and res.response.code ~= 0 and res.response.code < 500 then
+                all_error = false
+            end
+        end
+
+        if saw_4xx then
+            callback({ decision = "DENY", reason = "backend_deny" })
+            return
+        end
+
+        local allow_ttl, deny_ttl, allow_default = backend_defaults_for(ctx)
+        if all_error then
+            callback({
+                decision = allow_default and "ALLOW_DEFAULT" or "DENY_DEFAULT",
+                reason = "backend_down",
+                allow_ttl = allow_ttl,
+                deny_ttl = deny_ttl,
+            })
+            return
+        end
+
+        callback({ decision = "DENY", reason = "backend_error_code" })
+    end
+
+    local function next()
+        if index > #backends then
+            finalize()
+            return
+        end
+        local backend = backends[index]
+        index = index + 1
+        check_backend_one(ctx, session_id, backend, function(res)
+            table.insert(results, res)
+            if res and res.response and res.response.code then
+                local code = tonumber(res.response.code) or 0
+                if code == 200 then
+                    callback({ decision = "ALLOW", chosen = res, reason = "backend_allow" })
+                    return
+                end
+                if code == 302 and res.location and res.location ~= "" then
+                    callback({ decision = "REDIRECT", chosen = res, reason = "backend_redirect" })
+                    return
+                end
+                if code >= 400 and code < 500 then
+                    -- 401/403 в sequential не "блокируют" сразу: пробуем следующий портал.
+                    saw_4xx = true
+                    next()
+                    return
+                end
+            end
+            -- timeout/5xx/invalid -> пробуем следующий
+            next()
+        end)
+    end
+
+    next()
+end
+
+local function check_backend_group(ctx, session_id, backend_desc, callback)
+    local backends = {}
+    local mode = "parallel"
+    if backend_desc and backend_desc.kind == "auth_backend" then
+        ctx.backend_cfg = backend_desc.cfg
+        local cfg = backend_desc.cfg
+        if type(cfg) == "table" then
+            backends = normalize_backend_list(cfg.backends)
+            mode = normalize_backend_mode(cfg.mode or cfg.backend_mode)
+        end
+    elseif backend_desc and backend_desc.kind == "http_backend" then
+        backends = backend_desc.backends or {}
+    end
+
+    if ctx and ctx.backend_mode ~= nil then
+        mode = normalize_backend_mode(ctx.backend_mode)
+    end
+
+    if type(backends) ~= "table" or backends[1] == nil then
+        callback({ decision = "DENY", reason = "backend_missing" })
+        return
+    end
+
+    if mode == "sequential" then
+        return check_backend_group_sequential(ctx, session_id, backends, callback)
+    end
+    return check_backend_group_parallel(ctx, session_id, backends, callback)
 end
 
 local function handle_cache_result(ctx, entry, callback)
@@ -1208,6 +1441,10 @@ function auth.check(ctx, callback)
         ctx.token_hash = ""
     end
 
+    -- Счётчики сессий/клиентов для порталов.
+    ctx.total_clients = tonumber(auth.total_clients) or 0
+    ctx.stream_clients = tonumber(auth.stream_clients[ctx.stream_id] or 0) or 0
+
     -- Rules (allow/deny) can bypass token requirement.
     local allow_ttl, deny_ttl, allow_default = backend_defaults_for(ctx)
     local rule = rule_decision(ctx)
@@ -1250,6 +1487,9 @@ function auth.check(ctx, callback)
         return
     end
 
+    -- Если запись протухла недавно, сохраняем "прошлое решение" и делаем update_session вместо open_session.
+    local stale_entry = session_from_cache(session_id, { allow_stale = true })
+
     local already = add_inflight(session_id, function(allowed, entry, reason)
         callback(allowed, entry, reason)
     end)
@@ -1257,9 +1497,17 @@ function auth.check(ctx, callback)
         return
     end
 
-    -- First backend check opens the session.
-    ctx.request_type = "open_session"
-    ctx.request_number = (cached and tonumber(cached.request_number) or 0) + 1
+    if stale_entry and stale_entry._stale == true then
+        ctx.request_type = "update_session"
+        ctx.request_number = (tonumber(stale_entry.request_number) or 0) + 1
+        if stale_entry.opened_at then
+            ctx.duration_sec = now() - tonumber(stale_entry.opened_at or 0)
+        end
+    else
+        -- First backend check opens the session.
+        ctx.request_type = "open_session"
+        ctx.request_number = 1
+    end
 
     check_backend_group(ctx, session_id, backend_desc, function(result)
         local grace_ttl = 30
@@ -1272,7 +1520,7 @@ function auth.check(ctx, callback)
             request_number = tonumber(ctx.request_number) or 1,
         }
 
-        local existing = session_from_cache(session_id)
+        local existing = stale_entry and stale_entry._stale == true and stale_entry or nil
 
         local function finish(allowed, entry, reason)
             flush_inflight(session_id, allowed, entry, reason)
@@ -1370,6 +1618,210 @@ function auth.check_publish(ctx, callback)
     return auth.check(ctx, callback)
 end
 
+local function backend_desc_for_cached_entry(entry)
+    if not entry then
+        return nil
+    end
+    local name = entry.backend_name
+    local spec = entry.backend_spec
+    if (not name or name == "") and spec and spec ~= "" then
+        name = parse_auth_backend_ref(spec)
+    end
+    if name and name ~= "" then
+        local backends = get_auth_backends_setting()
+        local cfg = backends and backends[name] or nil
+        return {
+            kind = "auth_backend",
+            name = name,
+            cfg = cfg,
+            spec = "auth://" .. tostring(name),
+        }
+    end
+    if spec and spec ~= "" then
+        return {
+            kind = "http_backend",
+            backends = normalize_backend_list(spec),
+            spec = spec,
+        }
+    end
+    return nil
+end
+
+local function recheck_cached_entry(entry)
+    if not entry or not entry.session_id then
+        return
+    end
+    local session_id = entry.session_id
+    local backend_desc = backend_desc_for_cached_entry(entry)
+    if not backend_desc then
+        return
+    end
+    if backend_desc.kind == "auth_backend" and type(backend_desc.cfg) ~= "table" then
+        -- backend удалён из настроек: не рушим текущий поток, просто не перепроверяем.
+        return
+    end
+
+    local ctx = {
+        mode = entry.mode or "play",
+        stream_id = entry.stream_id or "",
+        stream_name = entry.stream_name or entry.stream_id or "",
+        ip = entry.ip or "",
+        proto = entry.proto or "",
+        token = entry.token or "",
+        token_hash = entry.token_hash or "",
+        session_id = session_id,
+        session_keys = entry.session_keys or "",
+        backend_spec = entry.backend_spec,
+        backend_name = entry.backend_name,
+        user_agent = entry.user_agent or "",
+        referer = entry.referer or "",
+        host = entry.host or "",
+        country = entry.country or "",
+        playback_session_id = entry.playback_session_id or "",
+        qs = "",
+        uri = "",
+        dvr = false,
+        request_type = "update_session",
+        request_number = (tonumber(entry.request_number) or 0) + 1,
+        total_clients = tonumber(auth.total_clients) or 0,
+        stream_clients = tonumber(auth.stream_clients[entry.stream_id] or 0) or 0,
+        duration_sec = entry.opened_at and (now() - tonumber(entry.opened_at or 0)) or 0,
+        bytes = tonumber(entry.bytes) or 0,
+    }
+
+    local already = add_inflight(session_id, function(allowed, updated, reason)
+        if allowed then
+            return
+        end
+        -- Если portal запретил во время update_session — закрываем клиентов.
+        if updated and updated.status == "DENY" and auth.on_kick then
+            auth.on_kick(updated)
+        end
+    end)
+    if already then
+        return
+    end
+
+    check_backend_group(ctx, session_id, backend_desc, function(result)
+        local grace_ttl = 30
+        local allow_ttl, deny_ttl, _ = backend_defaults_for(ctx)
+
+        local meta = {
+            last_backend_ts = now(),
+            last_backend_code = 0,
+            last_backend_error = result and result.reason or nil,
+            request_number = tonumber(ctx.request_number) or 1,
+        }
+
+        local function finish(allowed, updated, reason)
+            flush_inflight(session_id, allowed, updated, reason)
+        end
+
+        if not result then
+            local updated = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
+            finish(false, updated, "backend_no_response")
+            return
+        end
+
+        local decision = tostring(result.decision or "DENY")
+        local chosen = result.chosen
+        if chosen and chosen.response and chosen.response.code then
+            meta.last_backend_code = tonumber(chosen.response.code) or 0
+            meta.last_backend_error = chosen.error or meta.last_backend_error
+        end
+
+        if decision == "REDIRECT" and chosen and chosen.location and chosen.location ~= "" then
+            meta.redirect_location = tostring(chosen.location)
+            local updated = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
+            finish(false, updated, "backend_redirect")
+            return
+        end
+
+        if decision == "ALLOW" and chosen and chosen.response and tonumber(chosen.response.code) == 200 then
+            local headers = parse_backend_headers(chosen.response.headers or {})
+            local ttl = allow_ttl
+            if headers.duration and headers.duration > 0 then
+                ttl = headers.duration
+            end
+            meta.user_id = headers.user_id
+            meta.max_sessions = headers.max_sessions
+            meta.unique = headers.unique
+            local updated = create_entry(ctx, session_id, "ALLOW", ttl, meta)
+            finish(true, updated, "backend_allow")
+            return
+        end
+
+        if decision == "ALLOW_DEFAULT" then
+            local updated = create_entry(ctx, session_id, "ALLOW", allow_ttl, meta)
+            finish(true, updated, "backend_default_allow")
+            return
+        end
+
+        if decision == "DENY_DEFAULT" and entry.status == "ALLOW" then
+            -- backend недоступен: держим прошлое решение и попробуем снова чуть позже.
+            local updated = create_entry(ctx, session_id, "ALLOW", grace_ttl, meta)
+            finish(true, updated, "backend_grace_allow")
+            return
+        end
+
+        local updated = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
+        finish(false, updated, "backend_deny")
+    end)
+end
+
+function auth.recheck_tick()
+    local interval = setting_number("auth_recheck_interval_sec", 0) or 0
+    if interval <= 0 then
+        return
+    end
+    prune_expired()
+
+    local max_per_tick = setting_number("auth_recheck_max_per_tick", 20)
+    if not max_per_tick or max_per_tick < 1 then
+        max_per_tick = 1
+    elseif max_per_tick > 200 then
+        max_per_tick = 200
+    end
+
+    local ahead = setting_number("auth_recheck_ahead_sec", 5)
+    if not ahead or ahead < 0 then
+        ahead = 0
+    end
+    local ts = now()
+
+    local processed = 0
+    for _, entry in pairs(auth.cache) do
+        if processed >= max_per_tick then
+            break
+        end
+        if entry and entry.status == "ALLOW" and entry.expires_at then
+            local session_id = entry.session_id
+            local has_clients = session_id and auth.clients and auth.clients[session_id] ~= nil
+            if has_clients and (tonumber(entry.expires_at) or 0) <= (ts + ahead) then
+                processed = processed + 1
+                recheck_cached_entry(entry)
+            end
+        end
+    end
+end
+
+function auth.configure_recheck_timer()
+    local interval = setting_number("auth_recheck_interval_sec", 0) or 0
+    if auth.recheck_timer and type(auth.recheck_timer) == "table" and auth.recheck_timer.close then
+        auth.recheck_timer:close()
+        auth.recheck_timer = nil
+    end
+    if interval <= 0 then
+        return
+    end
+    auth.recheck_timer = timer({
+        interval = interval,
+        callback = function()
+            auth.recheck_tick()
+        end,
+    })
+end
+
 function auth.list_sessions(opts)
     opts = opts or {}
     prune_expired()
@@ -1454,4 +1906,12 @@ end
 
 function auth.token_from_url(url)
     return extract_token_from_url(url)
+end
+
+-- Автоконфигурация таймера перепроверки.
+-- По умолчанию выключено (auth_recheck_interval_sec=0), поэтому на поведение не влияет.
+if type(timer) == "function" and auth and auth.configure_recheck_timer then
+    pcall(function()
+        auth.configure_recheck_timer()
+    end)
 end

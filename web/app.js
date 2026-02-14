@@ -2003,6 +2003,9 @@ const elements = {
   authBackendId: $('#auth-backend-id'),
   authBackendAllowDefault: $('#auth-backend-allow-default'),
   authBackendUrls: $('#auth-backend-urls'),
+  authBackendMode: $('#auth-backend-mode'),
+  authBackendTimeout: $('#auth-backend-timeout'),
+  authBackendTotalTimeout: $('#auth-backend-total-timeout'),
   authBackendAllowTokens: $('#auth-backend-allow-tokens'),
   authBackendDenyTokens: $('#auth-backend-deny-tokens'),
   authBackendAllowIps: $('#auth-backend-allow-ips'),
@@ -5923,6 +5926,16 @@ function openAuthBackendModal(id) {
       .filter(Boolean);
     elements.authBackendUrls.value = urls.join('\n');
   }
+  if (elements.authBackendMode) {
+    const mode = cfg && cfg.mode ? String(cfg.mode) : 'parallel';
+    elements.authBackendMode.value = (mode === 'sequential') ? 'sequential' : 'parallel';
+  }
+  if (elements.authBackendTimeout) {
+    elements.authBackendTimeout.value = (cfg && cfg.timeout_ms !== undefined) ? String(cfg.timeout_ms) : '';
+  }
+  if (elements.authBackendTotalTimeout) {
+    elements.authBackendTotalTimeout.value = (cfg && cfg.total_timeout_ms !== undefined) ? String(cfg.total_timeout_ms) : '';
+  }
   const rules = cfg && cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : {};
   const allow = rules.allow && typeof rules.allow === 'object' ? rules.allow : {};
   const deny = rules.deny && typeof rules.deny === 'object' ? rules.deny : {};
@@ -5998,6 +6011,13 @@ async function saveAuthBackend() {
   const urls = parseAuthBackendUrls(elements.authBackendUrls ? elements.authBackendUrls.value : '');
   if (!urls.length) throw new Error('At least one backend URL is required');
 
+  const modeRaw = elements.authBackendMode ? String(elements.authBackendMode.value || '').trim() : '';
+  const mode = modeRaw === 'sequential' ? 'sequential' : 'parallel';
+  const timeoutMs = toNumber(elements.authBackendTimeout && elements.authBackendTimeout.value);
+  const totalTimeoutMs = toNumber(elements.authBackendTotalTimeout && elements.authBackendTotalTimeout.value);
+  if (timeoutMs !== undefined && timeoutMs <= 0) throw new Error('Timeout must be > 0');
+  if (totalTimeoutMs !== undefined && totalTimeoutMs <= 0) throw new Error('Total timeout must be > 0');
+
   const allowTokens = parseCommaList(elements.authBackendAllowTokens && elements.authBackendAllowTokens.value);
   const denyTokens = parseCommaList(elements.authBackendDenyTokens && elements.authBackendDenyTokens.value);
   const allowIps = parseCommaList(elements.authBackendAllowIps && elements.authBackendAllowIps.value);
@@ -6059,14 +6079,27 @@ async function saveAuthBackend() {
   if (allowTtl !== undefined) nextCache.default_allow_sec = allowTtl;
   if (denyTtl !== undefined) nextCache.default_deny_sec = denyTtl;
 
-  authBackends[id] = {
+  const nextCfg = {
     ...prev,
     allow_default: allowDefault,
+    mode,
     backends: nextBackends,
     rules: nextRules,
     cache: nextCache,
     session_keys_default: sessionKeys.length ? sessionKeys : undefined,
   };
+  if (timeoutMs !== undefined) {
+    nextCfg.timeout_ms = Math.round(timeoutMs);
+  } else {
+    delete nextCfg.timeout_ms;
+  }
+  if (totalTimeoutMs !== undefined) {
+    nextCfg.total_timeout_ms = Math.round(totalTimeoutMs);
+  } else {
+    delete nextCfg.total_timeout_ms;
+  }
+
+  authBackends[id] = nextCfg;
 
   await saveSettings({ auth_backends: authBackends });
   state.authBackends = normalizeAuthBackends(state.settings.auth_backends);

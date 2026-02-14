@@ -4255,8 +4255,28 @@
           <label class="field">
             <span>Backend URLs (one per line)</span>
             <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
-            <small class="form-hint">Requests are sent in parallel. First 200/302 wins.</small>
+            <small class="form-hint">You can use multiple URLs. Mode (parallel/sequential) is configured below.</small>
           </label>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Mode</span>
+              <select id="auth-backend-mode">
+                <option value="parallel">Parallel</option>
+                <option value="sequential">Sequential</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Timeout (ms)</span>
+              <input type="number" id="auth-backend-timeout" placeholder="3000" />
+              <small class="form-hint">Per backend request timeout (optional).</small>
+            </label>
+            <label class="field">
+              <span>Total timeout (ms)</span>
+              <input type="number" id="auth-backend-total-timeout" placeholder="2000" />
+              <small class="form-hint">Budget for parallel mode (optional).</small>
+            </label>
+          </div>
 
           <div class="form-subsection">
             <div class="form-hint">Rules (optional). Comma separated. CIDR supported for IPs.</div>
