@@ -247,6 +247,8 @@ def main() -> int:
     parser.add_argument("--pmt-pid", type=int, default=0x1000)
     parser.add_argument("--video-pid", type=int, default=0x0100)
     parser.add_argument("--pcr-pid", type=int, default=0x0100)
+    parser.add_argument("--stream-type", type=parse_int_auto, default=0x1B,
+                        help="PMT stream_type for ES PID (default: 0x1B H.264). Use 0x06 for DATA without PES parsing.")
     parser.add_argument("--program-count", type=int, default=1,
                         help="Generate N programs in one TS (multi-program input). Default: 1")
     parser.add_argument("--extra-pnr", type=int, default=0)
@@ -274,6 +276,14 @@ def main() -> int:
     parser.add_argument("--pps", type=int, default=200)
     parser.add_argument("--payload-per-program", type=int, default=3,
                         help="Dummy ES payload packets per program per tick. Default: 3")
+    parser.add_argument("--cc-error-pid", type=parse_int_auto, default=0,
+                        help="Inject CC errors on this PID by skipping CC value periodically (default: 0=off)")
+    parser.add_argument("--cc-error-every", type=int, default=0,
+                        help="Inject CC error every N packets for --cc-error-pid (default: 0=off)")
+    parser.add_argument("--cc-error-start-sec", type=float, default=0.0,
+                        help="Start injecting CC errors after N seconds since start (default: 0)")
+    parser.add_argument("--cc-error-max", type=int, default=0,
+                        help="Stop injecting after N injected errors (0=unlimited). Used with --cc-error-pid.")
     args = parser.parse_args()
 
     program_count = max(1, int(args.program_count))
@@ -300,6 +310,7 @@ def main() -> int:
                    pnr,
                    pcr_pid,
                    video_pid,
+                   stream_type=int(args.stream_type),
                    ca_system_id=args.pmt_ca_system_id,
                    ca_pid=args.pmt_ca_pid,
                    ca_private_data_hex=args.pmt_ca_private_data,
@@ -339,9 +350,28 @@ def main() -> int:
     start = time.time()
     next_tick = start
     cc_map = {}
+    cc_sent = {}
+    cc_injected = {}
 
     def next_cc(pid: int) -> int:
         value = cc_map.get(pid, 0)
+        if args.cc_error_pid and int(pid) == int(args.cc_error_pid) and args.cc_error_every and args.cc_error_every > 0:
+            if args.cc_error_start_sec and args.cc_error_start_sec > 0 and (time.time() - start) < float(args.cc_error_start_sec):
+                cc_map[pid] = (value + 1) & 0x0F
+                return value
+            if args.cc_error_max and args.cc_error_max > 0:
+                injected = int(cc_injected.get(pid, 0))
+                if injected >= int(args.cc_error_max):
+                    cc_map[pid] = (value + 1) & 0x0F
+                    return value
+            n = cc_sent.get(pid, 0) + 1
+            cc_sent[pid] = n
+            if (n % int(args.cc_error_every)) == 0:
+                # Skip one CC value: produce a single CC error, then continue normally.
+                send_cc = (value + 1) & 0x0F
+                cc_map[pid] = (value + 2) & 0x0F
+                cc_injected[pid] = int(cc_injected.get(pid, 0)) + 1
+                return send_cc
         cc_map[pid] = (value + 1) & 0x0F
         return value
 
