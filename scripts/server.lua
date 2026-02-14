@@ -162,6 +162,8 @@ dofile(script_path("system_metrics.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("preview.lua"))
 dofile(script_path("sharding.lua"))
+dofile(script_path("png_to_ts.lua"))
+dofile(script_path("radio_stream.lua"))
 dofile(script_path("api.lua"))
 
 -- Guardrail: never allow a Lua exception in an HTTP/timer callback to unwind into the main loop.

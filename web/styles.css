@@ -4046,6 +4046,87 @@ button.stream-audio-fix-toggle:disabled {
   display: block;
 }
 
+/* PNG -> TS generator (Transcode tab) */
+.pngts-block {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.pngts-header {
+  display: grid;
+  gap: 4px;
+}
+
+.pngts-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pngts-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.pngts-output {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pngts-logs {
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+}
+
+.pngts-field-hidden {
+  display: none;
+}
+
+/* Radio (audio + PNG -> UDP TS) */
+.radio-block {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.radio-header {
+  display: grid;
+  gap: 4px;
+}
+
+.radio-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.radio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.radio-logs {
+  max-height: 200px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+}
+
 /* Keep OUTPUT LIST visible even when transcode is enabled. */
 
 .player {
