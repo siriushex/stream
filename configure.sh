@@ -815,18 +815,24 @@ ASSETS_TAR  = assets.tar
 ASSETS_OBJ  = assets_tar.o
 ASSETS_BLOB_C = assets_tar_blob.c
 ASSETS_BLOB_OBJ = assets_tar_blob.o
+# Python is used only at build time to generate embedded assets.
+# Prefer python3, but allow python2.7 on older distros (CentOS 7).
+PYTHON ?= \$(shell command -v python3 2>/dev/null || command -v python 2>/dev/null)
+ifeq (\$(PYTHON),)
+\$(error python interpreter not found (python3 or python). Please install Python.)
+endif
 
 # NOTE: embedded assets must be rebuilt when any file under scripts/ or web/ changes.
 ASSETS_SRC := \$(shell find scripts web -type f -print 2>/dev/null)
 
 \$(ASSETS_TAR): tools/build_assets_tar.py \$(ASSETS_SRC)
 	@echo "  TAR: \$@"
-	@python3 tools/build_assets_tar.py \$@ scripts web
+	@\$(PYTHON) tools/build_assets_tar.py \$@ scripts web
 
 ifeq (\$(OS),darwin)
 \$(ASSETS_BLOB_C): tools/build_assets_blob_c.py \$(ASSETS_TAR)
 	@echo "  GEN: \$@"
-	@python3 tools/build_assets_blob_c.py \$(ASSETS_TAR) \$(ASSETS_BLOB_C)
+	@\$(PYTHON) tools/build_assets_blob_c.py \$(ASSETS_TAR) \$(ASSETS_BLOB_C)
 
 \$(ASSETS_BLOB_OBJ): \$(ASSETS_BLOB_C)
 	@echo "   CC: \$@"

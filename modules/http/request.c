@@ -356,8 +356,15 @@ static bool tls_setup(module_data_t *mod)
 
     if(mod->tls_verify && mod->config.host)
     {
+        /*
+         * Hostname verification API exists only in OpenSSL >= 1.0.2.
+         * CentOS 7 ships 1.0.1e by default, so keep TLS chain verification
+         * but skip host pinning on older versions.
+         */
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
         X509_VERIFY_PARAM *param = SSL_get0_param(mod->tls);
         X509_VERIFY_PARAM_set1_host(param, mod->config.host, 0);
+#endif
     }
 
     return true;
