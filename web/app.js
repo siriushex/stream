@@ -1473,9 +1473,11 @@ const elements = {
   radioBlock: $('#stream-radio-block'),
   radioAudioUrl: $('#radio-audio-url'),
   radioPngPath: $('#radio-png-path'),
+  radioPngFile: $('#radio-png-file'),
   radioUseCurl: $('#radio-use-curl'),
   radioUserAgent: $('#radio-user-agent'),
   radioExtraHeaders: $('#radio-extra-headers'),
+  radioAudioFormat: $('#radio-audio-format'),
   radioFps: $('#radio-fps'),
   radioWidth: $('#radio-width'),
   radioHeight: $('#radio-height'),
@@ -1502,6 +1504,7 @@ const elements = {
   btnRadioUseInput: $('#btn-radio-use-input'),
   radioStatus: $('#radio-status'),
   radioOutputHint: $('#radio-output-hint'),
+  radioPreviewUrl: $('#radio-preview-url'),
   radioLogs: $('#radio-logs'),
   transcodeOutputList: $('#transcode-output-list'),
   btnAddTranscodeOutput: $('#btn-add-transcode-output'),
@@ -12150,9 +12153,12 @@ function resetRadioStateFromStream(stream) {
   const rcfg = cfg && cfg.radio ? cfg.radio : {};
   radio.audioUrl = rcfg.audio_url || '';
   radio.pngPath = rcfg.png_path || '';
+  radio.pngDataUrl = '';
+  radio.pngName = '';
   radio.useCurl = rcfg.use_curl !== false;
   radio.userAgent = rcfg.user_agent || '';
   radio.extraHeaders = rcfg.extra_headers || '';
+  radio.audioFormat = rcfg.audio_format || 'mp3';
   radio.fps = Number(rcfg.fps) || 25;
   radio.width = Number(rcfg.width) || 270;
   radio.height = Number(rcfg.height) || 270;
@@ -12175,6 +12181,7 @@ function resetRadioStateFromStream(stream) {
   radio.muxdelay = rcfg.muxdelay || 0.7;
   radio.status = 'stopped';
   radio.logs = '';
+  if (elements.radioPngFile) elements.radioPngFile.value = '';
   updateRadioUiFromState();
   refreshRadioStatus();
 }
@@ -12303,6 +12310,32 @@ async function handlePngtsMp3FileChange() {
     pngts.mp3Name = '';
   }
   updatePngtsButtons();
+}
+
+async function handleRadioPngFileChange() {
+  const radio = normalizeRadioState();
+  if (!elements.radioPngFile || !elements.radioPngFile.files || !elements.radioPngFile.files[0]) {
+    radio.pngDataUrl = '';
+    radio.pngName = '';
+    return;
+  }
+  const file = elements.radioPngFile.files[0];
+  if (!file.name.toLowerCase().endsWith('.png')) {
+    setRadioStatus('PNG file is required', true);
+    radio.pngDataUrl = '';
+    radio.pngName = '';
+    return;
+  }
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    radio.pngDataUrl = dataUrl;
+    radio.pngName = file.name;
+    setRadioStatus(`PNG loaded: ${file.name}`);
+  } catch (err) {
+    setRadioStatus('Failed to read PNG', true);
+    radio.pngDataUrl = '';
+    radio.pngName = '';
+  }
 }
 
 async function pollPngtsJob(jobId, kind) {
@@ -12449,9 +12482,12 @@ function normalizeRadioState() {
   const radio = state.radio;
   radio.audioUrl = radio.audioUrl || '';
   radio.pngPath = radio.pngPath || '';
+  radio.pngDataUrl = radio.pngDataUrl || '';
+  radio.pngName = radio.pngName || '';
   radio.useCurl = radio.useCurl !== false;
   radio.userAgent = radio.userAgent || '';
   radio.extraHeaders = radio.extraHeaders || '';
+  radio.audioFormat = radio.audioFormat || 'mp3';
   radio.fps = Number(radio.fps) || 25;
   radio.width = Number(radio.width) || 270;
   radio.height = Number(radio.height) || 270;
@@ -12508,6 +12544,7 @@ function updateRadioUiFromState() {
   const radio = normalizeRadioState();
   if (elements.radioAudioUrl) elements.radioAudioUrl.value = radio.audioUrl;
   if (elements.radioPngPath) elements.radioPngPath.value = radio.pngPath;
+  if (elements.radioAudioFormat) elements.radioAudioFormat.value = radio.audioFormat || 'mp3';
   if (elements.radioUseCurl) elements.radioUseCurl.checked = radio.useCurl;
   if (elements.radioUserAgent) elements.radioUserAgent.value = radio.userAgent;
   if (elements.radioExtraHeaders) elements.radioExtraHeaders.value = radio.extraHeaders;
@@ -12535,6 +12572,16 @@ function updateRadioUiFromState() {
     const full = buildRadioOutputUrl();
     elements.radioOutputHint.textContent = full ? `Output: ${full}` : '';
   }
+  if (elements.radioPreviewUrl) {
+    const full = buildRadioOutputUrl();
+    if (full) {
+      elements.radioPreviewUrl.href = full;
+      elements.radioPreviewUrl.textContent = `Preview: ${full}`;
+      elements.radioPreviewUrl.style.display = '';
+    } else {
+      elements.radioPreviewUrl.style.display = 'none';
+    }
+  }
   setRadioStatus(radio.status || '');
   setRadioLogs(radio.logs || '');
 }
@@ -12546,6 +12593,7 @@ function readRadioForm() {
   radio.useCurl = elements.radioUseCurl ? elements.radioUseCurl.checked : true;
   radio.userAgent = elements.radioUserAgent ? elements.radioUserAgent.value.trim() : '';
   radio.extraHeaders = elements.radioExtraHeaders ? elements.radioExtraHeaders.value.trim() : '';
+  radio.audioFormat = elements.radioAudioFormat ? elements.radioAudioFormat.value.trim() : (radio.audioFormat || 'mp3');
   radio.fps = Number(elements.radioFps && elements.radioFps.value) || 25;
   radio.width = Number(elements.radioWidth && elements.radioWidth.value) || 270;
   radio.height = Number(elements.radioHeight && elements.radioHeight.value) || 270;
@@ -12575,7 +12623,9 @@ function radioSettingsPayload() {
   return {
     audio_url: radio.audioUrl,
     png_path: radio.pngPath,
+    png_data_url: radio.pngDataUrl || undefined,
     use_curl: radio.useCurl,
+    audio_format: radio.audioFormat || 'mp3',
     extra_headers: radio.extraHeaders,
     user_agent: radio.userAgent,
     fps: radio.fps,
@@ -12619,6 +12669,7 @@ async function refreshRadioStatus() {
         radio.useCurl = s.use_curl !== false;
         radio.userAgent = s.user_agent || radio.userAgent;
         radio.extraHeaders = s.extra_headers || radio.extraHeaders;
+        radio.audioFormat = s.audio_format || radio.audioFormat;
         radio.fps = Number(s.fps) || radio.fps;
         radio.width = Number(s.width) || radio.width;
         radio.height = Number(s.height) || radio.height;
@@ -12659,8 +12710,8 @@ async function startRadio() {
     setRadioStatus('Audio URL is required', true);
     return;
   }
-  if (!payload.png_path) {
-    setRadioStatus('PNG path is required', true);
+  if (!payload.png_path && !payload.png_data_url) {
+    setRadioStatus('PNG file or path is required', true);
     return;
   }
   if (!payload.output_url) {
@@ -12681,6 +12732,7 @@ async function startRadio() {
       radio.logs = status.logs || '';
       updateRadioUiFromState();
     }
+    useRadioAsInput(true);
     refreshRadioStatus();
   } catch (err) {
     setRadioStatus(err.message || 'Start failed', true);
@@ -12731,16 +12783,26 @@ async function restartRadio() {
   }
 }
 
-function useRadioAsInput() {
+function useRadioAsInput(silent) {
   const full = buildRadioOutputUrl();
   if (!full) {
     setRadioStatus('Output URL is required', true);
     return;
   }
   collectInputs();
-  state.inputs.push(full);
+  const existing = (state.inputs || []).some((entry) => String(entry || '') === full);
+  if (!existing) {
+    state.inputs.push(full);
+    renderInputList();
+    if (!silent) {
+      setRadioStatus('Added UDP output to INPUT LIST');
+    }
+    return;
+  }
+  if (!silent) {
+    setRadioStatus('UDP output already in INPUT LIST');
+  }
   renderInputList();
-  setRadioStatus('Added UDP output to INPUT LIST');
 }
 
 function normalizeMptsServices(list) {
@@ -18762,6 +18824,7 @@ function readStreamForm() {
         use_curl: radio.useCurl !== false,
         user_agent: radio.userAgent || undefined,
         extra_headers: radio.extraHeaders || undefined,
+        audio_format: radio.audioFormat || undefined,
         fps: radio.fps,
         width: radio.width,
         height: radio.height,
@@ -29942,6 +30005,11 @@ function bindEvents() {
       handlePngtsMp3FileChange();
     });
   }
+  if (elements.radioPngFile) {
+    elements.radioPngFile.addEventListener('change', () => {
+      handleRadioPngFileChange();
+    });
+  }
   if (elements.pngtsAudioMode) {
     elements.pngtsAudioMode.addEventListener('change', () => {
       readPngtsForm();
@@ -30000,6 +30068,7 @@ function bindEvents() {
     elements.radioUseCurl,
     elements.radioUserAgent,
     elements.radioExtraHeaders,
+    elements.radioAudioFormat,
     elements.radioFps,
     elements.radioWidth,
     elements.radioHeight,

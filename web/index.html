@@ -2380,6 +2380,19 @@
               </label>
             </div>
             <div class="form-grid">
+              <label class="field span-6">
+                <span>Upload PNG</span>
+                <input type="file" id="radio-png-file" accept=".png" />
+              </label>
+              <label class="field span-6">
+                <span>Audio format (pipe)</span>
+                <select id="radio-audio-format">
+                  <option value="mp3">MP3</option>
+                  <option value="aac">AAC</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-grid">
               <label class="checkline">
                 <input type="checkbox" id="radio-use-curl" checked />
                 <span>Use CURL pipe (recommended for ICY/MP3)</span>
@@ -2494,6 +2507,7 @@
             </div>
             <div class="form-hint" id="radio-status"></div>
             <div class="form-hint" id="radio-output-hint"></div>
+            <a class="form-hint link" id="radio-preview-url" href="#" target="_blank" rel="noopener">Preview URL</a>
             <pre class="form-hint form-hint-pre radio-logs" id="radio-logs"></pre>
           </div>
 
