@@ -352,27 +352,49 @@ function pngts.start_ffprobe(stream_id, input_url)
     job.timeout_sec = 20
 
     local started = now_ts()
+    job.stdout_buf = ""
+    job.stderr_buf = ""
     job.poller = timer({
         interval = 0.2,
         callback = function(self)
+            local out_chunk = proc:read_stdout()
+            if out_chunk then
+                job.stdout_buf = (job.stdout_buf or "") .. out_chunk
+            end
+            local err_chunk = proc:read_stderr()
+            if err_chunk then
+                job.stderr_buf = (job.stderr_buf or "") .. err_chunk
+            end
+
             local status = proc:poll()
             if not status then
                 if now_ts() - started > job.timeout_sec then
                     proc:terminate()
                     proc:kill()
-                    local stderr = proc:read_stderr() or ""
-                    finalize_job(job, "error", nil, "ffprobe timeout", stderr)
+                    -- дочитать остаток stderr (если есть)
+                    local tail = proc:read_stderr()
+                    if tail then
+                        job.stderr_buf = (job.stderr_buf or "") .. tail
+                    end
+                    finalize_job(job, "error", nil, "ffprobe timeout", job.stderr_buf or "")
                     self:close()
                 end
                 return
             end
-            local stdout = proc:read_stdout() or ""
-            local stderr = proc:read_stderr() or ""
-            local ok, parsed = pcall(json.decode, stdout)
+
+            -- process.poll() возвращает table: {exit_code=..., signal=...}
+            local exit_code = status.exit_code or 0
+            if exit_code ~= 0 then
+                finalize_job(job, "error", nil, "ffprobe failed", job.stderr_buf or "")
+                self:close()
+                return
+            end
+
+            local ok, parsed = pcall(json.decode, job.stdout_buf or "")
             if not ok then
-                finalize_job(job, "error", nil, "ffprobe parse error", stderr)
+                finalize_job(job, "error", nil, "ffprobe parse error", job.stderr_buf or "")
             else
-                finalize_job(job, "done", parsed, nil, stderr)
+                finalize_job(job, "done", parsed, nil, job.stderr_buf or "")
             end
             self:close()
         end,
@@ -405,26 +427,41 @@ function pngts.start_generate(stream_id, opts)
     job.timeout_sec = 60
     local started = now_ts()
 
+    job.stdout_buf = ""
+    job.stderr_buf = ""
     job.poller = timer({
         interval = 0.2,
         callback = function(self)
+            local out_chunk = proc:read_stdout()
+            if out_chunk then
+                job.stdout_buf = (job.stdout_buf or "") .. out_chunk
+            end
+            local err_chunk = proc:read_stderr()
+            if err_chunk then
+                job.stderr_buf = (job.stderr_buf or "") .. err_chunk
+            end
+
             local status = proc:poll()
             if not status then
                 if now_ts() - started > job.timeout_sec then
                     proc:terminate()
                     proc:kill()
-                    local stderr = proc:read_stderr() or ""
-                    finalize_job(job, "error", nil, "ffmpeg timeout", stderr)
+                    local tail = proc:read_stderr()
+                    if tail then
+                        job.stderr_buf = (job.stderr_buf or "") .. tail
+                    end
+                    finalize_job(job, "error", nil, "ffmpeg timeout", job.stderr_buf or "")
                     self:close()
                 end
                 return
             end
-            local stdout = proc:read_stdout() or ""
-            local stderr = proc:read_stderr() or ""
-            if status ~= 0 then
-                finalize_job(job, "error", nil, "ffmpeg failed", stderr)
+
+            -- process.poll() возвращает table: {exit_code=..., signal=...}
+            local exit_code = status.exit_code or 0
+            if exit_code ~= 0 then
+                finalize_job(job, "error", nil, "ffmpeg failed", job.stderr_buf or "")
             else
-                finalize_job(job, "done", { output_path = output_path }, nil, stderr)
+                finalize_job(job, "done", { output_path = output_path }, nil, job.stderr_buf or "")
             end
             self:close()
         end,
