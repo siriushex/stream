@@ -1384,6 +1384,16 @@ const elements = {
   streamStableOkSec: $('#stream-stable-ok-sec'),
   streamNoDataTimeoutSec: $('#stream-no-data-timeout-sec'),
   streamProbeIntervalSec: $('#stream-probe-interval-sec'),
+  streamAuthMode: $('#stream-auth-mode'),
+  streamAuthBackendName: $('#stream-auth-backend-name'),
+  streamAuthBackendField: $('#stream-auth-backend-field'),
+  streamAuthOnPlayField: $('#stream-auth-on-play-field'),
+  streamAuthTokenSource: $('#stream-auth-token-source'),
+  streamAuthTokenName: $('#stream-auth-token-name'),
+  streamAuthTokenNameField: $('#stream-auth-token-name-field'),
+  streamAuthAllowDefault: $('#stream-auth-allow-default'),
+  streamSessionKeyToken: $('#stream-session-key-token'),
+  streamSessionKeyPlaybackSessionId: $('#stream-session-key-playback-session-id'),
   streamAuthEnabled: $('#stream-auth-enabled'),
   streamOnPlay: $('#stream-on-play'),
   streamOnPublish: $('#stream-on-publish'),
@@ -18789,6 +18799,215 @@ function validateTranscodeOutput(output, index) {
   }
 }
 
+function parseAuthBackendNameFromSpec(spec) {
+  const text = String(spec || '').trim();
+  if (!text.startsWith('auth://')) return '';
+  const rest = text.slice('auth://'.length);
+  const match = rest.match(/^([^/\s?#]+)/);
+  return match ? match[1] : '';
+}
+
+function populateStreamAuthBackendOptions(selectedName = '') {
+  if (!elements.streamAuthBackendName) return;
+  const map = (state.authBackends && typeof state.authBackends === 'object') ? state.authBackends : {};
+  const ids = Object.keys(map)
+    .map((id) => String(id || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+  clearNode(elements.streamAuthBackendName);
+  if (!ids.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— no backends —';
+    elements.streamAuthBackendName.appendChild(opt);
+    elements.streamAuthBackendName.value = '';
+    return;
+  }
+  ids.forEach((id) => {
+    const opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = id;
+    elements.streamAuthBackendName.appendChild(opt);
+  });
+  if (selectedName && ids.includes(selectedName)) {
+    elements.streamAuthBackendName.value = selectedName;
+  } else {
+    elements.streamAuthBackendName.value = ids[0] || '';
+  }
+}
+
+function parseAuthTokenSourceSpec(spec) {
+  const raw = String(spec || '').trim();
+  if (!raw) return { kind: '', name: '' };
+  if (raw.toLowerCase() === 'auto') return { kind: 'auto', name: '' };
+  const match = raw.match(/^(\w+)\s*:\s*(.+)$/);
+  if (match) {
+    return { kind: String(match[1] || '').toLowerCase(), name: String(match[2] || '').trim() };
+  }
+  const kind = raw.toLowerCase();
+  if (kind === 'query' || kind === 'header' || kind === 'cookie') {
+    return { kind, name: '' };
+  }
+  return { kind: '', name: '' };
+}
+
+function updateStreamAuthTokenSourceUi() {
+  if (!elements.streamAuthTokenSource) return;
+  const kind = String(elements.streamAuthTokenSource.value || '');
+  const needsName = kind === 'query' || kind === 'header' || kind === 'cookie';
+  if (elements.streamAuthTokenNameField) {
+    elements.streamAuthTokenNameField.hidden = !needsName;
+  }
+  if (elements.streamAuthTokenName) {
+    elements.streamAuthTokenName.disabled = !needsName;
+    if (needsName) {
+      if (kind === 'query') elements.streamAuthTokenName.placeholder = 'token';
+      else if (kind === 'header') elements.streamAuthTokenName.placeholder = 'Authorization';
+      else if (kind === 'cookie') elements.streamAuthTokenName.placeholder = 'astra_token';
+      else elements.streamAuthTokenName.placeholder = 'token';
+    }
+  }
+}
+
+function updateStreamAuthModeUi() {
+  if (!elements.streamAuthMode) return;
+  const mode = String(elements.streamAuthMode.value || '');
+  const isInherit = mode === '';
+  const isBackend = mode === 'backend';
+  const isCustom = mode === 'custom';
+  const isOff = mode === 'off';
+
+  if (elements.streamAuthBackendField) {
+    elements.streamAuthBackendField.hidden = !isBackend;
+  }
+  if (elements.streamAuthBackendName) {
+    elements.streamAuthBackendName.disabled = !isBackend;
+  }
+  if (elements.streamAuthOnPlayField) {
+    // In inherit mode we clear per-stream override, so the field is just noise.
+    elements.streamAuthOnPlayField.hidden = isInherit;
+  }
+  if (elements.streamOnPlay) {
+    elements.streamOnPlay.disabled = isBackend || isInherit;
+  }
+
+  if (isBackend && elements.streamOnPlay && elements.streamAuthBackendName) {
+    const name = String(elements.streamAuthBackendName.value || '').trim();
+    elements.streamOnPlay.value = name ? `auth://${name}` : '';
+  }
+  if (isInherit && elements.streamOnPlay) {
+    elements.streamOnPlay.value = '';
+  }
+
+  // Keep legacy override in sync with the mode switch.
+  if (elements.streamAuthEnabled) {
+    if (isOff) {
+      elements.streamAuthEnabled.value = 'false';
+    } else if (elements.streamAuthEnabled.value === 'false') {
+      elements.streamAuthEnabled.value = '';
+    }
+  }
+
+  if (elements.streamOnPlay && (isCustom || isOff)) {
+    elements.streamOnPlay.disabled = false;
+  }
+}
+
+function syncStreamSessionKeyTogglesFromText() {
+  if (!elements.streamSessionKeys) return;
+  const keys = new Set(parseCommaList(elements.streamSessionKeys.value).map((k) => String(k).toLowerCase()));
+  if (elements.streamSessionKeyToken) {
+    elements.streamSessionKeyToken.checked = keys.has('token');
+  }
+  if (elements.streamSessionKeyPlaybackSessionId) {
+    elements.streamSessionKeyPlaybackSessionId.checked = keys.has('header.x-playback-session-id');
+  }
+}
+
+function toggleStreamSessionKey(key, enabled) {
+  if (!elements.streamSessionKeys) return;
+  const list = parseCommaList(elements.streamSessionKeys.value);
+  const lowerKey = String(key).toLowerCase();
+  const present = new Set(list.map((k) => String(k).toLowerCase()));
+  let next = list;
+  if (enabled) {
+    if (!present.has(lowerKey)) {
+      next = [...list, key];
+    }
+  } else {
+    next = list.filter((k) => String(k).toLowerCase() !== lowerKey);
+  }
+  elements.streamSessionKeys.value = next.join(',');
+  syncStreamSessionKeyTogglesFromText();
+}
+
+function updateStreamAuthFormFromConfig(config) {
+  if (!config) return;
+
+  const onPlaySpec = String(config.on_play || '').trim();
+  const backendName = parseAuthBackendNameFromSpec(onPlaySpec);
+
+  if (elements.streamAuthMode) {
+    let mode = '';
+    if (config.auth_enabled === false) {
+      mode = 'off';
+    } else if (backendName) {
+      mode = 'backend';
+    } else if (onPlaySpec) {
+      mode = 'custom';
+    } else {
+      mode = '';
+    }
+    elements.streamAuthMode.value = mode;
+  }
+
+  if (elements.streamAuthBackendName) {
+    populateStreamAuthBackendOptions(backendName);
+  }
+
+  if (elements.streamOnPlay) {
+    elements.streamOnPlay.value = onPlaySpec;
+  }
+  if (elements.streamOnPublish) {
+    elements.streamOnPublish.value = config.on_publish || '';
+  }
+
+  if (elements.streamSessionKeys) {
+    elements.streamSessionKeys.value = config.session_keys || '';
+  }
+  syncStreamSessionKeyTogglesFromText();
+
+  if (elements.streamAuthTokenSource) {
+    const spec = config.auth_token_source || config.token_source || '';
+    const parsed = parseAuthTokenSourceSpec(spec);
+    const tokenParam = config.auth_token_param || config.token_param || '';
+    if (!parsed.kind && tokenParam) {
+      elements.streamAuthTokenSource.value = 'query';
+      if (elements.streamAuthTokenName) elements.streamAuthTokenName.value = String(tokenParam);
+    } else {
+      elements.streamAuthTokenSource.value = (parsed.kind === 'query' || parsed.kind === 'header' || parsed.kind === 'cookie' || parsed.kind === 'auto')
+        ? parsed.kind
+        : '';
+      if (elements.streamAuthTokenName) {
+        elements.streamAuthTokenName.value = parsed.name || '';
+      }
+    }
+  }
+  updateStreamAuthTokenSourceUi();
+
+  if (elements.streamAuthAllowDefault) {
+    const raw = (config.allow_default_override !== undefined && config.allow_default_override !== null)
+      ? config.allow_default_override
+      : config.auth_allow_default;
+    if (raw === true) elements.streamAuthAllowDefault.value = 'allow';
+    else if (raw === false) elements.streamAuthAllowDefault.value = 'deny';
+    else elements.streamAuthAllowDefault.value = '';
+  }
+
+  updateStreamAuthModeUi();
+}
+
 function openEditor(stream, isNew) {
   const config = stream.config || {};
 
@@ -19073,6 +19292,7 @@ function openEditor(stream, isNew) {
   if (elements.streamSessionKeys) {
     elements.streamSessionKeys.value = config.session_keys || '';
   }
+  updateStreamAuthFormFromConfig(config);
   if (elements.streamNoSdt) {
     elements.streamNoSdt.checked = config.no_sdt === true;
   }
@@ -19409,7 +19629,10 @@ function readStreamForm() {
   const httpKeep = toNumber(elements.streamHttpKeep && elements.streamHttpKeep.value);
   if (httpKeep !== undefined) config.http_keep_active = httpKeep;
 
-  if (elements.streamAuthEnabled) {
+  const authMode = (elements.streamAuthMode && elements.streamAuthMode.value || '').trim();
+  if (authMode === 'off') {
+    config.auth_enabled = false;
+  } else if (elements.streamAuthEnabled) {
     const authValue = elements.streamAuthEnabled.value;
     if (authValue === 'true') {
       config.auth_enabled = true;
@@ -19417,12 +19640,54 @@ function readStreamForm() {
       config.auth_enabled = false;
     }
   }
+
   const onPlay = (elements.streamOnPlay && elements.streamOnPlay.value || '').trim();
-  if (onPlay) config.on_play = onPlay;
+  if (authMode === 'backend') {
+    const backend = (elements.streamAuthBackendName && elements.streamAuthBackendName.value || '').trim();
+    if (!backend) throw new Error('Auth backend is required (Auth tab)');
+    config.on_play = `auth://${backend}`;
+  } else if (authMode === 'custom') {
+    if (!onPlay) throw new Error('On-play backend is required (Auth tab)');
+    config.on_play = onPlay;
+  } else if (authMode === 'off') {
+    // Keep config for later re-enable.
+    if (onPlay) config.on_play = onPlay;
+  } else if (authMode !== '') {
+    // unknown mode -> legacy fallback
+    if (onPlay) config.on_play = onPlay;
+  }
+
   const onPublish = (elements.streamOnPublish && elements.streamOnPublish.value || '').trim();
   if (onPublish) config.on_publish = onPublish;
   const sessionKeys = (elements.streamSessionKeys && elements.streamSessionKeys.value || '').trim();
   if (sessionKeys) config.session_keys = sessionKeys;
+
+  if (elements.streamAuthTokenSource) {
+    const kind = (elements.streamAuthTokenSource.value || '').trim();
+    const name = (elements.streamAuthTokenName && elements.streamAuthTokenName.value || '').trim();
+    if (kind === 'auto') {
+      config.auth_token_source = 'auto';
+    } else if (kind === 'query') {
+      const param = name || 'token';
+      config.auth_token_source = `query:${param}`;
+      config.auth_token_param = param;
+    } else if (kind === 'header') {
+      const header = name || 'Authorization';
+      config.auth_token_source = `header:${header}`;
+    } else if (kind === 'cookie') {
+      const cookie = name || 'astra_token';
+      config.auth_token_source = `cookie:${cookie}`;
+    }
+  }
+
+  if (elements.streamAuthAllowDefault) {
+    const value = (elements.streamAuthAllowDefault.value || '').trim();
+    if (value === 'allow') {
+      config.auth_allow_default = true;
+    } else if (value === 'deny') {
+      config.auth_allow_default = false;
+    }
+  }
 
   const setPnr = toNumber(elements.streamSetPnr && elements.streamSetPnr.value);
   if (setPnr !== undefined) config.set_pnr = setPnr;
@@ -30581,6 +30846,40 @@ function bindEvents() {
       renderOutputList();
     });
   }
+
+  if (elements.streamAuthMode) {
+    elements.streamAuthMode.addEventListener('change', () => {
+      updateStreamAuthModeUi();
+    });
+  }
+  if (elements.streamAuthBackendName) {
+    elements.streamAuthBackendName.addEventListener('change', () => {
+      updateStreamAuthModeUi();
+    });
+  }
+  if (elements.streamAuthTokenSource) {
+    elements.streamAuthTokenSource.addEventListener('change', () => {
+      updateStreamAuthTokenSourceUi();
+    });
+    updateStreamAuthTokenSourceUi();
+  }
+  if (elements.streamSessionKeyToken) {
+    elements.streamSessionKeyToken.addEventListener('change', () => {
+      toggleStreamSessionKey('token', elements.streamSessionKeyToken.checked);
+    });
+  }
+  if (elements.streamSessionKeyPlaybackSessionId) {
+    elements.streamSessionKeyPlaybackSessionId.addEventListener('change', () => {
+      toggleStreamSessionKey('header.x-playback-session-id', elements.streamSessionKeyPlaybackSessionId.checked);
+    });
+  }
+  if (elements.streamSessionKeys) {
+    const sync = debounce(() => {
+      syncStreamSessionKeyTogglesFromText();
+    }, 200);
+    elements.streamSessionKeys.addEventListener('input', sync);
+  }
+
   if (elements.streamBackupType) {
     elements.streamBackupType.addEventListener('change', () => {
       updateStreamBackupFields();

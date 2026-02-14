@@ -246,5 +246,25 @@ do
     end)
 end
 
+-- 7) Token source: query/header/cookie + Bearer parsing
+do
+    local req = make_request({ ["authorization"] = "Bearer XYZ" }, {})
+    local token = auth.get_token(req, "token", "header:authorization")
+    assert_eq(token, "XYZ", "token header bearer")
+
+    local req2 = make_request({ ["cookie"] = "stb_token=ABC; other=1" }, {})
+    local token2 = auth.get_token(req2, "token", "cookie:stb_token")
+    assert_eq(token2, "ABC", "token cookie")
+
+    local req3 = make_request({}, { sid = "QQ" })
+    local token3 = auth.get_token(req3, "token", "query:sid")
+    assert_eq(token3, "QQ", "token query")
+
+    -- legacy default: query token + cookie astra_token
+    local req4 = make_request({ ["cookie"] = "astra_token=LEGACY" }, {})
+    local token4 = auth.get_token(req4, "token", "")
+    assert_eq(token4, "LEGACY", "token legacy cookie")
+end
+
 print("auth_backend_unit: ok")
 astra.exit()

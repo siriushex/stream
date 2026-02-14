@@ -1669,6 +1669,7 @@
         <button class="tab" data-tab="backup" data-tab-scope="stream-editor">Backup</button>
         <button class="tab" data-tab="transcode" data-tab-scope="stream-editor">Transcode</button>
         <button class="tab" data-tab="epg" data-tab-scope="stream-editor">EPG</button>
+        <button class="tab" data-tab="auth" data-tab-scope="stream-editor">Auth</button>
         <button class="tab" data-tab="advanced" data-tab-scope="stream-editor">Advanced</button>
       </div>
 
@@ -2543,6 +2544,94 @@
           </label>
           <div class="form-hint">EPG export configuration is stored with the stream. Leave fields empty to disable.</div>
         </div>
+        <div class="tab-content" data-tab-content="auth" data-tab-scope="stream-editor">
+          <div class="form-stack">
+            <div class="form-subsection">
+              <div class="form-hint">Playback authorization (Flussonic-like portals). Configure named backends in Settings → Auth backends.</div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Mode</span>
+                  <select id="stream-auth-mode">
+                    <option value="">Inherit (settings)</option>
+                    <option value="off">Disabled (bypass auth)</option>
+                    <option value="backend">Named auth backend</option>
+                    <option value="custom">Custom URL(s)</option>
+                  </select>
+                </label>
+                <label class="field" id="stream-auth-backend-field">
+                  <span>Auth backend</span>
+                  <select id="stream-auth-backend-name"></select>
+                  <small class="form-hint">Saved in settings as <code>auth_backends</code>.</small>
+                </label>
+              </div>
+              <label class="field" id="stream-auth-on-play-field">
+                <span>On-play backend</span>
+                <input type="text" id="stream-on-play" placeholder="auth://main1 or http://127.0.0.1:9100/on_play" />
+                <small class="form-hint">Custom mode supports multiple URLs (comma/newline separated).</small>
+              </label>
+              <label class="field">
+                <span>Session keys</span>
+                <input type="text" id="stream-session-keys" placeholder="ip,name,proto,token,header.x-playback-session-id" />
+                <small class="form-hint">Order matters. Missing keys are treated as <code>undefined</code>.</small>
+              </label>
+              <div class="checkline-row">
+                <label class="checkline">
+                  <input type="checkbox" id="stream-session-key-token" />
+                  <span>Include <code>token</code></span>
+                </label>
+                <label class="checkline">
+                  <input type="checkbox" id="stream-session-key-playback-session-id" />
+                  <span>Include <code>header.x-playback-session-id</code></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-subsection">
+              <div class="form-hint">Token extraction (optional). Default: query token + cookie <code>astra_token</code>.</div>
+              <div class="form-grid">
+                <label class="field">
+                  <span>Token source</span>
+                  <select id="stream-auth-token-source">
+                    <option value="">Default</option>
+                    <option value="auto">Auto</option>
+                    <option value="query">Query param</option>
+                    <option value="header">Header</option>
+                    <option value="cookie">Cookie</option>
+                  </select>
+                </label>
+                <label class="field" id="stream-auth-token-name-field">
+                  <span>Name</span>
+                  <input type="text" id="stream-auth-token-name" placeholder="token / Authorization / stb_token" />
+                  <small class="form-hint">Used for query/header/cookie modes.</small>
+                </label>
+              </div>
+              <label class="field">
+                <span>Allow default override (all backends down)</span>
+                <select id="stream-auth-allow-default">
+                  <option value="">Inherit (settings)</option>
+                  <option value="allow">Allow</option>
+                  <option value="deny">Deny</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="form-subsection">
+              <div class="form-hint">Publish authorization (on_publish). Leave empty to inherit.</div>
+              <label class="field">
+                <span>On-publish backend override</span>
+                <input type="text" id="stream-on-publish" placeholder="http://127.0.0.1:9100/on_publish" />
+              </label>
+              <label class="field">
+                <span>Auth override (legacy)</span>
+                <select id="stream-auth-enabled">
+                  <option value="">Inherit (use backend spec)</option>
+                  <option value="true">Force enable (requires on_play/on_publish)</option>
+                  <option value="false">Force disable</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </div>
         <div class="tab-content" data-tab-content="advanced" data-tab-scope="stream-editor">
           <div class="form-grid">
             <label class="field">
@@ -2552,26 +2641,6 @@
             <label class="field">
               <span>HTTP keep active (sec)</span>
               <input type="number" id="stream-http-keep-active" placeholder="0" />
-            </label>
-            <label class="field">
-              <span>Token auth override</span>
-              <select id="stream-auth-enabled">
-                <option value="">Inherit (use settings)</option>
-                <option value="true">Enable</option>
-                <option value="false">Disable</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>On-play backend override</span>
-              <input type="text" id="stream-on-play" placeholder="http://127.0.0.1:9100/on_play" />
-            </label>
-            <label class="field">
-              <span>On-publish backend override</span>
-              <input type="text" id="stream-on-publish" placeholder="http://127.0.0.1:9100/on_publish" />
-            </label>
-            <label class="field">
-              <span>Session keys</span>
-              <input type="text" id="stream-session-keys" placeholder="ip,name,proto,token" />
             </label>
           </div>
           <div class="form-hint">0 = stop immediately, -1 = always active, &gt;0 = keep input alive after last HTTP client.</div>
