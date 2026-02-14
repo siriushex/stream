@@ -16,6 +16,7 @@
   - HTTP input: for `net_profile=bad|max|superbad`, treat `#sync` (boolean) as a larger sync buffer (8/16/32 MB) to reduce `next PCR is not found` rebuffer loops on broken TS sources.
   - HTTP input: do not auto-enable PCR-based `sync` just because `net_profile` is set; profile-mode uses jitter buffering + resilience timeouts by default (enable `#sync` explicitly if needed).
   - HTTP input: in profile-mode (`bad|max|superbad`) for external hosts, interpret `#sync` flag as legacy and force `sync=0` (avoid PCR rebuffer loops). Use `#sync=1` or `#sync=<MB>` to force PCR sync.
+  - Inputs: auto-enable `playout` (carrier + NULL stuffing) for `net_profile=max`/`superbad` to keep outputs continuous on bursty/stalling HTTP-TS/HLS sources.
   - UI: update Input settings “Apply preset” defaults to match the tuned `bad`/`max` profiles.
 - Tests:
   - `node --check web/app.js`
