@@ -72,6 +72,14 @@ function split(s, d)
     return string.split(s, d)
 end
 
+-- Общий helper для UI/API/stream.lua.
+-- Возвращает true, если эта сборка поддерживает функции транскода (ffmpeg pipeline).
+-- Важно: функция должна существовать глобально, чтобы её могли вызывать модули,
+-- объявленные до локальных helper'ов в других скриптах.
+function transcode_supported()
+    return astra and astra.features and astra.features.transcode == true
+end
+
 ifaddr_list = nil
 if utils.ifaddrs then ifaddr_list = utils.ifaddrs() end
 
