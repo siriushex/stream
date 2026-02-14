@@ -98,6 +98,23 @@
     display: inline-block !important; /* Material скрывает на desktop */
   }
 
+  /* На витрине (главной) не нужен правый TOC-сайдбар.
+   * Он на широких экранах может “ломать” композицию и мешать drawer-меню. */
+  .sh-home .md-sidebar--secondary {
+    display: none;
+  }
+
+  /* На главной делаем контент реально “на всю ширину” (с минимальным padding),
+   * иначе full-bleed секции начинают смещаться из-за desktop-layout с sidebar. */
+  .sh-home .md-grid {
+    max-width: 100%;
+  }
+
+  .sh-home .md-content__inner {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
   /* На главной убираем “двухколоночный” макет (sidebar + content),
    * чтобы контент реально был на всю ширину. */
   .sh-home .md-main__inner {
@@ -105,16 +122,15 @@
     height: auto;
   }
 
-  /* Переводим левый sidebar в режим drawer на desktop */
-  [dir=ltr] .sh-home .md-sidebar--primary {
-    left: -12.1rem;
-  }
-  [dir=rtl] .sh-home .md-sidebar--primary {
-    right: -12.1rem;
-    left: auto;
+  .sh-home .md-content {
+    width: 100%;
   }
 
+  /* Переводим левый sidebar в режим drawer на desktop */
   .sh-home .md-sidebar--primary {
+    /* HTML по умолчанию без dir=..., поэтому не используем [dir=ltr] селектор. */
+    left: -12.1rem;
+    right: auto;
     background-color: var(--md-default-bg-color);
     display: block;
     height: 100%;
@@ -130,7 +146,11 @@
     box-shadow: var(--md-shadow-z3);
     transform: translateX(12.1rem);
   }
-  [dir=rtl] .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+  html[dir=rtl] .sh-home .md-sidebar--primary {
+    right: -12.1rem;
+    left: auto;
+  }
+  html[dir=rtl] .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
     transform: translateX(-12.1rem);
   }
 
@@ -165,10 +185,8 @@
   }
 
   /* Убираем отступы, которые Material добавляет при видимом sidebar */
-  [dir=ltr] .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+  .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
     margin-left: 0 !important;
-  }
-  [dir=rtl] .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
     margin-right: 0 !important;
   }
 }
