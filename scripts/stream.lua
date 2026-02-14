@@ -1260,12 +1260,17 @@ local function format_udp_output_url(conf, include_params)
     return url
 end
 
+
 local function normalize_audio_fix_config(conf)
     if type(conf) ~= "table" then
         conf = {}
     end
     local enabled = conf.enabled == true
     local force_on = conf.force_on == true
+    if not transcode_supported() then
+        enabled = false
+        force_on = false
+    end
     local mode = conf.mode
     if type(mode) == "string" then
         mode = mode:lower()
@@ -3200,6 +3205,10 @@ local function is_transcode_stream(cfg)
     return stype == "transcode" or stype == "ffmpeg"
 end
 
+local function transcode_supported()
+    return astra and astra.features and astra.features.transcode == true
+end
+
 local function normalize_stream_list(value)
     if type(value) == "string" then
         return { value }
@@ -3679,6 +3688,9 @@ function validate_stream_config(cfg, opts)
     end
 
     local is_transcode = is_transcode_stream(cfg)
+    if is_transcode and not transcode_supported() then
+        return nil, "transcode disabled in this build"
+    end
     local is_mpts = cfg.mpts == true
     local inputs = normalize_stream_list(cfg.input)
     local ok_cam, cam_err = validate_input_softcam(inputs)

@@ -1136,6 +1136,10 @@ local function detect_nvidia_available()
     return out:match("GPU%s+%d+") ~= nil
 end
 
+local function transcode_supported()
+    return astra and astra.features and astra.features.transcode == true
+end
+
 local function build_default_transcode_ladder(base_id, base_name)
     local engine = detect_nvidia_available() and "nvidia" or "cpu"
     local tc = {
@@ -1189,6 +1193,9 @@ local function transcode_all_streams(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
+    end
+    if not transcode_supported() then
+        return error_response(server, client, 501, "transcode disabled in this build")
     end
 
     local body = parse_json_body(request) or {}
@@ -3456,9 +3463,15 @@ end
 
 local function list_tools(server, client)
     if transcode and transcode.get_tool_info then
-        return json_response(server, client, 200, transcode.get_tool_info(true))
+        local info = transcode.get_tool_info(true) or {}
+        info.build_transcode = astra and astra.features and astra.features.transcode == true
+        info.build_variant = info.build_transcode and "full" or "lite"
+        return json_response(server, client, 200, info)
     end
-    return json_response(server, client, 200, {})
+    return json_response(server, client, 200, {
+        build_transcode = astra and astra.features and astra.features.transcode == true,
+        build_variant = (astra and astra.features and astra.features.transcode == true) and "full" or "lite",
+    })
 end
 
 local function list_metrics(server, client, request)
@@ -3830,6 +3843,9 @@ local function list_audit_events(server, client, request)
 end
 
 local function list_transcode_status(server, client, request)
+    if not transcode_supported() then
+        return error_response(server, client, 501, "transcode disabled in this build")
+    end
     -- Sharding master aggregates transcode status from all shard processes.
     if sharding_master_enabled() and sharding and type(sharding.get_cluster_ports) == "function" and http_request then
         local merged = {}
@@ -3920,6 +3936,9 @@ local function list_transcode_status(server, client, request)
 end
 
 local function get_transcode_status(server, client, request, id)
+    if not transcode_supported() then
+        return error_response(server, client, 501, "transcode disabled in this build")
+    end
     local status = runtime.get_transcode_status and runtime.get_transcode_status(id)
     if not status then
         if sharding_master_enabled() then
@@ -3972,6 +3991,9 @@ local function get_transcode_status(server, client, request, id)
 end
 
 local function restart_transcode(server, client, request, id)
+    if not transcode_supported() then
+        return error_response(server, client, 501, "transcode disabled in this build")
+    end
     local ok = runtime.restart_transcode and runtime.restart_transcode(id)
     if not ok then
         if sharding_master_enabled() then
@@ -4057,6 +4079,8 @@ end
 
 local function get_settings(server, client)
     local rows = config.list_settings and config.list_settings() or {}
+    rows.build_transcode = astra and astra.features and astra.features.transcode == true
+    rows.build_variant = rows.build_transcode and "full" or "lite"
     local token = rows.telegram_bot_token
     if token ~= nil and tostring(token) ~= "" then
         local masked = token

@@ -144,7 +144,12 @@ dofile(script_path("base.lua"))
 dofile(script_path("auth.lua"))
 dofile(script_path("stream.lua"))
 dofile(script_path("config.lua"))
-dofile(script_path("transcode.lua"))
+local transcode_supported = astra and astra.features and astra.features.transcode == true
+if transcode_supported then
+    dofile(script_path("transcode.lua"))
+else
+    log.warning("[build] transcode disabled in this build")
+end
 dofile(script_path("splitter.lua"))
 dofile(script_path("buffer.lua"))
 dofile(script_path("epg.lua"))
@@ -162,8 +167,10 @@ dofile(script_path("system_metrics.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("preview.lua"))
 dofile(script_path("sharding.lua"))
-dofile(script_path("png_to_ts.lua"))
-dofile(script_path("radio_stream.lua"))
+if transcode_supported then
+    dofile(script_path("png_to_ts.lua"))
+    dofile(script_path("radio_stream.lua"))
+end
 dofile(script_path("api.lua"))
 dofile(script_path("api_media.lua"))
 
@@ -248,6 +255,7 @@ options_usage = [[
     --reset-password    alias for -pass
     --no-web-auth       disable web ui authentication (forces http_auth_enabled=false)
     --init              register systemd service template (stream@.service)
+                       (use with -c/-p to create /etc/stream/<name>.json and .env)
     --remove            remove systemd service template (stream@.service)
     --config PATH       import config (.json or .lua) before start
     --import PATH       legacy alias for --config (json)
@@ -1263,19 +1271,45 @@ function main()
             log.error("[server] failed to create /etc/stream")
             return false
         end
+
+        local function basename(path)
+            local name = tostring(path or ""):gsub("\\", "/")
+            name = name:match("([^/]+)$") or name
+            return name
+        end
+
+        local function strip_ext(name)
+            return (name:gsub("%.[^%.]+$", ""))
+        end
+
+        local function copy_file(src, dst)
+            local src_f = io.open(src, "rb")
+            if not src_f then
+                return false, "cannot read " .. tostring(src)
+            end
+            local data = src_f:read("*a")
+            src_f:close()
+            local dst_f = io.open(dst, "wb")
+            if not dst_f then
+                return false, "cannot write " .. tostring(dst)
+            end
+            dst_f:write(data or "")
+            dst_f:close()
+            return true
+        end
+
         local path = systemd_unit_path()
         local st = utils.stat(path)
         if st and not st.error and st.type == "file" then
             log.info("[server] systemd unit already exists: " .. path)
             exec_ok("systemctl daemon-reload >/dev/null 2>&1")
-            return true
-        end
-        local f = io.open(path, "w")
-        if not f then
-            log.error("[server] cannot write systemd unit: " .. path)
-            return false
-        end
-        f:write([[
+        else
+            local f = io.open(path, "w")
+            if not f then
+                log.error("[server] cannot write systemd unit: " .. path)
+                return false
+            end
+            f:write([[
 [Unit]
 Description=Stream server (%i)
 After=network.target
@@ -1291,9 +1325,50 @@ RestartSec=2
 [Install]
 WantedBy=multi-user.target
 ]])
-        f:close()
-        exec_ok("systemctl daemon-reload >/dev/null 2>&1")
-        log.info("[server] systemd unit installed: " .. path)
+            f:close()
+            exec_ok("systemctl daemon-reload >/dev/null 2>&1")
+            log.info("[server] systemd unit installed: " .. path)
+        end
+
+        -- If -c/-p are provided with --init, create instance config/env.
+        if opt.config_path and opt.config_path ~= "" then
+            local instance_name = strip_ext(basename(opt.config_path))
+            if instance_name == "" then
+                instance_name = "default"
+            end
+            local dst_config = "/etc/stream/" .. instance_name .. ".json"
+            local src_config = opt.config_path
+            local src_stat = utils.stat(src_config)
+            if not src_stat or src_stat.error then
+                log.warning("[server] config not found: " .. tostring(src_config) .. " (creating empty config)")
+                local f = io.open(dst_config, "w")
+                if f then
+                    f:write("{}\n")
+                    f:close()
+                end
+            else
+                if src_config ~= dst_config then
+                    local ok, err = copy_file(src_config, dst_config)
+                    if not ok then
+                        log.error("[server] failed to copy config: " .. tostring(err))
+                        return false
+                    end
+                end
+            end
+            if opt.port_set then
+                local env_path = "/etc/stream/" .. instance_name .. ".env"
+                local f = io.open(env_path, "w")
+                if f then
+                    f:write("STREAM_PORT=" .. tostring(opt.port) .. "\n")
+                    f:close()
+                else
+                    log.error("[server] cannot write env file: " .. env_path)
+                    return false
+                end
+            end
+            log.info("[server] systemd instance ready: stream@" .. instance_name)
+        end
+
         return true
     end
 

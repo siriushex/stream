@@ -88,6 +88,12 @@ LUA_API int luaopen_astra(lua_State *L)
     lua_pushboolean(lua, 0);
 #endif
     lua_setfield(lua, -2, "ssl");
+#if STREAM_WITH_TRANSCODE
+    lua_pushboolean(lua, 1);
+#else
+    lua_pushboolean(lua, 0);
+#endif
+    lua_setfield(lua, -2, "transcode");
     lua_setfield(lua, -2, "features");
 
     lua_setglobal(L, "astra");

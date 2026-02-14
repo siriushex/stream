@@ -122,6 +122,7 @@ nav:
           - Watchdog: manual/watchdog.md
           - Sharding: manual/sharding.md
       - CLI и сервис: manual/cli.md
+      - Сервис (systemd): manual/service-systemd.md
       - API: manual/api.md
       - Метрики: manual/metrics.md
       - Логи: manual/logs.md

@@ -5316,3 +5316,13 @@ button.stream-audio-fix-toggle:disabled {
   font-size: 11px;
   margin-top: 4px;
 }
+
+/* Build: LITE (no transcode) */
+body.build-no-transcode [data-tab="transcode"][data-tab-scope="stream-editor"],
+body.build-no-transcode [data-tab-content="transcode"][data-tab-scope="stream-editor"],
+body.build-no-transcode #stream-transcode-general,
+body.build-no-transcode #transcode-profile-overlay,
+body.build-no-transcode #transcode-monitor-overlay,
+body.build-no-transcode .col-transcode {
+  display: none !important;
+}
