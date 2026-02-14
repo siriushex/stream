@@ -2578,20 +2578,7 @@ local function update_connections(channel_data, now)
         keep_connected[active_id] = true
     end
 
-    if is_active_backup_mode(fo.mode) and fo.warm_max > 0 and fo.global_state ~= "INACTIVE" then
-        local count = 0
-        -- Active Backup: держим "тёплыми" только более приоритетные входы (1..active-1),
-        -- чтобы можно было вернуться назад. Следующие входы (active+1..) не трогаем, пока текущий работает.
-        if active_id > 1 then
-            for idx = active_id - 1, 1, -1 do
-                keep_connected[idx] = true
-                count = count + 1
-                if count >= fo.warm_max then
-                    break
-                end
-            end
-        end
-    elseif fo.mode == "passive" then
+    if fo.mode == "passive" then
         -- passive mode keeps only the active input
     end
 
@@ -2608,11 +2595,9 @@ local function update_connections(channel_data, now)
 
     for idx, input_data in ipairs(channel_data.input) do
         if keep_connected[idx] then
-            local ok = channel_prepare_input(channel_data, idx, {
-                warm = is_active_backup_mode(fo.mode) and idx ~= active_id,
-            })
+            local ok = channel_prepare_input(channel_data, idx, { warm = false })
             if ok then
-                input_data.warm = (is_active_backup_mode(fo.mode) and idx ~= active_id)
+                input_data.warm = nil
             else
                 input_data.warm = nil
             end
