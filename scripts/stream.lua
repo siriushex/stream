@@ -773,7 +773,9 @@ end
 local function normalize_backup_type(value, has_multiple)
     if value == nil or value == "" then
         if has_multiple then
-            return "passive"
+            -- Поведение по умолчанию: Active Backup, если есть несколько входов.
+            -- Это соответствует UX: "активный резерв" с возвратом на более приоритетный вход.
+            return "active"
         end
         return "disabled"
     end
@@ -2514,6 +2516,15 @@ local function schedule_probe(channel_data, now, keep_connected)
     if not fo or not is_active_backup_mode(fo.mode) then
         return
     end
+    -- В Active Backup не делаем фоновые probing, пока активный вход OK:
+    -- это лишняя нагрузка и противоречит принципу "следующие входы не трогаем, пока текущий работает".
+    local active_id = channel_data.active_input_id or 0
+    if active_id > 0 then
+        local active_input = channel_data.input and channel_data.input[active_id] or nil
+        if active_input and active_input.is_ok then
+            return
+        end
+    end
     if fo.probe_interval <= 0 then
         return
     end
@@ -2569,8 +2580,10 @@ local function update_connections(channel_data, now)
 
     if is_active_backup_mode(fo.mode) and fo.warm_max > 0 and fo.global_state ~= "INACTIVE" then
         local count = 0
-        for idx, _ in ipairs(channel_data.input) do
-            if idx ~= active_id then
+        -- Active Backup: держим "тёплыми" только более приоритетные входы (1..active-1),
+        -- чтобы можно было вернуться назад. Следующие входы (active+1..) не трогаем, пока текущий работает.
+        if active_id > 1 then
+            for idx = active_id - 1, 1, -1 do
                 keep_connected[idx] = true
                 count = count + 1
                 if count >= fo.warm_max then
@@ -2803,15 +2816,21 @@ local function channel_failover_tick(channel_data)
         end
     end
 
+    -- После возможного failover переключения обновим active_id, чтобы возврат считался от актуального входа.
+    active_id = channel_data.active_input_id or active_id
+
     if active_id > 1 and active_mode then
-        local primary = channel_data.input[1]
-        if primary and primary.is_ok and primary.ok_since and
-            (now - primary.ok_since) >= fo.stable_ok then
-            if not fo.return_pending then
+        -- Active Backup: возвращаемся на более приоритетный вход (предыдущий в списке),
+        -- когда он стабильно OK некоторое время.
+        local target_id = active_id - 1
+        local target = channel_data.input[target_id]
+        if target and target.is_ok and target.ok_since and
+            (now - target.ok_since) >= fo.stable_ok then
+            if not fo.return_pending or fo.return_pending.target ~= target_id then
                 fo.return_pending = {
-                    target = 1,
+                    target = target_id,
                     ready_at = now + fo.return_delay,
-                    reason = "return_primary",
+                    reason = "return_prev",
                 }
             end
         else
