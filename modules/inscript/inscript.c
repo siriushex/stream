@@ -181,6 +181,129 @@ static int lua_dofile_disk_or_embedded(lua_State *L, const char *script)
     return LUA_ERRFILE;
 }
 
+static int lua_loadfile_disk_or_embedded(lua_State *L, const char *script, const char *mode)
+{
+    if(!script || script[0] == '\0')
+    {
+        lua_pushstring(L, "cannot open ");
+        return LUA_ERRFILE;
+    }
+
+    if(access(script, R_OK) == 0)
+        return luaL_loadfilex(L, script, mode);
+
+    const uint8_t *data = NULL;
+    size_t size = 0;
+    const bool has_embedded = embedded_fs_get(script, &data, &size);
+    if(has_embedded)
+    {
+        char chunk_name[PATH_MAX];
+        snprintf(chunk_name, sizeof(chunk_name), "@%s", script);
+
+        return luaL_loadbufferx(L, (const char *)data, size, chunk_name, mode);
+    }
+
+    lua_pushfstring(L, "cannot open %s", script);
+    return LUA_ERRFILE;
+}
+
+static int fn_embedded_loadfile(lua_State *L)
+{
+    const int argc = lua_gettop(L);
+
+    const char *script = NULL;
+    if(argc >= 1 && !lua_isnil(L, 1))
+        script = luaL_checkstring(L, 1);
+
+    const char *mode = NULL;
+    if(argc >= 2 && !lua_isnil(L, 2))
+        mode = luaL_checkstring(L, 2);
+
+    int env_ref = LUA_REFNIL;
+    if(argc >= 3 && !lua_isnil(L, 3))
+    {
+        luaL_checktype(L, 3, LUA_TTABLE);
+        lua_pushvalue(L, 3);
+        env_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    }
+
+    lua_settop(L, 0);
+
+    int ret;
+    if(script == NULL)
+    {
+        ret = luaL_loadfilex(L, NULL, mode);
+    }
+    else
+    {
+        ret = lua_loadfile_disk_or_embedded(L, script, mode);
+    }
+
+    if(ret != 0)
+    {
+        /* loadfile() возвращает (nil, err) */
+        lua_pushnil(L);
+        lua_insert(L, -2);
+        if(env_ref != LUA_REFNIL)
+            luaL_unref(L, LUA_REGISTRYINDEX, env_ref);
+        return 2;
+    }
+
+    /* chunk */
+    if(env_ref != LUA_REFNIL)
+    {
+        lua_rawgeti(L, LUA_REGISTRYINDEX, env_ref);
+        luaL_unref(L, LUA_REGISTRYINDEX, env_ref);
+
+        /*
+         * Lua 5.2: окружение задаётся через _ENV (первый upvalue).
+         * Если upvalue отсутствует — просто игнорируем.
+         */
+        lua_setupvalue(L, -2, 1); /* pops env */
+    }
+
+    return 1;
+}
+
+static int fn_embedded_dofile(lua_State *L)
+{
+    const int argc = lua_gettop(L);
+
+    const char *script = NULL;
+    if(argc >= 1 && !lua_isnil(L, 1))
+        script = luaL_checkstring(L, 1);
+
+    lua_settop(L, 0);
+
+    int ret;
+    if(script == NULL)
+    {
+        ret = luaL_loadfilex(L, NULL, NULL);
+    }
+    else
+    {
+        ret = lua_loadfile_disk_or_embedded(L, script, "t");
+    }
+
+    if(ret != 0)
+        return lua_error(L);
+
+    ret = lua_pcall(L, 0, LUA_MULTRET, 0);
+    if(ret != 0)
+        return lua_error(L);
+
+    return lua_gettop(L);
+}
+
+static void install_embedded_file_io(lua_State *L)
+{
+    /* Встроенные scripts/ должны работать и без внешней папки ./scripts (релизный сценарий). */
+    lua_pushcfunction(L, fn_embedded_loadfile);
+    lua_setglobal(L, "loadfile");
+    lua_pushcfunction(L, fn_embedded_dofile);
+    lua_setglobal(L, "dofile");
+}
+
 static int fn_inscript_callback(lua_State *L)
 {
     __uarg(L);
@@ -190,6 +313,8 @@ static int fn_inscript_callback(lua_State *L)
     load = load_inscript((const char *)base, sizeof(base), "=base");
     if(load != 0)
         luaL_error(lua, "[main] %s", lua_tostring(lua, -1));
+
+    install_embedded_file_io(lua);
 
     lua_getglobal(lua, "argv");
     int argc = luaL_len(lua, -1);
