@@ -283,6 +283,8 @@ local function new_job(kind, stream_id)
         updated_at = now_ts(),
         logs = "",
         error = nil,
+        exit_code = nil,
+        signal = nil,
         result = nil,
         proc = nil,
         timeout_sec = 60,
@@ -383,7 +385,9 @@ function pngts.start_ffprobe(stream_id, input_url)
             end
 
             -- process.poll() возвращает table: {exit_code=..., signal=...}
-            local exit_code = status.exit_code or 0
+            local exit_code = tonumber(status.exit_code) or 0
+            job.exit_code = exit_code
+            job.signal = tonumber(status.signal) or 0
             if exit_code ~= 0 then
                 finalize_job(job, "error", nil, "ffprobe failed", job.stderr_buf or "")
                 self:close()
@@ -457,7 +461,9 @@ function pngts.start_generate(stream_id, opts)
             end
 
             -- process.poll() возвращает table: {exit_code=..., signal=...}
-            local exit_code = status.exit_code or 0
+            local exit_code = tonumber(status.exit_code) or 0
+            job.exit_code = exit_code
+            job.signal = tonumber(status.signal) or 0
             if exit_code ~= 0 then
                 finalize_job(job, "error", nil, "ffmpeg failed", job.stderr_buf or "")
             else
