@@ -18,6 +18,7 @@ Source/binary download:
   --artifact NAME          Artifact filename under base URL.
   --git-url URL            Git repository URL for --mode source (default: https://github.com/siriushex/stream.git).
   --git-ref REF            Git ref/branch/tag for --mode source (default: main).
+  --allow-generic          Allow generic binary on older distros (may be incompatible).
 
 Install paths:
   --bin PATH               Install path for the binary (default: /usr/local/bin/stream).
@@ -63,6 +64,7 @@ DRY_RUN=0
 INSTANCE_NAME=""
 PORT=""
 ENABLE_SERVICE=0
+ALLOW_GENERIC=0
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -124,6 +126,8 @@ while [ "${#:-0}" -gt 0 ]; do
       INSTALL_FFMPEG=0; shift;;
     --runtime-only)
       RUNTIME_ONLY=1; shift;;
+    --allow-generic)
+      ALLOW_GENERIC=1; shift;;
     --dry-run)
       DRY_RUN=1; shift;;
     --name)
@@ -329,12 +333,31 @@ binary_url_candidates() {
     case "${OS_ID:-}" in
       ubuntu|debian)
         urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER}-${ARCH}")
+        urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER%%.*}-${ARCH}")
         ;;
     esac
   fi
 
-  # Generic fallback
-  urls+=("${BASE_URL}/stream-linux-${ARCH}")
+  # Generic fallback (может быть несовместим на старых дистрибутивах).
+  local use_generic=1
+  if [ "$ALLOW_GENERIC" -ne 1 ] && [ -n "${OS_ID:-}" ] && [ -n "${OS_VER:-}" ]; then
+    local major="${OS_VER%%.*}"
+    case "${OS_ID:-}" in
+      ubuntu)
+        [ "$major" -lt 20 ] && use_generic=0
+        ;;
+      debian)
+        [ "$major" -lt 11 ] && use_generic=0
+        ;;
+      centos|rhel|rocky|almalinux)
+        [ "$major" -lt 8 ] && use_generic=0
+        ;;
+    esac
+  fi
+
+  if [ "$use_generic" -eq 1 ]; then
+    urls+=("${BASE_URL}/stream-linux-${ARCH}")
+  fi
 
   printf '%s\n' "${urls[@]}"
 }
@@ -342,7 +365,17 @@ binary_url_candidates() {
 fetch_artifact() {
   local url="$1"
   local out="$2"
-  run curl -fsSL -o "$out" "$url"
+  if run curl -fsSL -o "$out" "$url"; then
+    return 0
+  fi
+  # На старых системах часто нет актуальных CA. Для stream.centv.ru попробуем HTTP.
+  if echo "$url" | grep -q "^https://stream.centv.ru/"; then
+    local url_http="${url/https:\/\//http://}"
+    warn "HTTPS download failed; trying HTTP: $url_http"
+    run curl -fsSL -o "$out" "$url_http"
+    return $?
+  fi
+  return 1
 }
 
 build_from_source() {
