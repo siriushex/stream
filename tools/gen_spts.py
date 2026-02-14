@@ -8,6 +8,11 @@ import socket
 import struct
 import time
 
+# Python 3.5 compatibility:
+# - no builtin generics like dict[int, int] / list[bytes]
+# - no variable annotations (PEP 526, Python 3.6+)
+# - no f-strings (Python 3.6+)
+
 TS_PACKET_SIZE = 188
 SYNC_BYTE = 0x47
 NULL_PID = 0x1FFF
@@ -188,12 +193,12 @@ def build_cat(version: int = 0) -> bytes:
     return bytes(section)
 
 
-def packetize_section(pid: int, section: bytes, cc_map: dict[int, int]) -> list[bytes]:
+def packetize_section(pid: int, section: bytes, cc_map):
     """Пакетизация PSI секции в TS пакеты по 188 байт.
 
     ВАЖНО: старый pack_section работал только для секций <= 183 байта и ломался на больших PAT/SDT.
     """
-    packets: list[bytes] = []
+    packets = []
     offset = 0
     pusi = True
     cc = cc_map.get(pid, 0)
@@ -318,12 +323,12 @@ def main() -> int:
                for pnr, pmt_pid, video_pid, pcr_pid in programs}
     services = []
     for idx, (pnr, _, _, _) in enumerate(programs, start=1):
-        suffix = "" if len(programs) == 1 else f" {idx}"
+        suffix = "" if len(programs) == 1 else " {}".format(idx)
         services.append({
             "pnr": pnr,
             "service_type": args.service_type,
             "provider": args.provider_name,
-            "name": f"{args.service_name}{suffix}",
+            "name": "{}{}".format(args.service_name, suffix),
         })
     sdt = build_sdt(args.tsid, args.onid, services) if args.emit_sdt else None
     eit_table_ids = []
@@ -337,7 +342,7 @@ def main() -> int:
                 try:
                     eit_table_ids.append(parse_int_auto(part))
                 except Exception:
-                    raise SystemExit(f"invalid --eit-table-ids entry: {part}")
+                    raise SystemExit("invalid --eit-table-ids entry: {}".format(part))
         if not eit_table_ids:
             eit_table_ids = [0x4E]
     eit_map = {pnr: [build_eit(pnr, args.tsid, args.onid, table_id=t) for t in eit_table_ids]
