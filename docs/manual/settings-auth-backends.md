@@ -11,7 +11,7 @@ Stream Hub делает HTTP запрос в ваш портал/скрипт и
 ## Где настраивается
 
 1. **Settings → Auth backends** — общий список backend’ов (по имени).
-2. **Edit stream → Advanced → On‑play backend override** — включение на конкретном стриме.
+2. **Edit stream → Auth** — включение на конкретном стриме (on_play, session_keys, token source).
 
 ## Auth backend по имени (рекомендуется)
 
@@ -143,8 +143,9 @@ http://portal.example.com/stalker_portal/server/api/chk_flussonic_tmp_link.php
 ## Быстрая проверка
 
 1. Включите auth на стриме:
-   - `Token auth override` → `Enable`
-   - `On‑play backend override` → `auth://main1`
+   - **Edit stream → Auth → Mode** → `Named auth backend`
+   - **Auth backend** → `main1`
+   - (опционально) **Auth override (legacy)** оставить `Inherit`
 2. Попробуйте открыть:
 
 ```bash
@@ -155,3 +156,15 @@ curl -i "http://SERVER:9060/play/STREAM_ID?token=TEST"
 - `200` → доступ есть
 - `403` → доступ запрещён
 - `302` + `Location` → редирект на другой URL
+
+## Token source (query/header/cookie)
+
+По умолчанию Stream Hub берёт token из:
+- query параметра (обычно `token`)
+- cookie `astra_token`
+
+Если портал/клиент передаёт token иначе, задайте **Edit stream → Auth → Token source**:
+- `Query param` (например `query:token`)
+- `Header` (например `header:Authorization`, поддерживается `Bearer <token>`)
+- `Cookie` (например `cookie:stb_token`)
+- `Auto` (попробовать query + header + cookie)

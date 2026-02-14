@@ -755,12 +755,131 @@ local function build_backend_request(url, params, method, body, timeout_ms, extr
     }, nil
 end
 
-function auth.get_token(request, token_param)
+local function split_kind_name(spec)
+    local text = tostring(spec or "")
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return "", ""
+    end
+    local kind, name = text:match("^(%w+)%s*:%s*(.+)$")
+    if kind and name then
+        return tostring(kind):lower(), tostring(name):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    return tostring(text):lower(), ""
+end
+
+local function token_from_header(headers, header_name)
+    if not headers or not header_name or header_name == "" then
+        return nil
+    end
+    local value = header_value(headers, header_name)
+    if value == nil then
+        return nil
+    end
+    local text = tostring(value):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return nil
+    end
+    local lower = text:lower()
+    if lower:find("bearer ", 1, true) == 1 then
+        return text:sub(8):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    if lower:find("token ", 1, true) == 1 then
+        return text:sub(7):gsub("^%s+", ""):gsub("%s+$", "")
+    end
+    return text
+end
+
+-- Извлечение token из запроса.
+-- По умолчанию (token_source пустой) сохраняем legacy поведение:
+-- - query параметр (token/auth_token_param)
+-- - cookie astra_token
+--
+-- Дополнительно поддерживаем совместимость с Flussonic-like:
+--   token_source="auto" | "query:<name>" | "header:<name>" | "cookie:<name>".
+function auth.get_token(request, token_param, token_source)
+    token_param = token_param or "token"
+    local kind, name = split_kind_name(token_source)
+
+    -- legacy behavior: query + cookie astra_token
+    if kind == "" then
+        local token = extract_token_from_query(request, token_param)
+        if token and token ~= "" then
+            return token
+        end
+        local cookies = parse_cookie(request and request.headers or {})
+        if cookies.astra_token and cookies.astra_token ~= "" then
+            return cookies.astra_token
+        end
+        return nil
+    end
+
+    local headers = request and request.headers or {}
+    local query = request and request.query or {}
+    local cookies = parse_cookie(headers)
+
+    if kind == "auto" then
+        local token = extract_token_from_query(request, token_param)
+        if token and token ~= "" then
+            return token
+        end
+        token = token_from_header(headers, "authorization")
+        if token and token ~= "" then
+            return token
+        end
+        if cookies.astra_token and cookies.astra_token ~= "" then
+            return cookies.astra_token
+        end
+        local cookie_by_param = cookies[token_param]
+        if cookie_by_param and cookie_by_param ~= "" then
+            return tostring(cookie_by_param)
+        end
+        local token_cookie = cookies.token or cookies.access_token
+        if token_cookie and token_cookie ~= "" then
+            return tostring(token_cookie)
+        end
+        return nil
+    end
+
+    if kind == "query" then
+        local key = name ~= "" and name or token_param
+        local value = query[key]
+        if value ~= nil and tostring(value) ~= "" then
+            return tostring(value)
+        end
+        -- совместимость: если явно просят query:token, используем старый fallback token/access_token
+        if key == "token" or key == token_param then
+            local token = extract_token_from_query(request, token_param)
+            if token and token ~= "" then
+                return token
+            end
+        end
+        return nil
+    end
+
+    if kind == "header" then
+        local header_name = name ~= "" and name or "authorization"
+        local token = token_from_header(headers, header_name)
+        if token and token ~= "" then
+            return token
+        end
+        return nil
+    end
+
+    if kind == "cookie" then
+        local cookie_name = name ~= "" and name or "astra_token"
+        local value = cookies[cookie_name]
+        if value ~= nil and tostring(value) ~= "" then
+            return tostring(value)
+        end
+        return nil
+    end
+
+    -- unknown token_source -> legacy
     local token = extract_token_from_query(request, token_param)
     if token and token ~= "" then
         return token
     end
-    local cookies = parse_cookie(request and request.headers or {})
     if cookies.astra_token and cookies.astra_token ~= "" then
         return cookies.astra_token
     end
@@ -1405,7 +1524,11 @@ function auth.check(ctx, callback)
             or (ctx.stream_cfg and (ctx.stream_cfg.token_param or ctx.stream_cfg.auth_token_param))
             or setting_string("auth_token_param", "token")
         ctx.token_param = token_param
-        token = auth.get_token(ctx.request, token_param)
+        local token_source = ctx.token_source
+            or (ctx.stream_cfg and (ctx.stream_cfg.token_source or ctx.stream_cfg.auth_token_source))
+            or setting_string("auth_token_source", "")
+        ctx.token_source = token_source
+        token = auth.get_token(ctx.request, token_param, token_source)
     end
     ctx.token = token or ""
 
