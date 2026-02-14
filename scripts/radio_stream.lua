@@ -34,6 +34,34 @@ local function sanitize_id(value)
     return clean
 end
 
+local function decode_data_url(data_url, allowed_prefix)
+    if not data_url or data_url == "" then
+        return nil, nil, "empty data url"
+    end
+    local header, b64 = data_url:match("^data:([^,]+),(.+)$")
+    if not header or not b64 then
+        return nil, nil, "invalid data url"
+    end
+    if allowed_prefix and not header:find(allowed_prefix, 1, true) then
+        return nil, nil, "unexpected mime type"
+    end
+    local ok, decoded = pcall(base64.decode, b64)
+    if not ok or not decoded then
+        return nil, nil, "base64 decode failed"
+    end
+    return decoded, header
+end
+
+local function write_binary(path, bytes)
+    local file, err = io.open(path, "wb")
+    if not file then
+        return nil, err
+    end
+    file:write(bytes)
+    file:close()
+    return true
+end
+
 local function read_setting_string(key, fallback)
     if config and config.get_setting then
         local v = config.get_setting(key)
@@ -58,6 +86,12 @@ local function resolve_stream_radio_dir(stream_id)
     local dir = base .. "/streams/" .. safe_id .. "/radio"
     ensure_dir(dir)
     return dir
+end
+
+local function build_uploaded_png_path(stream_id)
+    local dir = resolve_stream_radio_dir(stream_id)
+    local stamp = os.date("%Y%m%d-%H%M%S")
+    return dir .. "/cover_" .. stamp .. ".png"
 end
 
 local function resolve_stream_log_dir(stream_id)
@@ -222,7 +256,7 @@ local function build_ffmpeg_args(settings, fifo_path)
 
     if settings.use_curl then
         table.insert(args, "-f")
-        table.insert(args, "mp3")
+        table.insert(args, tostring(settings.audio_format or "mp3"))
         table.insert(args, "-i")
         table.insert(args, fifo_path)
     else
@@ -302,6 +336,11 @@ local function normalize_settings(raw)
     out.use_curl = normalize_bool(raw.use_curl, true)
     out.extra_headers = tostring(raw.extra_headers or "")
     out.user_agent = tostring(raw.user_agent or "")
+    local fmt = tostring(raw.audio_format or "mp3"):lower()
+    if fmt ~= "mp3" and fmt ~= "aac" then
+        fmt = "mp3"
+    end
+    out.audio_format = fmt
     out.fps = tonumber(raw.fps) or 25
     out.width = tonumber(raw.width) or 270
     out.height = tonumber(raw.height) or 270
@@ -418,6 +457,19 @@ function radio.start(stream_id, raw_settings)
     local settings = normalize_settings(raw_settings or {})
     if settings.audio_url == "" then
         return false, "audio url required"
+    end
+    local png_data_url = raw_settings and raw_settings.png_data_url or nil
+    if png_data_url and png_data_url ~= "" then
+        local bytes, _, err = decode_data_url(png_data_url, "image/png")
+        if not bytes then
+            return false, err or "invalid png data"
+        end
+        local path = build_uploaded_png_path(stream_id)
+        local ok, werr = write_binary(path, bytes)
+        if not ok then
+            return false, werr or "failed to save png"
+        end
+        settings.png_path = path
     end
     if settings.png_path == "" then
         return false, "png path required"
