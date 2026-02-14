@@ -1467,6 +1467,8 @@ const elements = {
   btnPngtsAnalyze: $('#btn-pngts-analyze'),
   btnPngtsGenerate: $('#btn-pngts-generate'),
   btnPngtsAddBackup: $('#btn-pngts-add-backup'),
+  pngtsExisting: $('#pngts-existing'),
+  pngtsExistingList: $('#pngts-existing-list'),
   pngtsStatus: $('#pngts-status'),
   pngtsOutputPath: $('#pngts-output-path'),
   pngtsLogs: $('#pngts-logs'),
@@ -12046,6 +12048,7 @@ function normalizePngtsState() {
   pngts.busy = pngts.busy === true;
   pngts.status = pngts.status || '';
   pngts.logs = pngts.logs || '';
+  pngts.existingFiles = Array.isArray(pngts.existingFiles) ? pngts.existingFiles : [];
   return pngts;
 }
 
@@ -12089,6 +12092,64 @@ function updatePngtsButtons() {
   }
 }
 
+function renderPngtsExistingList() {
+  if (!elements.pngtsExistingList) return;
+  const pngts = normalizePngtsState();
+  const files = Array.isArray(pngts.existingFiles) ? pngts.existingFiles : [];
+  elements.pngtsExistingList.innerHTML = '';
+  if (!files.length) {
+    const empty = document.createElement('div');
+    empty.className = 'form-hint';
+    empty.textContent = 'Пока нет созданных TS файлов';
+    elements.pngtsExistingList.appendChild(empty);
+    return;
+  }
+  files.forEach((file) => {
+    if (!file || !file.path) return;
+    const row = document.createElement('div');
+    row.className = 'pngts-existing-row';
+
+    const info = document.createElement('div');
+    const title = document.createElement('div');
+    title.textContent = file.name || file.path;
+    info.appendChild(title);
+
+    const metaParts = [];
+    if (file.size) metaParts.push(formatBytes(file.size));
+    if (file.mtime) metaParts.push(formatTimestamp(file.mtime));
+    if (metaParts.length) {
+      const meta = document.createElement('div');
+      meta.className = 'pngts-existing-meta';
+      meta.textContent = metaParts.join(' · ');
+      info.appendChild(meta);
+    }
+
+    const btn = document.createElement('button');
+    btn.className = 'btn ghost';
+    btn.type = 'button';
+    btn.textContent = 'Подставить';
+    btn.addEventListener('click', () => {
+      setPngtsAsBackupInput(file.path, 'Подставлено как backup input');
+    });
+
+    row.appendChild(info);
+    row.appendChild(btn);
+    elements.pngtsExistingList.appendChild(row);
+  });
+}
+
+async function loadPngtsExistingList() {
+  if (!state.editing || !state.editing.stream || !elements.pngtsExistingList) return;
+  const pngts = normalizePngtsState();
+  try {
+    const payload = await apiJson(`/api/v1/streams/${state.editing.stream.id}/pngts/list`);
+    pngts.existingFiles = Array.isArray(payload.files) ? payload.files : [];
+  } catch (err) {
+    pngts.existingFiles = [];
+  }
+  renderPngtsExistingList();
+}
+
 function updatePngtsUiFromState() {
   if (!elements.pngtsBlock) return;
   const pngts = normalizePngtsState();
@@ -12110,6 +12171,7 @@ function updatePngtsUiFromState() {
   }
   setPngtsStatus(pngts.status || '');
   setPngtsLogs(pngts.logs || '');
+  renderPngtsExistingList();
   updatePngtsAudioVisibility();
   updatePngtsButtons();
 }
@@ -12138,6 +12200,7 @@ function resetPngtsStateFromStream(stream) {
   pngts.busy = false;
   pngts.status = '';
   pngts.logs = '';
+  pngts.existingFiles = [];
   const inputs = (stream && stream.config && Array.isArray(stream.config.input) && stream.config.input) || state.inputs || [];
   const primary = inputs[0] ? stripInputHash(inputs[0]) : '';
   pngts.sourceUrl = primary;
@@ -12145,6 +12208,7 @@ function resetPngtsStateFromStream(stream) {
   if (elements.pngtsImageFile) elements.pngtsImageFile.value = '';
   if (elements.pngtsMp3File) elements.pngtsMp3File.value = '';
   updatePngtsUiFromState();
+  loadPngtsExistingList();
 }
 
 function resetRadioStateFromStream(stream) {
@@ -12367,6 +12431,8 @@ async function pollPngtsJob(jobId, kind) {
         if (elements.pngtsOutputPath) {
           elements.pngtsOutputPath.textContent = `Generated: ${pngts.lastOutputPath}`;
         }
+        setPngtsAsBackupInput(pngts.lastOutputPath, 'Сгенерированный TS добавлен как backup input');
+        loadPngtsExistingList();
       }
     } else {
       setPngtsStatus(job.error || 'Job failed', true);
@@ -12468,12 +12534,26 @@ async function runPngtsGenerate() {
 function addPngtsOutputToInputs() {
   const pngts = normalizePngtsState();
   if (!pngts.lastOutputPath) return;
-  const path = pngts.lastOutputPath;
+  setPngtsAsBackupInput(pngts.lastOutputPath, 'Добавлено в INPUT LIST');
+}
+
+function setPngtsAsBackupInput(path, message) {
+  if (!path) return;
   const inputUrl = path.startsWith('file://') ? path : `file://${path}`;
   collectInputs();
-  state.inputs.push(inputUrl);
-  renderInputList();
-  setPngtsStatus('Added generated TS to INPUT LIST');
+  const exists = state.inputs.some((item) => stripInputHash(item) === inputUrl);
+  if (!exists) {
+    state.inputs.push(inputUrl);
+    renderInputList();
+  }
+  if (elements.streamBackupType) {
+    const value = elements.streamBackupType.value.trim();
+    if (!value || value === 'disabled') {
+      elements.streamBackupType.value = 'active';
+      updateStreamBackupFields();
+    }
+  }
+  setPngtsStatus(message || 'Добавлено в INPUT LIST');
   updatePngtsButtons();
 }
 

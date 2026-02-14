@@ -4073,6 +4073,41 @@ button.stream-audio-fix-toggle:disabled {
   margin-top: 6px;
 }
 
+.pngts-existing {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.pngts-existing-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pngts-existing-list {
+  display: grid;
+  gap: 6px;
+}
+
+.pngts-existing-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.pngts-existing-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .pngts-output {
   font-size: 12px;
   color: var(--muted);

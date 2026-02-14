@@ -81,6 +81,34 @@ local function resolve_stream_backup_dir(stream_id)
     return dir
 end
 
+function pngts.list_outputs(stream_id)
+    local dir = resolve_stream_backup_dir(stream_id)
+    local files = {}
+    if not utils or type(utils.readdir) ~= "function" then
+        return files
+    end
+    local ok, iter = pcall(utils.readdir, dir)
+    if not ok or not iter then
+        return files
+    end
+    for name in iter do
+        if name:match("%.ts$") then
+            local path = dir .. "/" .. name
+            local stat = utils and utils.stat and utils.stat(path) or nil
+            table.insert(files, {
+                name = name,
+                path = path,
+                size = stat and stat.size or 0,
+                mtime = stat and stat.mtime or 0,
+            })
+        end
+    end
+    table.sort(files, function(a, b)
+        return (a.mtime or 0) > (b.mtime or 0)
+    end)
+    return files
+end
+
 local function build_output_path(stream_id, codec, width, height, fps)
     local dir = resolve_stream_backup_dir(stream_id)
     local safe_codec = tostring(codec or "h264"):gsub("[^%w]", "")
