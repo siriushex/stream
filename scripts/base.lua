@@ -200,7 +200,11 @@ function astra_brand_version()
     local version = os.getenv("ASTRAL_VERSION")
         or os.getenv("ASTRA_VERSION")
         or "1.0"
-    return name .. " " .. version
+    local build_label = "Build: FULL"
+    if astra and astra.features and astra.features.transcode == false then
+        build_label = "Build: LITE (no transcode)"
+    end
+    return name .. " " .. version .. " (" .. build_label .. ")"
 end
 
 function resolve_tool_path(name, opts)
@@ -3999,6 +4003,7 @@ Commands:
     --init              Register systemd service template (stream@.service)
     --remove            Remove systemd service template (stream@.service)
     --reset-password    Reset admin password to default (admin/admin)
+                        If used with -c/-p, creates instance files in /etc/stream and shows stream@NAME.
 
 Global Options:
     -h, --help          command line arguments

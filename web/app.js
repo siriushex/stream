@@ -824,6 +824,7 @@ const createEl = (tag, className, text) => {
 const elements = {
   navLinks: $$('.nav-link'),
   views: $$('.view'),
+  uiStamp: $('#ui-stamp'),
   settingsMenu: $('#settings-menu'),
   settingsItems: $$('#settings-menu .settings-item'),
   observabilityRange: $('#obs-range'),
@@ -24513,6 +24514,7 @@ function applySettingsToUI() {
     elements.settingsShowAdvanced.checked = getStoredBool(SETTINGS_ADVANCED_KEY, false);
   }
 
+  applyBuildFlags();
   updateTelegramBackupScheduleFields();
   updateTelegramSummaryScheduleFields();
   syncToggleTargets();
@@ -25509,6 +25511,19 @@ async function loadSettings() {
   refreshAllInputCamOptions();
 
   applySettingsToUI();
+}
+
+function applyBuildFlags() {
+  const buildTranscode = getSettingBool('build_transcode', true);
+  document.body.classList.toggle('build-no-transcode', !buildTranscode);
+  if (elements.uiStamp) {
+    if (!elements.uiStamp.dataset.baseText) {
+      elements.uiStamp.dataset.baseText = elements.uiStamp.textContent || 'UI build';
+    }
+    const baseText = elements.uiStamp.dataset.baseText;
+    const suffix = buildTranscode ? 'Build: FULL' : 'Build: LITE (no transcode)';
+    elements.uiStamp.textContent = `${baseText} · ${suffix}`;
+  }
 }
 
 function setConfigEditHint(message, isError) {
