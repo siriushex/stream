@@ -4133,7 +4133,61 @@ local function parse_bool(value, fallback)
     return fallback
 end
 
+-- Защита: буфер логов не должен ронять весь UI/API.
+-- Иногда состояние log_store может быть повреждено (например, после hot-reload/ошибок),
+-- и тогда любой log.* приводит к исключению и HTTP 500. Здесь аккуратно восстанавливаем
+-- минимально корректную структуру.
+local function log_store_sanitize()
+    if type(log_store) ~= "table" then
+        log_store = {
+            entries = {},
+            next_id = 1,
+            enabled = true,
+            max_entries = 2000,
+            retention_sec = 86400,
+            head = 1,
+            tail = 0,
+            count = 0,
+        }
+        return
+    end
+    if type(log_store.entries) ~= "table" then
+        log_store.entries = {}
+    end
+    if log_store.next_id == nil then
+        log_store.next_id = 1
+    end
+    if log_store.enabled == nil then
+        log_store.enabled = true
+    end
+    if log_store.max_entries == nil then
+        log_store.max_entries = 2000
+    end
+    if log_store.retention_sec == nil then
+        log_store.retention_sec = 86400
+    end
+    if type(log_store.head) ~= "number" then
+        log_store.head = tonumber(log_store.head) or 1
+    end
+    if type(log_store.tail) ~= "number" then
+        log_store.tail = tonumber(log_store.tail) or 0
+    end
+    if type(log_store.count) ~= "number" then
+        log_store.count = tonumber(log_store.count) or 0
+    end
+    if log_store.head < 1 then
+        log_store.head = 1
+    end
+    if log_store.tail < 0 then
+        log_store.tail = 0
+    end
+    if log_store.count < 0 then
+        log_store.count = 0
+    end
+end
+
 local function log_store_prune()
+    log_store_sanitize()
     local retention = tonumber(log_store.retention_sec) or 0
     local head = tonumber(log_store.head) or 1
     local tail = tonumber(log_store.tail) or 0
@@ -4192,6 +4246,7 @@ local function log_store_prune()
 end
 
 function log_store.configure(opts)
+    log_store_sanitize()
     if type(opts) ~= "table" then
         return
     end
@@ -4222,6 +4277,7 @@ function log_store.configure(opts)
 end
 
 local function log_store_add(level, message)
+    log_store_sanitize()
     if log_store.enabled == false then
         return
     end
@@ -4241,6 +4297,7 @@ local function log_store_add(level, message)
 end
 
 function log_store.list(since_id, limit, level, text, stream_id)
+    log_store_sanitize()
     log_store_prune()
     local out = {}
     local max_items = tonumber(limit) or 200
