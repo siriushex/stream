@@ -14,6 +14,7 @@
 - Changes:
   - Input resilience: tune `bad`/`max` network profiles for unstable HTTP/HLS sources (bigger timeouts + larger default jitter buffer).
   - HTTP input: for `net_profile=bad|max|superbad`, treat `#sync` (boolean) as a larger sync buffer (8/16/32 MB) to reduce `next PCR is not found` rebuffer loops on broken TS sources.
+  - HTTP input: do not auto-enable PCR-based `sync` just because `net_profile` is set; profile-mode uses jitter buffering + resilience timeouts by default (enable `#sync` explicitly if needed).
   - UI: update Input settings “Apply preset” defaults to match the tuned `bad`/`max` profiles.
 - Tests:
   - `node --check web/app.js`

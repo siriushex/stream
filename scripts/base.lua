@@ -2364,18 +2364,11 @@ init_input_module.http = function(conf)
 	            -- makes consumption stable for downstream pipelines.
 	            sync = 1
 	        end
-		        -- Для профильного режима (bad/max/superbad) включаем sync по умолчанию:
-		        -- это помогает переживать переподключения, когда поток может начатьcя не с границы TS-пакета.
-		        if sync == nil and res and res.enabled == true then
-		            local p = res.profile_effective
-		            if p == "bad" then
-		                sync = 8
-		            elseif p == "max" then
-		                sync = 16
-		            elseif p == "superbad" then
-		                sync = 32
-		            end
-		        end
+		        -- Важно: НЕ включаем `sync` (PCR-based pacing в http_request) автоматически для внешних HTTP-TS/HLS
+		        -- источников. У IPTV-панелей PCR может пропадать на секунды, и sync начинает постоянно уходить
+		        -- в buffering. Для устойчивости используем jitter buffer (jitter_buffer_ms) + network resilience
+		        -- профили. Если пользователю всё же нужен sync, он может включить его явно в URL: `#sync` или
+		        -- `#sync=<MB>`.
 	        local timeout = conf.timeout
 	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
 	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
