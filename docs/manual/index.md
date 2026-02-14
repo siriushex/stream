@@ -11,6 +11,8 @@
 - [Входы](inputs.md)
 - [Выходы](outputs.md)
 - [Транскодирование](transcoding.md)
+- [PNG to Stream](png-to-stream.md)
+- [Create radio](create-radio.md)
 - [Quality detectors](quality-detectors.md)
 - [Audio Fix](audio-fix.md)
 - [Observability](observability.md)

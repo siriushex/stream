@@ -98,6 +98,8 @@ nav:
       - Выходы: manual/outputs.md
       - Форматы адресов: manual/address-format.md
       - Транскодирование: manual/transcoding.md
+      - PNG to Stream: manual/png-to-stream.md
+      - Create radio: manual/create-radio.md
       - Ladder + publish: manual/transcode-ladder.md
       - Audio Fix: manual/audio-fix.md
       - Quality detectors: manual/quality-detectors.md
