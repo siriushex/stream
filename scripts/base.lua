@@ -1964,8 +1964,11 @@ function init_input(conf)
     if is_http_like then
         local playout_enabled = net_bool(conf.playout)
         if playout_enabled == nil then
-            -- Авто-дефолт только для configured profile=superbad (не для effective profile по глобальным settings).
-            playout_enabled = (normalize_net_profile(conf.net_profile) == "superbad")
+            -- Авто-дефолт только для configured profile=max/superbad (не для effective profile по глобальным settings).
+            -- max/superbad считаем режимом "максимальная стабильность": carrier (NULL stuffing) держит /play и UDP
+            -- живыми даже если вход отдаёт TS рывками или подвисает на десятки секунд.
+            local p = normalize_net_profile(conf.net_profile)
+            playout_enabled = (p == "max" or p == "superbad")
         end
 
         if playout_enabled == true then
