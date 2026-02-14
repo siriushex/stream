@@ -12539,9 +12539,16 @@ function addPngtsOutputToInputs() {
 
 function setPngtsAsBackupInput(path, message) {
   if (!path) return;
-  const inputUrl = path.startsWith('file://') ? path : `file://${path}`;
+  // Для резервного TS важен бесконечный цикл, иначе файл закончится и input станет EOF.
+  let inputUrl = path.startsWith('file://') ? path : `file://${path}`;
+  if (stripInputHash(inputUrl) === inputUrl) {
+    inputUrl = `${inputUrl}#loop`;
+  } else if (!inputUrl.includes('loop')) {
+    inputUrl = `${inputUrl}&loop`;
+  }
   collectInputs();
-  const exists = state.inputs.some((item) => stripInputHash(item) === inputUrl);
+  const base = stripInputHash(inputUrl);
+  const exists = state.inputs.some((item) => stripInputHash(item) === base);
   if (!exists) {
     state.inputs.push(inputUrl);
     renderInputList();
