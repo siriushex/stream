@@ -200,9 +200,11 @@ function astra_brand_version()
     local version = os.getenv("ASTRAL_VERSION")
         or os.getenv("ASTRA_VERSION")
         or "1.0"
-    local build_label = "Build: FULL"
-    if astra and astra.features and astra.features.transcode == false then
-        build_label = "Build: LITE (no transcode)"
+    -- Важно: transcode считается доступным только если явно включен в build/feature flags.
+    -- Если фича отсутствует (nil) - это тоже LITE.
+    local build_label = "Build: LITE (no transcode)"
+    if astra and astra.features and astra.features.transcode == true then
+        build_label = "Build: FULL"
     end
     return name .. " " .. version .. " (" .. build_label .. ")"
 end
