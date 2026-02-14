@@ -4,25 +4,38 @@
 
 ## Шаги
 
-1. Зарегистрируйте шаблон сервиса:
+1. Быстрый способ (создание инстанса + автозапуск):
+
+```bash
+sudo /usr/local/bin/stream --init -c /usr/local/etc/prod.json -p 9060
+```
+
+Будет создано:
+- `/etc/stream/prod.json`
+- `/etc/stream/prod.env` с `STREAM_PORT=9060`
+- включится `stream@prod`
+
+2. Вручную (если хотите сами управлять файлами):
+
+Зарегистрируйте шаблон сервиса:
 
 ```bash
 sudo /usr/local/bin/stream --init
 ```
 
-2. Создайте env‑файл инстанса (пример: `prod`):
+Создайте env‑файл инстанса (пример: `prod`):
 
 ```bash
 sudo sh -c 'echo STREAM_PORT=9060 > /etc/stream/prod.env'
 ```
 
-3. Создайте конфиг (если его ещё нет):
+Создайте конфиг (если его ещё нет):
 
 ```bash
 sudo sh -c 'echo {} > /etc/stream/prod.json'
 ```
 
-4. Запустите сервис:
+Запустите сервис:
 
 ```bash
 sudo systemctl enable --now stream@prod.service
@@ -37,4 +50,3 @@ journalctl -u stream@prod.service -f
 ## Дальше
 
 - [Руководство → Входы](../manual/inputs.md)
-

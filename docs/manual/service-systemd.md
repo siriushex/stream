@@ -4,7 +4,7 @@
 
 ## Быстрый способ (через `--init`)
 
-Если задать `-c` и `-p`, Stream сам создаст нужные файлы в `/etc/stream/` и покажет имя инстанса.
+Если задать `-c` и `-p`, Stream сам создаст нужные файлы в `/etc/stream/` и **сразу включит сервис**.
 
 ```bash
 sudo /usr/local/bin/stream --init -c /usr/local/etc/prod.json -p 9060
@@ -14,11 +14,7 @@ sudo /usr/local/bin/stream --init -c /usr/local/etc/prod.json -p 9060
 - `/etc/stream/prod.json` — копия конфига
 - `/etc/stream/prod.env` — `STREAM_PORT=9060`
 - шаблон `/etc/systemd/system/stream@.service`
-
-Запуск:
-```bash
-sudo systemctl enable --now stream@prod
-```
+Сервис будет включён как `stream@prod`.
 
 ## Вариант 2 (вручную)
 
