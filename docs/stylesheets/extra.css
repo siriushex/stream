@@ -98,40 +98,44 @@
  * - навигацию скрытой по умолчанию
  * - появление по клику на бургер (как drawer) даже на desktop */
 @media screen and (min-width: 76.25em) {
-  .sh-home label.md-header__button[for="__drawer"] {
+  /* Важно: в теме есть правила вида body[dir=ltr] ... которые по специфичности
+   * перебивают селекторы только по классу. Поэтому в “home drawer” используем
+   * префикс body.sh-home, чтобы гарантированно переопределять desktop layout. */
+
+  body.sh-home label.md-header__button[for="__drawer"] {
     display: inline-block !important; /* Material скрывает на desktop */
   }
 
   /* На витрине (главной) не нужен правый TOC-сайдбар.
    * Он на широких экранах может “ломать” композицию и мешать drawer-меню. */
-  .sh-home .md-sidebar--secondary {
+  body.sh-home .md-sidebar--secondary {
     display: none;
   }
 
   /* На главной делаем контент реально “на всю ширину” (с минимальным padding),
    * иначе full-bleed секции начинают смещаться из-за desktop-layout с sidebar. */
-  .sh-home .md-grid {
+  body.sh-home .md-grid {
     max-width: 100%;
   }
 
-  .sh-home .md-content__inner {
+  body.sh-home .md-content__inner {
     margin-left: 0;
     margin-right: 0;
   }
 
   /* На главной убираем “двухколоночный” макет (sidebar + content),
    * чтобы контент реально был на всю ширину. */
-  .sh-home .md-main__inner {
+  body.sh-home .md-main__inner {
     display: block;
     height: auto;
   }
 
-  .sh-home .md-content {
+  body.sh-home .md-content {
     width: 100%;
   }
 
   /* Переводим левый sidebar в режим drawer на desktop */
-  .sh-home .md-sidebar--primary {
+  body.sh-home .md-sidebar--primary {
     /* HTML по умолчанию без dir=..., поэтому не используем [dir=ltr] селектор. */
     left: calc(-1 * var(--sh-drawer-width));
     right: auto;
@@ -146,19 +150,19 @@
     z-index: 5;
   }
 
-  .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+  body.sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
     box-shadow: var(--md-shadow-z3);
     transform: translateX(var(--sh-drawer-width));
   }
-  html[dir=rtl] .sh-home .md-sidebar--primary {
+  html[dir=rtl] body.sh-home .md-sidebar--primary {
     right: calc(-1 * var(--sh-drawer-width));
     left: auto;
   }
-  html[dir=rtl] .sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
+  html[dir=rtl] body.sh-home [data-md-toggle=drawer]:checked ~ .md-container .md-sidebar--primary {
     transform: translateX(calc(-1 * var(--sh-drawer-width)));
   }
 
-  .sh-home .md-sidebar--primary .md-sidebar__scrollwrap {
+  body.sh-home .md-sidebar--primary .md-sidebar__scrollwrap {
     height: 100%;
     margin: 0;
     overflow-x: hidden;
@@ -168,7 +172,7 @@
 
   /* На desktop в Material overlay (затемнение) включён только для мобильного drawer.
    * На главной хотим тот же эффект: клик по фону закрывает меню. */
-  .sh-home .md-overlay {
+  body.sh-home .md-overlay {
     background-color: #0000008a;
     inset: 0;
     height: 0;
@@ -180,7 +184,7 @@
     z-index: 4;
     pointer-events: none;
   }
-  .sh-home [data-md-toggle=drawer]:checked ~ .md-overlay {
+  body.sh-home [data-md-toggle=drawer]:checked ~ .md-overlay {
     height: 100%;
     opacity: 1;
     transition: width 0ms, height 0ms, opacity 0.25s;
@@ -189,7 +193,7 @@
   }
 
   /* Убираем отступы, которые Material добавляет при видимом sidebar */
-  .sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
+  body.sh-home .md-sidebar--primary:not([hidden]) ~ .md-content > .md-content__inner {
     margin-left: 0 !important;
     margin-right: 0 !important;
   }
