@@ -6267,10 +6267,16 @@ local function export_config(server, client, request)
     if download then
         table.insert(headers, "Content-Disposition: attachment; filename=astra-export.json")
     end
+    local encoded
+    if json and type(json.encode_pretty) == "function" then
+        encoded = json.encode_pretty(payload)
+    else
+        encoded = json.encode(payload)
+    end
     server:send(client, {
         code = 200,
         headers = headers,
-        content = json.encode(payload),
+        content = encoded,
     })
 end
 
