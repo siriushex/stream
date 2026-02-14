@@ -961,12 +961,14 @@ end
 local function apply_log_settings()
     if log_store and type(log_store.configure) == "function" then
         log_store.configure({
+            enabled = config.get_setting("log_store_enabled"),
             max_entries = config.get_setting("log_max_entries"),
             retention_sec = config.get_setting("log_retention_sec"),
         })
     end
     if access_log and type(access_log.configure) == "function" then
         access_log.configure({
+            enabled = config.get_setting("access_log_enabled"),
             max_entries = config.get_setting("access_log_max_entries"),
             retention_sec = config.get_setting("access_log_retention_sec"),
         })
