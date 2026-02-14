@@ -11,6 +11,8 @@ function api.pngts_job_payload(job)
         stream_id = job.stream_id,
         status = job.status,
         error = job.error,
+        exit_code = job.exit_code,
+        signal = job.signal,
         result = job.result,
         logs = job.logs,
         created_at = job.created_at,
