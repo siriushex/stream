@@ -180,12 +180,22 @@ local function update_query_param(url, key, value)
     return (path or "") .. qs .. (hash or "")
 end
 
-local function extract_token_from_query(request)
+local function extract_token_from_query(request, token_param)
     if not request or not request.query then
         return nil
     end
-    if request.query.token and request.query.token ~= "" then
-        return request.query.token
+    local query = request.query
+    token_param = token_param or "token"
+
+    local value = query[token_param]
+    if value == nil and token_param ~= "token" then
+        value = query.token
+    end
+    if value == nil then
+        value = query.access_token
+    end
+    if value ~= nil and tostring(value) ~= "" then
+        return tostring(value)
     end
     return nil
 end
@@ -199,7 +209,7 @@ local function extract_token_from_url(url)
         return nil
     end
     local params = parse_query_string(query)
-    local token = params.token
+    local token = params.token or params.access_token
     if token and token ~= "" then
         return token
     end
@@ -235,6 +245,108 @@ local function parse_session_keys(value)
     return keys
 end
 
+local function ip_to_u32(ip)
+    if not ip or ip == "" then
+        return nil
+    end
+    local a, b, c, d = tostring(ip):match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+    a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+    if not a or not b or not c or not d then
+        return nil
+    end
+    if a > 255 or b > 255 or c > 255 or d > 255 then
+        return nil
+    end
+    return a * 16777216 + b * 65536 + c * 256 + d
+end
+
+local function cidr_match(ip, cidr)
+    local base, mask = tostring(cidr or ""):match("^(.-)/(%d+)$")
+    if not base or not mask then
+        return false
+    end
+    local ip_num = ip_to_u32(ip)
+    local base_num = ip_to_u32(base)
+    local bits = tonumber(mask)
+    if not ip_num or not base_num or not bits or bits < 0 or bits > 32 then
+        return false
+    end
+    if bits == 0 then
+        return true
+    end
+    local shift = 32 - bits
+    local factor = 2 ^ shift
+    return math.floor(ip_num / factor) == math.floor(base_num / factor)
+end
+
+local function list_items(value)
+    if value == nil then
+        return {}
+    end
+    if type(value) == "table" then
+        local out = {}
+        for _, item in ipairs(value) do
+            if item ~= nil then
+                local text = tostring(item)
+                if text ~= "" then
+                    out[#out + 1] = text
+                end
+            end
+        end
+        return out
+    end
+    local out = {}
+    local text = tostring(value)
+    for item in text:gmatch("[^,%s]+") do
+        out[#out + 1] = item
+    end
+    return out
+end
+
+local function list_has_exact(list, value)
+    if not value or value == "" then
+        return false
+    end
+    for _, item in ipairs(list or {}) do
+        if tostring(item) == tostring(value) then
+            return true
+        end
+    end
+    return false
+end
+
+local function list_has_ip(list, ip)
+    if not ip or ip == "" then
+        return false
+    end
+    for _, item in ipairs(list or {}) do
+        local text = tostring(item)
+        if text == tostring(ip) then
+            return true
+        end
+        if text:find("/", 1, true) then
+            if cidr_match(ip, text) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function list_has_substring(list, value)
+    if not value or value == "" then
+        return false
+    end
+    local hay = tostring(value):lower()
+    for _, item in ipairs(list or {}) do
+        local needle = tostring(item):lower()
+        if needle ~= "" and hay:find(needle, 1, true) ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 local function make_session_id(keys, values, algo)
     local parts = {}
     for _, key in ipairs(keys) do
@@ -265,27 +377,115 @@ local function build_request_uri(request)
     return uri
 end
 
-local function resolve_backend_url(mode, stream_cfg)
-    if stream_cfg and mode == "play" and stream_cfg.on_play and stream_cfg.on_play ~= "" then
-        return tostring(stream_cfg.on_play)
+local function get_auth_backends_setting()
+    if config and config.get_setting then
+        local raw = config.get_setting("auth_backends")
+        if type(raw) == "table" then
+            return raw
+        end
     end
-    if stream_cfg and mode == "publish" and stream_cfg.on_publish and stream_cfg.on_publish ~= "" then
-        return tostring(stream_cfg.on_publish)
-    end
-    if mode == "play" then
-        return setting_string("auth_on_play_url", "")
-    end
-    if mode == "publish" then
-        return setting_string("auth_on_publish_url", "")
-    end
-    return ""
+    return {}
 end
 
-local function is_auth_enabled(mode, stream_cfg, backend_url)
+local function parse_auth_backend_ref(spec)
+    if not spec or spec == "" then
+        return nil
+    end
+    local text = tostring(spec)
+    if text:find("auth://", 1, true) ~= 1 then
+        return nil
+    end
+    local rest = text:sub(8)
+    local name = rest:match("^([^%s/?#]+)")
+    if not name or name == "" then
+        return nil
+    end
+    return name
+end
+
+local function normalize_backend_list(value)
+    if value == nil then
+        return {}
+    end
+    if type(value) == "table" then
+        local out = {}
+        -- list of strings or objects {url,timeout_ms,params}
+        for _, item in ipairs(value) do
+            if type(item) == "string" and item ~= "" then
+                out[#out + 1] = { url = item }
+            elseif type(item) == "table" then
+                local url = item.url or item.backend or item[1]
+                if url ~= nil and tostring(url) ~= "" then
+                    out[#out + 1] = {
+                        url = tostring(url),
+                        timeout_ms = tonumber(item.timeout_ms or item.timeout) or nil,
+                        params = type(item.params) == "table" and item.params or nil,
+                    }
+                end
+            end
+        end
+        return out
+    end
+    local out = {}
+    local text = tostring(value or "")
+    for part in text:gmatch("[^\r\n,%s]+") do
+        if part ~= "" then
+            out[#out + 1] = { url = part }
+        end
+    end
+    return out
+end
+
+local function resolve_backend(mode, stream_cfg)
+    local spec = ""
+    if stream_cfg and mode == "play" and stream_cfg.on_play and stream_cfg.on_play ~= "" then
+        spec = tostring(stream_cfg.on_play)
+    elseif stream_cfg and mode == "publish" and stream_cfg.on_publish and stream_cfg.on_publish ~= "" then
+        spec = tostring(stream_cfg.on_publish)
+    elseif mode == "play" then
+        spec = setting_string("auth_on_play_url", "")
+    elseif mode == "publish" then
+        spec = setting_string("auth_on_publish_url", "")
+    end
+
+    if spec == nil or spec == "" then
+        return nil
+    end
+
+    local backend_name = parse_auth_backend_ref(spec)
+    if backend_name then
+        local backends = get_auth_backends_setting()
+        local cfg = backends and backends[backend_name] or nil
+        return {
+            kind = "auth_backend",
+            name = backend_name,
+            cfg = cfg,
+            spec = spec,
+        }
+    end
+
+    -- direct URL backend (single or comma/newline separated list)
+    return {
+        kind = "http_backend",
+        backends = normalize_backend_list(spec),
+        spec = spec,
+    }
+end
+
+local function is_auth_enabled(mode, stream_cfg, backend_desc)
     if stream_cfg and stream_cfg.auth_enabled ~= nil then
         return normalize_bool(stream_cfg.auth_enabled, false)
     end
-    return backend_url ~= nil and backend_url ~= ""
+    if not backend_desc then
+        return false
+    end
+    if backend_desc.kind == "auth_backend" then
+        return backend_desc.name ~= nil and backend_desc.name ~= ""
+    end
+    if backend_desc.kind == "http_backend" then
+        return type(backend_desc.backends) == "table" and backend_desc.backends[1] ~= nil
+    end
+    return false
 end
 
 local function build_values(ctx)
@@ -299,6 +499,42 @@ local function build_values(ctx)
         ua = ctx.user_agent,
         referer = ctx.referer,
     }
+end
+
+local function build_session_values(ctx, session_keys)
+    local values = build_values(ctx)
+    local request = ctx and ctx.request or nil
+    local headers = (request and request.headers) or {}
+    local query = (request and request.query) or {}
+    local cookies = parse_cookie(headers)
+
+    values.host = header_value(headers, "host") or ""
+    values.referer = values.referer or header_value(headers, "referer") or ""
+    values.user_agent = values.user_agent or header_value(headers, "user-agent") or ""
+    values.ua = values.ua or values.user_agent
+    values.country = header_value(headers, "cf-ipcountry")
+        or header_value(headers, "x-country")
+        or header_value(headers, "x-geo-country")
+        or ""
+
+    -- Поддержка session_keys в стиле Flussonic: header.* / query.* / cookie.*
+    for _, key in ipairs(session_keys or {}) do
+        if values[key] == nil then
+            local kind, name = tostring(key):match("^(%w+)%.(.+)$")
+            if kind and name then
+                kind = kind:lower()
+                if kind == "header" then
+                    values[key] = header_value(headers, name) or ""
+                elseif kind == "query" then
+                    values[key] = query[name] or ""
+                elseif kind == "cookie" then
+                    values[key] = cookies[name] or ""
+                end
+            end
+        end
+    end
+
+    return values
 end
 
 local function session_from_cache(session_id)
@@ -420,7 +656,7 @@ local function enforce_unique(entry, opts)
     end
 end
 
-local function build_backend_request(url, params, method, body)
+local function build_backend_request(url, params, method, body, timeout_ms)
     local parsed = parse_url(url)
     if not parsed then
         return nil, "invalid backend url"
@@ -458,12 +694,12 @@ local function build_backend_request(url, params, method, body)
         ssl = (parsed.format == "https"),
         headers = headers,
         content = body,
-        timeout = setting_number("auth_timeout_ms", 3000),
+        timeout = tonumber(timeout_ms) or setting_number("auth_timeout_ms", 3000),
     }, nil
 end
 
-function auth.get_token(request)
-    local token = extract_token_from_query(request)
+function auth.get_token(request, token_param)
+    local token = extract_token_from_query(request, token_param)
     if token and token ~= "" then
         return token
     end
@@ -561,10 +797,18 @@ local function create_entry(ctx, session_id, status, ttl, meta)
     entry.mode = ctx.mode
     entry.status = status
     entry.created_at = entry.created_at or now()
+    entry.opened_at = entry.opened_at or entry.created_at
     entry.last_seen = now()
     entry.expires_at = now() + ttl
     entry.session_keys = ctx.session_keys
     entry.token_hash = ctx.token_hash
+    if status == "ALLOW" and ctx.token and ctx.token ~= "" then
+        entry.token = ctx.token
+    end
+    entry.backend_spec = ctx.backend_spec or entry.backend_spec
+    entry.backend_name = ctx.backend_name or entry.backend_name
+    entry.redirect_location = meta.redirect_location or entry.redirect_location
+    entry.request_number = meta.request_number or entry.request_number
     entry.last_backend_ts = meta.last_backend_ts or entry.last_backend_ts
     entry.last_backend_code = meta.last_backend_code or entry.last_backend_code
     entry.last_backend_error = meta.last_backend_error or entry.last_backend_error
@@ -575,90 +819,90 @@ local function create_entry(ctx, session_id, status, ttl, meta)
     return entry
 end
 
-local function handle_backend_result(ctx, session_id, response, backend_error, callback)
-    local deny_ttl = setting_number("auth_deny_cache_sec", 180)
+local function backend_defaults_for(ctx)
     local allow_ttl = setting_number("auth_default_duration_sec", 180)
-    local grace_ttl = 30
-    local overlimit_policy = setting_string("auth_overlimit_policy", "deny_new")
-    local meta = {
-        last_backend_ts = now(),
-        last_backend_code = response and response.code or 0,
-        last_backend_error = backend_error,
-    }
+    local deny_ttl = setting_number("auth_deny_cache_sec", 180)
+    local allow_default = setting_bool("auth_allow_default", false)
 
-    local existing = session_from_cache(session_id)
-
-    if backend_error then
-        if log then
-            log.warning("[auth] backend error: " .. tostring(backend_error) ..
-                " stream=" .. tostring(ctx.stream_id) .. " proto=" .. tostring(ctx.proto))
+    local cfg = ctx and ctx.backend_cfg or nil
+    if type(cfg) == "table" then
+        if cfg.allow_default ~= nil then
+            allow_default = normalize_bool(cfg.allow_default, allow_default)
         end
-        local reason = "backend_error"
-        if existing and existing.status == "ALLOW" then
-            local entry = create_entry(ctx, session_id, "ALLOW", grace_ttl, meta)
-            callback(true, entry, reason)
-            return
-        end
-        local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
-        callback(false, entry, reason)
-        return
-    end
-
-    if not response then
-        local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
-        callback(false, entry, "backend_no_response")
-        return
-    end
-
-    if response.code == 200 then
-        local headers = parse_backend_headers(response.headers or {})
-        if headers.duration and headers.duration > 0 then
-            allow_ttl = headers.duration
-        end
-        meta.user_id = headers.user_id
-        meta.max_sessions = headers.max_sessions
-        meta.unique = headers.unique
-
-        local entry = create_entry(ctx, session_id, "ALLOW", allow_ttl, meta)
-        local ok = enforce_limits(entry, {
-            deny_ttl = deny_ttl,
-            overlimit_policy = overlimit_policy,
-        })
-        if not ok then
-            entry.status = "DENY"
-            entry.expires_at = now() + deny_ttl
-            if log then
-                log.info("[auth] deny (overlimit) stream=" .. tostring(ctx.stream_id) ..
-                    " proto=" .. tostring(ctx.proto))
+        if type(cfg.cache) == "table" then
+            local a = tonumber(cfg.cache.default_allow_sec)
+            local d = tonumber(cfg.cache.default_deny_sec)
+            if a and a > 0 then
+                allow_ttl = a
             end
-            callback(false, entry, "overlimit_deny")
-            return
+            if d and d > 0 then
+                deny_ttl = d
+            end
         end
-        enforce_unique(entry, { deny_ttl = deny_ttl })
-        if log then
-            log.debug("[auth] allow stream=" .. tostring(ctx.stream_id) ..
-                " proto=" .. tostring(ctx.proto))
-        end
-        callback(true, entry, "backend_allow")
-        return
     end
 
-    if response.code == 403 then
-        local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
-        if log then
-            log.info("[auth] deny stream=" .. tostring(ctx.stream_id) ..
-                " proto=" .. tostring(ctx.proto))
-        end
-        callback(false, entry, "backend_deny")
-        return
+    if ctx and ctx.allow_default_override ~= nil then
+        allow_default = normalize_bool(ctx.allow_default_override, allow_default)
     end
 
-    if log then
-        log.warning("[auth] backend error code: " .. tostring(response.code) ..
-            " stream=" .. tostring(ctx.stream_id) .. " proto=" .. tostring(ctx.proto))
+    return allow_ttl, deny_ttl, allow_default
+end
+
+local function classify_backend_error(response)
+    if not response or not response.code then
+        return "backend_no_response"
     end
-    local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
-    callback(false, entry, "backend_error_code")
+    if response.code == 0 then
+        return response.message or "backend_timeout"
+    end
+    if response.code >= 500 then
+        return "backend_" .. tostring(response.code)
+    end
+    return nil
+end
+
+local function rule_decision(ctx)
+    local cfg = ctx and ctx.backend_cfg or nil
+    if type(cfg) ~= "table" or type(cfg.rules) ~= "table" then
+        return nil
+    end
+    local rules = cfg.rules
+    local allow = type(rules.allow) == "table" and rules.allow or {}
+    local deny = type(rules.deny) == "table" and rules.deny or {}
+
+    local token = tostring(ctx.token or "")
+    local ip = tostring(ctx.ip or "")
+    local country = tostring(ctx.country or "")
+    local ua = tostring(ctx.user_agent or "")
+
+    -- Приоритет как в ТЗ (Flussonic-like):
+    -- allow token -> deny token -> allow ip -> deny ip -> allow country -> deny country -> allow ua -> deny ua
+    if list_has_exact(list_items(allow.token or allow.tokens), token) then
+        return { decision = "ALLOW", reason = "rule_allow_token" }
+    end
+    if list_has_exact(list_items(deny.token or deny.tokens), token) then
+        return { decision = "DENY", reason = "rule_deny_token" }
+    end
+    if list_has_ip(list_items(allow.ip or allow.ips), ip) then
+        return { decision = "ALLOW", reason = "rule_allow_ip" }
+    end
+    if list_has_ip(list_items(deny.ip or deny.ips), ip) then
+        return { decision = "DENY", reason = "rule_deny_ip" }
+    end
+    if list_has_exact(list_items(allow.country or allow.countries), country) then
+        return { decision = "ALLOW", reason = "rule_allow_country" }
+    end
+    if list_has_exact(list_items(deny.country or deny.countries), country) then
+        return { decision = "DENY", reason = "rule_deny_country" }
+    end
+    if list_has_substring(list_items(allow.ua or allow.user_agent or allow.user_agents), ua) then
+        return { decision = "ALLOW", reason = "rule_allow_ua" }
+    end
+    if list_has_substring(list_items(deny.ua or deny.user_agent or deny.user_agents), ua) then
+        return { decision = "DENY", reason = "rule_deny_ua" }
+    end
+
+    return nil
 end
 
 local function should_log_backend_error(entry)
@@ -670,8 +914,27 @@ local function should_log_backend_error(entry)
     return false
 end
 
-local function check_backend(ctx, session_id, backend_url, callback)
+local function backend_location(headers)
+    if not headers then
+        return nil
+    end
+    return headers.location or headers.Location or headers["Location"] or headers["location"]
+end
+
+local function check_backend_one(ctx, session_id, backend, callback)
+    local backend_url = backend and backend.url or nil
+    if not backend_url or backend_url == "" then
+        callback({ url = "", error = "backend_url_missing" })
+        return
+    end
+
+    local request_type = tostring(ctx.request_type or "open_session")
+    local request_number = tonumber(ctx.request_number) or 1
+
     local params = {}
+    local method = (ctx.mode == "publish") and "POST" or "GET"
+    local body = nil
+
     if ctx.mode ~= "publish" then
         params = {
             name = ctx.stream_id or "",
@@ -679,57 +942,161 @@ local function check_backend(ctx, session_id, backend_url, callback)
             proto = ctx.proto or "",
             token = ctx.token or "",
             session_id = session_id,
+            request_type = request_type,
+            request_number = request_number,
+            stream_clients = tonumber(ctx.stream_clients) or 0,
+            total_clients = tonumber(ctx.total_clients) or 0,
+            duration = tonumber(ctx.duration_sec) or 0,
+            bytes = tonumber(ctx.bytes) or 0,
+            qs = ctx.qs or "",
             uri = ctx.uri or "",
+            host = ctx.host or "",
             user_agent = ctx.user_agent or "",
             referer = ctx.referer or "",
+            dvr = ctx.dvr == true and "1" or "0",
+            playback_session_id = ctx.playback_session_id or "",
         }
-    end
-    local method = (ctx.mode == "publish") and "POST" or "GET"
-    local body = nil
-    if ctx.mode == "publish" then
+        if type(backend.params) == "table" then
+            for k, v in pairs(backend.params) do
+                params[k] = tostring(v or "")
+            end
+        end
+    else
         body = json.encode({
             name = ctx.stream_id or "",
             ip = ctx.ip or "",
             proto = ctx.proto or "",
             token = ctx.token or "",
             session_id = session_id,
+            request_type = request_type,
+            request_number = request_number,
             uri = ctx.uri or "",
             user_agent = ctx.user_agent or "",
         })
     end
 
-    local req, err = build_backend_request(backend_url, params, method, body)
+    local req, err = build_backend_request(backend_url, params, method, body, backend and backend.timeout_ms or nil)
     if not req then
-        callback(false, nil, err or "backend_config_error")
+        callback({ url = backend_url, error = err or "backend_config_error" })
         return
     end
 
     req.callback = function(self, response)
-        local backend_error = nil
-        if not response or not response.code then
-            backend_error = "backend_no_response"
-        elseif response.code == 0 then
-            backend_error = response.message or "backend_timeout"
-        elseif response.code >= 500 then
-            backend_error = "backend_" .. tostring(response.code)
-        end
-
-        handle_backend_result(ctx, session_id, response, backend_error, callback)
-
-        if backend_error and config and config.add_alert then
-            local entry = session_from_cache(session_id) or { session_id = session_id }
-            if should_log_backend_error(entry) then
-                config.add_alert("ERROR", ctx.stream_id, "AUTH_BACKEND_DOWN",
-                    "auth backend error: " .. tostring(backend_error), {
-                        mode = ctx.mode,
-                        backend = backend_url,
-                        stream_id = ctx.stream_id,
-                    })
-            end
-        end
+        local backend_error = classify_backend_error(response)
+        callback({
+            url = backend_url,
+            response = response,
+            error = backend_error,
+            location = response and backend_location(response.headers or {}) or nil,
+        })
     end
 
     http_request(req)
+end
+
+local function check_backend_group(ctx, session_id, backend_desc, callback)
+    local backends = {}
+    if backend_desc and backend_desc.kind == "auth_backend" then
+        ctx.backend_cfg = backend_desc.cfg
+        local cfg = backend_desc.cfg
+        if type(cfg) == "table" then
+            backends = normalize_backend_list(cfg.backends)
+        end
+    elseif backend_desc and backend_desc.kind == "http_backend" then
+        backends = backend_desc.backends or {}
+    end
+
+    if type(backends) ~= "table" or backends[1] == nil then
+        callback({ decision = "DENY", reason = "backend_missing" })
+        return
+    end
+
+    local pending = #backends
+    local done = false
+    local results = {}
+
+    local function finish()
+        if done then
+            return
+        end
+        done = true
+
+        local allow_res = nil
+        local redirect_res = nil
+        local deny_res = nil
+        local all_error = true
+
+        for _, res in ipairs(results) do
+            if res and res.response and res.response.code then
+                local code = tonumber(res.response.code) or 0
+                if code == 200 then
+                    allow_res = allow_res or res
+                    all_error = false
+                elseif code == 302 and res.location and res.location ~= "" then
+                    redirect_res = redirect_res or res
+                    all_error = false
+                elseif code >= 400 and code < 500 then
+                    deny_res = deny_res or res
+                    all_error = false
+                elseif code > 0 then
+                    all_error = false
+                end
+            end
+            if res and res.error == nil and res.response ~= nil and res.response.code ~= nil and res.response.code ~= 0 and res.response.code < 500 then
+                all_error = false
+            end
+        end
+
+        if redirect_res then
+            callback({ decision = "REDIRECT", chosen = redirect_res, reason = "backend_redirect" })
+            return
+        end
+        if allow_res then
+            callback({ decision = "ALLOW", chosen = allow_res, reason = "backend_allow" })
+            return
+        end
+        if deny_res then
+            callback({ decision = "DENY", chosen = deny_res, reason = "backend_deny" })
+            return
+        end
+
+        local allow_ttl, deny_ttl, allow_default = backend_defaults_for(ctx)
+        if all_error then
+            callback({
+                decision = allow_default and "ALLOW_DEFAULT" or "DENY_DEFAULT",
+                reason = "backend_down",
+                allow_ttl = allow_ttl,
+                deny_ttl = deny_ttl,
+            })
+            return
+        end
+
+        callback({ decision = "DENY", reason = "backend_error_code" })
+    end
+
+    for _, backend in ipairs(backends) do
+        check_backend_one(ctx, session_id, backend, function(res)
+            if done then
+                return
+            end
+            table.insert(results, res)
+            pending = pending - 1
+
+            -- allow/redirect can finish early (deny must wait for possible allow).
+            if res and res.response and tonumber(res.response.code) == 200 then
+                finish()
+                return
+            end
+            if res and res.response and tonumber(res.response.code) == 302 and res.location and res.location ~= "" then
+                finish()
+                return
+            end
+
+            if pending <= 0 then
+                finish()
+            end
+        end)
+    end
 end
 
 local function handle_cache_result(ctx, entry, callback)
@@ -740,6 +1107,8 @@ local function handle_cache_result(ctx, entry, callback)
     entry.last_seen = now()
     if entry.status == "ALLOW" then
         callback(true, entry, "cache_allow")
+    elseif entry.redirect_location and entry.redirect_location ~= "" then
+        callback(false, entry, "cache_redirect")
     else
         callback(false, entry, "cache_deny")
     end
@@ -752,15 +1121,32 @@ function auth.check(ctx, callback)
 
     prune_expired()
 
-    local backend_url = resolve_backend_url(ctx.mode, ctx.stream_cfg)
-    if not is_auth_enabled(ctx.mode, ctx.stream_cfg, backend_url) then
+    local backend_desc = resolve_backend(ctx.mode, ctx.stream_cfg)
+    ctx.backend_desc = backend_desc
+    if backend_desc and backend_desc.kind == "auth_backend" then
+        ctx.backend_name = backend_desc.name
+        ctx.backend_spec = backend_desc.spec
+        ctx.backend_cfg = backend_desc.cfg
+    elseif backend_desc then
+        ctx.backend_spec = backend_desc.spec
+    end
+
+    -- Per-stream override: allow_default (optional, fail-open when all backends are down).
+    if ctx.allow_default_override == nil and ctx.stream_cfg then
+        ctx.allow_default_override = ctx.stream_cfg.allow_default_override
+        if ctx.allow_default_override == nil then
+            ctx.allow_default_override = ctx.stream_cfg.auth_allow_default
+        end
+    end
+
+    if not is_auth_enabled(ctx.mode, ctx.stream_cfg, backend_desc) then
         callback(true, nil, "auth_disabled")
         return
     end
 
-    if backend_url == nil or backend_url == "" then
-        if log and ctx.stream_id then
-            log.error("[auth] backend url missing for stream " .. tostring(ctx.stream_id))
+    if backend_desc and backend_desc.kind == "auth_backend" and type(ctx.backend_cfg) ~= "table" then
+        if log then
+            log.error("[auth] backend '" .. tostring(ctx.backend_name) .. "' is not configured (settings.auth_backends)")
         end
         callback(false, nil, "backend_missing")
         return
@@ -782,13 +1168,37 @@ function auth.check(ctx, callback)
 
     local token = ctx.token
     if token == nil and ctx.request then
-        token = auth.get_token(ctx.request)
+        local token_param = ctx.token_param
+            or (ctx.stream_cfg and (ctx.stream_cfg.token_param or ctx.stream_cfg.auth_token_param))
+            or setting_string("auth_token_param", "token")
+        ctx.token_param = token_param
+        token = auth.get_token(ctx.request, token_param)
     end
     ctx.token = token or ""
 
-    local session_keys = parse_session_keys(ctx.session_keys or (ctx.stream_cfg and ctx.stream_cfg.session_keys))
+    local request = ctx.request
+    local headers = request and request.headers or {}
+    ctx.user_agent = ctx.user_agent or header_value(headers, "user-agent") or ""
+    ctx.referer = ctx.referer or header_value(headers, "referer") or ""
+    ctx.host = ctx.host or header_value(headers, "host") or ""
+    ctx.country = ctx.country
+        or header_value(headers, "cf-ipcountry")
+        or header_value(headers, "x-country")
+        or header_value(headers, "x-geo-country")
+        or ""
+    ctx.playback_session_id = ctx.playback_session_id
+        or header_value(headers, "x-playback-session-id")
+        or header_value(headers, "x_playback_session_id")
+        or ""
+    ctx.qs = ctx.qs or build_query(request and request.query or {})
+
+    local session_keys_source = ctx.session_keys or (ctx.stream_cfg and ctx.stream_cfg.session_keys)
+    if session_keys_source == nil and type(ctx.backend_cfg) == "table" and ctx.backend_cfg.session_keys_default ~= nil then
+        session_keys_source = ctx.backend_cfg.session_keys_default
+    end
+    local session_keys = parse_session_keys(session_keys_source)
     local algo = normalize_algo(setting_string("auth_hash_algo", "sha1"))
-    local values = build_values(ctx)
+    local values = build_session_values(ctx, session_keys)
     local session_id = make_session_id(session_keys, values, algo)
     ctx.session_id = session_id
     ctx.session_keys = table.concat(session_keys, ",")
@@ -798,9 +1208,29 @@ function auth.check(ctx, callback)
         ctx.token_hash = ""
     end
 
+    -- Rules (allow/deny) can bypass token requirement.
+    local allow_ttl, deny_ttl, allow_default = backend_defaults_for(ctx)
+    local rule = rule_decision(ctx)
+    if rule and rule.decision == "ALLOW" then
+        local entry = create_entry(ctx, session_id, "ALLOW", allow_ttl, {
+            last_backend_ts = now(),
+            last_backend_code = 0,
+            last_backend_error = rule.reason,
+        })
+        callback(true, entry, rule.reason)
+        return
+    elseif rule and rule.decision == "DENY" then
+        local entry = create_entry(ctx, session_id, "DENY", deny_ttl, {
+            last_backend_ts = now(),
+            last_backend_code = 0,
+            last_backend_error = rule.reason,
+        })
+        callback(false, entry, rule.reason)
+        return
+    end
+
     local allow_no_token = setting_bool("auth_allow_no_token", false)
     if ctx.token == "" and not allow_no_token then
-        local deny_ttl = setting_number("auth_deny_cache_sec", 180)
         local entry = create_entry(ctx, session_id, "DENY", deny_ttl, {
             last_backend_ts = now(),
             last_backend_code = 0,
@@ -827,8 +1257,106 @@ function auth.check(ctx, callback)
         return
     end
 
-    check_backend(ctx, session_id, backend_url, function(allowed, entry, reason)
-        flush_inflight(session_id, allowed, entry, reason)
+    -- First backend check opens the session.
+    ctx.request_type = "open_session"
+    ctx.request_number = (cached and tonumber(cached.request_number) or 0) + 1
+
+    check_backend_group(ctx, session_id, backend_desc, function(result)
+        local grace_ttl = 30
+        local overlimit_policy = setting_string("auth_overlimit_policy", "deny_new")
+
+        local meta = {
+            last_backend_ts = now(),
+            last_backend_code = 0,
+            last_backend_error = result and result.reason or nil,
+            request_number = tonumber(ctx.request_number) or 1,
+        }
+
+        local existing = session_from_cache(session_id)
+
+        local function finish(allowed, entry, reason)
+            flush_inflight(session_id, allowed, entry, reason)
+        end
+
+        if not result then
+            local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
+            finish(false, entry, "backend_no_response")
+            return
+        end
+
+        local decision = tostring(result.decision or "DENY")
+        local chosen = result.chosen
+
+        if chosen and chosen.response and chosen.response.code then
+            meta.last_backend_code = tonumber(chosen.response.code) or 0
+            meta.last_backend_error = chosen.error or meta.last_backend_error
+        end
+
+        if decision == "REDIRECT" and chosen and chosen.location and chosen.location ~= "" then
+            meta.redirect_location = tostring(chosen.location)
+            local entry = create_entry(ctx, session_id, "DENY", allow_ttl, meta)
+            finish(false, entry, "backend_redirect")
+            return
+        end
+
+        if decision == "ALLOW" and chosen and chosen.response and tonumber(chosen.response.code) == 200 then
+            local headers = parse_backend_headers(chosen.response.headers or {})
+            local ttl = allow_ttl
+            if headers.duration and headers.duration > 0 then
+                ttl = headers.duration
+            end
+            meta.user_id = headers.user_id
+            meta.max_sessions = headers.max_sessions
+            meta.unique = headers.unique
+            local entry = create_entry(ctx, session_id, "ALLOW", ttl, meta)
+
+            local ok = enforce_limits(entry, {
+                deny_ttl = deny_ttl,
+                overlimit_policy = overlimit_policy,
+            })
+            if not ok then
+                entry.status = "DENY"
+                entry.expires_at = now() + deny_ttl
+                if log then
+                    log.info("[auth] deny (overlimit) stream=" .. tostring(ctx.stream_id) ..
+                        " proto=" .. tostring(ctx.proto))
+                end
+                finish(false, entry, "overlimit_deny")
+                return
+            end
+            enforce_unique(entry, { deny_ttl = deny_ttl })
+            finish(true, entry, "backend_allow")
+            return
+        end
+
+        if decision == "ALLOW_DEFAULT" then
+            local entry = create_entry(ctx, session_id, "ALLOW", allow_ttl, meta)
+            finish(true, entry, "backend_default_allow")
+            return
+        end
+
+        if decision == "DENY_DEFAULT" and existing and existing.status == "ALLOW" then
+            local entry = create_entry(ctx, session_id, "ALLOW", grace_ttl, meta)
+            finish(true, entry, "backend_grace_allow")
+            return
+        end
+
+        -- DENY (explicit) or default deny.
+        local entry = create_entry(ctx, session_id, "DENY", deny_ttl, meta)
+
+        -- Backend health alerts (rate-limited per session).
+        if (decision == "DENY_DEFAULT" or decision == "ALLOW_DEFAULT") and config and config.add_alert then
+            if should_log_backend_error(entry) then
+                config.add_alert("ERROR", ctx.stream_id, "AUTH_BACKEND_DOWN",
+                    "auth backend down (" .. tostring(ctx.backend_spec or "") .. ")", {
+                        mode = ctx.mode,
+                        backend = ctx.backend_spec,
+                        stream_id = ctx.stream_id,
+                    })
+            end
+        end
+
+        finish(false, entry, result.reason or "backend_deny")
     end)
 end
 

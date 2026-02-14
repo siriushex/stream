@@ -25,6 +25,8 @@ jobs:
         run: tools/hls_memfd_smoke.sh
       - name: Telegram unit
         run: ./astra scripts/tests/telegram_unit.lua
+      - name: Auth backend unit
+        run: ./astra scripts/tests/auth_backend_unit.lua
 
   bundle-smoke:
     runs-on: ubuntu-latest

@@ -1,0 +1,136 @@
+# Settings → Auth backends (порталы)
+
+Auth backend — это “проверка доступа” перед выдачей потока.
+Stream Hub делает HTTP запрос в ваш портал/скрипт и получает ответ: **разрешить / запретить / редирект**.
+
+Это похоже на Flussonic `auth_backend` и подходит для порталов Stalker/Ministra и подобных.
+
+!!! tip "Если auth не включён"
+    Ничего не меняется. Потоки работают как раньше.
+
+## Где настраивается
+
+1. **Settings → Auth backends** — общий список backend’ов (по имени).
+2. **Edit stream → Advanced → On‑play backend override** — включение на конкретном стриме.
+
+## Auth backend по имени (рекомендуется)
+
+1. Откройте **Settings → Auth backends**.
+2. Нажмите **NEW BACKEND**.
+3. Заполните:
+   - **ID** — имя backend’а (например `main1`).
+   - **Default** — что делать, если все порталы “упали”.
+     `Allow` = fail‑open, `Deny` = fail‑closed.
+   - **Backends** — URL(ы) портала. По одному в строке.
+
+После этого на стриме укажите:
+
+```text
+auth://main1
+```
+
+## Несколько порталов (параллельно)
+
+В одном backend можно указать несколько URL.
+Stream Hub опрашивает их параллельно и принимает решение:
+
+- **200** хотя бы от одного → `ALLOW`
+- **403/4xx** (и нет 200) → `DENY`
+- **302 + Location** → `REDIRECT`
+- все **timeout/5xx** → `Default` (Allow/Deny)
+
+## Правила allow/deny (до порталов)
+
+В backend можно задать быстрые правила, чтобы:
+- не дергать порталы на “явно разрешённых” токенах/IP,
+- сразу отсеивать “явно запрещённые”.
+
+Поддерживаются поля:
+- `token`
+- `ip` (включая CIDR, например `10.0.0.0/24`)
+- `ua` (подстрока User‑Agent)
+- `country` (двухбуквенный код, если прокси/edge его добавляет)
+
+Приоритет:
+
+1. allow token
+2. deny token
+3. allow ip
+4. deny ip
+5. allow country
+6. deny country
+7. allow ua
+8. deny ua
+
+## Кэширование (важно для нагрузки)
+
+Stream Hub кэширует решение backend’а на время:
+- `allow ttl` — сколько секунд хранить `ALLOW`
+- `deny ttl` — сколько секунд хранить `DENY`
+
+Пока кэш не истёк — порталы **не опрашиваются**.
+
+## Session keys (стабильная “сессия”)
+
+`session_keys` управляет тем, как считается `session_id`.
+Это важно, когда портал ограничивает “сессии” или ожидает стабильный id.
+
+По умолчанию используются ключи:
+
+```text
+ip, name, proto, token
+```
+
+Можно добавить заголовок:
+
+```text
+header.x-playback-session-id
+```
+
+Это нужно для некоторых STB/порталов.
+
+## Что уходит в портал (параметры запроса)
+
+Для on‑play отправляется GET с параметрами в стиле Flussonic:
+
+- `name` (stream id)
+- `proto` (play/hls/http-ts/…)
+- `ip`
+- `token`
+- `session_id`
+- `request_type` (сейчас `open_session`)
+- `request_number`
+- `stream_clients`, `total_clients`
+- `qs`, `uri`, `host`, `user_agent`, `referer`
+- `dvr` (0/1)
+
+!!! note "Про совместимость"
+    Если ваш портал ожидает другой путь/параметры — используйте прямой URL (см. ниже) или адаптируйте backend.
+
+## Прямой URL на стриме (без имени)
+
+В поле `On‑play backend override` можно указать URL напрямую.
+Также можно указать несколько URL через запятую или новую строку.
+
+Пример (Stalker/Ministra‑подобный скрипт):
+
+```text
+http://portal.example.com/stalker_portal/server/api/chk_flussonic_tmp_link.php
+```
+
+## Быстрая проверка
+
+1. Включите auth на стриме:
+   - `Token auth override` → `Enable`
+   - `On‑play backend override` → `auth://main1`
+2. Попробуйте открыть:
+
+```bash
+curl -i "http://SERVER:9060/play/STREAM_ID?token=TEST"
+```
+
+Ожидаемо:
+- `200` → доступ есть
+- `403` → доступ запрещён
+- `302` + `Location` → редирект на другой URL
+

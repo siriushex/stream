@@ -813,6 +813,28 @@ local function auth_reject(server, client)
     })
 end
 
+local function auth_redirect(server, client, location)
+    if not location or location == "" then
+        return auth_reject(server, client)
+    end
+    server:send(client, {
+        code = 302,
+        headers = {
+            "Location: " .. tostring(location),
+            "Cache-Control: no-store",
+            "Connection: close",
+        },
+        content = "",
+    })
+end
+
+local function auth_reject_or_redirect(server, client, session)
+    if session and session.redirect_location and tostring(session.redirect_location) ~= "" then
+        return auth_redirect(server, client, tostring(session.redirect_location))
+    end
+    return auth_reject(server, client)
+end
+
 local function build_request_uri(request)
     if not request then
         return ""
@@ -852,7 +874,7 @@ local function ensure_token_auth(server, client, request, ctx, on_allow)
     ctx.uri = ctx.uri or build_request_uri(request)
     auth.check_play(ctx, function(allowed, entry)
         if not allowed then
-            auth_reject(server, client)
+            auth_reject_or_redirect(server, client, entry)
             return
         end
         on_allow(entry)
@@ -2537,7 +2559,7 @@ WantedBy=multi-user.target
 	                uri = build_request_uri(request),
 	            }, function(allowed, session)
 	                if not allowed then
-	                    server:abort(client, 403)
+	                    auth_reject_or_redirect(server, client, session)
 	                    return
 	                end
 	                allow_stream(session)

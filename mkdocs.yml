@@ -112,6 +112,7 @@ nav:
           - HLS: manual/settings-hls.md
           - HTTP Play: manual/settings-http-play.md
           - HTTP Authentication: manual/settings-http-auth.md
+          - Auth backends (порталы): manual/settings-auth-backends.md
           - Buffer: manual/settings-buffer.md
           - Telegram alerts: manual/settings-telegram.md
           - SoftCAM / CAS: manual/softcam.md
