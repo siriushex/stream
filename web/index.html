@@ -52,6 +52,7 @@
 	      <button class="settings-item" data-section="public-urls">Public URLs</button>
 	      <button class="settings-item" data-section="buffer">Buffer</button>
 	      <button class="settings-item" data-section="http-auth">HTTP Authentication</button>
+	      <button class="settings-item" data-section="auth-backends">Auth Backends</button>
 	      <button class="settings-item" data-section="softcam">Softcam</button>
 	      <button class="settings-item" data-section="cas">CAS</button>
 	      <button class="settings-item" data-section="servers">Servers</button>
@@ -1306,6 +1307,28 @@
                 <button class="btn ghost" type="button" id="btn-save-http-auth">Save</button>
                 <button class="btn" type="button" id="btn-apply-http-auth">Save &amp; Restart</button>
               </div>
+            </div>
+          </div>
+
+          <div class="settings-section" data-section="auth-backends">
+            <div class="panel users-panel">
+              <div class="panel-title-row">
+                <div class="panel-title">Auth backends</div>
+                <button class="text-link" type="button" id="auth-backend-new">NEW BACKEND</button>
+              </div>
+              <div class="table" id="auth-backend-table">
+                <div class="table-row header">
+                  <div>ID</div>
+                  <div>Backends</div>
+                  <div>Allow default</div>
+                  <div>Rules</div>
+                  <div></div>
+                </div>
+              </div>
+              <div class="muted" id="auth-backend-empty">No auth backends yet</div>
+            </div>
+            <div class="muted">
+              Use <code>auth://&lt;id&gt;</code> in stream <code>On-play backend override</code> or global settings.
             </div>
           </div>
 
@@ -4203,6 +4226,100 @@
             <button class="btn ghost" type="button" id="server-test">Test</button>
             <div class="form-note" id="server-error"></div>
           </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="overlay" id="auth-backend-overlay" aria-hidden="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="auth-backend-title">New auth backend</div>
+        <button class="icon-btn" id="auth-backend-close" aria-label="Close">
+          <span class="icon-x"></span>
+        </button>
+      </div>
+      <form id="auth-backend-form">
+        <div class="modal-body-scroll">
+          <div class="form-grid">
+            <label class="field">
+              <span>ID</span>
+              <input type="text" id="auth-backend-id" placeholder="main" />
+            </label>
+            <label class="checkline">
+              <input type="checkbox" id="auth-backend-allow-default" />
+              <span>Allow if all backends are down</span>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Backend URLs (one per line)</span>
+            <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
+            <small class="form-hint">Requests are sent in parallel. First 200/302 wins.</small>
+          </label>
+
+          <div class="form-subsection">
+            <div class="form-hint">Rules (optional). Comma separated. CIDR supported for IPs.</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>Allow tokens</span>
+                <input type="text" id="auth-backend-allow-tokens" placeholder="token1, token2" />
+              </label>
+              <label class="field">
+                <span>Deny tokens</span>
+                <input type="text" id="auth-backend-deny-tokens" placeholder="badtoken" />
+              </label>
+              <label class="field">
+                <span>Allow IPs</span>
+                <input type="text" id="auth-backend-allow-ips" placeholder="127.0.0.1, 10.0.0.0/24" />
+              </label>
+              <label class="field">
+                <span>Deny IPs</span>
+                <input type="text" id="auth-backend-deny-ips" placeholder="1.2.3.4, 45.139.0.0/16" />
+              </label>
+              <label class="field">
+                <span>Allow UA contains</span>
+                <input type="text" id="auth-backend-allow-ua" placeholder="stb, vlc" />
+              </label>
+              <label class="field">
+                <span>Deny UA contains</span>
+                <input type="text" id="auth-backend-deny-ua" placeholder="bot" />
+              </label>
+              <label class="field">
+                <span>Allow countries</span>
+                <input type="text" id="auth-backend-allow-country" placeholder="US, RU" />
+                <small class="form-hint">Uses CF-IPCountry / X-Country header when present.</small>
+              </label>
+              <label class="field">
+                <span>Deny countries</span>
+                <input type="text" id="auth-backend-deny-country" placeholder="CN" />
+              </label>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>Session keys default</span>
+            <input type="text" id="auth-backend-session-keys" placeholder="ip,name,proto,token,header.x-playback-session-id" />
+            <small class="form-hint">Required keys (ip/name/proto) are always included.</small>
+          </label>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Allow cache (sec)</span>
+              <input type="number" id="auth-backend-allow-ttl" placeholder="180" />
+            </label>
+            <label class="field">
+              <span>Deny cache (sec)</span>
+              <input type="number" id="auth-backend-deny-ttl" placeholder="180" />
+            </label>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <div class="footer-actions">
+            <button class="btn" type="submit" id="auth-backend-save">Save</button>
+            <button class="btn ghost" type="button" id="auth-backend-cancel">Cancel</button>
+          </div>
+          <div class="form-note" id="auth-backend-error"></div>
         </div>
       </form>
     </div>

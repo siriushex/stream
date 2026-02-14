@@ -410,6 +410,9 @@ const state = {
   dvbAdapters: [],
   dvbAdaptersLoaded: false,
   settings: {},
+  authBackends: {},
+  authBackendEditing: null,
+  authBackendEditingId: '',
   stats: {},
   adapterStatus: {},
   sessions: [],
@@ -1991,6 +1994,30 @@ const elements = {
   authAdminBypass: $('#auth-admin-bypass'),
   authAllowNoToken: $('#auth-allow-no-token'),
   authOverlimitPolicy: $('#auth-overlimit-policy'),
+  authBackendNew: $('#auth-backend-new'),
+  authBackendTable: $('#auth-backend-table'),
+  authBackendEmpty: $('#auth-backend-empty'),
+  authBackendOverlay: $('#auth-backend-overlay'),
+  authBackendTitle: $('#auth-backend-title'),
+  authBackendForm: $('#auth-backend-form'),
+  authBackendId: $('#auth-backend-id'),
+  authBackendAllowDefault: $('#auth-backend-allow-default'),
+  authBackendUrls: $('#auth-backend-urls'),
+  authBackendAllowTokens: $('#auth-backend-allow-tokens'),
+  authBackendDenyTokens: $('#auth-backend-deny-tokens'),
+  authBackendAllowIps: $('#auth-backend-allow-ips'),
+  authBackendDenyIps: $('#auth-backend-deny-ips'),
+  authBackendAllowUa: $('#auth-backend-allow-ua'),
+  authBackendDenyUa: $('#auth-backend-deny-ua'),
+  authBackendAllowCountry: $('#auth-backend-allow-country'),
+  authBackendDenyCountry: $('#auth-backend-deny-country'),
+  authBackendSessionKeys: $('#auth-backend-session-keys'),
+  authBackendAllowTtl: $('#auth-backend-allow-ttl'),
+  authBackendDenyTtl: $('#auth-backend-deny-ttl'),
+  authBackendSave: $('#auth-backend-save'),
+  authBackendCancel: $('#auth-backend-cancel'),
+  authBackendClose: $('#auth-backend-close'),
+  authBackendError: $('#auth-backend-error'),
   btnRestart: $('#btn-restart'),
   importFile: $('#import-file'),
   importMode: $('#import-mode'),
@@ -5235,6 +5262,22 @@ function normalizeSoftcams(value) {
   return out;
 }
 
+function normalizeAuthBackends(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  Object.keys(value).forEach((id) => {
+    const key = String(id || '').trim();
+    if (!key) return;
+    const cfg = value[id];
+    if (cfg && typeof cfg === 'object') {
+      out[key] = { ...cfg };
+    } else {
+      out[key] = {};
+    }
+  });
+  return out;
+}
+
 function findSoftcamById(id) {
   if (!id) return null;
   const target = String(id);
@@ -5745,6 +5788,298 @@ function closeGroupModal() {
   state.groupEditing = null;
   state.groupIdAuto = false;
   setOverlay(elements.groupOverlay, false);
+}
+
+function renderAuthBackends() {
+  if (!elements.authBackendTable || !elements.authBackendEmpty) return;
+  const header = `
+    <div class="table-row header">
+      <div>ID</div>
+      <div>Default</div>
+      <div>Backends</div>
+      <div>Rules</div>
+      <div>Cache</div>
+      <div></div>
+    </div>
+  `;
+  elements.authBackendTable.innerHTML = header;
+
+  const map = state.authBackends && typeof state.authBackends === 'object'
+    ? state.authBackends
+    : {};
+  const items = Object.keys(map)
+    .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()))
+    .map((id) => ({ id, cfg: map[id] || {} }));
+
+  if (!items.length) {
+    elements.authBackendEmpty.hidden = false;
+    return;
+  }
+  elements.authBackendEmpty.hidden = true;
+
+  items.forEach(({ id, cfg }) => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+
+    const allowDefault = cfg && cfg.allow_default !== undefined ? (cfg.allow_default === true) : false;
+    const cache = cfg && cfg.cache && typeof cfg.cache === 'object' ? cfg.cache : {};
+    const allowTtl = toNumber(cache.default_allow_sec);
+    const denyTtl = toNumber(cache.default_deny_sec);
+
+    const backendsRaw = cfg ? cfg.backends : null;
+    const backends = Array.isArray(backendsRaw)
+      ? backendsRaw
+      : [];
+    const urls = backends
+      .map((b) => {
+        if (!b) return '';
+        if (typeof b === 'string') return b;
+        if (typeof b === 'object' && b.url) return String(b.url);
+        return '';
+      })
+      .filter(Boolean);
+    const urlsLabel = urls.length
+      ? truncateText(urls[0], 60) + (urls.length > 1 ? ` (+${urls.length - 1})` : '')
+      : '—';
+
+    const rules = cfg && cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : {};
+    const allow = rules.allow && typeof rules.allow === 'object' ? rules.allow : {};
+    const deny = rules.deny && typeof rules.deny === 'object' ? rules.deny : {};
+    const allowTokens = parseCommaList(allow.token || allow.tokens || []).length;
+    const denyTokens = parseCommaList(deny.token || deny.tokens || []).length;
+    const allowIps = parseCommaList(allow.ip || allow.ips || []).length;
+    const denyIps = parseCommaList(deny.ip || deny.ips || []).length;
+    const allowUa = parseCommaList(allow.ua || allow.user_agent || allow.user_agents || []).length;
+    const denyUa = parseCommaList(deny.ua || deny.user_agent || deny.user_agents || []).length;
+    const allowCountry = parseCommaList(allow.country || allow.countries || []).length;
+    const denyCountry = parseCommaList(deny.country || deny.countries || []).length;
+    const rulesParts = [];
+    if (allowTokens || denyTokens) rulesParts.push(`token ${allowTokens}/${denyTokens}`);
+    if (allowIps || denyIps) rulesParts.push(`ip ${allowIps}/${denyIps}`);
+    if (allowUa || denyUa) rulesParts.push(`ua ${allowUa}/${denyUa}`);
+    if (allowCountry || denyCountry) rulesParts.push(`country ${allowCountry}/${denyCountry}`);
+    const rulesLabel = rulesParts.length ? rulesParts.join(' · ') : '—';
+
+    const cacheLabel = [
+      (allowTtl !== undefined ? `allow ${allowTtl}s` : 'allow —'),
+      (denyTtl !== undefined ? `deny ${denyTtl}s` : 'deny —'),
+    ].join(' · ');
+
+    const idCell = createEl('div', '', id);
+    const defaultCell = createEl('div', '', allowDefault ? 'Allow' : 'Deny');
+    const urlCell = createEl('div', '', urlsLabel);
+    if (urls.length) {
+      urlCell.title = urls.join('\n');
+    }
+    const rulesCell = createEl('div', '', rulesLabel);
+    const cacheCell = createEl('div', '', cacheLabel);
+
+    const actionCell = document.createElement('div');
+    const editBtn = createEl('button', 'btn ghost', 'Edit');
+    editBtn.type = 'button';
+    editBtn.dataset.action = 'auth-backend-edit';
+    editBtn.dataset.id = id;
+    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+    deleteBtn.type = 'button';
+    deleteBtn.dataset.action = 'auth-backend-delete';
+    deleteBtn.dataset.id = id;
+    actionCell.appendChild(editBtn);
+    actionCell.appendChild(deleteBtn);
+
+    row.appendChild(idCell);
+    row.appendChild(defaultCell);
+    row.appendChild(urlCell);
+    row.appendChild(rulesCell);
+    row.appendChild(cacheCell);
+    row.appendChild(actionCell);
+    elements.authBackendTable.appendChild(row);
+  });
+}
+
+function openAuthBackendModal(id) {
+  const cfg = id ? (state.authBackends && state.authBackends[id]) : null;
+  state.authBackendEditingId = id ? String(id) : '';
+  state.authBackendEditing = cfg ? { ...cfg } : null;
+
+  if (elements.authBackendTitle) {
+    elements.authBackendTitle.textContent = id ? `Edit auth backend: ${id}` : 'New auth backend';
+  }
+  if (elements.authBackendId) {
+    elements.authBackendId.value = id || '';
+    elements.authBackendId.disabled = !!id;
+  }
+  if (elements.authBackendAllowDefault) {
+    elements.authBackendAllowDefault.checked = cfg ? cfg.allow_default === true : false;
+  }
+  if (elements.authBackendUrls) {
+    const list = cfg ? (cfg.backends || []) : [];
+    const urls = (Array.isArray(list) ? list : [])
+      .map((b) => {
+        if (!b) return '';
+        if (typeof b === 'string') return b;
+        if (typeof b === 'object' && b.url) return String(b.url);
+        return '';
+      })
+      .filter(Boolean);
+    elements.authBackendUrls.value = urls.join('\n');
+  }
+  const rules = cfg && cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : {};
+  const allow = rules.allow && typeof rules.allow === 'object' ? rules.allow : {};
+  const deny = rules.deny && typeof rules.deny === 'object' ? rules.deny : {};
+  if (elements.authBackendAllowTokens) {
+    elements.authBackendAllowTokens.value = formatCommaList(parseCommaList(allow.token || allow.tokens || []));
+  }
+  if (elements.authBackendDenyTokens) {
+    elements.authBackendDenyTokens.value = formatCommaList(parseCommaList(deny.token || deny.tokens || []));
+  }
+  if (elements.authBackendAllowIps) {
+    elements.authBackendAllowIps.value = formatCommaList(parseCommaList(allow.ip || allow.ips || []));
+  }
+  if (elements.authBackendDenyIps) {
+    elements.authBackendDenyIps.value = formatCommaList(parseCommaList(deny.ip || deny.ips || []));
+  }
+  if (elements.authBackendAllowUa) {
+    elements.authBackendAllowUa.value = formatCommaList(parseCommaList(allow.ua || allow.user_agent || allow.user_agents || []));
+  }
+  if (elements.authBackendDenyUa) {
+    elements.authBackendDenyUa.value = formatCommaList(parseCommaList(deny.ua || deny.user_agent || deny.user_agents || []));
+  }
+  if (elements.authBackendAllowCountry) {
+    elements.authBackendAllowCountry.value = formatCommaList(parseCommaList(allow.country || allow.countries || []));
+  }
+  if (elements.authBackendDenyCountry) {
+    elements.authBackendDenyCountry.value = formatCommaList(parseCommaList(deny.country || deny.countries || []));
+  }
+  if (elements.authBackendSessionKeys) {
+    const keys = cfg && cfg.session_keys_default !== undefined ? cfg.session_keys_default : '';
+    elements.authBackendSessionKeys.value = Array.isArray(keys)
+      ? keys.join(',')
+      : String(keys || '');
+  }
+  const cache = cfg && cfg.cache && typeof cfg.cache === 'object' ? cfg.cache : {};
+  if (elements.authBackendAllowTtl) {
+    elements.authBackendAllowTtl.value = cache.default_allow_sec !== undefined ? String(cache.default_allow_sec) : '';
+  }
+  if (elements.authBackendDenyTtl) {
+    elements.authBackendDenyTtl.value = cache.default_deny_sec !== undefined ? String(cache.default_deny_sec) : '';
+  }
+  if (elements.authBackendError) {
+    elements.authBackendError.textContent = '';
+  }
+  setOverlay(elements.authBackendOverlay, true);
+}
+
+function closeAuthBackendModal() {
+  state.authBackendEditingId = '';
+  state.authBackendEditing = null;
+  setOverlay(elements.authBackendOverlay, false);
+}
+
+function parseAuthBackendUrls(value) {
+  const out = [];
+  const text = String(value || '');
+  text.split(/\r?\n/).forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith('#') || trimmed.startsWith(';')) return;
+    trimmed.split(',').forEach((part) => {
+      const url = part.trim();
+      if (url) out.push(url);
+    });
+  });
+  return out;
+}
+
+async function saveAuthBackend() {
+  const id = elements.authBackendId ? elements.authBackendId.value.trim() : '';
+  if (!id) throw new Error('Backend id is required');
+
+  const allowDefault = !!(elements.authBackendAllowDefault && elements.authBackendAllowDefault.checked);
+  const urls = parseAuthBackendUrls(elements.authBackendUrls ? elements.authBackendUrls.value : '');
+  if (!urls.length) throw new Error('At least one backend URL is required');
+
+  const allowTokens = parseCommaList(elements.authBackendAllowTokens && elements.authBackendAllowTokens.value);
+  const denyTokens = parseCommaList(elements.authBackendDenyTokens && elements.authBackendDenyTokens.value);
+  const allowIps = parseCommaList(elements.authBackendAllowIps && elements.authBackendAllowIps.value);
+  const denyIps = parseCommaList(elements.authBackendDenyIps && elements.authBackendDenyIps.value);
+  const allowUa = parseCommaList(elements.authBackendAllowUa && elements.authBackendAllowUa.value);
+  const denyUa = parseCommaList(elements.authBackendDenyUa && elements.authBackendDenyUa.value);
+  const allowCountry = parseCommaList(elements.authBackendAllowCountry && elements.authBackendAllowCountry.value)
+    .map((c) => c.toUpperCase());
+  const denyCountry = parseCommaList(elements.authBackendDenyCountry && elements.authBackendDenyCountry.value)
+    .map((c) => c.toUpperCase());
+
+  const sessionKeys = parseCommaList(elements.authBackendSessionKeys && elements.authBackendSessionKeys.value);
+
+  const allowTtl = toNumber(elements.authBackendAllowTtl && elements.authBackendAllowTtl.value);
+  const denyTtl = toNumber(elements.authBackendDenyTtl && elements.authBackendDenyTtl.value);
+  if (allowTtl !== undefined && allowTtl <= 0) throw new Error('Allow cache TTL must be > 0');
+  if (denyTtl !== undefined && denyTtl <= 0) throw new Error('Deny cache TTL must be > 0');
+
+  const authBackends = { ...(state.authBackends || {}) };
+  const prev = authBackends[id] && typeof authBackends[id] === 'object' ? authBackends[id] : {};
+
+  const prevBackends = Array.isArray(prev.backends) ? prev.backends : [];
+  const prevByUrl = new Map();
+  prevBackends.forEach((b) => {
+    if (!b) return;
+    if (typeof b === 'string' && b) {
+      prevByUrl.set(String(b), { url: String(b) });
+      return;
+    }
+    if (typeof b === 'object' && b.url) {
+      prevByUrl.set(String(b.url), b);
+    }
+  });
+
+  const nextBackends = urls.map((url) => {
+    const existing = prevByUrl.get(url);
+    if (existing && typeof existing === 'object') {
+      return { ...existing, url };
+    }
+    return { url };
+  });
+
+  const nextRules = {
+    allow: {
+      token: allowTokens,
+      ip: allowIps,
+      ua: allowUa,
+      country: allowCountry,
+    },
+    deny: {
+      token: denyTokens,
+      ip: denyIps,
+      ua: denyUa,
+      country: denyCountry,
+    },
+  };
+
+  const nextCache = { ...(prev.cache && typeof prev.cache === 'object' ? prev.cache : {}) };
+  if (allowTtl !== undefined) nextCache.default_allow_sec = allowTtl;
+  if (denyTtl !== undefined) nextCache.default_deny_sec = denyTtl;
+
+  authBackends[id] = {
+    ...prev,
+    allow_default: allowDefault,
+    backends: nextBackends,
+    rules: nextRules,
+    cache: nextCache,
+    session_keys_default: sessionKeys.length ? sessionKeys : undefined,
+  };
+
+  await saveSettings({ auth_backends: authBackends });
+  state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
+  renderAuthBackends();
+  closeAuthBackendModal();
+}
+
+async function deleteAuthBackend(id) {
+  const authBackends = { ...(state.authBackends || {}) };
+  delete authBackends[id];
+  await saveSettings({ auth_backends: authBackends });
+  state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
+  renderAuthBackends();
 }
 
 function renderServers() {
@@ -24771,6 +25106,7 @@ function applySettingsToUI() {
   renderGroups();
   renderSoftcams();
   renderServers();
+  renderAuthBackends();
   updateStreamGroupOptions();
   applyFeatureVisibility();
 
@@ -25757,6 +26093,7 @@ async function loadSettings() {
   state.groups = normalizeGroups(state.settings.groups);
   state.servers = normalizeServers(state.settings.servers);
   state.softcams = normalizeSoftcams(state.settings.softcam);
+  state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
   refreshAllInputCamOptions();
 
   applySettingsToUI();
@@ -29648,6 +29985,46 @@ function bindEvents() {
         const confirmed = window.confirm(`Delete server ${id}?`);
         if (!confirmed) return;
         deleteServer(id).catch((err) => setStatus(err.message || 'Delete failed'));
+      }
+    });
+  }
+
+  if (elements.authBackendNew) {
+    elements.authBackendNew.addEventListener('click', () => openAuthBackendModal(null));
+  }
+  if (elements.authBackendClose) {
+    elements.authBackendClose.addEventListener('click', closeAuthBackendModal);
+  }
+  if (elements.authBackendCancel) {
+    elements.authBackendCancel.addEventListener('click', closeAuthBackendModal);
+  }
+  if (elements.authBackendForm) {
+    elements.authBackendForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await saveAuthBackend();
+      } catch (err) {
+        if (elements.authBackendError) {
+          elements.authBackendError.textContent = err.message || 'Failed to save auth backend';
+        }
+      }
+    });
+  }
+  if (elements.authBackendTable) {
+    elements.authBackendTable.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      const id = target.dataset.id;
+      if (action === 'auth-backend-edit') {
+        if (!id) return;
+        openAuthBackendModal(id);
+      }
+      if (action === 'auth-backend-delete') {
+        if (!id) return;
+        const confirmed = window.confirm(`Delete auth backend ${id}?`);
+        if (!confirmed) return;
+        deleteAuthBackend(id).catch((err) => setStatus(err.message || 'Delete failed'));
       }
     });
   }
