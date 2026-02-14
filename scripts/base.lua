@@ -4376,7 +4376,58 @@ else
     end
 end
 
+-- Защита: access_log тоже не должен ронять UI/API (например, если таблица повреждена).
+local function access_log_sanitize()
+    if type(access_log) ~= "table" then
+        access_log = {
+            entries = {},
+            next_id = 1,
+            enabled = true,
+            max_entries = 2000,
+            retention_sec = 86400,
+            head = 1,
+            tail = 0,
+            count = 0,
+        }
+        return
+    end
+    if type(access_log.entries) ~= "table" then
+        access_log.entries = {}
+    end
+    if access_log.next_id == nil then
+        access_log.next_id = 1
+    end
+    if access_log.enabled == nil then
+        access_log.enabled = true
+    end
+    if access_log.max_entries == nil then
+        access_log.max_entries = 2000
+    end
+    if access_log.retention_sec == nil then
+        access_log.retention_sec = 86400
+    end
+    if type(access_log.head) ~= "number" then
+        access_log.head = tonumber(access_log.head) or 1
+    end
+    if type(access_log.tail) ~= "number" then
+        access_log.tail = tonumber(access_log.tail) or 0
+    end
+    if type(access_log.count) ~= "number" then
+        access_log.count = tonumber(access_log.count) or 0
+    end
+    if access_log.head < 1 then
+        access_log.head = 1
+    end
+    if access_log.tail < 0 then
+        access_log.tail = 0
+    end
+    if access_log.count < 0 then
+        access_log.count = 0
+    end
+end
+
 local function access_log_prune()
+    access_log_sanitize()
     local retention = tonumber(access_log.retention_sec) or 0
     local head = tonumber(access_log.head) or 1
     local tail = tonumber(access_log.tail) or 0
@@ -4433,6 +4484,7 @@ local function access_log_prune()
 end
 
 function access_log.configure(opts)
+    access_log_sanitize()
     if type(opts) ~= "table" then
         return
     end
@@ -4463,6 +4515,7 @@ function access_log.configure(opts)
 end
 
 function access_log.add(entry)
+    access_log_sanitize()
     if access_log.enabled == false then
         return
     end
@@ -4492,6 +4545,7 @@ function access_log.add(entry)
 end
 
 function access_log.list(since_id, limit, event, stream_id, ip, login, text)
+    access_log_sanitize()
     access_log_prune()
     local out = {}
     local max_items = tonumber(limit) or 200
