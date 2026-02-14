@@ -1,0 +1,613 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# При запуске через pipe (curl | bash) BASH_SOURCE может быть пустым, а set -u
+# превращает обращение к BASH_SOURCE[0] в фатальную ошибку.
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  sudo ./install.sh [options]
+
+Modes:
+  --mode source|binary     Download and build from sources, or download a ready binary.
+
+Source/binary download:
+  --url URL                Explicit URL to download (source tarball or binary).
+  --base-url URL           Base URL for artifacts (default: https://stream.centv.ru).
+  --artifact NAME          Artifact filename under base URL.
+  --git-url URL            Git repository URL for --mode source (default: https://github.com/siriushex/stream.git).
+  --git-ref REF            Git ref/branch/tag for --mode source (default: main).
+
+Install paths:
+  --bin PATH               Install path for the binary (default: /usr/local/bin/stream).
+  --data-dir DIR           Config/data root (default: /etc/stream).
+  --workdir DIR            Temporary build dir (default: /tmp/stream-build).
+
+Web assets:
+  --install-web            Copy web assets to /usr/local/share/stream/web (optional override from disk).
+  --no-web                 Do not install web assets (UI will be served from embedded bundle).
+
+Service:
+  --name NAME              Instance name (creates /etc/stream/NAME.json and NAME.env).
+  --port PORT              HTTP port for the instance (requires --name).
+  --enable                 Enable+start systemd unit after install (requires --name).
+
+Deps:
+  --no-ffmpeg              Skip installing ffmpeg/ffprobe + dev libs.
+  --runtime-only           Install only runtime deps (no compiler toolchain). Requires --mode binary.
+  --dry-run                Print actions without running them.
+  -h, --help               Show help.
+
+Notes:
+  - Supports CentOS/RHEL/Rocky/Alma and Debian/Ubuntu.
+  - Source mode builds locally using ./configure.sh && make.
+  - By default, build artifacts are removed after install.
+USAGE
+}
+
+MODE="source"
+URL=""
+# Default artifact host. Can be overridden with --base-url/--url.
+BASE_URL="https://stream.centv.ru"
+ARTIFACT=""
+GIT_URL="https://github.com/siriushex/stream.git"
+GIT_REF="main"
+BIN_PATH="/usr/local/bin/stream"
+DATA_DIR="/etc/stream"
+WORKDIR="/tmp/stream-build"
+INSTALL_WEB=0
+INSTALL_FFMPEG=1
+RUNTIME_ONLY=0
+DRY_RUN=0
+INSTANCE_NAME=""
+PORT=""
+ENABLE_SERVICE=0
+
+log() { printf '%s\n' "$*"; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+STREAM_TMP_BIN=""
+cleanup_tmp() {
+  if [ -n "${STREAM_TMP_BIN:-}" ] && [ -f "${STREAM_TMP_BIN:-}" ]; then
+    rm -f "$STREAM_TMP_BIN" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup_tmp EXIT
+
+is_elf_binary() {
+  # Если вместо бинарника скачался HTML (например, index.html), не устанавливаем.
+  # ELF magic: 0x7f 'E' 'L' 'F' -> 7f454c46.
+  local f="$1"
+  if [ ! -f "$f" ]; then
+    return 1
+  fi
+  local magic
+  magic="$(dd if="$f" bs=1 count=4 2>/dev/null | od -An -t x1 | tr -d ' \n' || true)"
+  [ "$magic" = "7f454c46" ]
+}
+
+run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] $*"
+    return 0
+  fi
+  "$@"
+}
+
+while [ "${#:-0}" -gt 0 ]; do
+  case "${1:-}" in
+    --mode)
+      MODE="${2:-}"; shift 2;;
+    --url)
+      URL="${2:-}"; shift 2;;
+    --base-url)
+      BASE_URL="${2:-}"; shift 2;;
+    --artifact)
+      ARTIFACT="${2:-}"; shift 2;;
+    --git-url)
+      GIT_URL="${2:-}"; shift 2;;
+    --git-ref)
+      GIT_REF="${2:-}"; shift 2;;
+    --bin)
+      BIN_PATH="${2:-}"; shift 2;;
+    --data-dir)
+      DATA_DIR="${2:-}"; shift 2;;
+    --workdir)
+      WORKDIR="${2:-}"; shift 2;;
+    --install-web)
+      INSTALL_WEB=1; shift;;
+    --no-web)
+      INSTALL_WEB=0; shift;;
+    --no-ffmpeg)
+      INSTALL_FFMPEG=0; shift;;
+    --runtime-only)
+      RUNTIME_ONLY=1; shift;;
+    --dry-run)
+      DRY_RUN=1; shift;;
+    --name)
+      INSTANCE_NAME="${2:-}"; shift 2;;
+    --port)
+      PORT="${2:-}"; shift 2;;
+    --enable)
+      ENABLE_SERVICE=1; shift;;
+    -h|--help)
+      usage; exit 0;;
+    *)
+      die "Unknown argument: ${1:-}";;
+  esac
+done
+
+if [ "$(uname -s)" != "Linux" ]; then
+  die "This installer must be run on Linux."
+fi
+
+if [ "$(id -u)" -ne 0 ]; then
+  die "Please run as root (sudo)."
+fi
+
+PKG_MGR=""
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_MGR="apt"
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_MGR="dnf"
+elif command -v yum >/dev/null 2>&1; then
+  PKG_MGR="yum"
+else
+  die "No supported package manager found (apt, dnf, yum)."
+fi
+
+. /etc/os-release || true
+OS_ID="${ID:-unknown}"
+OS_LIKE="${ID_LIKE:-}"
+OS_VER="${VERSION_ID:-}"
+OS_CODENAME="${VERSION_CODENAME:-}"
+
+ARCH="$(uname -m)"
+
+apt_has_candidate() {
+  # apt-cache show может возвращать 0 даже если пакета нет. Используем policy.
+  # Возвращает 0, если у пакета есть Candidate (не "(none)").
+  local pkg="$1"
+  if ! command -v apt-cache >/dev/null 2>&1; then
+    return 1
+  fi
+  local cand
+  cand="$(apt-cache policy "$pkg" 2>/dev/null | awk '/Candidate:/{print $2}' | head -n1)"
+  [ -n "$cand" ] && [ "$cand" != "(none)" ]
+}
+
+ensure_dirs() {
+  run mkdir -p "$DATA_DIR"
+  run chmod 755 "$DATA_DIR"
+}
+
+install_deps_debian() {
+  run apt-get update -y
+  # Ubuntu keeps ffmpeg and some optional deps in "universe". Enable it on-demand.
+  if [ "${OS_ID:-}" = "ubuntu" ]; then
+    if ! apt-cache show ffmpeg >/dev/null 2>&1; then
+      run apt-get install -y --no-install-recommends software-properties-common
+      if command -v add-apt-repository >/dev/null 2>&1; then
+        run add-apt-repository -y universe || true
+        run apt-get update -y
+      else
+        warn "add-apt-repository not found; ffmpeg/libdvbcsa packages may be unavailable."
+      fi
+    fi
+  fi
+
+  run apt-get install -y --no-install-recommends ca-certificates curl tar gzip xz-utils git gcc make pkg-config python3 \
+    openssl libssl-dev libsqlite3-dev
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    run apt-get install -y --no-install-recommends ffmpeg libavcodec-dev libavutil-dev
+  fi
+
+  # Optional deps (soft failure if missing in repo)
+  run apt-get install -y --no-install-recommends libdvbcsa-dev libpq-dev || true
+}
+
+install_runtime_deps_debian() {
+  run apt-get update -y
+
+  # Ubuntu: ensure universe for ffmpeg/libdvbcsa runtime packages.
+  if [ "${OS_ID:-}" = "ubuntu" ]; then
+    if ! apt-cache show ffmpeg >/dev/null 2>&1; then
+      run apt-get install -y --no-install-recommends software-properties-common
+      if command -v add-apt-repository >/dev/null 2>&1; then
+        run add-apt-repository -y universe || true
+        run apt-get update -y
+      else
+        warn "add-apt-repository not found; some packages may be unavailable."
+      fi
+    fi
+  fi
+
+  run apt-get install -y --no-install-recommends ca-certificates curl
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    run apt-get install -y --no-install-recommends ffmpeg
+  fi
+
+  # Runtime libraries for dynamically linked builds.
+  run apt-get install -y --no-install-recommends libsqlite3-0 libpq5 libdvbcsa1 || true
+  # OpenSSL runtime package name depends on Ubuntu/Debian version.
+  # Не пытаемся ставить несуществующие пакеты, чтобы не засорять вывод ошибками apt.
+  if apt_has_candidate libssl3; then
+    run apt-get install -y --no-install-recommends libssl3 || true
+  elif apt_has_candidate libssl1.1; then
+    run apt-get install -y --no-install-recommends libssl1.1 || true
+  elif apt_has_candidate libssl1.0.0; then
+    run apt-get install -y --no-install-recommends libssl1.0.0 || true
+  fi
+}
+
+enable_epel_rhel() {
+  if [ -f /etc/redhat-release ] && ! rpm -q epel-release >/dev/null 2>&1; then
+    run "$PKG_MGR" -y install epel-release || true
+  fi
+}
+
+enable_rpmfusion() {
+  if rpm -q rpmfusion-free-release >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ -f /etc/redhat-release ]; then
+    local rel
+    rel=$(rpm -E %rhel)
+    if [ -n "$rel" ]; then
+      if [ "$DRY_RUN" -eq 1 ]; then
+        log "[dry-run] $PKG_MGR -y install https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm"
+        return 0
+      fi
+      if ! "$PKG_MGR" -y install "https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm"; then
+        warn "rpmfusion HTTPS install failed; trying HTTP"
+        "$PKG_MGR" -y install "http://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm" || true
+      fi
+    fi
+  fi
+}
+
+install_deps_rhel() {
+  enable_epel_rhel
+  run "$PKG_MGR" -y install ca-certificates curl tar gzip xz git gcc make pkgconfig \
+    openssl-devel sqlite-devel
+
+  # Optional deps: dvbcsa, postgres
+  run "$PKG_MGR" -y install libdvbcsa-devel postgresql-devel || true
+
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    enable_rpmfusion
+    run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+  fi
+}
+
+install_runtime_deps_rhel() {
+  enable_epel_rhel
+  run "$PKG_MGR" -y install ca-certificates curl sqlite-libs openssl-libs || true
+  run "$PKG_MGR" -y install libdvbcsa postgresql-libs || true
+  if [ "$INSTALL_FFMPEG" -eq 1 ]; then
+    enable_rpmfusion
+    run "$PKG_MGR" -y install ffmpeg || true
+  fi
+}
+
+resolve_url() {
+  if [ -n "$URL" ]; then
+    printf '%s' "$URL"
+    return 0
+  fi
+
+  if [ -n "$ARTIFACT" ]; then
+    printf '%s/%s' "$BASE_URL" "$ARTIFACT"
+    return 0
+  fi
+
+  if [ "$MODE" = "binary" ]; then
+    printf '%s/stream-linux-%s' "$BASE_URL" "$ARCH"
+    return 0
+  fi
+
+  # Default source tarball name guesses.
+  printf '%s/stream-src.tar.gz' "$BASE_URL"
+}
+
+binary_url_candidates() {
+  # Пытаемся подобрать "наиболее совместимый" артефакт.
+  # Правило: сначала дистро-специфичный, затем generic.
+  #
+  # Это важно для старых Ubuntu/Debian, где:
+  # - другой glibc
+  # - другие версии libssl/libcrypto
+  # - нет libavcodec.so.58 и т.п.
+  local urls=()
+
+  # Ubuntu / Debian
+  if [ -n "${OS_ID:-}" ] && [ -n "${OS_VER:-}" ]; then
+    case "${OS_ID:-}" in
+      ubuntu|debian)
+        urls+=("${BASE_URL}/stream-linux-${OS_ID}${OS_VER}-${ARCH}")
+        ;;
+    esac
+  fi
+
+  # Generic fallback
+  urls+=("${BASE_URL}/stream-linux-${ARCH}")
+
+  printf '%s\n' "${urls[@]}"
+}
+
+fetch_artifact() {
+  local url="$1"
+  local out="$2"
+  run curl -fsSL -o "$out" "$url"
+}
+
+build_from_source() {
+  run rm -rf "$WORKDIR"
+  run mkdir -p "$WORKDIR"
+  local src_root=""
+
+  if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
+    local url
+    url=$(resolve_url)
+    log "Downloading sources: $url"
+
+    local archive="$WORKDIR/stream-src.tar.gz"
+    fetch_artifact "$url" "$archive"
+
+    run tar -xf "$archive" -C "$WORKDIR"
+    src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+    if [ -z "$src_root" ]; then
+      die "Could not find configure.sh in extracted sources. Provide --url explicitly."
+    fi
+  else
+    log "Cloning sources: $GIT_URL (ref: $GIT_REF)"
+    run mkdir -p "$WORKDIR"
+    run rm -rf "$WORKDIR/src"
+    (cd "$WORKDIR" && run git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src)
+    src_root="$WORKDIR/src"
+    if [ ! -f "$src_root/configure.sh" ]; then
+      die "Could not find configure.sh in cloned sources. Try --git-ref or --url."
+    fi
+  fi
+
+  log "Building from: $src_root"
+  # Стараемся собирать максимально полный функционал (softcam/descramble),
+  # даже если в системе нет libdvbcsa-dev.
+  (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
+
+  if [ ! -x "$src_root/astra" ]; then
+    die "Build succeeded but binary 'astra' not found."
+  fi
+
+  run install -m 755 "$src_root/astra" "$BIN_PATH"
+
+  if [ "$INSTALL_WEB" -eq 1 ]; then
+    run mkdir -p /usr/local/share/stream/web
+    run cp -r "$src_root/web"/* /usr/local/share/stream/web/
+  fi
+
+  run rm -rf "$WORKDIR"
+}
+
+check_runtime_binary_usable() {
+  # Проверяем, что бинарник можно запустить в этой системе:
+  # - нет missing .so
+  # - нет ошибок вида "version `GLIBC_2.xx' not found"
+  # Возвращает 0 если ок. Если нет — возвращает 1 и печатает причину в stdout.
+  local f="$1"
+  if ! command -v ldd >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local out
+  if ! out="$(ldd "$f" 2>&1)"; then
+    # Обычно сюда попадают несовместимости glibc/loader.
+    printf '%s' "$out"
+    return 1
+  fi
+  if echo "$out" | grep -qi "not a dynamic executable"; then
+    return 0
+  fi
+
+  local missing
+  missing="$(echo "$out" | awk '/not found/{print $1}' | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ -n "$missing" ]; then
+    printf 'missing libs: %s' "$missing"
+    return 1
+  fi
+
+  return 0
+}
+
+install_binary() {
+  run mkdir -p "$(dirname "$BIN_PATH")"
+
+  STREAM_TMP_BIN="$(mktemp -t stream-bin.XXXXXX)"
+  local tmp="$STREAM_TMP_BIN"
+
+  # If user provided an explicit URL or artifact name, use it as-is.
+  if [ -n "$URL" ] || [ -n "$ARTIFACT" ]; then
+    local url
+    url=$(resolve_url)
+    log "Downloading binary: $url"
+    fetch_artifact "$url" "$tmp"
+    if ! is_elf_binary "$tmp"; then
+      die "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
+    fi
+    local reason=""
+    if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+      die "Downloaded binary is not usable on this system ($reason). Install required packages or use --mode source."
+    fi
+    run install -m 755 "$tmp" "$BIN_PATH"
+    STREAM_TMP_BIN=""
+    return 0
+  fi
+
+  local last_err=""
+  local url=""
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    log "Downloading binary: $url"
+    if ! fetch_artifact "$url" "$tmp"; then
+      warn "Download failed: $url"
+      last_err="download failed"
+      continue
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log "[dry-run] would install binary to: $BIN_PATH"
+      return 0
+    fi
+    if ! is_elf_binary "$tmp"; then
+      warn "Downloaded file is not a Linux ELF binary (maybe an HTML error page): $url"
+      last_err="not an ELF binary"
+      continue
+    fi
+    local reason=""
+    if ! reason="$(check_runtime_binary_usable "$tmp")"; then
+      warn "Downloaded binary is not usable on this system ($reason): $url"
+      last_err="$reason"
+      continue
+    fi
+    run install -m 755 "$tmp" "$BIN_PATH"
+    STREAM_TMP_BIN=""
+    return 0
+  done < <(binary_url_candidates)
+
+  die "Failed to download a usable prebuilt binary (last error: ${last_err:-unknown}). Try --mode source, or provide --url/--artifact explicitly."
+}
+
+check_runtime_libs() {
+  if ! command -v ldd >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Static binaries print "not a dynamic executable" - that's OK.
+  local out
+  out="$(ldd "$BIN_PATH" 2>&1 || true)"
+  if echo "$out" | grep -qi "not a dynamic executable"; then
+    return 0
+  fi
+
+  local missing
+  missing="$(echo "$out" | awk '/not found/{print $1}' | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ -n "$missing" ]; then
+    die "Missing runtime libraries for $BIN_PATH: $missing. Install the required packages or use --mode source."
+  fi
+}
+
+write_systemd_unit() {
+  # В контейнерах (Docker) и некоторых минимальных окружениях systemd не работает.
+  # Установку бинарника и конфигов делаем всё равно, а сервис пропускаем.
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    warn "systemd not detected; skipping unit install"
+    return 0
+  fi
+  local unit_path="/etc/systemd/system/stream@.service"
+  if [ ! -f "$unit_path" ]; then
+    cat > "$unit_path" <<UNIT
+[Unit]
+Description=Stream server (%i)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-${DATA_DIR}/%i.env
+WorkingDirectory=${DATA_DIR}
+ExecStart=${BIN_PATH} -c ${DATA_DIR}/%i.json -p \${STREAM_PORT:-8816}
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  fi
+  run systemctl daemon-reload
+}
+
+write_instance_files() {
+  if [ -z "$INSTANCE_NAME" ]; then
+    return 0
+  fi
+
+  local cfg="$DATA_DIR/${INSTANCE_NAME}.json"
+  local env="$DATA_DIR/${INSTANCE_NAME}.env"
+
+  if [ ! -f "$cfg" ]; then
+    printf '{}' > "$cfg"
+  fi
+
+  if [ -z "$PORT" ]; then
+    PORT="8816"
+  fi
+
+  {
+    printf 'STREAM_PORT=%s\n' "$PORT"
+    if [ "$INSTALL_WEB" -eq 1 ]; then
+      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/stream/web"
+    fi
+  } > "$env"
+}
+
+maybe_enable_service() {
+  if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then
+    return 0
+  fi
+  if ! command -v systemctl >/dev/null 2>&1 || [ ! -d /run/systemd/system ]; then
+    warn "systemd not detected; skipping enable/start"
+    return 0
+  fi
+  run systemctl enable --now "stream@${INSTANCE_NAME}.service"
+}
+
+main() {
+  if [ "$MODE" != "source" ] && [ "$MODE" != "binary" ]; then
+    die "Unsupported --mode: $MODE (use source or binary)"
+  fi
+
+  if [ "$RUNTIME_ONLY" -eq 1 ] && [ "$MODE" != "binary" ]; then
+    die "--runtime-only requires --mode binary"
+  fi
+
+  # Важно: НЕ переключаемся автоматически на сборку из исходников.
+  # Пользователь должен явно выбрать --mode source, если бинарник не подходит.
+
+  ensure_dirs
+
+  if [ "$PKG_MGR" = "apt" ]; then
+    if [ "$RUNTIME_ONLY" -eq 1 ]; then
+      install_runtime_deps_debian
+    else
+      install_deps_debian
+    fi
+  else
+    if [ "$RUNTIME_ONLY" -eq 1 ]; then
+      install_runtime_deps_rhel
+    else
+      install_deps_rhel
+    fi
+  fi
+
+  if [ "$MODE" = "source" ]; then
+    build_from_source
+  else
+    install_binary
+    check_runtime_libs
+  fi
+
+  if [ "$INSTALL_WEB" -eq 0 ]; then
+    log "Web assets not installed. UI will be served from embedded bundle."
+  fi
+
+  write_systemd_unit
+  write_instance_files
+  maybe_enable_service
+
+  log "Done. Binary: $BIN_PATH"
+  log "Config root: $DATA_DIR"
+}
+
+main

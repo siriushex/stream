@@ -1,70 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stream Hub installer for macOS.
-# Installs a prebuilt binary (Apple Silicon) and creates a default config directory.
-
 BASE_URL="https://stream.centv.ru"
+BIN_PATH="/usr/local/bin/stream"
 
-if [ "$(uname -s)" != "Darwin" ]; then
-  echo "ERROR: This installer is for macOS." >&2
-  exit 1
-fi
+log() { printf '%s\n' "$*"; }
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
 ARCH="$(uname -m)"
-URL=""
-
 case "$ARCH" in
-  arm64)
-    URL="${BASE_URL}/stream-macos-arm64"
-    ;;
-  x86_64)
-    URL="${BASE_URL}/stream-macos-x86_64"
-    ;;
-  *)
-    echo "ERROR: Unsupported macOS arch: $ARCH" >&2
-    exit 1
-    ;;
+  arm64) ARTIFACT="stream-macos-arm64" ;;
+  x86_64) ARTIFACT="stream-macos-x86_64" ;;
+  *) die "Unsupported macOS arch: $ARCH" ;;
 esac
 
-BIN="/usr/local/bin/stream"
-CONF_DIR="/usr/local/etc/stream"
+URL="${BASE_URL}/${ARTIFACT}"
+TMP_FILE="$(mktemp -t stream-macos.XXXXXX)"
+trap 'rm -f "$TMP_FILE" >/dev/null 2>&1 || true' EXIT
 
-SUDO=""
-if [ "$(id -u)" -ne 0 ]; then
-  if command -v sudo >/dev/null 2>&1; then
-    SUDO="sudo"
-  else
-    echo "ERROR: Need root to install to /usr/local/bin (sudo not found)." >&2
-    exit 1
-  fi
-fi
+log "Downloading binary: $URL"
+curl -fsSL -o "$TMP_FILE" "$URL"
 
-TMP="$(mktemp -t stream-macos.XXXXXX)"
-trap 'rm -f "$TMP"' EXIT
+chmod +x "$TMP_FILE"
+sudo mkdir -p "$(dirname "$BIN_PATH")"
+sudo install -m 755 "$TMP_FILE" "$BIN_PATH"
 
-if ! curl -fsSL "$URL" -o "$TMP"; then
-  echo "ERROR: Failed to download: $URL" >&2
-  echo "Hint: Intel macOS builds may be unavailable. Use Linux or build from source." >&2
-  exit 1
-fi
-
-$SUDO mkdir -p "$(dirname "$BIN")"
-$SUDO install -m 0755 "$TMP" "$BIN"
-$SUDO mkdir -p "$CONF_DIR"
-
-cat <<EOF
-OK.
-
-Binary:
-  $BIN
-
-Config directory:
-  $CONF_DIR
-
-Run example:
-  $BIN -c $CONF_DIR/prod.json -p 9060
-
-Optional (for transcoding):
-  - Install ffmpeg (Homebrew), then enable transcoding in UI.
-EOF
+log "Done. Binary: $BIN_PATH"
