@@ -80,6 +80,96 @@ function transcode_supported()
     return astra and astra.features and astra.features.transcode == true
 end
 
+-- Pretty JSON encoder for config files and exports.
+-- Цель: чтобы *.json читались глазами и удобно диффались в консоли.
+-- Важно: повторяем логику json.encode() из C (пустая таблица -> "[]").
+if json and type(json.encode_pretty) ~= "function" then
+    local function count_pairs(t)
+        local n = 0
+        for _ in pairs(t) do
+            n = n + 1
+        end
+        return n
+    end
+
+    local function is_array_table(t)
+        -- json.encode(): luaL_len(table) == pairs_count
+        return (#t == count_pairs(t))
+    end
+
+    local function json_escape_string(value)
+        local s = tostring(value or "")
+        s = s:gsub("\\", "\\\\")
+        s = s:gsub("\"", "\\\"")
+        s = s:gsub("\t", "\\t")
+        s = s:gsub("\r", "\\r")
+        s = s:gsub("\n", "\\n")
+        return "\"" .. s .. "\""
+    end
+
+    local function encode_value_pretty(v, indent, level)
+        local t = type(v)
+        if t == "table" then
+            local pairs_count = count_pairs(v)
+            if pairs_count == 0 then
+                return "[]"
+            end
+
+            if is_array_table(v) then
+                local out = { "[" }
+                for i = 1, #v do
+                    out[#out + 1] = "\n" .. string.rep(indent, level + 1) .. encode_value_pretty(v[i], indent, level + 1)
+                    if i < #v then
+                        out[#out + 1] = ","
+                    end
+                end
+                out[#out + 1] = "\n" .. string.rep(indent, level) .. "]"
+                return table.concat(out)
+            end
+
+            local out = { "{" }
+            local first = true
+            for k, vv in pairs(v) do
+                if first then
+                    first = false
+                else
+                    out[#out + 1] = ","
+                end
+                out[#out + 1] = "\n" .. string.rep(indent, level + 1)
+                    .. json_escape_string(tostring(k)) .. ": " .. encode_value_pretty(vv, indent, level + 1)
+            end
+            out[#out + 1] = "\n" .. string.rep(indent, level) .. "}"
+            return table.concat(out)
+        elseif t == "string" then
+            return json_escape_string(v)
+        elseif t == "number" then
+            -- как в json.c: "%.14g"
+            return string.format("%.14g", v)
+        elseif t == "boolean" then
+            return v and "true" or "false"
+        elseif t == "nil" then
+            return "null"
+        else
+            -- На всякий случай (userdata/function) кодируем как строку.
+            return json_escape_string(tostring(v))
+        end
+    end
+
+    function json.encode_pretty(value, opts)
+        local indent = "  "
+        local final_newline = true
+        if type(opts) == "table" then
+            if type(opts.indent) == "string" then indent = opts.indent end
+            if opts.final_newline == false then final_newline = false end
+        end
+        local text = encode_value_pretty(value, indent, 0)
+        if final_newline then
+            text = text .. "\n"
+        end
+        return text
+    end
+end
+
 ifaddr_list = nil
 if utils.ifaddrs then ifaddr_list = utils.ifaddrs() end
 

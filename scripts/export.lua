@@ -91,11 +91,19 @@ function main()
             log.error("[export] failed to open output: " .. tostring(err))
             astra.abort()
         end
-        file:write(json.encode(payload))
+        if json and type(json.encode_pretty) == "function" then
+            file:write(json.encode_pretty(payload))
+        else
+            file:write(json.encode(payload))
+        end
         file:close()
         log.info("[export] wrote: " .. opt.output)
     else
-        print(json.encode(payload))
+        if json and type(json.encode_pretty) == "function" then
+            io.write(json.encode_pretty(payload))
+        else
+            print(json.encode(payload))
+        end
     end
 
     astra.exit()
