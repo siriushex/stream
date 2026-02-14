@@ -74,8 +74,9 @@ EOF
   --no-stdout &
 ASTRA_PID=$!
 
+# Ждём готовности HTTP сервера. У нас нет отдельного /health, поэтому проверяем root.
 for _ in $(seq 1 80); do
-  if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/health" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
@@ -134,4 +135,3 @@ if [[ "${override_tripped}" == "1" ]]; then
 fi
 
 echo "cc_limit_defaults_smoke OK (global cc_limit=1 trips; explicit cc_limit=3 does not)"
-
