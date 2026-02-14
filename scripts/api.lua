@@ -6494,6 +6494,10 @@ function api.handle_request(server, client, request)
     if pngts_generate_id and method == "POST" then
         return api.pngts_generate(server, client, request, pngts_generate_id)
     end
+    local pngts_list_id = path:match("^/api/v1/streams/([%w%-%_]+)/pngts/list$")
+    if pngts_list_id and method == "GET" then
+        return api.pngts_list(server, client, request, pngts_list_id)
+    end
     local pngts_job_id = path:match("^/api/v1/pngts/jobs/([%w%-%_]+)$")
     if pngts_job_id and method == "GET" then
         return api.pngts_job_status(server, client, pngts_job_id)

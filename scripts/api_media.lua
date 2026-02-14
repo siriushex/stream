@@ -116,6 +116,14 @@ function api.pngts_job_status(server, client, job_id)
     return json_response(server, client, 200, { job = api.pngts_job_payload(job) })
 end
 
+function api.pngts_list(server, client, request, stream_id)
+    if not pngts or type(pngts.list_outputs) ~= "function" then
+        return error_response(server, client, 501, "pngts module unavailable")
+    end
+    local files = pngts.list_outputs(stream_id) or {}
+    return json_response(server, client, 200, { files = files })
+end
+
 -- Create radio: audio + PNG -> UDP TS
 function api.radio_payload(status)
     if not status then
