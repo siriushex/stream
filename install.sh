@@ -258,7 +258,14 @@ enable_rpmfusion() {
     local rel
     rel=$(rpm -E %rhel)
     if [ -n "$rel" ]; then
-      run "$PKG_MGR" -y install "https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm" || true
+      if [ "$DRY_RUN" -eq 1 ]; then
+        log "[dry-run] $PKG_MGR -y install https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm"
+        return 0
+      fi
+      if ! "$PKG_MGR" -y install "https://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm"; then
+        warn "rpmfusion HTTPS install failed; trying HTTP"
+        "$PKG_MGR" -y install "http://download1.rpmfusion.org/free/el/rpmfusion-free-release-${rel}.noarch.rpm" || true
+      fi
     fi
   fi
 }
@@ -358,7 +365,9 @@ build_from_source() {
     fi
   else
     log "Cloning sources: $GIT_URL (ref: $GIT_REF)"
-    run git -C "$WORKDIR" clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src
+    run mkdir -p "$WORKDIR"
+    run rm -rf "$WORKDIR/src"
+    (cd "$WORKDIR" && run git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src)
     src_root="$WORKDIR/src"
     if [ ! -f "$src_root/configure.sh" ]; then
       die "Could not find configure.sh in cloned sources. Try --git-ref or --url."
