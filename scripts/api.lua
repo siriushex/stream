@@ -866,7 +866,7 @@ local function stop_stream_preview(server, client, request, stream_id)
 end
 
 -- PNG -> TS generator (reserve stream from PNG)
-local function pngts_job_payload(job)
+function api.pngts_job_payload(job)
     if not job then
         return nil
     end
@@ -883,7 +883,7 @@ local function pngts_job_payload(job)
     }
 end
 
-local function pngts_ffprobe(server, client, request, stream_id)
+function api.pngts_ffprobe(server, client, request, stream_id)
     if not pngts or type(pngts.start_ffprobe) ~= "function" then
         return error_response(server, client, 501, "pngts module unavailable")
     end
@@ -900,10 +900,10 @@ local function pngts_ffprobe(server, client, request, stream_id)
         return error_response(server, client, 400, "input_url required")
     end
     local job = pngts.start_ffprobe(stream_id, input_url)
-    return json_response(server, client, 200, { job = pngts_job_payload(job) })
+    return json_response(server, client, 200, { job = api.pngts_job_payload(job) })
 end
 
-local function pngts_generate(server, client, request, stream_id)
+function api.pngts_generate(server, client, request, stream_id)
     if not pngts or type(pngts.start_generate) ~= "function" then
         return error_response(server, client, 501, "pngts module unavailable")
     end
@@ -967,10 +967,10 @@ local function pngts_generate(server, client, request, stream_id)
     }
 
     local job = pngts.start_generate(stream_id, opts)
-    return json_response(server, client, 200, { job = pngts_job_payload(job) })
+    return json_response(server, client, 200, { job = api.pngts_job_payload(job) })
 end
 
-local function pngts_job_status(server, client, job_id)
+function api.pngts_job_status(server, client, job_id)
     if not pngts or type(pngts.get_job) ~= "function" then
         return error_response(server, client, 501, "pngts module unavailable")
     end
@@ -978,11 +978,11 @@ local function pngts_job_status(server, client, job_id)
     if not job then
         return error_response(server, client, 404, "job not found")
     end
-    return json_response(server, client, 200, { job = pngts_job_payload(job) })
+    return json_response(server, client, 200, { job = api.pngts_job_payload(job) })
 end
 
 -- Create radio: audio + PNG -> UDP TS
-local function radio_payload(status)
+function api.radio_payload(status)
     if not status then
         return nil
     end
@@ -997,7 +997,7 @@ local function radio_payload(status)
     }
 end
 
-local function radio_start(server, client, request, stream_id)
+function api.radio_start(server, client, request, stream_id)
     if not radio or type(radio.start) ~= "function" then
         return error_response(server, client, 501, "radio module unavailable")
     end
@@ -1007,19 +1007,19 @@ local function radio_start(server, client, request, stream_id)
         return error_response(server, client, 400, err or "start failed")
     end
     local status = radio.get_status(stream_id)
-    return json_response(server, client, 200, { status = radio_payload(status) })
+    return json_response(server, client, 200, { status = api.radio_payload(status) })
 end
 
-local function radio_stop(server, client, request, stream_id)
+function api.radio_stop(server, client, request, stream_id)
     if not radio or type(radio.stop) ~= "function" then
         return error_response(server, client, 501, "radio module unavailable")
     end
     radio.stop(stream_id)
     local status = radio.get_status(stream_id)
-    return json_response(server, client, 200, { status = radio_payload(status) })
+    return json_response(server, client, 200, { status = api.radio_payload(status) })
 end
 
-local function radio_restart(server, client, request, stream_id)
+function api.radio_restart(server, client, request, stream_id)
     if not radio or type(radio.restart) ~= "function" then
         return error_response(server, client, 501, "radio module unavailable")
     end
@@ -1029,15 +1029,15 @@ local function radio_restart(server, client, request, stream_id)
         return error_response(server, client, 400, err or "restart failed")
     end
     local status = radio.get_status(stream_id)
-    return json_response(server, client, 200, { status = radio_payload(status) })
+    return json_response(server, client, 200, { status = api.radio_payload(status) })
 end
 
-local function radio_status(server, client, request, stream_id)
+function api.radio_status(server, client, request, stream_id)
     if not radio or type(radio.get_status) ~= "function" then
         return error_response(server, client, 501, "radio module unavailable")
     end
     local status = radio.get_status(stream_id)
-    return json_response(server, client, 200, { status = radio_payload(status) })
+    return json_response(server, client, 200, { status = api.radio_payload(status) })
 end
 
 -- In multi-process sharding, a stream config can be updated from any API port (shared sqlite),
@@ -6637,32 +6637,32 @@ function api.handle_request(server, client, request)
 
     local pngts_ffprobe_id = path:match("^/api/v1/streams/([%w%-%_]+)/pngts/ffprobe$")
     if pngts_ffprobe_id and method == "POST" then
-        return pngts_ffprobe(server, client, request, pngts_ffprobe_id)
+        return api.pngts_ffprobe(server, client, request, pngts_ffprobe_id)
     end
     local pngts_generate_id = path:match("^/api/v1/streams/([%w%-%_]+)/pngts/generate$")
     if pngts_generate_id and method == "POST" then
-        return pngts_generate(server, client, request, pngts_generate_id)
+        return api.pngts_generate(server, client, request, pngts_generate_id)
     end
     local pngts_job_id = path:match("^/api/v1/pngts/jobs/([%w%-%_]+)$")
     if pngts_job_id and method == "GET" then
-        return pngts_job_status(server, client, pngts_job_id)
+        return api.pngts_job_status(server, client, pngts_job_id)
     end
 
     local radio_start_id = path:match("^/api/v1/streams/([%w%-%_]+)/radio/start$")
     if radio_start_id and method == "POST" then
-        return radio_start(server, client, request, radio_start_id)
+        return api.radio_start(server, client, request, radio_start_id)
     end
     local radio_stop_id = path:match("^/api/v1/streams/([%w%-%_]+)/radio/stop$")
     if radio_stop_id and method == "POST" then
-        return radio_stop(server, client, request, radio_stop_id)
+        return api.radio_stop(server, client, request, radio_stop_id)
     end
     local radio_restart_id = path:match("^/api/v1/streams/([%w%-%_]+)/radio/restart$")
     if radio_restart_id and method == "POST" then
-        return radio_restart(server, client, request, radio_restart_id)
+        return api.radio_restart(server, client, request, radio_restart_id)
     end
     local radio_status_id = path:match("^/api/v1/streams/([%w%-%_]+)/radio/status$")
     if radio_status_id and method == "GET" then
-        return radio_status(server, client, request, radio_status_id)
+        return api.radio_status(server, client, request, radio_status_id)
     end
 
     if path == "/api/v1/adapters" and method == "GET" then
