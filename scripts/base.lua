@@ -2329,18 +2329,27 @@ init_input_module.http = function(conf)
 
 		        local sync = conf.sync
 		        -- Если sync задан флагом (например, `#sync` без значения), то в Lua это boolean=true.
-		        -- http_request трактует boolean как 1 (1MB буфера), но для "плохих" источников этого часто
-		        -- недостаточно: PCR может отсутствовать несколько секунд, и тогда sync начинает постоянно
-		        -- уходить в buffering. Для профилей bad/max/superbad считаем такой sync "дефолтным" и
-		        -- повышаем размер буфера (MB), чтобы переживать длинные дырки по PCR.
+		        -- В http_request это включает PCR-based pacing (thread_loop). На IPTV-панелях PCR может
+		        -- пропадать на секунды, и sync начинает уходить в buffering, создавая заметные паузы.
+		        --
+		        -- Поэтому для внешних источников в profile-mode (bad/max/superbad) трактуем флаг `#sync`
+		        -- как "legacy" и выключаем PCR sync по умолчанию. Если пользователю реально нужен PCR sync,
+		        -- он может включить его явно числом: `#sync=1` или `#sync=<MB>`.
 		        if sync == true and res and res.enabled == true then
 		            local p = res.profile_effective
-		            if p == "bad" then
-		                sync = 8
-		            elseif p == "max" then
-		                sync = 16
-		            elseif p == "superbad" then
-		                sync = 32
+		            if p == "bad" or p == "max" or p == "superbad" then
+		                if not is_local_http_host(conf.host) then
+		                    sync = 0
+		                else
+		                    -- Для локальных источников PCR обычно корректный, можно увеличить буфер.
+		                    if p == "bad" then
+		                        sync = 8
+		                    elseif p == "max" then
+		                        sync = 16
+		                    else
+		                        sync = 32
+		                    end
+		                end
 		            end
 		        end
 		        -- Совместимость со старыми конфигами: некоторые источники используют #buffer_time=10
@@ -2646,15 +2655,26 @@ end
 
 	        local res = resolve_input_resilience(conf)
 	        local sync = conf.sync
+	        if sync == true and res and res.enabled == true then
+	            local p = res.profile_effective
+	            if p == "bad" or p == "max" or p == "superbad" then
+	                if not is_local_http_host(conf.host) then
+	                    sync = 0
+	                else
+	                    if p == "bad" then
+	                        sync = 8
+	                    elseif p == "max" then
+	                        sync = 16
+	                    else
+	                        sync = 32
+	                    end
+	                end
+	            end
+	        end
 	        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
 	            sync = 1
 	        end
-	        if sync == nil and res and res.enabled == true then
-	            local p = res.profile_effective
-	            if p == "bad" or p == "max" or p == "superbad" then
-	                sync = 1
-	            end
-	        end
+	        -- Не включаем sync автоматически для profile-mode (см. комментарий в http input выше).
 	        local timeout = conf.timeout
 	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
 	            timeout = 60
