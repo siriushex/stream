@@ -165,6 +165,7 @@ dofile(script_path("sharding.lua"))
 dofile(script_path("png_to_ts.lua"))
 dofile(script_path("radio_stream.lua"))
 dofile(script_path("api.lua"))
+dofile(script_path("api_media.lua"))
 
 -- Guardrail: never allow a Lua exception in an HTTP/timer callback to unwind into the main loop.
 -- This is intentionally lightweight (no extra allocations per request beyond xpcall itself).
