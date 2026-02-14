@@ -1316,9 +1316,10 @@ After=network.target
 
 [Service]
 Type=simple
+Environment=STREAM_PORT=8816
 EnvironmentFile=-/etc/stream/%i.env
 WorkingDirectory=/etc/stream
-ExecStart=/usr/local/bin/stream -c /etc/stream/%i.json -p ${STREAM_PORT:-8816}
+ExecStart=/usr/local/bin/stream -c /etc/stream/%i.json -p $STREAM_PORT
 Restart=always
 RestartSec=2
 
