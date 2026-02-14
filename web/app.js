@@ -1092,8 +1092,10 @@ const elements = {
   settingsPreviewMaxSessions: $('#settings-preview-max-sessions'),
   settingsPreviewIdleTimeout: $('#settings-preview-idle-timeout'),
   settingsPreviewTokenTtl: $('#settings-preview-token-ttl'),
+  settingsLogStoreEnabled: $('#settings-log-store-enabled'),
   settingsLogMaxEntries: $('#settings-log-max-entries'),
   settingsLogRetentionSec: $('#settings-log-retention-sec'),
+  settingsAccessLogEnabled: $('#settings-access-log-enabled'),
   settingsAccessLogMaxEntries: $('#settings-access-log-max-entries'),
   settingsAccessLogRetentionSec: $('#settings-access-log-retention-sec'),
   settingsObservabilityEnabled: $('#settings-observability-enabled'),
@@ -2730,6 +2732,13 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'advanced',
           },
           {
+            id: 'settings-log-store-enabled',
+            label: 'Store UI log buffer',
+            type: 'switch',
+            key: 'log_store_enabled',
+            level: 'advanced',
+          },
+          {
             id: 'settings-log-max-entries',
             label: 'Log max entries',
             type: 'input',
@@ -2737,6 +2746,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'log_max_entries',
             level: 'advanced',
             placeholder: '0 (unlimited)',
+            dependsOn: { id: 'settings-log-store-enabled', value: true },
           },
           {
             id: 'settings-log-retention-sec',
@@ -2746,6 +2756,14 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'log_retention_sec',
             level: 'advanced',
             placeholder: '0 (unlimited)',
+            dependsOn: { id: 'settings-log-store-enabled', value: true },
+          },
+          {
+            id: 'settings-access-log-enabled',
+            label: 'Store access log buffer',
+            type: 'switch',
+            key: 'access_log_enabled',
+            level: 'advanced',
           },
           {
             id: 'settings-access-log-max-entries',
@@ -2755,6 +2773,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'access_log_max_entries',
             level: 'advanced',
             placeholder: '0 (unlimited)',
+            dependsOn: { id: 'settings-access-log-enabled', value: true },
           },
           {
             id: 'settings-access-log-retention-sec',
@@ -2764,6 +2783,7 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'access_log_retention_sec',
             level: 'advanced',
             placeholder: '0 (unlimited)',
+            dependsOn: { id: 'settings-access-log-enabled', value: true },
           },
           {
             type: 'note',
@@ -2863,13 +2883,15 @@ const SETTINGS_GENERAL_SECTIONS = [
         ],
         summary: () => {
           const webhook = readStringValue('settings-event-request', '');
-          const logMax = readNumberValue('settings-log-max-entries', 0);
-          const accessMax = readNumberValue('settings-access-log-max-entries', 0);
+          const logEnabled = readBoolValue('settings-log-store-enabled', true);
+          const accessEnabled = readBoolValue('settings-access-log-enabled', true);
+          const logMax = logEnabled ? readNumberValue('settings-log-max-entries', 0) : 0;
+          const accessMax = accessEnabled ? readNumberValue('settings-access-log-max-entries', 0) : 0;
           const dest = readStringValue('settings-runtime-log-dest', 'inherit');
           const level = readStringValue('settings-runtime-log-level', 'inherit');
           const webhookText = webhook ? 'Webhook: задан' : 'Webhook: нет';
-          const logsText = `Logs: ${formatOptionalNumber(logMax, '', '∞')}`;
-          const accessText = `Access: ${formatOptionalNumber(accessMax, '', '∞')}`;
+          const logsText = logEnabled ? `Logs: ${formatOptionalNumber(logMax, '', '∞')}` : 'Logs: off';
+          const accessText = accessEnabled ? `Access: ${formatOptionalNumber(accessMax, '', '∞')}` : 'Access: off';
           return `${webhookText} · ${logsText} · ${accessText} · Runtime: ${level}/${dest}`;
         },
       },
@@ -4218,8 +4240,10 @@ function bindGeneralElements() {
     settingsPreviewMaxSessions: 'settings-preview-max-sessions',
     settingsPreviewIdleTimeout: 'settings-preview-idle-timeout',
     settingsPreviewTokenTtl: 'settings-preview-token-ttl',
+    settingsLogStoreEnabled: 'settings-log-store-enabled',
     settingsLogMaxEntries: 'settings-log-max-entries',
     settingsLogRetentionSec: 'settings-log-retention-sec',
+    settingsAccessLogEnabled: 'settings-access-log-enabled',
     settingsAccessLogMaxEntries: 'settings-access-log-max-entries',
     settingsAccessLogRetentionSec: 'settings-access-log-retention-sec',
     settingsRuntimeLogDest: 'settings-runtime-log-dest',
@@ -22989,11 +23013,17 @@ function applySettingsToUI() {
   if (elements.settingsPreviewTokenTtl) {
     elements.settingsPreviewTokenTtl.value = getSettingNumber('preview_token_ttl_sec', 180);
   }
+  if (elements.settingsLogStoreEnabled) {
+    elements.settingsLogStoreEnabled.checked = getSettingBool('log_store_enabled', true);
+  }
   if (elements.settingsLogMaxEntries) {
     elements.settingsLogMaxEntries.value = getSettingNumber('log_max_entries', '');
   }
   if (elements.settingsLogRetentionSec) {
     elements.settingsLogRetentionSec.value = getSettingNumber('log_retention_sec', '');
+  }
+  if (elements.settingsAccessLogEnabled) {
+    elements.settingsAccessLogEnabled.checked = getSettingBool('access_log_enabled', true);
   }
   if (elements.settingsAccessLogMaxEntries) {
     elements.settingsAccessLogMaxEntries.value = getSettingNumber('access_log_max_entries', '');
@@ -23761,6 +23791,7 @@ function collectGeneralSettings() {
   if (inputResHlsMaxParallel !== undefined && (inputResHlsMaxParallel < 1 || inputResHlsMaxParallel > 2)) {
     throw new Error('HLS segment parallelism must be 1 or 2');
   }
+  const logStoreEnabled = elements.settingsLogStoreEnabled ? !!elements.settingsLogStoreEnabled.checked : undefined;
   const logMax = toNumber(elements.settingsLogMaxEntries && elements.settingsLogMaxEntries.value);
   if (logMax !== undefined && logMax < 0) {
     throw new Error('Log max entries must be >= 0');
@@ -23769,6 +23800,7 @@ function collectGeneralSettings() {
   if (logRetention !== undefined && logRetention < 0) {
     throw new Error('Log retention must be >= 0');
   }
+  const accessLogEnabled = elements.settingsAccessLogEnabled ? !!elements.settingsAccessLogEnabled.checked : undefined;
   const accessLogMax = toNumber(elements.settingsAccessLogMaxEntries && elements.settingsAccessLogMaxEntries.value);
   if (accessLogMax !== undefined && accessLogMax < 0) {
     throw new Error('Access log max entries must be >= 0');
@@ -24204,8 +24236,10 @@ function collectGeneralSettings() {
   if (previewMax !== undefined) payload.preview_max_sessions = previewMax;
   if (previewIdle !== undefined) payload.preview_idle_timeout_sec = previewIdle;
   if (previewTtl !== undefined) payload.preview_token_ttl_sec = previewTtl;
+  if (elements.settingsLogStoreEnabled) payload.log_store_enabled = logStoreEnabled;
   if (logMax !== undefined) payload.log_max_entries = logMax;
   if (logRetention !== undefined) payload.log_retention_sec = logRetention;
+  if (elements.settingsAccessLogEnabled) payload.access_log_enabled = accessLogEnabled;
   if (accessLogMax !== undefined) payload.access_log_max_entries = accessLogMax;
   if (accessLogRetention !== undefined) payload.access_log_retention_sec = accessLogRetention;
   const hadRuntimeDest = getSettingString('runtime_log_dest', '') !== '';

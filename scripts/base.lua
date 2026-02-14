@@ -4048,39 +4048,111 @@ function astra_parse_options(idx)
     end
 end
 
--- Log buffer for web UI
+-- Log buffer for web UI (in-memory, bounded).
+-- Важно: это НЕ runtime-логи процесса (stdout/file/syslog). Это только буфер для вкладки Log в UI.
 if not log_store then
     log_store = {
         entries = {},
         next_id = 1,
+        enabled = true,
         max_entries = 2000,
         retention_sec = 86400,
+        head = 1,
+        tail = 0,
+        count = 0,
     }
+else
+    -- Backward-compatible migration from dense array to queue indexes.
+    if log_store.enabled == nil then
+        log_store.enabled = true
+    end
+    if log_store.head == nil or log_store.tail == nil or log_store.count == nil then
+        local entries = log_store.entries or {}
+        local tail = #entries
+        log_store.entries = entries
+        log_store.head = 1
+        log_store.tail = tail
+        log_store.count = tail
+    end
+end
+
+local function parse_bool(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" or value == "no" or value == "off" then
+        return false
+    end
+    return fallback
 end
 
 local function log_store_prune()
     local retention = tonumber(log_store.retention_sec) or 0
+    local head = tonumber(log_store.head) or 1
+    local tail = tonumber(log_store.tail) or 0
+    local count = tonumber(log_store.count) or 0
     if retention > 0 then
         local cutoff = os.time() - retention
-        while #log_store.entries > 0 do
-            local ts = tonumber(log_store.entries[1].ts) or 0
-            if ts >= cutoff then
-                break
+        while count > 0 do
+            local entry = log_store.entries[head]
+            if not entry then
+                head = head + 1
+            else
+                local ts = tonumber(entry.ts) or 0
+                if ts >= cutoff then
+                    break
+                end
+                log_store.entries[head] = nil
+                head = head + 1
+                count = count - 1
             end
-            table.remove(log_store.entries, 1)
         end
     end
     local max_entries = tonumber(log_store.max_entries) or 0
     if max_entries > 0 then
-        while #log_store.entries > max_entries do
-            table.remove(log_store.entries, 1)
+        while count > max_entries do
+            log_store.entries[head] = nil
+            head = head + 1
+            count = count - 1
         end
+    end
+
+    log_store.head = head
+    log_store.tail = tail
+    log_store.count = count
+
+    -- Compaction: keep indices small so list() stays O(N) with small constants.
+    if head > 5000 and count > 0 then
+        local compact = {}
+        local idx = 1
+        for i = head, tail do
+            local entry = log_store.entries[i]
+            if entry then
+                compact[idx] = entry
+                idx = idx + 1
+            end
+        end
+        log_store.entries = compact
+        log_store.head = 1
+        log_store.tail = idx - 1
+        log_store.count = idx - 1
+    elseif count == 0 then
+        -- Reset to keep table small when empty.
+        log_store.entries = {}
+        log_store.head = 1
+        log_store.tail = 0
     end
 end
 
 function log_store.configure(opts)
     if type(opts) ~= "table" then
         return
+    end
+    if opts.enabled ~= nil then
+        log_store.enabled = parse_bool(opts.enabled, log_store.enabled ~= false)
     end
     if opts.max_entries ~= nil then
         local value = tonumber(opts.max_entries)
@@ -4106,6 +4178,9 @@ function log_store.configure(opts)
 end
 
 local function log_store_add(level, message)
+    if log_store.enabled == false then
+        return
+    end
     local entry = {
         id = log_store.next_id,
         ts = os.time(),
@@ -4113,7 +4188,11 @@ local function log_store_add(level, message)
         message = tostring(message),
     }
     log_store.next_id = log_store.next_id + 1
-    table.insert(log_store.entries, entry)
+    local tail = tonumber(log_store.tail) or 0
+    tail = tail + 1
+    log_store.entries[tail] = entry
+    log_store.tail = tail
+    log_store.count = (tonumber(log_store.count) or 0) + 1
     log_store_prune()
 end
 
@@ -4134,8 +4213,11 @@ function log_store.list(since_id, limit, level, text, stream_id)
     if stream_filter == "" then
         stream_filter = nil
     end
-    for _, entry in ipairs(log_store.entries) do
-        if entry.id > since then
+    local head = tonumber(log_store.head) or 1
+    local tail = tonumber(log_store.tail) or 0
+    for i = head, tail do
+        local entry = log_store.entries[i]
+        if entry and entry.id > since then
             local ok = true
             if level_filter and tostring(entry.level):lower() ~= level_filter then
                 ok = false
@@ -4172,34 +4254,89 @@ if not access_log then
     access_log = {
         entries = {},
         next_id = 1,
+        enabled = true,
         max_entries = 2000,
         retention_sec = 86400,
+        head = 1,
+        tail = 0,
+        count = 0,
     }
+else
+    if access_log.enabled == nil then
+        access_log.enabled = true
+    end
+    if access_log.head == nil or access_log.tail == nil or access_log.count == nil then
+        local entries = access_log.entries or {}
+        local tail = #entries
+        access_log.entries = entries
+        access_log.head = 1
+        access_log.tail = tail
+        access_log.count = tail
+    end
 end
 
 local function access_log_prune()
     local retention = tonumber(access_log.retention_sec) or 0
+    local head = tonumber(access_log.head) or 1
+    local tail = tonumber(access_log.tail) or 0
+    local count = tonumber(access_log.count) or 0
     if retention > 0 then
         local cutoff = os.time() - retention
-        while #access_log.entries > 0 do
-            local ts = tonumber(access_log.entries[1].ts) or 0
-            if ts >= cutoff then
-                break
+        while count > 0 do
+            local entry = access_log.entries[head]
+            if not entry then
+                head = head + 1
+            else
+                local ts = tonumber(entry.ts) or 0
+                if ts >= cutoff then
+                    break
+                end
+                access_log.entries[head] = nil
+                head = head + 1
+                count = count - 1
             end
-            table.remove(access_log.entries, 1)
         end
     end
     local max_entries = tonumber(access_log.max_entries) or 0
     if max_entries > 0 then
-        while #access_log.entries > max_entries do
-            table.remove(access_log.entries, 1)
+        while count > max_entries do
+            access_log.entries[head] = nil
+            head = head + 1
+            count = count - 1
         end
+    end
+
+    access_log.head = head
+    access_log.tail = tail
+    access_log.count = count
+
+    if head > 5000 and count > 0 then
+        local compact = {}
+        local idx = 1
+        for i = head, tail do
+            local entry = access_log.entries[i]
+            if entry then
+                compact[idx] = entry
+                idx = idx + 1
+            end
+        end
+        access_log.entries = compact
+        access_log.head = 1
+        access_log.tail = idx - 1
+        access_log.count = idx - 1
+    elseif count == 0 then
+        access_log.entries = {}
+        access_log.head = 1
+        access_log.tail = 0
     end
 end
 
 function access_log.configure(opts)
     if type(opts) ~= "table" then
         return
+    end
+    if opts.enabled ~= nil then
+        access_log.enabled = parse_bool(opts.enabled, access_log.enabled ~= false)
     end
     if opts.max_entries ~= nil then
         local value = tonumber(opts.max_entries)
@@ -4225,6 +4362,9 @@ function access_log.configure(opts)
 end
 
 function access_log.add(entry)
+    if access_log.enabled == false then
+        return
+    end
     if type(entry) ~= "table" then
         return
     end
@@ -4242,7 +4382,11 @@ function access_log.add(entry)
         reason = entry.reason,
     }
     access_log.next_id = access_log.next_id + 1
-    table.insert(access_log.entries, item)
+    local tail = tonumber(access_log.tail) or 0
+    tail = tail + 1
+    access_log.entries[tail] = item
+    access_log.tail = tail
+    access_log.count = (tonumber(access_log.count) or 0) + 1
     access_log_prune()
 end
 
@@ -4282,8 +4426,11 @@ function access_log.list(since_id, limit, event, stream_id, ip, login, text)
         return tostring(value):lower():find(needle, 1, true) ~= nil
     end
 
-    for _, entry in ipairs(access_log.entries) do
-        if entry.id > since then
+    local head = tonumber(access_log.head) or 1
+    local tail = tonumber(access_log.tail) or 0
+    for i = head, tail do
+        local entry = access_log.entries[i]
+        if entry and entry.id > since then
             local ok = true
             if event_filter and tostring(entry.event):lower() ~= event_filter then
                 ok = false
@@ -4342,10 +4489,17 @@ local function wrap_logger(level)
         return
     end
     local original = log[level]
-    log[level] = function(...)
-        local message = join_log_message(...)
+    log[level] = function(first, ...)
+        -- Чтобы не создавать лишние таблицы/строки в hot-path:
+        -- если message один аргумент, не собираем parts[].
+        local message = nil
+        if select("#", ...) == 0 then
+            message = tostring(first)
+        else
+            message = join_log_message(first, ...)
+        end
         log_store_add(level, message)
-        return original(...)
+        return original(message)
     end
 end
 

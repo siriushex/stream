@@ -4085,16 +4085,18 @@ local function apply_log_settings_patch(body)
         return
     end
     if log_store and type(log_store.configure) == "function" then
-        if body.log_max_entries ~= nil or body.log_retention_sec ~= nil then
+        if body.log_store_enabled ~= nil or body.log_max_entries ~= nil or body.log_retention_sec ~= nil then
             log_store.configure({
+                enabled = body.log_store_enabled,
                 max_entries = body.log_max_entries,
                 retention_sec = body.log_retention_sec,
             })
         end
     end
     if access_log and type(access_log.configure) == "function" then
-        if body.access_log_max_entries ~= nil or body.access_log_retention_sec ~= nil then
+        if body.access_log_enabled ~= nil or body.access_log_max_entries ~= nil or body.access_log_retention_sec ~= nil then
             access_log.configure({
+                enabled = body.access_log_enabled,
                 max_entries = body.access_log_max_entries,
                 retention_sec = body.access_log_retention_sec,
             })
