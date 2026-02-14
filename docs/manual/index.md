@@ -18,5 +18,6 @@
 - [Observability](observability.md)
 - [Настройки (Settings)](settings.md)
 - [CLI и запуск как сервис](cli.md)
+- [Build profiles (FULL/LITE)](build-profiles.md)
 - [API](api.md)
 - [Если что‑то не работает](troubleshooting.md)

@@ -28,6 +28,7 @@
 
 Скорее всего у вас сборка **LITE (no transcode)**.
 В ней Transcode отключен, чтобы бинарник не тянул зависимости FFmpeg.
+Подробнее: [Build profiles (FULL/LITE)](manual/build-profiles.md).
 
 Проверьте:
 
