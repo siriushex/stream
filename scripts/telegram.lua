@@ -608,7 +608,13 @@ local function create_backup_file()
     ensure_dir(base)
     local stamp = os.date("%Y%m%d-%H%M%S", os.time())
     local path = base .. "/telegram_backup_" .. stamp .. ".json"
-    local ok, write_err = write_file(path, json.encode(payload))
+    local encoded
+    if json and type(json.encode_pretty) == "function" then
+        encoded = json.encode_pretty(payload)
+    else
+        encoded = json.encode(payload)
+    end
+    local ok, write_err = write_file(path, encoded)
     if not ok then
         return nil, write_err
     end

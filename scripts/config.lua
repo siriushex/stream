@@ -3079,7 +3079,13 @@ function config.export_astra_file(path, opts)
         return nil, "empty path"
     end
     local payload = config.export_astra(opts)
-    local ok, err = write_file_atomic(path, json.encode(payload))
+    local encoded
+    if json and type(json.encode_pretty) == "function" then
+        encoded = json.encode_pretty(payload)
+    else
+        encoded = json.encode(payload)
+    end
+    local ok, err = write_file_atomic(path, encoded)
     if not ok then
         return nil, err
     end
