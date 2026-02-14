@@ -70,8 +70,9 @@ EOF
   --no-stdout &
 ASTRA_PID=$!
 
+# Ждём готовности HTTP сервера. У нас нет отдельного /health, поэтому проверяем root.
 for _ in $(seq 1 80); do
-  if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/health" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
