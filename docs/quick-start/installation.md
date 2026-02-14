@@ -8,10 +8,16 @@
 curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only
 ```
 
-!!! note "LITE (без транскода)"
-    Готовый бинарник **stream-latest** сейчас собирается в LITE‑режиме.
-    В нём нет транскодирования и функций, которые зависят от `ffmpeg`.
-    Если нужен транскод, соберите из исходников (см. ниже) или используйте FULL‑сборку.
+!!! note "FULL / LITE"
+    По умолчанию установщик ставит **FULL**‑сборку (с поддержкой транскода).
+
+    Если нужен **LITE (no transcode)**, укажите артефакт явно:
+
+    ```bash
+    curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- \
+      --mode binary --runtime-only --artifact stream-linux-x86_64-lite
+    ```
+
     Подробнее: [Build profiles (FULL/LITE)](../manual/build-profiles.md).
 
 !!! warning "Старые системы"

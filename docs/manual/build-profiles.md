@@ -40,6 +40,19 @@ Stream Hub можно собрать в двух вариантах.
 - `Build: FULL`
 - `Build: LITE (no transcode)`
 
+## Готовые бинарники (скачать)
+
+- **FULL**: `https://stream.centv.ru/stream` (то же самое: `https://stream.centv.ru/stream-linux-x86_64`)
+- **LITE (no transcode)**: `https://stream.centv.ru/stream-linux-x86_64-lite`
+
+!!! tip "Через installer"
+    Можно поставить конкретный артефакт так:
+
+    ```bash
+    curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- \
+      --mode binary --runtime-only --artifact stream-linux-x86_64-lite
+    ```
+
 ## Как собрать FULL из исходников
 
 ```bash
@@ -86,4 +99,3 @@ sudo systemctl restart stream@prod
 - нужен транскод;
 - нужен ladder/publish;
 - нужен PNG to Stream или Create radio.
-
