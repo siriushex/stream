@@ -2240,134 +2240,6 @@
           </div>
         </div>
         <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
-          <div class="form-subsection">
-            <div class="form-grid">
-              <label class="field span-6">
-                <span>Preset</span>
-                <select id="stream-transcode-preset" disabled>
-                  <option value="">Custom</option>
-                  <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
-                  <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
-                  <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
-                  <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
-                  <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
-                  <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
-                  <option value="nvidia_ladder_2">NVIDIA 2 profiles (720+540)</option>
-                  <option value="nvidia_ladder_3">NVIDIA 3 profiles (720+540+360)</option>
-                </select>
-              </label>
-              <div class="field span-6">
-                <span>Apply</span>
-                <button class="btn ghost" type="button" id="stream-transcode-preset-apply" disabled>Apply</button>
-              </div>
-            </div>
-            <div class="form-hint">Apply preset overwrites transcoding profiles. Publish outputs are configured in the OUTPUT LIST (General tab).</div>
-          </div>
-
-          <div class="form-subsection pngts-block" id="stream-pngts-block">
-            <div class="pngts-header">
-              <div class="pngts-title">PNG to Stream</div>
-              <div class="form-hint">Generate a reserve MPEG-TS from a PNG and audio for backup inputs.</div>
-            </div>
-            <div class="form-grid">
-              <label class="field">
-                <span>PNG file</span>
-                <input type="file" id="pngts-image-file" accept="image/png" />
-              </label>
-              <label class="field">
-                <span>Source URL (for analyze)</span>
-                <input type="text" id="pngts-source-url" placeholder="auto from input #1" />
-              </label>
-            </div>
-            <div class="form-grid pngts-audio-grid">
-              <label class="field">
-                <span>Audio mode</span>
-                <select id="pngts-audio-mode">
-                  <option value="silence">Silence</option>
-                  <option value="beep">Beep</option>
-                  <option value="mp3">MP3 file</option>
-                </select>
-              </label>
-              <label class="field" id="pngts-beep-field">
-                <span>Beep preset</span>
-                <select id="pngts-beep-preset">
-                  <option value="sine_440">Sine 440 Hz</option>
-                  <option value="sine_1000">Sine 1000 Hz</option>
-                  <option value="beep_1s">Beep every second</option>
-                  <option value="pink_noise">Pink noise</option>
-                </select>
-              </label>
-              <label class="field" id="pngts-mp3-field">
-                <span>MP3 file</span>
-                <input type="file" id="pngts-mp3-file" accept=".mp3,audio/mpeg" />
-              </label>
-            </div>
-            <details class="fold pngts-advanced">
-              <summary class="fold-summary">Output settings</summary>
-              <div class="fold-body">
-                <div class="form-grid">
-                  <label class="field">
-                    <span>Video codec</span>
-                    <select id="pngts-video-codec">
-                      <option value="">Auto (from analyze)</option>
-                      <option value="h264">H.264 (libx264)</option>
-                      <option value="hevc">HEVC (libx265)</option>
-                      <option value="mpeg2">MPEG-2</option>
-                    </select>
-                  </label>
-                  <label class="field">
-                    <span>Width</span>
-                    <input type="number" id="pngts-video-width" placeholder="Auto" />
-                  </label>
-                  <label class="field">
-                    <span>Height</span>
-                    <input type="number" id="pngts-video-height" placeholder="Auto" />
-                  </label>
-                  <label class="field">
-                    <span>FPS</span>
-                    <input type="text" id="pngts-video-fps" placeholder="Auto (25)" />
-                  </label>
-                  <label class="field">
-                    <span>Pixel format</span>
-                    <input type="text" id="pngts-video-pixfmt" placeholder="yuv420p" />
-                  </label>
-                  <label class="field">
-                    <span>Profile</span>
-                    <input type="text" id="pngts-video-profile" placeholder="Auto" />
-                  </label>
-                  <label class="field">
-                    <span>Level</span>
-                    <input type="text" id="pngts-video-level" placeholder="Auto" />
-                  </label>
-                  <label class="field">
-                    <span>Video bitrate (optional)</span>
-                    <input type="text" id="pngts-video-bitrate" placeholder="5M" />
-                  </label>
-                  <label class="field">
-                    <span>Duration (sec)</span>
-                    <input type="number" id="pngts-duration" placeholder="10" min="1" />
-                  </label>
-                  <label class="field">
-                    <span>Output path</span>
-                    <input type="text" id="pngts-output-path-input" placeholder="Auto (data/streams/&lt;id&gt;/backup/...)" />
-                  </label>
-                </div>
-              </div>
-            </details>
-            <div class="pngts-actions">
-              <button class="btn ghost" type="button" id="btn-pngts-analyze">Analyze main stream</button>
-              <button class="btn primary" type="button" id="btn-pngts-generate">Generate TS</button>
-              <button class="btn ghost" type="button" id="btn-pngts-add-backup" disabled>Add to INPUT LIST</button>
-            </div>
-            <div class="pngts-existing" id="pngts-existing">
-              <div class="pngts-existing-title">Созданные TS файлы</div>
-              <div class="pngts-existing-list" id="pngts-existing-list"></div>
-            </div>
-            <div class="form-hint" id="pngts-status"></div>
-            <div class="form-hint pngts-output" id="pngts-output-path"></div>
-            <pre class="form-hint form-hint-pre pngts-logs" id="pngts-logs"></pre>
-          </div>
-
           <details class="fold">
             <summary class="fold-summary">Advanced</summary>
             <div class="fold-body">
@@ -2465,6 +2337,134 @@
               </div>
             </div>
           </details>
+            </div>
+          </details>
+
+          <div class="form-subsection">
+            <div class="form-grid">
+              <label class="field span-6">
+                <span>Preset</span>
+                <select id="stream-transcode-preset" disabled>
+                  <option value="">Custom</option>
+                  <option value="cpu_1080p">CPU 1080p (H.264/AAC)</option>
+                  <option value="cpu_720p">CPU 720p (H.264/AAC)</option>
+                  <option value="cpu_540p">CPU 540p (H.264/AAC)</option>
+                  <option value="nvidia_1080p">NVIDIA 1080p (H.264/AAC)</option>
+                  <option value="nvidia_720p">NVIDIA 720p (H.264/AAC)</option>
+                  <option value="nvidia_540p">NVIDIA 540p (H.264/AAC)</option>
+                  <option value="nvidia_ladder_2">NVIDIA 2 profiles (720+540)</option>
+                  <option value="nvidia_ladder_3">NVIDIA 3 profiles (720+540+360)</option>
+                </select>
+              </label>
+              <div class="field span-6">
+                <span>Apply</span>
+                <button class="btn ghost" type="button" id="stream-transcode-preset-apply" disabled>Apply</button>
+              </div>
+            </div>
+            <div class="form-hint">Apply preset overwrites transcoding profiles. Publish outputs are configured in the OUTPUT LIST (General tab).</div>
+          </div>
+
+          <details class="fold pngts-block" id="stream-pngts-block">
+            <summary class="fold-summary">PNG to Stream</summary>
+            <div class="fold-body">
+              <div class="form-hint">Generate a reserve MPEG-TS from a PNG and audio for backup inputs.</div>
+            <div class="form-grid">
+              <label class="field">
+                <span>PNG file</span>
+                <input type="file" id="pngts-image-file" accept="image/png" />
+              </label>
+              <label class="field">
+                <span>Source URL (for analyze)</span>
+                <input type="text" id="pngts-source-url" placeholder="auto from input #1" />
+              </label>
+            </div>
+            <div class="form-grid pngts-audio-grid">
+              <label class="field">
+                <span>Audio mode</span>
+                <select id="pngts-audio-mode">
+                  <option value="silence">Silence</option>
+                  <option value="beep">Beep</option>
+                  <option value="mp3">MP3 file</option>
+                </select>
+              </label>
+              <label class="field" id="pngts-beep-field">
+                <span>Beep preset</span>
+                <select id="pngts-beep-preset">
+                  <option value="sine_440">Sine 440 Hz</option>
+                  <option value="sine_1000">Sine 1000 Hz</option>
+                  <option value="beep_1s">Beep every second</option>
+                  <option value="pink_noise">Pink noise</option>
+                </select>
+              </label>
+              <label class="field" id="pngts-mp3-field">
+                <span>MP3 file</span>
+                <input type="file" id="pngts-mp3-file" accept=".mp3,audio/mpeg" />
+              </label>
+            </div>
+            <details class="fold pngts-advanced">
+              <summary class="fold-summary">Output settings</summary>
+              <div class="fold-body">
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Video codec</span>
+                    <select id="pngts-video-codec">
+                      <option value="">Auto (from analyze)</option>
+                      <option value="h264">H.264 (libx264)</option>
+                      <option value="hevc">HEVC (libx265)</option>
+                      <option value="mpeg2">MPEG-2</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Width</span>
+                    <input type="number" id="pngts-video-width" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Height</span>
+                    <input type="number" id="pngts-video-height" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>FPS</span>
+                    <input type="text" id="pngts-video-fps" placeholder="Auto (25)" />
+                  </label>
+                  <label class="field">
+                    <span>Pixel format</span>
+                    <input type="text" id="pngts-video-pixfmt" placeholder="yuv420p" />
+                  </label>
+                  <label class="field">
+                    <span>Profile</span>
+                    <input type="text" id="pngts-video-profile" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Level</span>
+                    <input type="text" id="pngts-video-level" placeholder="Auto" />
+                  </label>
+                  <label class="field">
+                    <span>Video bitrate (optional)</span>
+                    <input type="text" id="pngts-video-bitrate" placeholder="5M" />
+                  </label>
+                  <label class="field">
+                    <span>Duration (sec)</span>
+                    <input type="number" id="pngts-duration" placeholder="10" min="1" />
+                  </label>
+                  <label class="field">
+                    <span>Output path</span>
+                    <input type="text" id="pngts-output-path-input" placeholder="Auto (data/streams/&lt;id&gt;/backup/...)" />
+                  </label>
+                </div>
+              </div>
+            </details>
+            <div class="pngts-actions">
+              <button class="btn ghost" type="button" id="btn-pngts-analyze">Analyze main stream</button>
+              <button class="btn primary" type="button" id="btn-pngts-generate">Generate TS</button>
+              <button class="btn ghost" type="button" id="btn-pngts-add-backup" disabled>Add to INPUT LIST</button>
+            </div>
+            <div class="pngts-existing" id="pngts-existing">
+              <div class="pngts-existing-title">Созданные TS файлы</div>
+              <div class="pngts-existing-list" id="pngts-existing-list"></div>
+            </div>
+            <div class="form-hint" id="pngts-status"></div>
+            <div class="form-hint pngts-output" id="pngts-output-path"></div>
+            <pre class="form-hint form-hint-pre pngts-logs" id="pngts-logs"></pre>
             </div>
           </details>
           <div class="form-hint" id="stream-transcode-input-url"></div>
