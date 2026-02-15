@@ -1,10 +1,11 @@
-# SKILL — Astral (fork Astra)
+# SKILL — Stream Hub (stream)
 
 ## Scope
 - Canonical repo: https://github.com/siriushex/stream (work on this repo going forward).
-- Astral — форк Astra с целью паритета функционала и близкого UX, без регрессий.
+- Stream Hub: Web UI + API для управления стримами (relay/transcode/mpts/publish).
 - Ничего из уже работающего не ломаем. Все новые фичи — add‑only, с безопасными дефолтами.
-- Брендинг: Astral. Astra упоминать только при ссылках на документацию.
+- Брендинг: `stream` / Stream Hub. Не использовать старое название проекта в user-facing тексте (UI/API/CLI/доки). Внутренние имена модулей/таблиц можно не переименовывать.
+- Версия продукта: `STREAM_VERSION` в `version.h` (сейчас `"1.2"`). Для релизов обновлять только её.
 
 ## Что уже сделано (зафиксировано)
 - Inline‑редактирование OUTPUT list (стримы), включая строковые URL‑outputs.
@@ -75,7 +76,7 @@
 
 ## Правила доработок (чтобы не терялись обновления)
 - Всегда обновлять `CHANGELOG.md` на каждое изменение.
-- Обновлять `docs/PARITY.md` (матрица “Docs → Astral”) при каждой фиче.
+- Обновлять `docs/PARITY.md` (матрица “Docs → Stream”) при каждой фиче.
 - Новые таблицы/поля → миграции в `scripts/config.lua`.
 - Ошибки сети/валидации должны быть читабельны в UI.
 

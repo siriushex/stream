@@ -54,12 +54,12 @@ python3 tools/net_autotune.py --api http://127.0.0.1:9060 --candidates bad,max,b
 
 Systemd timer (per instance, recommended):
 ```
-cp contrib/systemd/astral-net-autotune@.service /etc/systemd/system/
-cp contrib/systemd/astral-net-autotune@.timer /etc/systemd/system/
+cp contrib/systemd/stream-net-autotune@.service /etc/systemd/system/
+cp contrib/systemd/stream-net-autotune@.timer /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now astral-net-autotune@prod.timer
+systemctl enable --now stream-net-autotune@prod.timer
 ```
-The timer runs periodically and the script uses a lock file (`/tmp/astral_net_autotune.lock`) to avoid overlaps.
+The timer runs periodically and the script uses a lock file (`/tmp/stream_net_autotune.lock`) to avoid overlaps.
 
 ## Adaptive auto-tune (optional)
 For unstable sources you can enable adaptive tuning:

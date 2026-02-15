@@ -1643,7 +1643,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
             "Host: %s:%d\r\n"
             "User-Agent: %s\r\n"
             "Connection: close\r\n\r\n",
-            path, host, port, user_agent ? user_agent : "Astra");
+            path, host, port, user_agent ? user_agent : "Stream");
 
         if(!send_all(fd, request, strlen(request)))
         {

@@ -2,11 +2,13 @@
 
 ## Scope
 - Canonical repo: https://github.com/siriushex/stream (work on this repo going forward).
+- Product branding: Stream Hub / `stream` (do not use the legacy project name in user-facing text).
+- Product version: `STREAM_VERSION` in `version.h` (currently `"1.2"`).
 - Testing and final verification must run on the DEV/TEST server in `/home/hex`.
 - DEV/TEST (only): `ssh -p 40242 -i ~/.ssh/root_blast root@178.212.236.2`
 - PROD: `178.212.236.6` is production. Do not use it for development/testing or deploys from Codex.
 - Test instances list must exclude `178.212.236.6`; use only `178.212.236.2` for dev/test.
-- Guardrail: `scripts/ops/deploy_rsync.sh` refuses to deploy to `178.212.236.6` unless `ASTRAL_ALLOW_PROD_DEPLOY=1` is set explicitly.
+- Guardrail: `scripts/ops/deploy_rsync.sh` refuses to deploy to `178.212.236.6` unless `STREAM_ALLOW_PROD_DEPLOY=1` is set explicitly.
 - If you must touch PROD: logs/diagnostics only (read-only). Never run `git pull`, `rsync`, `./configure.sh`, `make`, or hot-edit files there from Codex.
 - The DEV/TEST server may have no DVB support; do not test adapters or any DVB-related flows there unless explicitly confirmed.
 - Do not add secrets to the repo. Do not commit `.env` files or keys.
@@ -15,7 +17,7 @@
 
 ## Codex environment setup (multi-agent)
 - Use a separate working tree per agent to avoid file collisions:
-  - `git worktree add ../astra-<agent> -b codex/<agent>/<topic>`
+  - `git worktree add ../stream-<agent> -b codex/<agent>/<topic>`
 - Configure a unique Git identity per agent:
   - `git config user.name "<agent>"`
   - `git config user.email "<agent>@users.noreply.github.com"`
@@ -68,8 +70,8 @@
 
 ## Local parallelization (worktrees)
 - Use `git worktree` for separate branches on the same machine:
-  - `git worktree add ../astra-<agent> -b codex/<agent>/<topic>`
-  - `cd ../astra-<agent>`
+  - `git worktree add ../stream-<agent> -b codex/<agent>/<topic>`
+  - `cd ../stream-<agent>`
   - Work and push from the worktree as usual.
 
 ## Gates (pre-push)
@@ -82,17 +84,17 @@
 - Parity matrix: `docs/PARITY.md`
 
 ## Upload
-- Target directory: `/home/hex/astra`
+- Target directory: `/home/hex/stream`
 - Use rsync (example):
 ```sh
-rsync -az --delete --exclude '.git' --exclude 'astra' --exclude '*.o' --exclude '*.so' \
+rsync -az --delete --exclude '.git' --exclude 'stream' --exclude '*.o' --exclude '*.so' \
   -e "ssh -p 40242 -i ~/.ssh/root_blast" \
-  ./ root@178.212.236.2:/home/hex/astra/
+  ./ root@178.212.236.2:/home/hex/stream/
 ```
 
 ## Local sanity (optional)
-- Build: `cd astra && ./configure.sh && make`
-- Run UI/API server: `./astra scripts/server.lua -p 8000 --data-dir ./data --web-dir ./web`
+- Build: `./configure.sh && make`
+- Run UI/API server: `./stream scripts/server.lua -p 8000 --data-dir ./data --web-dir ./web`
 - NOTE: local runs are not a substitute for server verification.
 
 ## Обязательная проверка (smoke tests)
@@ -101,12 +103,12 @@ Run from the server in `/home/hex`:
 cd /home/hex
 
 # Build (required after C/core changes)
-cd /home/hex/astra
+cd /home/hex/stream
 ./configure.sh
 make
 
 # If make reports clock skew after rsync, normalize timestamps:
-find /home/hex/astra -type f -exec touch -c {} +
+find /home/hex/stream -type f -exec touch -c {} +
 cd /home/hex
 
 # UI and assets
@@ -120,39 +122,39 @@ curl -s -X POST http://127.0.0.1:9000/api/v1/auth/login \
 
 # API after login (replace TOKEN)
 curl -s http://127.0.0.1:9000/api/v1/streams \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 curl -s http://127.0.0.1:9000/api/v1/settings \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 
 # Metrics (summary counters)
 curl -s http://127.0.0.1:9000/api/v1/metrics \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 curl -s "http://127.0.0.1:9000/api/v1/metrics?format=prometheus" \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 
 # Health endpoints
 curl -s http://127.0.0.1:9000/api/v1/health/process \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 curl -s http://127.0.0.1:9000/api/v1/health/inputs \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 curl -s http://127.0.0.1:9000/api/v1/health/outputs \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 
 # Config safety
 curl -s -X POST http://127.0.0.1:9000/api/v1/config/validate \
-  -H "Cookie: astra_session=<TOKEN>" \
+  -H "Cookie: stream_session=<TOKEN>" \
   -H 'Content-Type: application/json' \
   --data-binary '{}'
 curl -s http://127.0.0.1:9000/api/v1/config/revisions \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 curl -s -X POST http://127.0.0.1:9000/api/v1/reload \
-  -H "Cookie: astra_session=<TOKEN>"
+  -H "Cookie: stream_session=<TOKEN>"
 
 # Export (backup)
 curl -s "http://127.0.0.1:9000/api/v1/export?include_users=0" \
-  -H "Cookie: astra_session=<TOKEN>" | head -n 1
-./astra scripts/export.lua --data-dir ./data --output ./astra-export.json
-rm -f ./astra-export.json
+  -H "Cookie: stream_session=<TOKEN>" | head -n 1
+./stream scripts/export.lua --data-dir ./data --output ./stream-export.json
+rm -f ./stream-export.json
 
 # NOTE: do not test adapters or DVB-related endpoints on this server (no DVB).
 
@@ -167,12 +169,12 @@ NOTE: the default port in `scripts/server.lua` is `8000`, but the server may sto
 `http_port` in SQLite; adjust the URLs to the actual port.
 
 ## Smoke tests for config files (JSON/Lua)
-Run from the server in `/home/hex/astra` (use `--data-dir` to avoid clobbering prod data):
+Run from the server in `/home/hex/stream` (use `--data-dir` to avoid clobbering prod data):
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # JSON config (fixtures/ada2-10815.json)
-./astra ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web &
+./stream ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web &
 JSON_PID=$!
 sleep 2
 curl -I http://127.0.0.1:9001/index.html
@@ -186,7 +188,7 @@ rm -f "$COOKIE_JAR"
 kill "$JSON_PID"
 
 # Lua config (fixtures/sample.lua)
-./astra ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web &
+./stream ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web &
 LUA_PID=$!
 sleep 2
 curl -I http://127.0.0.1:9002/index.html
@@ -202,11 +204,11 @@ kill "$LUA_PID"
 # Missing config (auto-create defaults)
 rm -f ./data_test_missing.json
 rm -rf ./data_test_missing.data
-./astra ./data_test_missing.json -p 9003 &
+./stream ./data_test_missing.json -p 9003 &
 MISS_PID=$!
 sleep 2
 test -f ./data_test_missing.json
-test -f ./data_test_missing.data/astra.db
+test -f ./data_test_missing.data/stream.db
 curl -I http://127.0.0.1:9003/index.html
 kill "$MISS_PID"
 rm -f ./data_test_missing.json
@@ -216,9 +218,9 @@ rm -rf ./data_test_missing.data
 ```
 
 ## Smoke tests for input failover (passive/active)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Start two local MPEG-TS generators (primary + backup).
 ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
@@ -230,7 +232,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:12001?pkt_size=1316" &
 BACKUP_FF=$!
 
-./astra ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web &
+./stream ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web &
 FO_PID=$!
 sleep 2
 
@@ -319,9 +321,9 @@ rm -rf ./data_failover
 ```
 
 ## Smoke tests for HLS failover (discontinuity)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Start two local MPEG-TS generators (primary + backup).
 ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
@@ -333,7 +335,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:12001?pkt_size=1316" &
 BACKUP_FF=$!
 
-./astra ./fixtures/failover_hls.json -p 9052 --data-dir ./data_failover_hls --web-dir ./web &
+./stream ./fixtures/failover_hls.json -p 9052 --data-dir ./data_failover_hls --web-dir ./web &
 PID=$!
 sleep 6
 
@@ -365,9 +367,9 @@ rm -rf ./data_failover_hls
 ```
 
 ## Smoke tests for HLS + HTTP Play settings
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 cat > ./tmp_hls_http_play.json <<'JSON'
 {
@@ -398,7 +400,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:13000?pkt_size=1316" &
 FF_PID=$!
 
-./astra ./tmp_hls_http_play.json -p 9026 --data-dir ./data_hls_9026 --web-dir ./web &
+./stream ./tmp_hls_http_play.json -p 9026 --data-dir ./data_hls_9026 --web-dir ./web &
 PID=$!
 sleep 5
 
@@ -422,9 +424,9 @@ rm -rf ./data_hls_9026
 ```
 
 ## Smoke tests for user management
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 COOKIE_JAR=$(mktemp)
 curl -s -c "$COOKIE_JAR" -X POST http://127.0.0.1:9000/api/v1/auth/login \
@@ -455,9 +457,9 @@ rm -f "$COOKIE_JAR"
 ```
 
 ## Smoke tests for HTTP auth (allow/deny/tokens/basic)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 cat > ./tmp_http_auth.json <<'JSON'
 {
@@ -487,7 +489,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:13100?pkt_size=1316" &
 FF_PID=$!
 
-./astra ./tmp_http_auth.json -p 9028 --data-dir ./data_http_auth_9028 --web-dir ./web &
+./stream ./tmp_http_auth.json -p 9028 --data-dir ./data_http_auth_9028 --web-dir ./web &
 PID=$!
 sleep 5
 
@@ -504,9 +506,9 @@ rm -rf ./data_http_auth_9028
 ```
 
 ## Smoke tests for token auth backend (on_play/on_publish)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 python3 ./fixtures/auth_backend.py &
 AUTH_BACKEND_PID=$!
@@ -516,7 +518,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:13200?pkt_size=1316" &
 SRC_FF=$!
 
-./astra ./fixtures/auth_play.json -p 9032 --data-dir ./data_auth_9032 --web-dir ./web &
+./stream ./fixtures/auth_play.json -p 9032 --data-dir ./data_auth_9032 --web-dir ./web &
 PID=$!
 sleep 6
 
@@ -529,7 +531,7 @@ curl -s "http://127.0.0.1:9032/playlist.m3u8?token=token1" | grep 'token=token1'
 # HLS rewrite + cookie propagation.
 curl -s "http://127.0.0.1:9032/hls/auth_demo/index.m3u8?token=token1" | grep 'token=token1'
 curl -s -D - -o /dev/null "http://127.0.0.1:9032/hls/auth_demo/index.m3u8?token=token1" \
-  | grep -i 'set-cookie: astra_token'
+  | grep -i 'set-cookie: stream_token'
 
 COOKIE_JAR=$(mktemp)
 curl -s -c "$COOKIE_JAR" -X POST http://127.0.0.1:9032/api/v1/auth/login \
@@ -547,9 +549,9 @@ rm -rf ./data_auth_9032
 ```
 
 ## Smoke tests for token auth limits (max sessions / unique)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 python3 ./fixtures/auth_backend.py &
 AUTH_BACKEND_PID=$!
@@ -560,7 +562,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
 SRC_FF=$!
 
 # Overlimit policy (deny_new) with max_sessions=3:
-./astra ./fixtures/auth_limits.json -p 9033 --data-dir ./data_auth_limits_9033 --web-dir ./web &
+./stream ./fixtures/auth_limits.json -p 9033 --data-dir ./data_auth_limits_9033 --web-dir ./web &
 PID=$!
 sleep 6
 curl -s "http://127.0.0.1:9033/playlist.m3u8?token=token1" | head -n 1
@@ -570,7 +572,7 @@ kill "$PID"
 rm -rf ./data_auth_limits_9033
 
 # Unique sessions (kicks previous):
-./astra ./fixtures/auth_unique.json -p 9034 --data-dir ./data_auth_unique_9034 --web-dir ./web &
+./stream ./fixtures/auth_unique.json -p 9034 --data-dir ./data_auth_unique_9034 --web-dir ./web &
 PID=$!
 sleep 4
 curl -s "http://127.0.0.1:9034/playlist.m3u8?token=token1" | head -n 1
@@ -599,9 +601,9 @@ rm -rf ./data_auth_unique_9034
 ```
 
 ## Smoke tests for HLSSplitter (managed service)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Ensure hlssplitter binary exists (build externally if missing).
 test -x ./hlssplitter/hlssplitter || test -x ./hlssplitter/source/hlssplitter/hlssplitter
@@ -613,7 +615,7 @@ ffmpeg -loglevel error -f lavfi -i testsrc=size=128x128:rate=25 \
 python3 -m http.server 18080 --directory . &
 HTTP_PID=$!
 
-./astra scripts/server.lua -p 9041 --data-dir ./data_splitter_9041 --web-dir ./web &
+./stream scripts/server.lua -p 9041 --data-dir ./data_splitter_9041 --web-dir ./web &
 PID=$!
 sleep 3
 
@@ -663,9 +665,9 @@ rm -rf ./data_splitter_9041
 ```
 
 ## Smoke tests for Buffer mode (HTTP TS buffer)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Start two HTTP TS sources (primary + backup).
 ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 \
@@ -679,7 +681,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 \
   -listen 1 http://127.0.0.1:18081/backup.ts &
 BACKUP_FF=$!
 
-./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &
+./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &
 PID=$!
 sleep 4
 
@@ -759,9 +761,9 @@ rm -rf ./data_buffer_9047
 ```
 
 ## Smoke tests for password policy + audit log
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 cat > ./tmp_password_policy.json <<'JSON'
 {
@@ -776,7 +778,7 @@ cat > ./tmp_password_policy.json <<'JSON'
 }
 JSON
 
-./astra ./tmp_password_policy.json -p 9031 --data-dir ./data_policy_9031 --web-dir ./web &
+./stream ./tmp_password_policy.json -p 9031 --data-dir ./data_policy_9031 --web-dir ./web &
 PID=$!
 sleep 3
 
@@ -804,9 +806,9 @@ rm -rf ./data_policy_9031
 ```
 
 ## Smoke tests for transcode (ffmpeg)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Ensure no stale ffmpeg processes are holding the ports.
 pids=$(pgrep -f "udp://127.0.0.1:12100" || true)
@@ -821,7 +823,7 @@ ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
   "udp://127.0.0.1:12100?pkt_size=1316" &
 SRC_FF=$!
 
-./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &
+./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &
 TC_PID=$!
 # Allow ffmpeg progress/bitrate to populate before checks.
 sleep 30
@@ -870,9 +872,9 @@ rm -rf ./data_transcode
 ```
 
 ## Smoke tests for UDP audio fix (optional)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Input generator with non-AAC audio (MP2).
 ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
@@ -907,12 +909,12 @@ cat > ./tmp_audio_fix.json <<'JSON'
 }
 JSON
 
-./astra ./tmp_audio_fix.json -p 9050 --data-dir ./data_audio_fix --web-dir ./web &
+./stream ./tmp_audio_fix.json -p 9050 --data-dir ./data_audio_fix --web-dir ./web &
 PID=$!
 sleep 8
 
 # Output should report AUDIO type 0x0F (AAC) after fix starts.
-./astra scripts/analyze.lua -n 3 udp://127.0.0.1:15010 | grep 'AUDIO'
+./stream scripts/analyze.lua -n 3 udp://127.0.0.1:15010 | grep 'AUDIO'
 
 kill "$PID"
 kill "$SRC_FF"
@@ -923,9 +925,9 @@ rm -rf ./data_audio_fix
 ```
 
 ## Smoke tests for SRT/RTSP bridge (optional, requires ffmpeg with srt/rtsp)
-Run from the server in `/home/hex/astra`:
+Run from the server in `/home/hex/stream`:
 ```sh
-cd /home/hex/astra
+cd /home/hex/stream
 
 # Ensure ffmpeg supports protocols (skip if missing).
 ffmpeg -protocols | grep -E 'srt|rtsp' || true
@@ -952,7 +954,7 @@ cat > ./tmp_srt_out.json <<'JSON'
 }
 JSON
 
-./astra ./tmp_srt_out.json -p 9036 --data-dir ./data_srt_9036 --web-dir ./web &
+./stream ./tmp_srt_out.json -p 9036 --data-dir ./data_srt_9036 --web-dir ./web &
 PID=$!
 sleep 4
 ffmpeg -loglevel error -i "srt://127.0.0.1:15100?mode=listener" -t 2 -f null - || true
@@ -974,7 +976,7 @@ rm -rf ./data_srt_9036
 - Выходы: HTTP ответы/коды, события, форматы данных, side-effects (файлы/сессии).
 
 ### Ошибки и поведение
-- Ошибки: коды, текст, когда `astra.abort()`/`astra.exit()` допустимы.
+- Ошибки: коды, текст, когда допустимы abort/exit (не падать в callback-ах; обрабатывать ошибки в UI/API).
 - Идемпотентность: какие операции безопасны для повторов.
 
 ### Логирование

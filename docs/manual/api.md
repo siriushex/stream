@@ -49,12 +49,12 @@ curl -sS "http://SERVER:9060/api/v1/stream-status" -H "Authorization: Bearer TOK
 curl -sS "http://SERVER:9060/api/v1/alerts" -H "Authorization: Bearer TOKEN"
 ```
 
-## Cesbo Astra API (совместимость)
+## Cesbo Stream API (совместимость)
 
-Если у вас есть отдельный сервер Cesbo Astra (старый проект) и вы хотите управлять им скриптом,
+Если у вас есть отдельный сервер Cesbo Stream (старый проект) и вы хотите управлять им скриптом,
 в Stream Hub есть готовый клиент.
 
-См. страницу: **Cesbo Astra API client** в этом manual.
+См. страницу: **Cesbo Stream API client** в этом manual.
 
 ## Важно про безопасность
 

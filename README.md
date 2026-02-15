@@ -1,17 +1,14 @@
 # Description
 
-Astra (Advanced Streamer) is a professional software to organize Digital TV Service for
-TV operators and broadcasters, internet service providers, hotels, etc.
-
-* Learn more: https://cesbo.com/astra/
-* Community: http://forum.cesbo.com/
+Stream Hub is a Web UI + API to manage IPTV streams: inputs/outputs, relay, transcoding,
+MPTS workflows, publishing, diagnostics.
 
 ## Quick start (local build)
-- From `astra/`:
+- From repo root:
   - `./configure.sh` (see `./configure.sh --help` for all options)
   - `make`
-  - Optional: `make install` (installs to `--bin`, default `/usr/bin/astra`)
-- Binary: `./astra`
+  - Optional: `make install` (installs to `--bin`, default `/usr/bin/stream`)
+- Binary: `./stream`
 - NOTE: `configure.sh` regenerates `Makefile` and `config.h`.
 
 ## Docs
@@ -32,8 +29,8 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Generated files include favicon and PWA sizes (16..512 + apple-touch icon).
 
 ## Run UI/API server
-- `./astra scripts/server.lua [options]`
-- `./astra <config.json|config.lua> [options]` (auto-runs `scripts/server.lua --config <path>`)
+- `./stream scripts/server.lua [options]`
+- `./stream <config.json|config.lua> [options]` (auto-runs `scripts/server.lua --config <path>`)
 - Options (see `scripts/server.lua`):
   - `-a ADDR`, `-p PORT`
   - `--data-dir PATH`, `--db PATH`
@@ -43,9 +40,9 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   - `--import PATH`, `--import-mode merge|replace` (legacy alias)
 - Defaults: addr `0.0.0.0`, port `8000`, data dir `./data`, web dir `./web`,
   HLS route `/hls`.
-- First run creates SQLite `./data/astra.db` and default admin `admin`/`admin`.
-- If `--config` points to a missing file, Astra creates it with default values.
-- If `--data-dir` is not provided for a config run, Astra uses `<config>.data`
+- First run creates SQLite `./data/stream.db` and default admin `admin`/`admin`.
+- If `--config` points to a missing file, Stream creates it with default values.
+- If `--data-dir` is not provided for a config run, Stream uses `<config>.data`
   next to the config file.
 - The server persists `http_port`, `hls_dir`, and `hls_base_url` in SQLite; if set,
   they override defaults on next run.
@@ -54,7 +51,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 ## UI preferences
 - Use the top-bar "View" menu to switch between Table, Compact, and Cards layouts.
 - Theme can be Light, Dark, or Auto (system); both view/theme are stored in
-  localStorage keys `astra.viewMode` and `astra.theme`.
+  localStorage keys `stream.viewMode` and `stream.theme`.
 
 ## PNG to Stream (reserve TS)
 - UI: Edit stream → Transcode → PNG to Stream.
@@ -72,23 +69,23 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Global options (from `scripts/base.lua`): `-h/--help`, `-v/--version`, `--pid`,
   `--syslog`, `--log`, `--no-stdout`, `--color`, `--debug`.
 - Built-in apps (from `modules/inscript/inscript.c`):
-  - `./astra --stream` (stream runtime; built-in stream app).
-  - `./astra --relay` or `--xproxy` (HTTP relay).
-  - `./astra --analyze` (MPEG-TS analyzer; see `-n` and URL formats).
-  - `./astra --dvbls` (DVB adapter list).
-  - `./astra --femon` (frontend monitor).
+  - `./stream --stream` (stream runtime; built-in stream app).
+  - `./stream --relay` or `--xproxy` (HTTP relay).
+  - `./stream --analyze` (MPEG-TS analyzer; see `-n` and URL formats).
+  - `./stream --dvbls` (DVB adapter list).
+  - `./stream --femon` (frontend monitor).
 - Script entrypoints (same runtime, editable files):
-  - `./astra scripts/server.lua`
-  - `./astra scripts/relay.lua`
-  - `./astra scripts/analyze.lua`
-  - `./astra scripts/femon.lua`
-  - `./astra scripts/export.lua`
-  - `./astra scripts/lint.lua --config <path>` (config lint)
+  - `./stream scripts/server.lua`
+  - `./stream scripts/relay.lua`
+  - `./stream scripts/analyze.lua`
+  - `./stream scripts/femon.lua`
+  - `./stream scripts/export.lua`
+  - `./stream scripts/lint.lua --config <path>` (config lint)
   - any custom script path
 
 ## HTTP API (public)
 - Auth: `POST /api/v1/auth/login` (JSON `{username,password}`); response includes
-  token and `astra_session` cookie. Auth header also accepts
+  token and `stream_session` cookie. Auth header also accepts
   `Authorization: Bearer <token>`.
 - Logout: `POST /api/v1/auth/logout`.
 - Streams: `GET/POST /api/v1/streams`, `GET/PUT/DELETE /api/v1/streams/<id>`.
@@ -106,7 +103,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   `?format=prometheus` for text export).
   - Includes `lua_mem_kb` and `perf` timings (`refresh_ms`, `status_ms`,
     `status_one_ms`, `adapter_refresh_ms`) for basic profiling.
-  - Prometheus adds `astra_lua_mem_kb` and `astra_perf_*_ms` gauges.
+  - Prometheus adds `stream_lua_mem_kb` and `stream_perf_*_ms` gauges.
 - Tools: `GET /api/v1/tools` (resolved ffmpeg/ffprobe paths and versions).
 - Audit log: `GET /api/v1/audit?since=&limit=&action=&actor=&target=&ip=&ok=` (admin-only).
 - Users: `GET /api/v1/users`, `POST /api/v1/users`, `PUT /api/v1/users/<username>`,
@@ -133,11 +130,11 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - NOTE: all endpoints except login/logout require a valid session; unauthorized
   returns 401.
 - NOTE: if `http_csrf_enabled` is on, state-changing requests that rely on the
-  `astra_session` cookie must send `X-CSRF-Token` equal to the session token.
+  `stream_session` cookie must send `X-CSRF-Token` equal to the session token.
   Bearer `Authorization` skips the CSRF check.
 
 ## Config and settings
-- SQLite config store lives in `./data/astra.db` by default.
+- SQLite config store lives in `./data/stream.db` by default.
 - Settings are stored via `/api/v1/settings` and used by `scripts/server.lua` and
   `scripts/stream.lua`.
 - Watchdog alerts are stored in SQLite (`alerts` table) and exposed via `/api/v1/alerts`.
@@ -180,10 +177,10 @@ TV operators and broadcasters, internet service providers, hotels, etc.
   until changed.
 - NOTE: log buffers are in-memory; defaults are 2000 entries and 86400 seconds
   for both logs. Set a limit to `0` to disable it (not recommended). File logs
-  from `--log` are not rotated by Astra; use logrotate/systemd.
+  from `--log` are not rotated by Stream; use logrotate/systemd.
 
 ## HLSSplitter service (managed)
-- Astra can manage an external `hlssplitter` process as a service (no code changes
+- Stream can manage an external `hlssplitter` process as a service (no code changes
   to hlssplitter itself).
 - Binary discovery order:
   - `./hlssplitter/hlssplitter`
@@ -196,7 +193,7 @@ TV operators and broadcasters, internet service providers, hotels, etc.
 - Output URL pattern:
   `http://<server_ip>:<instance_port>/<resource_path>`, where `resource_path` is
   the input URL path.
-- If no allow rules are present, Astra writes `allow 0.0.0.0` (allow all).
+- If no allow rules are present, Stream writes `allow 0.0.0.0` (allow all).
 - Health checks probe local output URLs and mark each link `OK/DOWN` with
   `last_ok_ts` and `last_error`.
 - UI presets fill common instance defaults (port/log/config). Note: `logtype` is
@@ -338,9 +335,9 @@ Low latency:
 
 ## UDP Output Audio Fix (AAC normalize)
 - Per-UDP output toggle in the Output List: **Audio fix**.
-- When enabled, Astra probes the UDP output with `scripts/analyze.lua` and checks
+- When enabled, Stream probes the UDP output with `scripts/analyze.lua` and checks
   the audio type in PMT.
-- If audio type is not AAC (`0x0F`) for longer than the hold window, Astra starts
+- If audio type is not AAC (`0x0F`) for longer than the hold window, Stream starts
   a local ffmpeg pass: video copy, audio AAC, and publishes to the same UDP URL.
 - Exclusive output: the normal UDP writer is disabled while the audio-fix ffmpeg
   is running (no double publish).
@@ -385,9 +382,9 @@ Per-output config (UDP only):
 - NOTE: user exports include hashed passwords (or legacy cipher). Use
   `include_users=0` if you want to omit credentials.
 - CLI export:
-  - `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
-  - `./astra scripts/export.lua --data-dir ./data --no-users` (stdout)
-  - `./astra scripts/export.lua --data-dir ./data --no-splitters` (stdout)
+  - `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
+  - `./stream scripts/export.lua --data-dir ./data --no-users` (stdout)
+  - `./stream scripts/export.lua --data-dir ./data --no-splitters` (stdout)
   - Other: `http_port`, `gid`, `softcam`, `backup_active_warm_max`, `event_request`.
 - NOTE: `hls_base_url` is used as the URL prefix/route (default `/hls`); the CLI
   flag is `--hls-route`.
@@ -403,7 +400,7 @@ Per-output config (UDP only):
   `Authorization: Bearer <token>` or `?token=`, and Basic uses the users table.
 
 ## Config safety (LKG rollback)
-- Config changes are validated and applied atomically. If reload fails, Astra
+- Config changes are validated and applied atomically. If reload fails, Stream
   restores the last known good (LKG) snapshot automatically.
 - LKG snapshot path: `./data/backups/config/config_lkg.json`.
 - Boot marker path: `./data/state/boot_state.json` (used to auto-rollback after a failed boot).
@@ -450,7 +447,7 @@ Per-output config (UDP only):
 - Response headers: `X-AuthDuration`, `X-UserId`, `X-Max-Sessions`, `X-Unique`.
 
 ### Notes
-- Token source: query `?token=`, fallback to `astra_token` cookie.
+- Token source: query `?token=`, fallback to `stream_token` cookie.
 - Session id uses the ordered session_keys values; missing values become `undefined`.
 - Backend errors: cached ALLOW gets short grace; new sessions fail closed.
 - on_publish is best-effort for pull inputs: denial stops input after backend response.
@@ -469,18 +466,13 @@ Per-output config (UDP only):
   and transcode (most streams are disabled by default).
 
 ## Systemd (template)
-- Templates live in `contrib/systemd/`:
-  - `astra.service` (unit)
-  - `astra.env` (environment file)
-- Copy to:
-  - `/etc/systemd/system/astra.service`
-  - `/etc/default/astra`
-- Update `WorkingDirectory`, `ExecStart`, and paths in `astra.env` for your install.
-- Create the config at `ASTRA_CONFIG` (JSON or Lua). The unit uses
-  `--config` to import before startup.
+- Installer writes `/etc/systemd/system/stream@.service`.
+- Instance files live under `/etc/stream/`:
+  - `/etc/stream/<name>.json` (config)
+  - `/etc/stream/<name>.env` (env, includes `STREAM_PORT=...`)
 - Enable/start:
   - `systemctl daemon-reload`
-  - `systemctl enable --now astra`
+  - `systemctl enable --now stream@<name>.service`
 
 ## Stream backup/failover
 - Inputs are ordered; `input[0]` is primary, `input[1..]` are backups.
@@ -548,7 +540,7 @@ Per-output config (UDP only):
 
 ## Transcode streams (FFmpeg)
 - New stream type: `type="transcode"` (alias: `type="ffmpeg"`).
-- Astra launches `ffmpeg` as a managed subprocess (no shell) with
+- Stream launches `ffmpeg` as a managed subprocess (no shell) with
   `-hide_banner -progress pipe:1 -nostats -loglevel warning`.
 - Status/alerts:
   - `GET /api/v1/transcode-status` and `/api/v1/transcode-status/<id>`.
@@ -574,7 +566,7 @@ Per-output config (UDP only):
   - `transcode.outputs[]`: `vf`, `vcodec`, `v_args`, `acodec`, `a_args`,
     `metadata`, `format_args`, `url`.
   - `transcode.log_file`: append ffmpeg stderr lines to a file.
-  - `transcode.log_to_main`: `true` to mirror ffmpeg stderr to Astra log
+  - `transcode.log_to_main`: `true` to mirror ffmpeg stderr to Stream log
     (use `"errors"` to log only matched error lines).
   - `transcode.input_probe_udp`: `true` to run a short UDP input probe before
     start (longer analyze window; requires `probe_interval_sec` > 0). UDP
@@ -586,13 +578,13 @@ Per-output config (UDP only):
     `restart_delay_sec`, `no_progress_timeout_sec`, `max_error_lines_per_min`,
     `desync_threshold_ms`, `desync_fail_count`, `probe_interval_sec`,
     `probe_duration_sec`, `probe_timeout_sec`, `max_restarts_per_10min`,
-    `probe_fail_count`, `monitor_engine` (`auto|ffprobe|astra_analyze`),
+    `probe_fail_count`, `monitor_engine` (`auto|ffprobe|stream_analyze`),
     `low_bitrate_enabled`, `low_bitrate_min_kbps`, `low_bitrate_hold_sec`,
     `restart_cooldown_sec`.
     Probe target is always the output `url` (user-provided `probe_url` is ignored).
   - Legacy: `transcode.watchdog` is still accepted as defaults for outputs when
     an output does not define its own watchdog.
-  - Global: `monitor_analyze_max_concurrency` limits parallel Astra Analyze probes
+  - Global: `monitor_analyze_max_concurrency` limits parallel Stream Analyze probes
     (default 4).
 - UI tip: transcode output presets are available for common CPU/NVIDIA/Intel QSV 1080p/720p/540p
   profiles; transcode presets can also set engine/decoder/watchdog defaults and
@@ -689,7 +681,7 @@ Per-output config (UDP only):
   only on a MAJOR bump.
 - Migrations: update SQLite schema via `scripts/config.lua` migrations; avoid
   destructive changes unless `--import-mode replace` is used. Migrations run in
-  transactions and create `astra.db.bak.<timestamp>` before applying new steps.
+  transactions and create `stream.db.bak.<timestamp>` before applying new steps.
 - Acceptance criteria: define expected behavior for each feature and extend smoke
   tests to cover new public endpoints/flows (see `AGENT.md`).
 

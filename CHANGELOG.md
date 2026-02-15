@@ -13,12 +13,17 @@
 ### 2026-02-15
 - Changes:
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
+  - Transcode watchdog: rename monitor engine `astra_analyze` -> `stream_analyze` (legacy values still accepted).
   - Installer (CentOS): run transcode verification by default and prefer source tarball download with git clone fallback.
-  - Release: version suffix `.2` via `ASTRA_VERSION`.
+  - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
+  - Branding/version: user-facing version is now `STREAM_VERSION` (set to `1.2`), binary name is `stream`.
 - Tests:
+  - `./configure.sh && make`
   - `node --check web/app.js`
-  - `./astra scripts/tests/transcode_qsv_args_unit.lua`
-  - `./astra scripts/tests/process_spawn_env_unit.lua`
+  - `./stream scripts/tests/transcode_qsv_args_unit.lua`
+  - `./stream scripts/tests/process_spawn_env_unit.lua`
+  - `./stream scripts/tests/cesbo_api_client_unit.lua`
+  - `python3 -m py_compile tools/net_autotune.py tools/docs_admin_server.py`
 ### 2026-02-14
 - Changes:
   - Input resilience: tune `bad`/`max` network profiles for unstable HTTP/HLS sources (bigger timeouts + larger default jitter buffer).
@@ -49,7 +54,7 @@
   - Validation: validate detector options on stream save to avoid invalid configs.
 - Tests:
   - `node --check web/app.js`
-  - `./astra scripts/tests/input_detectors_url_unit.lua`
+  - `./stream scripts/tests/input_detectors_url_unit.lua`
 ### 2026-02-10
 - Changes:
   - OUTPUT LIST: stop auto-creating outputs when enabling transcoding or applying transcode presets.
@@ -86,7 +91,7 @@
   - Transcode: fix internal `/input/<id>` loopback for `stream://<id>` inputs by normalizing stream refs to `http://127.0.0.1:<http_port>/play/<id>?internal=1` when creating loop channels.
   - Server: make `/input/<id>` prefer the transcode loop channel (raw input) when a transcode/audio-fix job exists for the stream.
 - Tests:
-  - `./astra scripts/server.lua --config fixtures/transcode_ladder_hls_publish.json -p 9100 --data-dir /tmp/astra_test_data --web-dir ./web`
+  - `./stream scripts/server.lua --config fixtures/transcode_ladder_hls_publish.json -p 9100 --data-dir /tmp/astra_test_data --web-dir ./web`
   - `curl -sS -D - -o /dev/null --max-time 2 "http://127.0.0.1:9100/input/transcode_ladder_hls_publish?internal=1"`
 ### 2026-02-09
 - Changes:
@@ -394,7 +399,7 @@
 - Changes:
   - AI: honor `retry-after` / `x-ratelimit-reset-*` headers when scheduling retries (reduces retry load on 429).
 - Tests:
-  - `./astra scripts/tests/ai_openai_retry_delay_unit.lua`
+  - `./stream scripts/tests/ai_openai_retry_delay_unit.lua`
 ### 2026-02-06
 - Changes:
   - CI: run HLS memfd smoke (`tools/hls_memfd_smoke.sh`) to guard zero-disk/on-demand behavior.
@@ -425,7 +430,7 @@
 - Changes:
   - AI: fix OpenAI retry backoff timer scoping (prevents panic on retries).
 - Tests:
-  - `./astra scripts/tests/ai_openai_retry_scope_unit.lua`
+  - `./stream scripts/tests/ai_openai_retry_scope_unit.lua`
 ### 2026-02-06
 - Changes:
   - MPTS: NIT delivery descriptor support for DVB-T (0x5A) and DVB-S/S2 (0x43).
@@ -439,12 +444,12 @@
 - Changes:
   - AI: add `Content-Length` header for OpenAI requests (fixes OpenAI 400 "Missing required parameter: model" when body is ignored).
 - Tests:
-  - `./astra scripts/tests/ai_openai_host_header_unit.lua`
+  - `./stream scripts/tests/ai_openai_host_header_unit.lua`
 ### 2026-02-06
 - Changes:
   - AI: add `Host` and `User-Agent` headers for OpenAI requests (fixes Cloudflare 400 when Host is missing).
 - Tests:
-  - `./astra scripts/tests/ai_openai_host_header_unit.lua`
+  - `./stream scripts/tests/ai_openai_host_header_unit.lua`
 ### 2026-02-06
 - Changes:
   - Transcode: add per-output workers (one ffmpeg per output) for fault isolation.
@@ -464,7 +469,7 @@
 - Changes:
   - AI: scrub ASCII control bytes and sanitize UTF-8 in OpenAI request bodies (prevents OpenAI "Invalid body: failed to parse JSON value" 400s).
 - Tests:
-  - `./astra scripts/tests/ai_openai_body_scrub_unit.lua`
+  - `./stream scripts/tests/ai_openai_body_scrub_unit.lua`
 ### 2026-02-05
 - Changes:
   - HLS: memfd mode avoids touching disk HLS dir unless disk HLS is explicitly used; playlist rewrite path avoids disk fallback when memfd playlist isn't ready.
@@ -476,26 +481,26 @@
 - Tests:
   - `tools/hls_memfd_smoke.sh`
   - `./configure.sh && make`
-  - `./astra scripts/tests/ai_prompt_sanitize_nan_unit.lua`
+  - `./stream scripts/tests/ai_prompt_sanitize_nan_unit.lua`
 ### 2026-02-05
 - Changes:
   - AI: fix strict JSON schema (Structured Outputs) by requiring all object keys (prevents OpenAI schema validation errors).
 - Tests:
-  - `./astra scripts/tests/ai_openai_strict_schema_unit.lua`
+  - `./stream scripts/tests/ai_openai_strict_schema_unit.lua`
 ### 2026-02-05
 - Changes:
   - AI: fix OpenAI Responses json_schema request format (text.format.name/schema/strict) to avoid 400 errors.
 - Tests:
-  - `./astra scripts/tests/ai_openai_fallback_unit.lua`
+  - `./stream scripts/tests/ai_openai_fallback_unit.lua`
 ### 2026-02-05
 - Changes:
   - AI: add fallback for unsupported response_format/json_schema and expose error detail + model metadata.
   - UI: show AI error details in chat.
   - Release: pin bundled FFmpeg source to a specific autobuild tag (stable SHA256).
 - Tests:
-  - `./astra scripts/tests/ai_openai_fallback_unit.lua`
-  - `./astra scripts/tests/ai_telegram_commands_unit.lua`
-  - `./astra scripts/tests/ai_logs_autoselect_unit.lua`
+  - `./stream scripts/tests/ai_openai_fallback_unit.lua`
+  - `./stream scripts/tests/ai_telegram_commands_unit.lua`
+  - `./stream scripts/tests/ai_logs_autoselect_unit.lua`
 ### 2026-02-05
 - Changes:
   - UI: warmup alerts now show actionable hints.
@@ -507,7 +512,7 @@
   - AI: Telegram command parsing now supports keys with `_` / `-` (e.g. plan_id).
   - Docs: clarify minimal-load AI defaults and auto context selection.
 - Tests:
-  - `./astra scripts/tests/ai_telegram_commands_unit.lua`
+  - `./stream scripts/tests/ai_telegram_commands_unit.lua`
 ### 2026-02-05
 - Changes:
   - Transcode: add warmup failure/timeout/stop alerts for failover diagnostics.
@@ -581,7 +586,7 @@
 - Changes:
   - Export: принудительно синхронизирует `enable` для streams/adapters с текущим состоянием БД.
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - Auth (port 9060): `POST /api/v1/auth/login`
@@ -589,7 +594,7 @@
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
 ### 2026-02-05
 - Changes:
   - UI: hide/remove Observability AI summary block from the page (AI uses it internally).
@@ -598,7 +603,7 @@
   - UI: AstralAI chat `/help` returns local hints without calling AI.
   - AstralAI: normalize ai_api_base so trailing `/v1` is handled correctly.
 - Tests:
-  - `./astra scripts/tests/ai_openai_url_unit.lua`
+  - `./stream scripts/tests/ai_openai_url_unit.lua`
 ### 2026-02-05
 - Changes:
   - AstralAI: auto-include on-demand metrics in AI context when prompt asks for charts/metrics.
@@ -619,10 +624,10 @@
   - Observability: when `ai_metrics_on_demand=true`, metrics retention forced to `0` (no background rollups).
   - UI: AI chat no longer forces log inclusion; status shows effective model.
 - Tests:
-  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
-  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
-  - `./astra scripts/tests/ai_logs_autoselect_unit.lua`
-  - `./astra scripts/tests/ai_cli_autoselect_unit.lua`
+  - `./stream scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./stream scripts/tests/ai_observability_on_demand_config_unit.lua`
+  - `./stream scripts/tests/ai_logs_autoselect_unit.lua`
+  - `./stream scripts/tests/ai_cli_autoselect_unit.lua`
 ### 2026-02-05
 - Changes:
   - Analyze: модалка показывает подробные PSI/PMT/PID/codec данные через on-demand analyze API.
@@ -635,13 +640,13 @@
   - Observability: when `ai_metrics_on_demand=true`, metrics retention is forced to `0` (no background rollups).
   - UI: AI chat no longer forces log inclusion; status uses default model when field is empty.
 - Tests:
-  - `./astra scripts/tests/ai_openai_model_fallback_unit.lua`
-  - `./astra scripts/tests/ai_observability_on_demand_config_unit.lua`
+  - `./stream scripts/tests/ai_openai_model_fallback_unit.lua`
+  - `./stream scripts/tests/ai_observability_on_demand_config_unit.lua`
 ### 2026-02-05
 - Changes:
   - Streams/Adapters: при сохранении синхронизируется `enable` в config_json, чтобы disable не терялся в JSON и после рестарта.
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - Auth (port 9060): `POST /api/v1/auth/login`
@@ -649,7 +654,7 @@
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
 ### 2026-02-05
 - Changes:
   - UI Player: ссылка и кнопки Open/Copy используют `/play/<stream_id>`; для `<video>` выбирается прямой HTTP Play при поддержке MPEG-TS.
@@ -660,7 +665,7 @@
   - Config: экспортирует основной JSON-конфиг при изменениях (streams/adapters/settings) при запуске с `--config *.json`.
   - Config: при ошибке apply откатывает основной JSON-конфиг к LKG-снимку.
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - Auth (port 9060): `POST /api/v1/auth/login`
@@ -668,7 +673,7 @@
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
 ### 2026-02-05
 - Changes:
   - Transcode failover: improved warmup/pending switch handling and return-to-primary logic.
@@ -685,7 +690,7 @@
   - UI: добавлена автоподсветка активного раздела Settings → General при прокрутке.
   - UI: убран блок Observability AI Summary, чтобы AI‑сводка запускалась только по запросу (API/Telegram).
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - Auth (port 9060): `POST /api/v1/auth/login`
@@ -693,13 +698,13 @@
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
 ### 2026-02-05
 - Changes:
   - UI: перестроена вкладка Settings → General на разделы и карточки с поиском, переключателем базовых/расширенных, sticky-панелью действий и едиными switch-контролами.
   - UI: добавлено подтверждение для Allow apply в AstraAI и переключатель отображения лимитов в разделе безопасности.
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - Auth (port 9060): `POST /api/v1/auth/login`
@@ -707,7 +712,7 @@
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF header): `POST /api/v1/config/validate`, `GET /api/v1/config/revisions`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
 ### 2026-02-05
 - Changes:
   - Added automatic contrib ffmpeg build fallback for mixaudio module when system libs are missing.
@@ -731,14 +736,14 @@
   - Added HLS in-memory counters (`current_segments`, `current_bytes`) to stream status.
   - Added HLS memfd settings wiring + documentation and example config.
 - Tests:
-  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/astra).
+  - Server: `./configure.sh && make` (root@178.212.236.2:/home/hex/stream).
   - UI (port 9060): `curl -I http://127.0.0.1:9060/index.html`
   - UI asset (port 9060): `curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - API (port 9060, cookie auth): `GET /api/v1/streams`, `GET /api/v1/settings`
   - Metrics/health (port 9060): `GET /api/v1/metrics`, `GET /api/v1/metrics?format=prometheus`, `GET /api/v1/health/*`
   - Config (port 9060, CSRF): `POST /api/v1/config/validate`, `POST /api/v1/reload`
   - Export (port 9060): `GET /api/v1/export?include_users=0`
-  - Export CLI: `./astra scripts/export.lua --data-dir ./data --output ./astra-export.json`
+  - Export CLI: `./stream scripts/export.lua --data-dir ./data --output ./stream-export.json`
   - HLS memfd on-demand (port 9027): playlist/segment fetch + idle deactivate log + no files in hls_dir.
   - HLS HTTP Play (port 9026): `fixtures`-style smoke for cache headers + playlist/segment.
   - HLS memfd load sanity (dynamic port): 10 clients playlist/segment + stream-status counters.
@@ -762,11 +767,11 @@
   - Added AstralAI test list to docs/TESTING.md.
   - Clarified stream/dvbls context sources (runtime/module for low‑load).
 - Tests:
-  - `./astra scripts/tests/ai_context_unit.lua`
-  - `./astra scripts/tests/ai_context_cli_unit.lua`
-  - `./astra scripts/tests/ai_runtime_context_unit.lua`
-  - `./astra scripts/tests/ai_context_api_unit.lua`
-  - `./astra scripts/tests/ai_plan_context_unit.lua`
+  - `./stream scripts/tests/ai_context_unit.lua`
+  - `./stream scripts/tests/ai_context_cli_unit.lua`
+  - `./stream scripts/tests/ai_runtime_context_unit.lua`
+  - `./stream scripts/tests/ai_context_api_unit.lua`
+  - `./stream scripts/tests/ai_plan_context_unit.lua`
 ### 2026-02-05
 - Changes:
   - Added `ai_context.lua` to collect AI context from logs and CLI snapshots on demand.
@@ -816,8 +821,8 @@
   - Added AstralAI settings block in General UI (enable/model/apply toggles).
   - Bumped UI build stamp to 20260205q.
 - Tests:
-  - ./astra scripts/tests/ai_plan_smoke.lua
-  - ./astra scripts/tests/ai_apply_smoke.lua
+  - ./stream scripts/tests/ai_plan_smoke.lua
+  - ./stream scripts/tests/ai_apply_smoke.lua
 ### 2026-02-05
 - Changes:
   - Added View menu toggle to show/hide disabled streams.
@@ -1174,157 +1179,157 @@
   - Added Telegram settings UI (enable, level, token/chat ID) with test endpoint and masking in settings API.
   - Added Telegram unit tests and mock server helper.
 - Tests:
-  - `./astra scripts/tests/telegram_unit.lua`
+  - `./stream scripts/tests/telegram_unit.lua`
 ### 2026-02-04
 - Changes:
   - Added InfluxDB export settings and runtime metrics push.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*astra_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=$TOKEN" | head -n 1'`
+  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*stream_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=$TOKEN" | head -n 1'`
 ### 2026-02-04
 - Changes:
   - Added General stream defaults (timeouts/backup/keep-active) and applied them at runtime.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*astra_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=$TOKEN" | head -n 1'`
+  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*stream_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=$TOKEN" | head -n 1'`
 ### 2026-02-04
 - Changes:
   - Added libdvbcsa auto-detection in `configure.sh` (biss_encrypt builds when the library is installed).
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*astra_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=$TOKEN" | head -n 1'`
+  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*stream_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=$TOKEN" | head -n 1'`
 ### 2026-02-04
 - Changes:
   - Added BISS/SRT args hints and validation; improved HLS inline parsing in outputs.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh --with-libdvbcsa` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh --with-libdvbcsa` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*astra_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=$TOKEN" | head -n 1'`
+  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | python3 -c "import re,sys; text=sys.stdin.read(); m=re.search(r\"(?i)set-cookie:.*stream_session=([^;]+)\", text); print(m.group(1) if m else \"\")"); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=$TOKEN" | head -n 1'`
 ### 2026-02-04
 - Changes:
   - Added General settings controls for session TTL, CSRF, and login rate limiting.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh --with-libdvbcsa` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh --with-libdvbcsa` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 grep -n "settings-auth-session-ttl" /home/hex/astra/web/index.html`
-  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | awk -F"astra_session=" "/Set-Cookie/ {print $2}" | cut -d";" -f1 | head -n 1); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=$TOKEN" | head -n 1'`
+  - `ssh root@178.212.236.2 -p 40242 grep -n "settings-auth-session-ttl" /home/hex/stream/web/index.html`
+  - `ssh root@178.212.236.2 -p 40242 'TOKEN=$(curl -i -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H "Content-Type: application/json" --data-binary "{\"username\":\"admin\",\"password\":\"admin\"}" | awk -F"stream_session=" "/Set-Cookie/ {print $2}" | cut -d";" -f1 | head -n 1); curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=$TOKEN" | head -n 1; curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" -H "Content-Type: application/json" --data-binary "{}" >/dev/null; curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=$TOKEN" >/dev/null; curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=$TOKEN" -H "X-CSRF-Token: $TOKEN" >/dev/null; curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=$TOKEN" | head -n 1'`
 ### 2026-02-04
 - Changes:
   - Added per-output BISS key field in the Output modal (applies to any output type).
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "output-biss"`
   - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
 ### 2026-02-04
 - Changes:
   - Extended Output modal: HLS advanced fields, SCTP toggles, NP buffer fill, and SRT bridge advanced options.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "output-hls-naming"`
   - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
 ### 2026-02-04
 - Changes:
   - Added password policy settings in Users section (min length and required character classes).
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "password-min-length"`
   - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
 ### 2026-02-04
 - Changes:
   - Added General settings fields for event webhook, analyze concurrency, and log/access log retention limits.
   - Treated outputs without explicit format as raw strings during save to avoid “format is required” errors.
   - Added `docs/astral-parity.md` and updated planning/skill docs for parity tracking.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 nohup ./astra /home/hex/test.json -p 9060` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 nohup ./stream /home/hex/test.json -p 9060` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/auth/login -H 'Content-Type: application/json' --data-binary '{"username":"admin","password":"admin"}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
-  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: astra_session=<TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: astra_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
-  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: astra_session=<TOKEN>" | head -n 1`
-  - `ssh root@178.212.236.2 -p 40242 ./astra scripts/export.lua --data-dir /home/hex/test.data --output /home/hex/astra-export.json` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/streams -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/settings -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/metrics -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/metrics?format=prometheus" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/process -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/inputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/health/outputs -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/config/validate -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>" -H 'Content-Type: application/json' --data-binary '{}'`
+  - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/api/v1/config/revisions -H "Cookie: stream_session=<TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s -X POST http://127.0.0.1:9060/api/v1/reload -H "Cookie: stream_session=<TOKEN>" -H "X-CSRF-Token: <TOKEN>"`
+  - `ssh root@178.212.236.2 -p 40242 curl -s "http://127.0.0.1:9060/api/v1/export?include_users=0" -H "Cookie: stream_session=<TOKEN>" | head -n 1`
+  - `ssh root@178.212.236.2 -p 40242 ./stream scripts/export.lua --data-dir /home/hex/test.data --output /home/hex/stream-export.json` (in `/home/hex/stream`)
 ### 2026-02-03
 - Changes:
   - Added MPTS tab (General/NIT/Advanced) and persisted MPTS config under `mpts_config` in stream settings.
   - Added `stream://` input type to the input editor for MPTS-friendly chaining.
   - Added UI toggle to disable MPTS fields when MPTS is off.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "data-tab=\\\"mpts\\\""`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "input-stream-id"`
@@ -1336,9 +1341,9 @@
   - Added minimal EPG export on boot and stream changes (channels-only XMLTV/JSON).
   - Added EPG export interval setting and background timer for periodic exports.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "settings-epg-interval"`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | grep -n "epg_export_interval_sec"`
@@ -1347,9 +1352,9 @@
   - Added stream-level exclude PID filter (`filter~`) with UI field and backend propagation to inputs.
   - Added Advanced tab checkboxes for SDT/EIT pass/disable flags and no-reload, applied to inputs when set.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "stream-filter-exclude"`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "stream-no-sdt"`
@@ -1360,9 +1365,9 @@
   - When inline output parsing fails, fall back to saving the raw URL string instead of erroring on missing format.
   - Replace raw network errors in stream/adapter/login actions with a clearer allowlist-aware message.
 - Tests:
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | grep -n "formatNetworkError"`
 ### 2026-02-03
@@ -1390,50 +1395,50 @@
   - `GET http://127.0.0.1:8020/api/v1/streams`
   - `GET http://127.0.0.1:8020/api/v1/stream-status`
   - `GET http://127.0.0.1:8020/api/v1/logs?limit=200`
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242` buffer smoke test (port 9047; HTTP buffer `sync_ok True`, failover to backup input)
-  - `./astra scripts/server.lua -p 8015 --data-dir ./data_ui_check --web-dir ./web`
+  - `./stream scripts/server.lua -p 8015 --data-dir ./data_ui_check --web-dir ./web`
   - `curl -I http://127.0.0.1:8015/index.html`
   - `POST http://127.0.0.1:8015/api/v1/auth/login` (admin/admin)
   - `PUT http://127.0.0.1:8015/api/v1/settings` (`ui_splitter_enabled`, `ui_buffer_enabled`)
   - `POST/DELETE http://127.0.0.1:8015/api/v1/adapters` (rename adapter)
   - `POST/PUT/DELETE http://127.0.0.1:8015/api/v1/streams` (rename stream + update dvb:// input)
-  - `ssh root@178.212.236.2 -p 40242 ./astra scripts/server.lua -p 9055 --data-dir ./data_ui_server --web-dir ./web`
+  - `ssh root@178.212.236.2 -p 40242 ./stream scripts/server.lua -p 9055 --data-dir ./data_ui_server --web-dir ./web`
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9055/index.html`
   - `ssh root@178.212.236.2 -p 40242 POST http://127.0.0.1:9055/api/v1/auth/login` (admin/admin)
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '1357,1375p'`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '5500,5535p'`
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '1357,1366p'`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '580,650p'`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '7125,7185p'`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | sed -n '7600,7685p'`
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "Default (passive)"`
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/styles.css | grep -n "tile.disabled"`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | grep -n "Disabled"`
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | head -n 1`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "stream-service-type"`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | grep -n "service_type_id"`
-  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/astra`)
-  - `ssh root@178.212.236.2 -p 40242 ./astra test.json -p 9060` (restart)
+  - `ssh root@178.212.236.2 -p 40242 ./configure.sh` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 make` (in `/home/hex/stream`)
+  - `ssh root@178.212.236.2 -p 40242 ./stream test.json -p 9060` (restart)
   - `ssh root@178.212.236.2 -p 40242 curl -I http://127.0.0.1:9060/index.html`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/index.html | grep -n "stream-filter"`
   - `ssh root@178.212.236.2 -p 40242 curl -s http://127.0.0.1:9060/app.js | grep -n "streamFilter"`
@@ -1448,8 +1453,8 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `tail -n 120 /home/hex/astra-server.log`
-  - `tail -n 80 /home/hex/astra-keepalive.log`
+  - `tail -n 120 /home/hex/stream-server.log`
+  - `tail -n 80 /home/hex/stream-keepalive.log`
 
 ### 2025-12-28
 - Changes:
@@ -1461,7 +1466,7 @@
   - `make`
   - `curl -I http://127.0.0.1:9000/index.html`
   - `curl -s http://127.0.0.1:9000/app.js | head -n 1`
-  - `tail -n 50 /home/hex/astra/astra-9000.log`
+  - `tail -n 50 /home/hex/stream/astra-9000.log`
 
 ### 2025-12-28
 - Changes:
@@ -1479,7 +1484,7 @@
 - Tests:
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:13000?pkt_size=1316`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=800 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:13001?pkt_size=1316`
-  - `./astra /tmp/failover_test.json -p 9014 --data-dir ./data_failover_9014 --web-dir ./web`
+  - `./stream /tmp/failover_test.json -p 9014 --data-dir ./data_failover_9014 --web-dir ./web`
   - `POST http://127.0.0.1:9014/api/v1/auth/login` (admin/admin)
   - `GET http://127.0.0.1:9014/api/v1/stream-status/failover_passive`
   - `GET http://127.0.0.1:9014/api/v1/stream-status/failover_active`
@@ -1497,18 +1502,18 @@
   - `make`
   - `curl -I http://127.0.0.1:9000/index.html`
   - `curl -s http://127.0.0.1:9000/app.js | head -n 1`
-  - `./astra ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
+  - `./stream ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
   - `POST http://127.0.0.1:9001/api/v1/auth/login` (admin/admin)
   - `GET http://127.0.0.1:9001/api/v1/settings`
   - `GET http://127.0.0.1:9001/api/v1/streams`
-  - `./astra ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
+  - `./stream ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
   - `POST http://127.0.0.1:9002/api/v1/auth/login` (admin/admin)
   - `GET http://127.0.0.1:9002/api/v1/settings`
   - `GET http://127.0.0.1:9002/api/v1/streams`
-  - `./astra ./data_test_missing.json -p 9013`
+  - `./stream ./data_test_missing.json -p 9013`
   - `curl -I http://127.0.0.1:9013/index.html`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a aac -b:a 128k -f mpegts udp://127.0.0.1:12100?pkt_size=1316`
-  - `./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web`
+  - `./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web`
   - `POST http://127.0.0.1:9005/api/v1/auth/login`
   - `GET http://127.0.0.1:9005/api/v1/transcode-status/transcode_cpu_test` (RUNNING, `active_input_url` == `ffmpeg_input_url`)
   - `GET http://127.0.0.1:9005/api/v1/alerts?limit=5&stream_id=transcode_cpu_test` (after stopping input; `TRANSCODE_STALL`)
@@ -1524,27 +1529,27 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `find /home/hex/astra -type f -exec touch -c {} +`
+  - `find /home/hex/stream -type f -exec touch -c {} +`
   - `make`
   - `curl -I http://127.0.0.1:9000/index.html`
   - `curl -s http://127.0.0.1:9000/app.js | head -n 1`
-  - `./astra ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
+  - `./stream ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
   - `POST http://127.0.0.1:9001/api/v1/auth/login` (admin/admin)
   - `GET http://127.0.0.1:9001/api/v1/settings` (http_play_stream)
   - `GET http://127.0.0.1:9001/api/v1/streams`
-  - `./astra ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
+  - `./stream ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
   - `POST http://127.0.0.1:9002/api/v1/auth/login` (admin/admin)
   - `GET http://127.0.0.1:9002/api/v1/settings` (hls_duration)
   - `GET http://127.0.0.1:9002/api/v1/streams`
-  - `./astra ./data_test_missing.json -p 9013`
+  - `./stream ./data_test_missing.json -p 9013`
   - `curl -I http://127.0.0.1:9013/index.html`
-  - Failover smoke: ffmpeg primary/backup + `./astra ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web` with stream-status checks for passive/active/active_stop/disabled.
+  - Failover smoke: ffmpeg primary/backup + `./stream ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web` with stream-status checks for passive/active/active_stop/disabled.
   - Not run: authenticated `/api/v1/streams` + `/api/v1/settings` + metrics/health/export on port 9000 (missing credentials).
 
 ### 2025-12-27
 - Changes:
   - Move transcode restart/monitor settings to per-output watchdogs and drop user probe_url.
-  - Add per-output monitor engines (ffprobe/auto/Astra Analyze), low-bitrate watchdog, and cooldown.
+  - Add per-output monitor engines (ffprobe/auto/Stream Analyze), low-bitrate watchdog, and cooldown.
   - Expose per-output monitor status in transcode/stream status responses.
   - Update transcode docs and smoke notes for per-output monitor defaults.
 - Tests:
@@ -1553,7 +1558,7 @@
   - `curl -I http://127.0.0.1:9000/index.html`
   - `curl -s http://127.0.0.1:9000/app.js | head -n 1`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a aac -b:a 128k -f mpegts udp://127.0.0.1:12100?pkt_size=1316`
-  - `./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
+  - `./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
   - `POST http://127.0.0.1:9005/api/v1/auth/login`
   - `GET http://127.0.0.1:9005/api/v1/transcode-status/transcode_cpu_test`
   - `GET http://127.0.0.1:9005/api/v1/alerts?limit=5&stream_id=transcode_cpu_test` (TRANSCODE_STALL)
@@ -1589,15 +1594,15 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra --log /home/hex/astra-keepalive.log --no-stdout scripts/server.lua -p 9016 --data-dir /home/hex/astra-data-keepalive --web-dir ./web &`
+  - `./stream --log /home/hex/stream-keepalive.log --no-stdout scripts/server.lua -p 9016 --data-dir /home/hex/stream-data-keepalive --web-dir ./web &`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:12000?pkt_size=1316`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=800 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:12100?pkt_size=1316`
   - `POST http://127.0.0.1:9016/api/v1/auth/login`
   - `POST http://127.0.0.1:9016/api/v1/streams` (http_test)
   - `POST http://127.0.0.1:9016/api/v1/streams` (tc_test)
   - `PUT http://127.0.0.1:9016/api/v1/streams/http_test`
-  - `grep -n 'bind() to 127.0.0.1:8022' /home/hex/astra-keepalive.log` (none)
-  - `grep -n 'abort execution' /home/hex/astra-keepalive.log` (none)
+  - `grep -n 'bind() to 127.0.0.1:8022' /home/hex/stream-keepalive.log` (none)
+  - `grep -n 'abort execution' /home/hex/stream-keepalive.log` (none)
 
 ### 2025-12-27
 - Changes:
@@ -1605,7 +1610,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra --log /home/hex/astra-server.log --no-stdout scripts/server.lua -p 9000 --data-dir /home/hex/astra-data --web-dir ./web &`
+  - `./stream --log /home/hex/stream-server.log --no-stdout scripts/server.lua -p 9000 --data-dir /home/hex/stream-data --web-dir ./web &`
   - Not run: forced refresh via adapter save (would touch production data).
 
 ### 2025-12-27
@@ -1622,9 +1627,9 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra --debug --log /home/hex/astra-logs/stream-save-debug-20251227.log scripts/server.lua -p 9015 --data-dir /home/hex/astra-data --web-dir ./web &`
+  - `./stream --debug --log /home/hex/stream-logs/stream-save-debug-20251227.log scripts/server.lua -p 9015 --data-dir /home/hex/stream-data --web-dir ./web &`
   - `curl -I http://127.0.0.1:9015/index.html`
-  - `grep -n \"invalid stream config\" /home/hex/astra-logs/stream-save-debug-20251227.log`
+  - `grep -n \"invalid stream config\" /home/hex/stream-logs/stream-save-debug-20251227.log`
 
 ### 2025-12-27
 - Changes:
@@ -1634,11 +1639,11 @@
   - `./configure.sh`
   - `make`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a aac -b:a 128k -f mpegts udp://127.0.0.1:12100?pkt_size=1316`
-  - `./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
+  - `./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
   - `POST http://127.0.0.1:9005/api/v1/auth/login`
   - `GET http://127.0.0.1:9005/api/v1/transcode-status/transcode_cpu_test`
   - `GET http://127.0.0.1:9005/api/v1/alerts?limit=5&stream_id=transcode_cpu_test`
-  - `./astra scripts/server.lua -p 9012 --data-dir ./data_ui_9012 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9012 --data-dir ./data_ui_9012 --web-dir ./web &`
   - Headless UI save flow via puppeteer-core (login + create stream + save; screenshots under `/home/hex/ui_screens/20251227_154524`)
 
 ### 2025-12-27
@@ -1648,7 +1653,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9010 --data-dir ./data_smoke_9010 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9010 --data-dir ./data_smoke_9010 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9010/index.html`
   - `curl -s http://127.0.0.1:9010/app.js | head -n 1`
   - `POST http://127.0.0.1:9010/api/v1/auth/login`
@@ -1684,7 +1689,7 @@
   - `GET http://127.0.0.1:9000/api/v1/health/outputs`
   - `GET http://127.0.0.1:9000/api/v1/export?include_users=0`
   - `ffmpeg -re -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:12120?pkt_size=1316&localport=12122`
-  - `./astra ./tmp_transcode_udp_restart.json -p 9025 --data-dir ./data_transcode_udp_restart2 --web-dir ./web &`
+  - `./stream ./tmp_transcode_udp_restart.json -p 9025 --data-dir ./data_transcode_udp_restart2 --web-dir ./web &`
   - `POST http://127.0.0.1:9025/api/v1/auth/login`
   - `GET http://127.0.0.1:9025/api/v1/transcode-status/transcode_udp_restart` (input_bitrate_kbps set, restarts_10min=1)
 
@@ -1708,7 +1713,7 @@
   - `GET http://127.0.0.1:9000/api/v1/health/outputs`
   - `GET http://127.0.0.1:9000/api/v1/export?include_users=0`
   - `ffmpeg -re -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:12112?pkt_size=1316&localport=12114`
-  - `./astra ./tmp_transcode_udp.json -p 9023 --data-dir ./data_transcode_udp4 --web-dir ./web &`
+  - `./stream ./tmp_transcode_udp.json -p 9023 --data-dir ./data_transcode_udp4 --web-dir ./web &`
   - `POST http://127.0.0.1:9023/api/v1/auth/login`
   - `GET http://127.0.0.1:9023/api/v1/transcode-status/transcode_udp_test` (input_bitrate_kbps)
 
@@ -1731,15 +1736,15 @@
   - `GET http://127.0.0.1:9000/api/v1/health/inputs`
   - `GET http://127.0.0.1:9000/api/v1/health/outputs`
   - `GET http://127.0.0.1:9000/api/v1/export?include_users=0`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources`
   - `GET http://127.0.0.1:9047/api/v1/buffers/resources`
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources/buffer_test/inputs`
   - `ffmpeg -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts udp://127.0.0.1:12100?pkt_size=1316`
-  - `./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
+  - `./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web &`
   - `GET http://127.0.0.1:9005/api/v1/transcode-status/transcode_cpu_test` (state/out_time_ms/output_bitrate_kbps)
   - `GET http://127.0.0.1:9005/api/v1/alerts?limit=5&stream_id=transcode_cpu_test` (TRANSCODE_STALL)
-  - `./astra ./tmp_transcode_http.json -p 9013 --data-dir ./data_transcode_http --web-dir ./web &`
+  - `./stream ./tmp_transcode_http.json -p 9013 --data-dir ./data_transcode_http --web-dir ./web &`
   - `GET http://127.0.0.1:9013/api/v1/transcode-status/transcode_http_test` (state/input_bitrate_kbps/output_bitrate_kbps)
   - `ffmpeg -i udp://127.0.0.1:12112?pkt_size=1316 -t 2 -f null -`
 
@@ -1749,13 +1754,13 @@
   - Added transcode status error note and clearer stream validation messages.
   - Added form subsection styling for preset blocks.
   - Added transcode log-to-main toggle and preset auto-fill for output URLs.
-  - Added ffmpeg stderr mirroring into Astra log when enabled.
+  - Added ffmpeg stderr mirroring into Stream log when enabled.
 - Tests:
   - `./configure.sh`
   - `make`
   - `curl -I http://127.0.0.1:9000/index.html`
   - `curl -s http://127.0.0.1:9000/app.js | head -n 1`
-  - `./astra /home/hex/astra/tmp_transcode_test.json -p 9012 --data-dir /home/hex/astra-data-transcode-test --web-dir /home/hex/astra/web` (transcode source check)
+  - `./stream /home/hex/stream/tmp_transcode_test.json -p 9012 --data-dir /home/hex/stream-data-transcode-test --web-dir /home/hex/stream/web` (transcode source check)
   - `POST http://127.0.0.1:9012/api/v1/auth/login`
   - `GET http://127.0.0.1:9012/api/v1/stream-status/transcode_cpu_test`
   - `GET http://127.0.0.1:9012/api/v1/transcode-status/transcode_cpu_test`
@@ -1774,11 +1779,11 @@
 ### 2025-12-27
 - Changes:
   - Added Phase 27 plan steps for server buffer 404 fix and restarted port 9000 server to load updated scripts.
-  - Rebuilt Linux `./astra` binary on the server after rsync replaced it with a macOS build.
+  - Rebuilt Linux `./stream` binary on the server after rsync replaced it with a macOS build.
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua --data-dir /home/hex/astra-data -p 9000 --web-dir /home/hex/astra/web &` (restart)
+  - `./stream scripts/server.lua --data-dir /home/hex/stream-data -p 9000 --web-dir /home/hex/stream/web &` (restart)
   - Manual UI check: pending (needs browser)
 
 ### 2025-12-27
@@ -1791,7 +1796,7 @@
   - `make`
   - `ffmpeg -y -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=1000 -t 6 -c:v mpeg2video -c:a mp2 -f mpegts ./tmp_buffer.ts`
   - `python3 -m http.server 18080 --directory .`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
   - `POST http://127.0.0.1:9047/api/v1/auth/login`
   - `PUT http://127.0.0.1:9047/api/v1/settings` (buffer enable, port 8090)
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources`
@@ -1812,7 +1817,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
   - `POST http://127.0.0.1:9047/api/v1/auth/login`
   - `PUT http://127.0.0.1:9047/api/v1/settings` (buffer enable)
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources`
@@ -1845,7 +1850,7 @@
   - Added clean-room Lua/C skeleton stubs under `astra/re/cleanroom`.
   - Recorded Phase 22 completion in `plan.md`.
 - Tests:
-  - Server observation: `./astra scripts/server.lua -p 9131 --data-dir ./data_re_9131 --web-dir ./web` + API queries via Bearer token (astra-250612 aborts without sqlite).
+  - Server observation: `./stream scripts/server.lua -p 9131 --data-dir ./data_re_9131 --web-dir ./web` + API queries via Bearer token (astra-250612 aborts without sqlite).
 
 ### 2025-12-26
 - Changes:
@@ -1906,7 +1911,7 @@
   - `make`
   - `ffmpeg -loglevel error -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -t 5 -c:v mpeg2video -c:a mp2 -f mpegts ./tmp_splitter.ts`
   - `python3 -m http.server 18080 --directory .`
-  - `./astra scripts/server.lua -p 9041 --data-dir ./data_splitter_9041 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9041 --data-dir ./data_splitter_9041 --web-dir ./web &`
   - `POST http://127.0.0.1:9041/api/v1/auth/login`
   - `POST http://127.0.0.1:9041/api/v1/splitters`
   - `POST http://127.0.0.1:9041/api/v1/splitters/splitter_demo/allow`
@@ -1933,7 +1938,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9060 --data-dir ./data_smoke_9060 --web-dir ./web > ./server_9060.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9060 --data-dir ./data_smoke_9060 --web-dir ./web > ./server_9060.log 2>&1 &`
   - `curl -I http://127.0.0.1:9060/index.html`
   - `curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9060/app.js`
   - `POST http://127.0.0.1:9060/api/v1/auth/login`
@@ -1945,10 +1950,10 @@
   - `GET http://127.0.0.1:9060/api/v1/health/inputs`
   - `GET http://127.0.0.1:9060/api/v1/health/outputs`
   - `GET http://127.0.0.1:9060/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_smoke_9060 --output ./astra-export.json`
+  - `./stream scripts/export.lua --data-dir ./data_smoke_9060 --output ./stream-export.json`
   - `ffmpeg -nostdin -loglevel error -y -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -t 5 -c:v mpeg2video -c:a mp2 -f mpegts ./tmp_splitter.ts`
   - `python3 -m http.server 18080 --directory .`
-  - `./astra scripts/server.lua -p 9043 --data-dir ./data_splitter_9043 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9043 --data-dir ./data_splitter_9043 --web-dir ./web &`
   - `POST http://127.0.0.1:9043/api/v1/auth/login`
   - `POST http://127.0.0.1:9043/api/v1/splitters`
   - `POST http://127.0.0.1:9043/api/v1/splitters/splitter_demo/allow (allowRange 127.0.0.1/32)`
@@ -1963,7 +1968,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9056 --data-dir ./data_smoke_9056 --web-dir ./web > ./server_9056.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9056 --data-dir ./data_smoke_9056 --web-dir ./web > ./server_9056.log 2>&1 &`
   - `curl -I http://127.0.0.1:9056/index.html`
   - `curl -s http://127.0.0.1:9056/app.js | head -n 1`
   - `POST http://127.0.0.1:9056/api/v1/auth/login`
@@ -1975,10 +1980,10 @@
   - `GET http://127.0.0.1:9056/api/v1/health/inputs`
   - `GET http://127.0.0.1:9056/api/v1/health/outputs`
   - `GET http://127.0.0.1:9056/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_smoke_9056 --output ./astra-export.json`
+  - `./stream scripts/export.lua --data-dir ./data_smoke_9056 --output ./stream-export.json`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a mp2 -f mpegts -listen 1 http://127.0.0.1:18080/primary.ts &`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=800 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a mp2 -f mpegts -listen 1 http://127.0.0.1:18081/backup.ts &`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
   - `POST http://127.0.0.1:9047/api/v1/auth/login`
   - `PUT http://127.0.0.1:9047/api/v1/settings (buffer_enabled, buffer_listen_port)`
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources`
@@ -1998,7 +2003,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9056 --data-dir ./data_smoke_9056 --web-dir ./web > ./server_9056.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9056 --data-dir ./data_smoke_9056 --web-dir ./web > ./server_9056.log 2>&1 &`
   - `curl -I http://127.0.0.1:9056/index.html`
   - `curl -s http://127.0.0.1:9056/app.js | head -n 1`
   - `POST http://127.0.0.1:9056/api/v1/auth/login`
@@ -2010,10 +2015,10 @@
   - `GET http://127.0.0.1:9056/api/v1/health/inputs`
   - `GET http://127.0.0.1:9056/api/v1/health/outputs`
   - `GET http://127.0.0.1:9056/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_smoke_9056 --output ./astra-export.json`
+  - `./stream scripts/export.lua --data-dir ./data_smoke_9056 --output ./stream-export.json`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=1000 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a mp2 -f mpegts -listen 1 http://127.0.0.1:18080/primary.ts &`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=160x90:rate=25 -f lavfi -i sine=frequency=800 -c:v libx264 -preset veryfast -tune zerolatency -g 50 -keyint_min 50 -sc_threshold 0 -c:a mp2 -f mpegts -listen 1 http://127.0.0.1:18081/backup.ts &`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_buffer_9047 --web-dir ./web &`
   - `POST http://127.0.0.1:9047/api/v1/auth/login`
   - `PUT http://127.0.0.1:9047/api/v1/settings (buffer_enabled, buffer_listen_port)`
   - `POST http://127.0.0.1:9047/api/v1/buffers/resources`
@@ -2057,7 +2062,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9050 --data-dir ./data_smoke_9050 --web-dir ./web > ./server_9050.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9050 --data-dir ./data_smoke_9050 --web-dir ./web > ./server_9050.log 2>&1 &`
   - `curl -I http://127.0.0.1:9050/index.html`
   - `curl -s http://127.0.0.1:9050/app.js | head -n 1`
   - `POST http://127.0.0.1:9050/api/v1/auth/login`
@@ -2069,21 +2074,21 @@
   - `GET http://127.0.0.1:9050/api/v1/health/inputs`
   - `GET http://127.0.0.1:9050/api/v1/health/outputs`
   - `GET http://127.0.0.1:9050/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_smoke_9050 --output ./export_smoke_9050.json`
+  - `./stream scripts/export.lua --data-dir ./data_smoke_9050 --output ./export_smoke_9050.json`
   - `python3 ./fixtures/auth_backend.py &`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:13200?pkt_size=1316" &`
-  - `./astra ./fixtures/auth_play.json -p 9032 --data-dir ./data_auth_9032 --web-dir ./web &`
+  - `./stream ./fixtures/auth_play.json -p 9032 --data-dir ./data_auth_9032 --web-dir ./web &`
   - `curl -s -o /dev/null -w "%{http_code}\\n" http://127.0.0.1:9032/playlist.m3u8 | grep 403`
   - `curl -s "http://127.0.0.1:9032/playlist.m3u8?token=token1" | grep "token=token1"`
   - `curl -s "http://127.0.0.1:9032/hls/auth_demo/index.m3u8?token=token1" | grep "token=token1"`
   - `curl -s -D - -o /dev/null "http://127.0.0.1:9032/hls/auth_demo/index.m3u8?token=token1" | grep -i "set-cookie: astra_token"`
   - `POST http://127.0.0.1:9032/api/v1/auth/login`
   - `GET http://127.0.0.1:9032/api/v1/sessions?type=auth`
-  - `./astra ./fixtures/auth_limits.json -p 9033 --data-dir ./data_auth_limits_9033 --web-dir ./web &`
+  - `./stream ./fixtures/auth_limits.json -p 9033 --data-dir ./data_auth_limits_9033 --web-dir ./web &`
   - `curl -s "http://127.0.0.1:9033/playlist.m3u8?token=token1" | head -n 1`
   - `curl -s "http://127.0.0.1:9033/hls/auth_demo/index.m3u8?token=token1" | grep "token=token1"`
   - `curl -s -o /dev/null -w "%{http_code}\\n" "http://127.0.0.1:9033/playlist.m3u8?token=token2" | grep 403`
-  - `./astra ./fixtures/auth_unique.json -p 9034 --data-dir ./data_auth_unique_9034 --web-dir ./web &`
+  - `./stream ./fixtures/auth_unique.json -p 9034 --data-dir ./data_auth_unique_9034 --web-dir ./web &`
   - `curl -s "http://127.0.0.1:9034/playlist.m3u8?token=token1" | head -n 1`
   - `curl -s "http://127.0.0.1:9034/playlist.m3u8?token=token2" | head -n 1`
   - `POST http://127.0.0.1:9034/api/v1/auth/login`
@@ -2097,7 +2102,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9054 --data-dir ./data_srt_9054 --web-dir ./web > ./server_9054.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9054 --data-dir ./data_srt_9054 --web-dir ./web > ./server_9054.log 2>&1 &`
   - `curl -I http://127.0.0.1:9054/index.html`
   - `curl -s http://127.0.0.1:9054/index.html | grep 'app.js'`
   - `curl -s http://127.0.0.1:9054/app.js | head -n 1`
@@ -2110,7 +2115,7 @@
   - `GET http://127.0.0.1:9054/api/v1/health/inputs`
   - `GET http://127.0.0.1:9054/api/v1/health/outputs`
   - `GET http://127.0.0.1:9054/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_srt_9054 --output ./export_srt_9054.json`
+  - `./stream scripts/export.lua --data-dir ./data_srt_9054 --output ./export_srt_9054.json`
 
 ### 2025-12-25
 - Changes:
@@ -2118,7 +2123,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9053 --data-dir ./data_release_9053 --web-dir ./web > ./server_9053.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9053 --data-dir ./data_release_9053 --web-dir ./web > ./server_9053.log 2>&1 &`
   - `curl -I http://127.0.0.1:9053/index.html`
   - `curl -s http://127.0.0.1:9053/index.html | grep 'app.js'`
   - `curl -s http://127.0.0.1:9053/app.js | head -n 1`
@@ -2131,7 +2136,7 @@
   - `GET http://127.0.0.1:9053/api/v1/health/inputs`
   - `GET http://127.0.0.1:9053/api/v1/health/outputs`
   - `GET http://127.0.0.1:9053/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_release_9053 --output ./export_release_9053.json`
+  - `./stream scripts/export.lua --data-dir ./data_release_9053 --output ./export_release_9053.json`
 
 ### 2025-12-25
 - Changes:
@@ -2154,7 +2159,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9048 --data-dir ./data_security_9048 --web-dir ./web > ./server_9048.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9048 --data-dir ./data_security_9048 --web-dir ./web > ./server_9048.log 2>&1 &`
   - `curl -I http://127.0.0.1:9048/index.html`
   - `curl -s http://127.0.0.1:9048/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9048/app.js | head -n 1`
@@ -2167,7 +2172,7 @@
   - `GET http://127.0.0.1:9048/api/v1/health/inputs`
   - `GET http://127.0.0.1:9048/api/v1/health/outputs`
   - `GET http://127.0.0.1:9048/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_security_9048 --output ./export_security_9048.json`
+  - `./stream scripts/export.lua --data-dir ./data_security_9048 --output ./export_security_9048.json`
 
 ### 2025-12-25
 - Changes:
@@ -2177,7 +2182,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9047 --data-dir ./data_perf_9047 --web-dir ./web > ./server_9047.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9047 --data-dir ./data_perf_9047 --web-dir ./web > ./server_9047.log 2>&1 &`
   - `curl -I http://127.0.0.1:9047/index.html`
   - `curl -s http://127.0.0.1:9047/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9047/app.js | head -n 1`
@@ -2190,17 +2195,17 @@
   - `GET http://127.0.0.1:9047/api/v1/health/inputs`
   - `GET http://127.0.0.1:9047/api/v1/health/outputs`
   - `GET http://127.0.0.1:9047/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_perf_9047 --output ./export_perf_9047.json`
+  - `./stream scripts/export.lua --data-dir ./data_perf_9047 --output ./export_perf_9047.json`
 
 ### 2025-12-25
 - Changes:
   - Wrapped schema migrations in transactions with rollback on failure.
-  - Added automatic DB backups (`astra.db.bak.<timestamp>`) before new migrations.
+  - Added automatic DB backups (`stream.db.bak.<timestamp>`) before new migrations.
   - Documented migration safety behavior in READMEs.
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9046 --data-dir ./data_migrate_9046 --web-dir ./web > ./server_9046.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9046 --data-dir ./data_migrate_9046 --web-dir ./web > ./server_9046.log 2>&1 &`
   - `curl -I http://127.0.0.1:9046/index.html`
   - `curl -s http://127.0.0.1:9046/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9046/app.js | head -n 1`
@@ -2213,7 +2218,7 @@
   - `GET http://127.0.0.1:9046/api/v1/health/inputs`
   - `GET http://127.0.0.1:9046/api/v1/health/outputs`
   - `GET http://127.0.0.1:9046/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_migrate_9046 --output ./export_migrate_9046.json`
+  - `./stream scripts/export.lua --data-dir ./data_migrate_9046 --output ./export_migrate_9046.json`
 
 ### 2025-12-25
 - Changes:
@@ -2223,9 +2228,9 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/lint.lua --config ./fixtures/ada2-10815.json`
-  - `./astra scripts/lint.lua --config ./fixtures/sample.lua`
-  - `./astra scripts/server.lua -p 9045 --data-dir ./data_lint_9045 --web-dir ./web > ./server_9045.log 2>&1 &`
+  - `./stream scripts/lint.lua --config ./fixtures/ada2-10815.json`
+  - `./stream scripts/lint.lua --config ./fixtures/sample.lua`
+  - `./stream scripts/server.lua -p 9045 --data-dir ./data_lint_9045 --web-dir ./web > ./server_9045.log 2>&1 &`
   - `curl -I http://127.0.0.1:9045/index.html`
   - `curl -s http://127.0.0.1:9045/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9045/app.js | head -n 1`
@@ -2238,7 +2243,7 @@
   - `GET http://127.0.0.1:9045/api/v1/health/inputs`
   - `GET http://127.0.0.1:9045/api/v1/health/outputs`
   - `GET http://127.0.0.1:9045/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_lint_9045 --output ./export_lint_9045.json`
+  - `./stream scripts/export.lua --data-dir ./data_lint_9045 --output ./export_lint_9045.json`
 
 ### 2025-12-25
 - Changes:
@@ -2248,7 +2253,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9044 --data-dir ./data_gpu_9044 --web-dir ./web > ./server_9044.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9044 --data-dir ./data_gpu_9044 --web-dir ./web > ./server_9044.log 2>&1 &`
   - `curl -I http://127.0.0.1:9044/index.html`
   - `curl -s http://127.0.0.1:9044/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9044/app.js | head -n 1`
@@ -2261,7 +2266,7 @@
   - `GET http://127.0.0.1:9044/api/v1/health/inputs`
   - `GET http://127.0.0.1:9044/api/v1/health/outputs`
   - `GET http://127.0.0.1:9044/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_gpu_9044 --output ./export_gpu_9044.json`
+  - `./stream scripts/export.lua --data-dir ./data_gpu_9044 --output ./export_gpu_9044.json`
 
 ### 2025-12-25
 - Changes:
@@ -2271,7 +2276,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9042 --data-dir ./data_presets_9042 --web-dir ./web > ./server_9042.log 2>&1 &`
+  - `./stream scripts/server.lua -p 9042 --data-dir ./data_presets_9042 --web-dir ./web > ./server_9042.log 2>&1 &`
   - `curl -I http://127.0.0.1:9042/index.html`
   - `curl -s http://127.0.0.1:9042/index.html | grep 'transcode-output-preset'`
   - `curl -s http://127.0.0.1:9042/app.js | head -n 1`
@@ -2284,7 +2289,7 @@
   - `GET http://127.0.0.1:9042/api/v1/health/inputs`
   - `GET http://127.0.0.1:9042/api/v1/health/outputs`
   - `GET http://127.0.0.1:9042/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_presets_9042 --output ./export_presets_9042.json`
+  - `./stream scripts/export.lua --data-dir ./data_presets_9042 --output ./export_presets_9042.json`
 
 ### 2025-12-25
 - Changes:
@@ -2294,7 +2299,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9040 --data-dir ./data_logs_9040 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9040 --data-dir ./data_logs_9040 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9040/index.html`
   - `curl -s http://127.0.0.1:9040/app.js | head -n 1`
   - `POST http://127.0.0.1:9040/api/v1/auth/login`
@@ -2306,7 +2311,7 @@
   - `GET http://127.0.0.1:9040/api/v1/health/inputs`
   - `GET http://127.0.0.1:9040/api/v1/health/outputs`
   - `GET http://127.0.0.1:9040/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_logs_9040 --output ./export_logs_9040.json`
+  - `./stream scripts/export.lua --data-dir ./data_logs_9040 --output ./export_logs_9040.json`
 
 ### 2025-12-25
 - Changes:
@@ -2316,10 +2321,10 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9036 --data-dir ./data_export_9036 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9036 --data-dir ./data_export_9036 --web-dir ./web &`
   - `POST http://127.0.0.1:9036/api/v1/auth/login`
   - `GET http://127.0.0.1:9036/api/v1/export?include_users=0`
-  - `./astra scripts/export.lua --data-dir ./data_export_9036 --output ./export_9036.json`
+  - `./stream scripts/export.lua --data-dir ./data_export_9036 --output ./export_9036.json`
 
 ### 2025-12-25
 - Changes:
@@ -2328,7 +2333,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9035 --data-dir ./data_systemd_9035 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9035 --data-dir ./data_systemd_9035 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9035/index.html`
   - `POST http://127.0.0.1:9035/api/v1/auth/login`
   - `GET http://127.0.0.1:9035/api/v1/streams`
@@ -2341,7 +2346,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9034 --data-dir ./data_health_9034 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9034 --data-dir ./data_health_9034 --web-dir ./web &`
   - `POST http://127.0.0.1:9034/api/v1/auth/login`
   - `GET http://127.0.0.1:9034/api/v1/health/process`
   - `GET http://127.0.0.1:9034/api/v1/health/inputs`
@@ -2356,7 +2361,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9033 --data-dir ./data_metrics_9033 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9033 --data-dir ./data_metrics_9033 --web-dir ./web &`
   - `POST http://127.0.0.1:9033/api/v1/auth/login`
   - `GET http://127.0.0.1:9033/api/v1/metrics`
   - `GET http://127.0.0.1:9033/api/v1/metrics?format=prometheus`
@@ -2369,7 +2374,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra ./tmp_password_policy.json -p 9031 --data-dir ./data_policy_9031 --web-dir ./web &`
+  - `./stream ./tmp_password_policy.json -p 9031 --data-dir ./data_policy_9031 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9031/index.html`
   - `curl -s http://127.0.0.1:9031/app.js | head -n 1`
   - `POST http://127.0.0.1:9031/api/v1/auth/login`
@@ -2384,7 +2389,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9030 --data-dir ./data_smoke_9030 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9030 --data-dir ./data_smoke_9030 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9030/index.html`
   - `curl -s http://127.0.0.1:9030/app.js | head -n 1`
   - `POST http://127.0.0.1:9030/api/v1/auth/login`
@@ -2400,7 +2405,7 @@
   - `./configure.sh`
   - `make`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:13100?pkt_size=1316" &`
-  - `./astra ./tmp_http_auth.json -p 9028 --data-dir ./data_http_auth_9028 --web-dir ./web &`
+  - `./stream ./tmp_http_auth.json -p 9028 --data-dir ./data_http_auth_9028 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9028/playlist_auth.m3u8`
   - `curl -I "http://127.0.0.1:9028/playlist_auth.m3u8?token=token123"`
   - `curl -I -u admin:admin http://127.0.0.1:9028/playlist_auth.m3u8`
@@ -2414,7 +2419,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9027 --data-dir ./data_users_9027 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9027 --data-dir ./data_users_9027 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9027/index.html`
   - `POST http://127.0.0.1:9027/api/v1/auth/login`
   - `GET http://127.0.0.1:9027/api/v1/users`
@@ -2431,7 +2436,7 @@
   - `./configure.sh`
   - `make`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:13000?pkt_size=1316" &`
-  - `./astra ./tmp_hls_http_play.json -p 9026 --data-dir ./data_hls_9026 --web-dir ./web &`
+  - `./stream ./tmp_hls_http_play.json -p 9026 --data-dir ./data_hls_9026 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9026/playlist_test.m3u8`
   - `curl -s http://127.0.0.1:9026/playlist_test.m3u8 | head -n 5`
   - `curl -I http://127.0.0.1:9026/hls/hls_demo/index.m3u8 | grep -i 'cache-control: no-cache'`
@@ -2447,7 +2452,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9025 --data-dir ./data_access_9025 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9025 --data-dir ./data_access_9025 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9025/index.html`
   - `curl -s http://127.0.0.1:9025/index.html | grep 'view-access'`
   - `curl -s http://127.0.0.1:9025/index.html | grep 'log-stream-filter'`
@@ -2463,7 +2468,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9024 --data-dir ./data_sessions_9024 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9024 --data-dir ./data_sessions_9024 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9024/index.html`
   - `curl -s http://127.0.0.1:9024/index.html | grep 'session-limit'`
   - `curl -s http://127.0.0.1:9024/app.js | grep 'buildSessionQuery'`
@@ -2479,7 +2484,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9023 --data-dir ./data_ui_phase6_9023 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9023 --data-dir ./data_ui_phase6_9023 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9023/index.html`
   - `curl -s http://127.0.0.1:9023/index.html | grep 'session-filter'`
   - `curl -s http://127.0.0.1:9023/index.html | grep 'session-group'`
@@ -2498,7 +2503,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9022 --data-dir ./data_ui_phase6_9022 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9022 --data-dir ./data_ui_phase6_9022 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9022/index.html`
   - `curl -s http://127.0.0.1:9022/index.html | grep 'session-filter'`
   - `curl -s http://127.0.0.1:9022/index.html | grep 'session-group'`
@@ -2521,7 +2526,7 @@
   - `./configure.sh`
   - `make`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:12100?pkt_size=1316"`
-  - `./astra ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web`
+  - `./stream ./fixtures/transcode_cpu.json -p 9005 --data-dir ./data_transcode --web-dir ./web`
   - `POST http://127.0.0.1:9005/api/v1/auth/login`
   - `GET http://127.0.0.1:9005/api/v1/transcode-status/transcode_cpu_test` (state=RUNNING, out_time_ms present)
   - `GET http://127.0.0.1:9005/api/v1/alerts?limit=5&stream_id=transcode_cpu_test` (TRANSCODE_STALL after input stop)
@@ -2536,14 +2541,14 @@
 - Tests:
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:12000?pkt_size=1316"`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=800 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:12001?pkt_size=1316"`
-  - `./astra ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web`
+  - `./stream ./fixtures/failover.json -p 9004 --data-dir ./data_failover --web-dir ./web`
   - `POST http://127.0.0.1:9004/api/v1/auth/login`
   - `GET http://127.0.0.1:9004/api/v1/stream-status/failover_passive` (active_input_index 0 -> 1 -> 0)
   - `GET http://127.0.0.1:9004/api/v1/stream-status/failover_active` (active_input_index 0 -> 1 -> 0)
 
 ### 2025-12-24
 - Changes:
-  - Added config file auto-detection for `./astra <config.json|config.lua>` and `--config`.
+  - Added config file auto-detection for `./stream <config.json|config.lua>` and `--config`.
   - Added Lua/JSON config parsing for startup import in `scripts/config.lua`.
   - Auto-create missing config files with defaults before import.
   - Default config runs to `<config>.data` when `--data-dir` is omitted.
@@ -2559,19 +2564,19 @@
   - `POST http://127.0.0.1:9000/api/v1/auth/login`
   - `GET http://127.0.0.1:9000/api/v1/streams`
   - `GET http://127.0.0.1:9000/api/v1/settings`
-  - `./astra ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
+  - `./stream ./fixtures/ada2-10815.json -p 9001 --data-dir ./data_test --web-dir ./web`
   - `curl -I http://127.0.0.1:9001/index.html`
   - `POST http://127.0.0.1:9001/api/v1/auth/login`
   - `GET http://127.0.0.1:9001/api/v1/settings`
   - `GET http://127.0.0.1:9001/api/v1/streams`
-  - `./astra ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
+  - `./stream ./fixtures/sample.lua -p 9002 --data-dir ./data_test2 --web-dir ./web`
   - `curl -I http://127.0.0.1:9002/index.html`
   - `POST http://127.0.0.1:9002/api/v1/auth/login`
   - `GET http://127.0.0.1:9002/api/v1/settings`
   - `GET http://127.0.0.1:9002/api/v1/streams`
-  - `./astra ./data_test_missing.json -p 9003`
+  - `./stream ./data_test_missing.json -p 9003`
   - `test -f ./data_test_missing.json`
-  - `test -f ./data_test_missing.data/astra.db`
+  - `test -f ./data_test_missing.data/stream.db`
   - `curl -I http://127.0.0.1:9003/index.html`
 
 ### 2025-12-24
@@ -2675,7 +2680,7 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9011 --data-dir ./data_ui_transcode_9011 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9011 --data-dir ./data_ui_transcode_9011 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9011/index.html`
   - `curl -s http://127.0.0.1:9011/index.html | grep 'transcode-output-list'`
   - `curl -s http://127.0.0.1:9011/app.js | head -n 1`
@@ -2690,12 +2695,12 @@
 - Tests:
   - `./configure.sh`
   - `make`
-  - `./astra scripts/server.lua -p 9016 --data-dir ./data_ui_inputs_9016 --web-dir ./web &`
+  - `./stream scripts/server.lua -p 9016 --data-dir ./data_ui_inputs_9016 --web-dir ./web &`
   - `curl -I http://127.0.0.1:9016/index.html`
   - `curl -s http://127.0.0.1:9016/app.js | grep 'tile-inputs'`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:12000?pkt_size=1316" &`
   - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 -f lavfi -i sine=frequency=800 -c:v mpeg2video -c:a mp2 -f mpegts "udp://127.0.0.1:12001?pkt_size=1316" &`
-  - `./astra ./fixtures/failover.json -p 9017 --data-dir ./data_failover_ui --web-dir ./web &`
+  - `./stream ./fixtures/failover.json -p 9017 --data-dir ./data_failover_ui --web-dir ./web &`
   - `POST http://127.0.0.1:9017/api/v1/auth/login`
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_passive` (inputs + switch checks)
   - `GET http://127.0.0.1:9017/api/v1/stream-status/failover_active` (switch + return checks)
@@ -2759,7 +2764,7 @@
 - Changes:
   - Transcode loopback: split internal `/input/<id>` (raw stage for ffmpeg) vs `/play/<id>` (stream output). `/play` prefers transcoded output when available.
   - Transcode: ffmpeg input URL now uses `/input/... ?internal=1` without `buf_kb/buf_fill_kb` query params (buffering is enforced server-side).
-  - Transcode inputs: treat absolute `http(s)://.../play/<id>` URLs as direct upstream inputs (do not rewrite to localhost `/play/<id>`), fixing external Astra/Astral `/play` sources.
+  - Transcode inputs: treat absolute `http(s)://.../play/<id>` URLs as direct upstream inputs (do not rewrite to localhost `/play/<id>`), fixing external Stream/Astral `/play` sources.
   - HTTP-TS publish: canonical `/live/<stream_id>~<profile_id>` endpoints are extensionless (backend still accepts legacy `.ts`).
   - UI: ultra-minimal Transcode flow (Enable toggle in General + default CPU 720p preset on first enable); removed “Quick presets”.
   - UI: OUTPUT LIST now provides full public URLs with auto/manual override, reset-to-auto, and variants tags for publish targets.

@@ -25,7 +25,7 @@
  * Module Options:
  *      addr         - string, server IP address
  *      port         - number, server port
- *      server_name  - string, default value: "Astra"
+ *      server_name  - string, default value: "Stream"
  *      http_version - string, default value: "HTTP/1.1"
  *      request_line_max   - number, max request line bytes (default: 4096)
  *      headers_max        - number, max headers bytes (default: 12288)
@@ -1257,7 +1257,7 @@ static void module_init(module_data_t *mod)
     mod->port = 80;
     module_option_number("port", &mod->port);
 
-    mod->server_name = "Astra";
+    mod->server_name = "Stream";
     module_option_string("server_name", &mod->server_name, NULL);
 
     mod->http_version = "HTTP/1.1";

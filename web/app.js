@@ -5,7 +5,14 @@ const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
 const SETTINGS_DENSITY_KEY = 'astral.settings.density';
-const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
+const VIEW_MODE_KEY = 'stream.viewMode';
+const VIEW_MODE_KEY_LEGACY = 'astra.viewMode';
+const THEME_KEY = 'stream.theme';
+const THEME_KEY_LEGACY = 'astra.theme';
+const AUTH_TOKEN_KEY = 'stream_token';
+const AUTH_TOKEN_KEY_LEGACY = 'astra_token';
+const SHOW_DISABLED_KEY = 'stream.showDisabledStreams';
+const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const HELP_GUIDE_STATE_KEY = 'helpGuide.expanded';
 const SIDEBAR_HELP_KEYS = {
@@ -311,18 +318,19 @@ function loadTilesUiState() {
 }
 
 function loadViewModeState() {
-  const stored = localStorage.getItem('astra.viewMode');
+  const stored = localStorage.getItem(VIEW_MODE_KEY) || localStorage.getItem(VIEW_MODE_KEY_LEGACY);
   const version = localStorage.getItem(VIEW_DEFAULT_VERSION_KEY);
   const mode = normalizeViewMode((stored && version === '20260205') ? stored : 'cards');
   if (version !== '20260205') {
-    localStorage.setItem('astra.viewMode', mode);
+    localStorage.setItem(VIEW_MODE_KEY, mode);
     localStorage.setItem(VIEW_DEFAULT_VERSION_KEY, '20260205');
   }
   return mode;
 }
 
 function loadShowDisabledState() {
-  const stored = localStorage.getItem(SHOW_DISABLED_KEY);
+  const stored = localStorage.getItem(SHOW_DISABLED_KEY)
+    || localStorage.getItem(SHOW_DISABLED_KEY_LEGACY);
   if (stored === null || stored === undefined || stored === '') {
     localStorage.setItem(SHOW_DISABLED_KEY, '1');
     return true;
@@ -439,7 +447,7 @@ const state = {
   users: [],
   accessLogEntries: [],
   auditEntries: [],
-  token: localStorage.getItem('astra_token'),
+  token: localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem(AUTH_TOKEN_KEY_LEGACY),
   editing: null,
   streamIdAuto: false,
   adapterEditing: null,
@@ -642,7 +650,7 @@ const state = {
   aiChatBusy: false,
   aiChatPreviewUrls: [],
   viewMode: loadViewModeState(),
-  themeMode: localStorage.getItem('astra.theme') || 'auto',
+  themeMode: localStorage.getItem(THEME_KEY) || localStorage.getItem(THEME_KEY_LEGACY) || 'auto',
   tilesUi: loadTilesUiState(),
   showDisabledStreams: loadShowDisabledState(),
   dashboardNoticeTimer: null,
@@ -2041,7 +2049,7 @@ const elements = {
 
 const defaults = {
   hlsBase: '/hls',
-  hlsDir: '/tmp/astra-data/hls',
+  hlsDir: '/tmp/stream-data/hls',
 };
 
 const OUTPUT_AUDIO_FIX_DEFAULTS = {
@@ -7140,7 +7148,7 @@ function setViewMode(mode, opts) {
   const next = normalizeViewMode(mode);
   state.viewMode = next;
   if (!opts || opts.persist !== false) {
-    localStorage.setItem('astra.viewMode', next);
+    localStorage.setItem(VIEW_MODE_KEY, next);
   }
   if (elements.streamViews) {
     elements.streamViews.dataset.viewMode = next;
@@ -7167,7 +7175,7 @@ function setThemeMode(mode, opts) {
   const next = normalizeThemeMode(mode);
   state.themeMode = next;
   if (!opts || opts.persist !== false) {
-    localStorage.setItem('astra.theme', next);
+    localStorage.setItem(THEME_KEY, next);
   }
   applyThemeMode(next);
   updateViewMenuSelection();
@@ -9159,7 +9167,8 @@ const TRANSCODE_PRESETS = {
 
 function normalizeMonitorEngine(value) {
   const text = String(value || '').toLowerCase();
-  if (text === 'ffprobe' || text === 'astra_analyze' || text === 'auto') return text;
+  if (text === 'ffprobe' || text === 'auto') return text;
+  if (text === 'stream_analyze' || text === 'astra_analyze' || text === 'analyze' || text === 'astra') return 'stream_analyze';
   return 'auto';
 }
 
@@ -19262,7 +19271,7 @@ function updateStreamAuthTokenSourceUi() {
     if (needsName) {
       if (kind === 'query') elements.streamAuthTokenName.placeholder = 'token';
       else if (kind === 'header') elements.streamAuthTokenName.placeholder = 'Authorization';
-      else if (kind === 'cookie') elements.streamAuthTokenName.placeholder = 'astra_token';
+      else if (kind === 'cookie') elements.streamAuthTokenName.placeholder = 'stream_token';
       else elements.streamAuthTokenName.placeholder = 'token';
     }
   }
@@ -20080,7 +20089,7 @@ function readStreamForm() {
       const header = name || 'Authorization';
       config.auth_token_source = `header:${header}`;
     } else if (kind === 'cookie') {
-      const cookie = name || 'astra_token';
+      const cookie = name || 'stream_token';
       config.auth_token_source = `cookie:${cookie}`;
     }
   }
@@ -29958,7 +29967,8 @@ async function submitLogin(event) {
 
     if (data.token) {
       state.token = data.token;
-      localStorage.setItem('astra_token', data.token);
+      localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
     }
 
     setOverlay(elements.loginOverlay, false);
@@ -29974,7 +29984,8 @@ async function logout() {
   } catch (err) {
   }
   state.token = null;
-  localStorage.removeItem('astra_token');
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
   pauseAllPolling();
   setOverlay(elements.loginOverlay, true);
 }

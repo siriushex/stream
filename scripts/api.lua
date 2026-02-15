@@ -155,8 +155,13 @@ local function get_token(request)
     end
 
     local cookies = parse_cookie(request.headers)
-    if cookies and cookies.astra_session then
-        return cookies.astra_session
+    if cookies then
+        if cookies.stream_session then
+            return cookies.stream_session
+        end
+        if cookies.astra_session then
+            return cookies.astra_session
+        end
     end
 
     return nil
@@ -3663,44 +3668,44 @@ local function list_metrics(server, client, request)
     end
     if format == "prometheus" or format == "prom" then
         local lines = {
-            "astra_uptime_seconds " .. tostring(payload.uptime_sec or 0),
-            "astra_streams_total " .. tostring(payload.streams.total or 0),
-            "astra_streams_enabled " .. tostring(payload.streams.enabled or 0),
-            "astra_streams_disabled " .. tostring(payload.streams.disabled or 0),
-            "astra_streams_on_air " .. tostring(payload.streams.on_air or 0),
-            "astra_streams_transcode_enabled " .. tostring(payload.streams.transcode_enabled or 0),
-            "astra_adapters_total " .. tostring(payload.adapters.total or 0),
-            "astra_adapters_enabled " .. tostring(payload.adapters.enabled or 0),
-            "astra_adapters_disabled " .. tostring(payload.adapters.disabled or 0),
-            "astra_adapters_with_status " .. tostring(payload.adapters.with_status or 0),
-            "astra_sessions_auth " .. tostring(payload.sessions.auth or 0),
-            "astra_sessions_clients " .. tostring(payload.sessions.clients or 0),
+            "stream_uptime_seconds " .. tostring(payload.uptime_sec or 0),
+            "stream_streams_total " .. tostring(payload.streams.total or 0),
+            "stream_streams_enabled " .. tostring(payload.streams.enabled or 0),
+            "stream_streams_disabled " .. tostring(payload.streams.disabled or 0),
+            "stream_streams_on_air " .. tostring(payload.streams.on_air or 0),
+            "stream_streams_transcode_enabled " .. tostring(payload.streams.transcode_enabled or 0),
+            "stream_adapters_total " .. tostring(payload.adapters.total or 0),
+            "stream_adapters_enabled " .. tostring(payload.adapters.enabled or 0),
+            "stream_adapters_disabled " .. tostring(payload.adapters.disabled or 0),
+            "stream_adapters_with_status " .. tostring(payload.adapters.with_status or 0),
+            "stream_sessions_auth " .. tostring(payload.sessions.auth or 0),
+            "stream_sessions_clients " .. tostring(payload.sessions.clients or 0),
         }
         if lua_mem_kb then
-            table.insert(lines, "astra_lua_mem_kb " .. tostring(lua_mem_kb))
+            table.insert(lines, "stream_lua_mem_kb " .. tostring(lua_mem_kb))
         end
         if perf.last_refresh_ms then
-            table.insert(lines, "astra_perf_refresh_ms " .. tostring(perf.last_refresh_ms))
+            table.insert(lines, "stream_perf_refresh_ms " .. tostring(perf.last_refresh_ms))
         end
         if perf.last_status_ms then
-            table.insert(lines, "astra_perf_status_ms " .. tostring(perf.last_status_ms))
+            table.insert(lines, "stream_perf_status_ms " .. tostring(perf.last_status_ms))
         end
         if perf.last_status_one_ms then
-            table.insert(lines, "astra_perf_status_one_ms " .. tostring(perf.last_status_one_ms))
+            table.insert(lines, "stream_perf_status_one_ms " .. tostring(perf.last_status_one_ms))
         end
         if perf.last_adapter_refresh_ms then
-            table.insert(lines, "astra_perf_adapter_refresh_ms " .. tostring(perf.last_adapter_refresh_ms))
+            table.insert(lines, "stream_perf_adapter_refresh_ms " .. tostring(perf.last_adapter_refresh_ms))
         end
         if dataplane_engine then
-            table.insert(lines, "astra_dataplane_workers_count " .. tostring(dataplane_engine.workers_count or 0))
-            table.insert(lines, "astra_dataplane_sendmmsg_available " .. tostring((dataplane_engine.sendmmsg_available == true) and 1 or 0))
+            table.insert(lines, "stream_dataplane_workers_count " .. tostring(dataplane_engine.workers_count or 0))
+            table.insert(lines, "stream_dataplane_sendmmsg_available " .. tostring((dataplane_engine.sendmmsg_available == true) and 1 or 0))
             if type(dataplane_engine.workers) == "table" then
                 for _, w in ipairs(dataplane_engine.workers) do
                     local widx = tonumber(w.index) or 0
                     local label = string.format("{worker=\"%d\"}", widx)
-                    table.insert(lines, "astra_dataplane_worker_active_streams" .. label .. " " .. tostring(w.active_streams or 0))
+                    table.insert(lines, "stream_dataplane_worker_active_streams" .. label .. " " .. tostring(w.active_streams or 0))
                     if w.pinned_cpu ~= nil then
-                        table.insert(lines, "astra_dataplane_worker_pinned_cpu" .. label .. " " .. tostring(w.pinned_cpu))
+                        table.insert(lines, "stream_dataplane_worker_pinned_cpu" .. label .. " " .. tostring(w.pinned_cpu))
                     end
                 end
             end
@@ -3709,13 +3714,13 @@ local function list_metrics(server, client, request)
             for stream_id, stats in pairs(mpts_metrics) do
                 local label = string.format("{stream_id=\"%s\"}", tostring(stream_id):gsub("\"", "\\\""))
                 if stats.bitrate_bps then
-                    table.insert(lines, "astra_mpts_bitrate_bps" .. label .. " " .. tostring(stats.bitrate_bps))
+                    table.insert(lines, "stream_mpts_bitrate_bps" .. label .. " " .. tostring(stats.bitrate_bps))
                 end
                 if stats.null_percent then
-                    table.insert(lines, "astra_mpts_null_percent" .. label .. " " .. tostring(stats.null_percent))
+                    table.insert(lines, "stream_mpts_null_percent" .. label .. " " .. tostring(stats.null_percent))
                 end
                 if stats.psi_interval_ms then
-                    table.insert(lines, "astra_mpts_psi_interval_ms" .. label .. " " .. tostring(stats.psi_interval_ms))
+                    table.insert(lines, "stream_mpts_psi_interval_ms" .. label .. " " .. tostring(stats.psi_interval_ms))
                 end
             end
         end
@@ -5060,7 +5065,11 @@ local function parse_cookie_from_headers(headers)
     if not raw then
         return nil
     end
-    local token = tostring(raw):match("astra_session=([^;]+)")
+    local token = tostring(raw):match("stream_session=([^;]+)")
+    if token and token ~= "" then
+        return "stream_session=" .. token
+    end
+    token = tostring(raw):match("astra_session=([^;]+)")
     if token and token ~= "" then
         return "astra_session=" .. token
     end
@@ -5161,7 +5170,11 @@ local function parse_cookie_from_header_text(text)
     if not cookie then
         return nil
     end
-    local token = cookie:match("astra_session=([^;]+)")
+    local token = cookie:match("stream_session=([^;]+)")
+    if token and token ~= "" then
+        return "stream_session=" .. token
+    end
+    token = cookie:match("astra_session=([^;]+)")
     if token and token ~= "" then
         return "astra_session=" .. token
     end
@@ -5529,8 +5542,15 @@ local function server_test(server, client, request)
         if not line then
             return ""
         end
-        local token = line:match("astra_session=([^;]+)")
-        return token or ""
+        local token = line:match("stream_session=([^;]+)")
+        if token and token ~= "" then
+            return "stream_session=" .. token
+        end
+        token = line:match("astra_session=([^;]+)")
+        if token and token ~= "" then
+            return "astra_session=" .. token
+        end
+        return ""
     end
 
     local function do_health_https(cookie)
@@ -5596,11 +5616,11 @@ local function server_test(server, client, request)
                 if not code or code >= 400 then
                     return respond_err(400, "login failed (" .. tostring(code or "unknown") .. ")")
                 end
-                local token = parse_cookie(stdout)
-                if token == "" then
+                local cookie = parse_cookie(stdout)
+                if cookie == "" then
                     return respond_err(400, "login failed (no session cookie)")
                 end
-                do_health_https("astra_session=" .. token)
+                do_health_https(cookie)
             end)
             return
         end
@@ -5634,11 +5654,20 @@ local function server_test(server, client, request)
                 if response.headers and response.headers["set-cookie"] then
                     cookie = tostring(response.headers["set-cookie"])
                 end
-                local token = cookie and cookie:match("astra_session=([^;]+)") or ""
-                if token == "" then
+                local token = cookie and cookie:match("stream_session=([^;]+)") or ""
+                local out_cookie = ""
+                if token ~= "" then
+                    out_cookie = "stream_session=" .. token
+                else
+                    token = cookie and cookie:match("astra_session=([^;]+)") or ""
+                    if token ~= "" then
+                        out_cookie = "astra_session=" .. token
+                    end
+                end
+                if out_cookie == "" then
                     return respond_err(400, "login failed (no session cookie)")
                 end
-                do_health("astra_session=" .. token)
+                do_health(out_cookie)
             end,
         })
         return
@@ -6068,7 +6097,7 @@ local function login(server, client, request)
         actor_username = user.username,
         ok = true,
     })
-    local cookie = "astra_session=" .. token .. "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" .. ttl
+    local cookie = "stream_session=" .. token .. "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" .. ttl
     server:send(client, {
         code = 200,
         headers = {
@@ -6261,7 +6290,7 @@ local function logout(server, client, request)
         code = 200,
         headers = {
             "Content-Type: application/json",
-            "Set-Cookie: astra_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            "Set-Cookie: stream_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
             "Connection: close",
         },
         content = json.encode({ status = "ok" }),
@@ -6343,7 +6372,7 @@ local function export_config(server, client, request)
         "Connection: close",
     }
     if download then
-        table.insert(headers, "Content-Disposition: attachment; filename=astra-export.json")
+        table.insert(headers, "Content-Disposition: attachment; filename=stream-export.json")
     end
     local encoded
     if json and type(json.encode_pretty) == "function" then

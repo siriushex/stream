@@ -793,7 +793,7 @@ end
 -- Извлечение token из запроса.
 -- По умолчанию (token_source пустой) сохраняем legacy поведение:
 -- - query параметр (token/auth_token_param)
--- - cookie astra_token
+-- - cookie stream_token
 --
 -- Дополнительно поддерживаем совместимость с Flussonic-like:
 --   token_source="auto" | "query:<name>" | "header:<name>" | "cookie:<name>".
@@ -801,13 +801,16 @@ function auth.get_token(request, token_param, token_source)
     token_param = token_param or "token"
     local kind, name = split_kind_name(token_source)
 
-    -- legacy behavior: query + cookie astra_token
+    -- legacy behavior: query + cookie stream_token
     if kind == "" then
         local token = extract_token_from_query(request, token_param)
         if token and token ~= "" then
             return token
         end
         local cookies = parse_cookie(request and request.headers or {})
+        if cookies.stream_token and cookies.stream_token ~= "" then
+            return cookies.stream_token
+        end
         if cookies.astra_token and cookies.astra_token ~= "" then
             return cookies.astra_token
         end
@@ -826,6 +829,9 @@ function auth.get_token(request, token_param, token_source)
         token = token_from_header(headers, "authorization")
         if token and token ~= "" then
             return token
+        end
+        if cookies.stream_token and cookies.stream_token ~= "" then
+            return cookies.stream_token
         end
         if cookies.astra_token and cookies.astra_token ~= "" then
             return cookies.astra_token
@@ -867,7 +873,7 @@ function auth.get_token(request, token_param, token_source)
     end
 
     if kind == "cookie" then
-        local cookie_name = name ~= "" and name or "astra_token"
+        local cookie_name = name ~= "" and name or "stream_token"
         local value = cookies[cookie_name]
         if value ~= nil and tostring(value) ~= "" then
             return tostring(value)
@@ -880,6 +886,9 @@ function auth.get_token(request, token_param, token_source)
     if token and token ~= "" then
         return token
     end
+    if cookies.stream_token and cookies.stream_token ~= "" then
+        return cookies.stream_token
+    end
     if cookies.astra_token and cookies.astra_token ~= "" then
         return cookies.astra_token
     end
@@ -888,7 +897,7 @@ end
 
 function auth.get_session_cookie(request)
     local cookies = parse_cookie(request and request.headers or {})
-    return cookies.astra_session
+    return cookies.stream_session or cookies.astra_session
 end
 
 function auth.get_hls_rewrite_enabled()

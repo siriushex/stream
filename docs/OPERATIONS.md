@@ -2,26 +2,26 @@
 
 ## Systemd Service
 Templates are in `contrib/systemd/`:
-- `astra.service`
-- `astra.env`
-- `astral-watchdog.service`
-- `astral-watchdog.timer`
-- `astral-watchdog.env`
+- `stream.service`
+- `stream.env`
+- `stream-watchdog.service`
+- `stream-watchdog.timer`
+- `stream-watchdog.env`
 
 Example locations (adjust as needed):
-- Binary: `/opt/astra/astra`
-- Web UI: `/opt/astra/web`
-- Config: `/etc/astra/astra.json`
-- Data dir: `/var/lib/astra`
+- Binary: `/usr/local/bin/stream`
+- Web UI: `/usr/local/share/stream/web` (optional; otherwise embedded bundle)
+- Config: `/etc/stream/stream.json`
+- Data dir: `/etc/stream`
 
 Service command (from template):
 ```
-ExecStart=/opt/astra/astra scripts/server.lua --config ${ASTRA_CONFIG} \
-  -p ${ASTRA_HTTP_PORT} --data-dir ${ASTRA_DATA_DIR} --web-dir ${ASTRA_WEB_DIR}
+ExecStart=/usr/local/bin/stream -c ${STREAM_CONFIG} -p ${STREAM_HTTP_PORT} \
+  --data-dir ${STREAM_DATA_DIR} --web-dir ${STREAM_WEB_DIR} ${STREAM_EXTRA_ARGS}
 ```
 
 ### Restart storms / config errors
-Astral exits with code `78` (`EX_CONFIG`) for startup config errors (bad port, missing web dir,
+Stream exits with code `78` (`EX_CONFIG`) for startup config errors (bad port, missing web dir,
 failed import). Recommended systemd guardrails to avoid restart storms:
 ```
 Restart=on-failure
@@ -32,8 +32,8 @@ StartLimitBurst=3
 
 Optional preflight (prevent a start with empty envs):
 ```
-ExecStartPre=/bin/sh -lc 'test -n "$ASTRA_HTTP_PORT" && echo "$ASTRA_HTTP_PORT" | grep -Eq "^[0-9]+$"'
-ExecStartPre=/bin/sh -lc 'test -r "$ASTRA_CONFIG"'
+ExecStartPre=/bin/sh -lc 'test -n "$STREAM_HTTP_PORT" && echo "$STREAM_HTTP_PORT" | grep -Eq "^[0-9]+$"'
+ExecStartPre=/bin/sh -lc 'test -r "$STREAM_CONFIG"'
 ```
 
 ## Runtime Dependencies (Ubuntu/Debian)
@@ -42,7 +42,7 @@ libraries or external tools (for example `ffmpeg`).
 
 Installer (idempotent):
 ```
-sudo ./install.sh --bin /opt/astra/astra
+sudo ./install.sh --bin /usr/local/bin/stream
 ```
 
 Notes:
@@ -61,14 +61,14 @@ sudo scripts/ops/install_watchdog.sh
 ```
 
 Configuration:
-- `/etc/astral-watchdog.env`
+- `/etc/stream-watchdog.env`
 - Defaults: `CPU_LIMIT=300`, `RSS_LIMIT_MB=1500`, `HITS_THRESHOLD=2`
-- You can also set `ASTRA_CMD` or `ASTRA_PGREP` for custom run patterns.
+- You can also set `STREAM_CMD` or `STREAM_PGREP` for custom run patterns.
 
 Status:
 ```
-systemctl status astral-watchdog.timer
-journalctl -u astral-watchdog.service -n 50
+systemctl status stream-watchdog.timer
+journalctl -u stream-watchdog.service -n 50
 ```
 
 ## Upgrade Flow
@@ -80,12 +80,12 @@ journalctl -u astral-watchdog.service -n 50
 6. Run smoke checks (see `docs/TESTING.md`).
 
 ## Backups
-- SQLite DB: `data/astra.db` (default).
+- SQLite DB: `data/stream.db` (default).
 - Config revisions: `data/backups/config/`.
-- Export: `GET /api/v1/export` or `./astra scripts/export.lua`.
+- Export: `GET /api/v1/export` or `./stream scripts/export.lua`.
 
 ## Restore
-- Restore `astra.db` and config revisions.
+- Restore `stream.db` and config revisions.
 - Or re-import from JSON via `POST /api/v1/import` (merge/replace).
 
 ## Logs
@@ -97,17 +97,17 @@ journalctl -u astral-watchdog.service -n 50
 - Use `http_ip_allow` and `http_ip_deny` where possible.
 
 ## Multi-core Scaling (Stream Sharding)
-Astral is largely single-threaded for the MPEG-TS hot path (inputs → processing → outputs). If one CPU core
+Stream is largely single-threaded for the MPEG-TS hot path (inputs → processing → outputs). If one CPU core
 hits 100% (often visible with SoftCAM/descrambling), you can spread load across multiple processes.
 
 ### Run multiple shards (same DB/config)
 Each process will instantiate only its shard of streams:
 ```bash
 # 4 shards on different ports
-astral scripts/server.lua --config /etc/astral/prod.json -p 9060 --stream-shard 0/4
-astral scripts/server.lua --config /etc/astral/prod.json -p 9061 --stream-shard 1/4
-astral scripts/server.lua --config /etc/astral/prod.json -p 9062 --stream-shard 2/4
-astral scripts/server.lua --config /etc/astral/prod.json -p 9063 --stream-shard 3/4
+stream scripts/server.lua --config /etc/stream/prod.json -p 9060 --stream-shard 0/4
+stream scripts/server.lua --config /etc/stream/prod.json -p 9061 --stream-shard 1/4
+stream scripts/server.lua --config /etc/stream/prod.json -p 9062 --stream-shard 2/4
+stream scripts/server.lua --config /etc/stream/prod.json -p 9063 --stream-shard 3/4
 ```
 
 Notes:
@@ -117,10 +117,10 @@ Notes:
 ### Optional CPU pinning
 You can pin each shard to its own CPU set to avoid “everything on core0”:
 ```bash
-taskset -c 0-2 astral ... --stream-shard 0/4 -p 9060
-taskset -c 3-5 astral ... --stream-shard 1/4 -p 9061
-taskset -c 6-8 astral ... --stream-shard 2/4 -p 9062
-taskset -c 9-11 astral ... --stream-shard 3/4 -p 9063
+taskset -c 0-2 stream ... --stream-shard 0/4 -p 9060
+taskset -c 3-5 stream ... --stream-shard 1/4 -p 9061
+taskset -c 6-8 stream ... --stream-shard 2/4 -p 9062
+taskset -c 9-11 stream ... --stream-shard 3/4 -p 9063
 ```
 
 systemd alternative:
@@ -128,18 +128,18 @@ systemd alternative:
 
 ### systemd example (template + env files)
 Templates live in `contrib/systemd/`. For sharding you can use:
-- `contrib/systemd/astral-sharded@.service` (supports optional `taskset` via `CPUS=` env)
+- `contrib/systemd/stream-sharded@.service` (supports optional `taskset` via `CPUS=` env)
 
 Example envs:
 ```bash
-# /etc/astral/prod0.env
-CONFIG=/etc/astral/prod.json
+# /etc/stream/prod0.env
+CONFIG=/etc/stream/prod.json
 PORT=9060
 EXTRA_OPTS=--stream-shard 0/4
 CPUS=0-2
 
-# /etc/astral/prod1.env
-CONFIG=/etc/astral/prod.json
+# /etc/stream/prod1.env
+CONFIG=/etc/stream/prod.json
 PORT=9061
 EXTRA_OPTS=--stream-shard 1/4
 CPUS=3-5
@@ -147,6 +147,6 @@ CPUS=3-5
 
 Enable:
 ```bash
-systemctl enable --now astral-sharded@prod0.service
-systemctl enable --now astral-sharded@prod1.service
+systemctl enable --now stream-sharded@prod0.service
+systemctl enable --now stream-sharded@prod1.service
 ```

@@ -1185,8 +1185,12 @@ local function normalize_monitor_engine(value)
     if engine == "ffprobe" then
         return "ffprobe"
     end
+    if engine == "stream_analyze" then
+        return "stream_analyze"
+    end
     if engine == "astra_analyze" or engine == "analyze" or engine == "astra" then
-        return "astra_analyze"
+        -- Legacy aliases.
+        return "stream_analyze"
     end
     return "auto"
 end
@@ -1197,7 +1201,7 @@ local function resolve_monitor_engine(engine, url)
         return normalized
     end
     if is_udp_url(url) then
-        return "astra_analyze"
+        return "stream_analyze"
     end
     return "ffprobe"
 end
@@ -3774,7 +3778,7 @@ local function build_analyze_args(url, duration_sec)
         seconds = 1
     end
     return {
-        "./astra",
+        "./stream",
         "scripts/analyze.lua",
         "-n",
         tostring(seconds),
@@ -4584,7 +4588,7 @@ local function check_psi_timeout(job, output_state, watchdog, now)
         return
     end
     local engine = resolve_monitor_engine(watchdog.monitor_engine, output_state.url)
-    if engine ~= "astra_analyze" then
+    if engine ~= "stream_analyze" then
         return
     end
     if pat_timeout > 0 then
@@ -4755,7 +4759,7 @@ local function handle_input_probe_result(job, payload, err)
 end
 
 local function release_analyze_slot(probe)
-    if not probe or probe.engine ~= "astra_analyze" then
+    if not probe or probe.engine ~= "stream_analyze" then
         return
     end
     if probe.analyze_slot then
@@ -4772,7 +4776,7 @@ local function tick_output_probe(job, output_state, now)
 
     local out_chunk = probe.proc:read_stdout()
     if out_chunk then
-        if probe.engine == "astra_analyze" then
+        if probe.engine == "stream_analyze" then
             consume_lines(probe, "stdout_buf", out_chunk, function(line)
                 local bitrate = parse_analyze_bitrate_kbps(line)
                 if bitrate then
@@ -4902,7 +4906,7 @@ local function tick_output_probe(job, output_state, now)
         release_analyze_slot(probe)
         output_state.probe = nil
         output_state.probe_inflight = false
-        local err = probe.engine == "astra_analyze" and "analyze timeout" or "ffprobe timeout"
+        local err = probe.engine == "stream_analyze" and "analyze timeout" or "ffprobe timeout"
         handle_output_probe_failure(job, output_state, err)
     end
 end
@@ -4954,7 +4958,7 @@ local function start_output_probe(job, output_state)
         return
     end
     local engine = resolve_monitor_engine(output_state.watchdog.monitor_engine, url)
-    if engine == "astra_analyze" then
+    if engine == "stream_analyze" then
         local limit = get_analyze_concurrency_limit()
         if transcode.analyze_active >= limit then
             output_state.analyze_pending = true
@@ -4970,7 +4974,7 @@ local function start_output_probe(job, output_state)
         output_state.analyze_pending = false
         output_state.probe_inflight = true
         output_state.probe = {
-            engine = "astra_analyze",
+            engine = "stream_analyze",
             proc = proc,
             stdout_buf = "",
             stderr_buf = "",

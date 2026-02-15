@@ -2,7 +2,7 @@
 
 ## Sources and Scope
 - Static source of truth for routes/validation: `astra/scripts/api.lua`.
-- Dynamic observation: run on server using `./astra` (source build, v4.4.187)
+- Dynamic observation: run on server using `./stream` (source build, v4.4.187)
   because `astra-250612` aborts at startup with `sqlite` missing
   (`scripts/config.lua:346: attempt to index global 'sqlite'`).
 - Endpoints and schemas below are derived from code; observed response keys are
@@ -144,7 +144,7 @@
 - `POST /api/v1/restart` (triggers process restart)
 
 ## Observed Response Keys (Server Build)
-Observed on `/home/hex/astra` using `./astra scripts/server.lua -p 9131`.
+Observed on `/home/hex/stream` using `./stream scripts/server.lua -p 9131`.
 
 - `GET /api/v1/health/process`: `started_at`, `status`, `ts`, `uptime_sec`, `version`
 - `GET /api/v1/health/inputs`: `inputs`, `streams`, `ts`, `unhealthy_streams`

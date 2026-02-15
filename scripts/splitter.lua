@@ -14,7 +14,7 @@ local function ensure_dir(path)
 end
 
 local function get_data_dir()
-    local db_path = config and config.db_path or "./data/astra.db"
+    local db_path = config and config.db_path or "./data/stream.db"
     local dir = db_path:match("^(.*)/[^/]+$")
     return dir or "."
 end

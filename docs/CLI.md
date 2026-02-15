@@ -1,37 +1,37 @@
-# Astral CLI
+# Stream CLI
 
-Бинарь: `astral` (или `astra` в legacy сборках).
+Бинарь: `stream`.
 
 ## Основные режимы
 
 ### `--stream` (основной сервер)
 Запуск сервера с UI/API.
 ```bash
-astral --stream -p 8000 --config /path/to/config.json
+stream --stream -p 8000 --config /path/to/config.json
 ```
 
 ### `--relay`
 Релей потоков через HTTP (legacy режим).
 ```bash
-astral --relay
+stream --relay
 ```
 
 ### `--analyze`
 MPEG‑TS анализатор. Полезно для PID/битрейта/PSI.
 ```bash
-astral --analyze -n 1 udp://239.1.1.1:1234
+stream --analyze -n 1 udp://239.1.1.1:1234
 ```
 
 ### `--dvbls`
 Список DVB‑адаптеров (busy/free).
 ```bash
-astral --dvbls
+stream --dvbls
 ```
 
 ### `--femon`
 DVB монитор (signal/SNR/lock).
 ```bash
-astral --femon dvb://#adapter=0&type=S2&tp=...
+stream --femon dvb://#adapter=0&type=S2&tp=...
 ```
 
 ## Настройки сервера
@@ -41,7 +41,7 @@ astral --femon dvb://#adapter=0&type=S2&tp=...
   -p PORT             listen port (default: 8000)
   --http-play-port P  http play server port override (default: setting http_play_port or PORT)
   --data-dir PATH     data directory (default: ./data or <config>.data)
-  --db PATH           sqlite db path (default: data-dir/astra.db)
+  --db PATH           sqlite db path (default: data-dir/stream.db)
   --web-dir PATH      web ui directory (default: ./web)
   --hls-dir PATH      hls output directory (default: data-dir/hls)
   --hls-route PATH    hls url prefix (default: /hls)
@@ -55,8 +55,8 @@ astral --femon dvb://#adapter=0&type=S2&tp=...
 
 ## Примеры многопроцессного запуска
 ```bash
-astral /etc/astral/a.json -p 9060
-astral /etc/astral/b.json -p 9061
+stream /etc/stream/a.json -p 9060
+stream /etc/stream/b.json -p 9061
 ```
 
 ## Примечания

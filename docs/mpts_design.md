@@ -121,7 +121,7 @@
 
 ## Метрики
 - В статусе стрима доступны: `bitrate_bps`, `null_percent`, `psi_interval_ms`.
-- В `/api/v1/metrics?format=prom` экспортируются метрики `astra_mpts_*` по stream_id.
+- В `/api/v1/metrics?format=prom` экспортируются метрики `stream_mpts_*` по stream_id.
 
 ## PCR restamp
 - `advanced.pcr_restamp` (bool) — переписывает PCR по локальному времени выхода.

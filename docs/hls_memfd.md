@@ -46,7 +46,7 @@ Per-stream override is supported via the HLS output config (`storage`, `on_deman
    - `ffmpeg -loglevel error -re -f lavfi -i testsrc=size=128x128:rate=25 \
        -f lavfi -i sine=frequency=1000 -c:v mpeg2video -c:a mp2 -f mpegts \
        "udp://127.0.0.1:13000?pkt_size=1316" &`
-   - `./astra ./tmp_hls_memfd.json -p 9027 --data-dir ./data_hls_memfd --web-dir ./web &`
+   - `./stream ./tmp_hls_memfd.json -p 9027 --data-dir ./data_hls_memfd --web-dir ./web &`
 2. Request HLS:
    - `curl -s http://127.0.0.1:9027/hls/hls_demo/index.m3u8 | head -n 5`
    - `segment=$(curl -s http://127.0.0.1:9027/hls/hls_demo/index.m3u8 | grep -v '^#' | head -n 1)`

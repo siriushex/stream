@@ -24,7 +24,7 @@ trap cleanup EXIT
 ./configure.sh
 make
 
-./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" > "$LOG_FILE" 2>&1 &
+./stream scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" > "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 sleep 2
 
@@ -54,7 +54,7 @@ curl -s "http://127.0.0.1:${PORT}/api/v1/health/inputs" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/health/outputs" -b "$COOKIE_JAR"
 curl -s "http://127.0.0.1:${PORT}/api/v1/export?include_users=0" -b "$COOKIE_JAR" | head -n 1
 
-./astra scripts/export.lua --data-dir "$DATA_DIR" --output "${DATA_DIR}/astra-export.json"
+./stream scripts/export.lua --data-dir "$DATA_DIR" --output "${DATA_DIR}/stream-export.json"
 
 if [[ "${MPTS_STRICT_PNR_SMOKE:-0}" == "1" ]]; then
   STRICT_PNR_PORT="${MPTS_STRICT_PNR_PORT:-9057}"

@@ -1,4 +1,4 @@
--- Cesbo Astra HTTP API client (compat layer)
+-- Cesbo Stream HTTP API client (compat layer)
 --
 -- Поддерживает:
 -- - baseUrl вида http(s)://host:port (без завершающего "/")
@@ -11,8 +11,8 @@
 -- - не логируем пароль и заголовок Authorization
 -- - не делаем агрессивные ретраи (по умолчанию 3 попытки)
 
-AstraApiClient = {}
-AstraApiClient.__index = AstraApiClient
+CesboApiClient = {}
+CesboApiClient.__index = CesboApiClient
 
 local function safe_tostring(v)
     if v == nil then return "" end
@@ -129,7 +129,7 @@ local function deep_copy_table(t)
     return out
 end
 
-function AstraApiClient.new(opts)
+function CesboApiClient.new(opts)
     opts = type(opts) == "table" and opts or {}
     local base_url = trim_slashes_end(opts.baseUrl or opts.base_url or "")
     if base_url == "" then
@@ -147,7 +147,7 @@ function AstraApiClient.new(opts)
         return nil, "https not supported (OpenSSL not available)"
     end
 
-    local self = setmetatable({}, AstraApiClient)
+    local self = setmetatable({}, CesboApiClient)
     self.baseUrl = base_url
     self.host = parsed.host
     self.port = parsed.port
@@ -174,14 +174,14 @@ function AstraApiClient.new(opts)
     return self, nil
 end
 
-function AstraApiClient:_debug(msg)
+function CesboApiClient:_debug(msg)
     if not self.debug then return end
     if log and log.debug then
-        log.debug("[astra_api] " .. safe_tostring(msg))
+        log.debug("[cesbo_api] " .. safe_tostring(msg))
     end
 end
 
-function AstraApiClient:_build_headers(extra, body_len)
+function CesboApiClient:_build_headers(extra, body_len)
     local headers = {
         "Host: " .. safe_tostring(self.host) .. ":" .. safe_tostring(self.port),
         "Connection: close",
@@ -208,7 +208,7 @@ function AstraApiClient:_build_headers(extra, body_len)
     return headers
 end
 
-function AstraApiClient:_request(method, path, query, body_obj, callback)
+function CesboApiClient:_request(method, path, query, body_obj, callback)
     if type(http_request) ~= "function" then
         callback(false, "http_request unavailable")
         return
@@ -309,11 +309,11 @@ end
 
 -- ===== Low-level wrappers =====
 
-function AstraApiClient:GetApi(path, query, callback)
+function CesboApiClient:GetApi(path, query, callback)
     return self:_request("GET", join_path("/api", path), query, nil, callback)
 end
 
-function AstraApiClient:PostControl(payload, callback)
+function CesboApiClient:PostControl(payload, callback)
     return self:_request("POST", "/control/", nil, payload, callback)
 end
 
@@ -329,63 +329,63 @@ end
 
 -- ===== Process Status API =====
 
-function AstraApiClient:GetSystemStatus(time, callback)
+function CesboApiClient:GetSystemStatus(time, callback)
     local t = tonumber(time) or 1
     return self:GetApi("/system-status", { t = tostring(t) }, callback)
 end
 
-function AstraApiClient:RestartAstra(callback)
+function CesboApiClient:RestartServer(callback)
     return self:PostControl(control_cmd("restart"), callback)
 end
 
 -- ===== DVB Adapters API =====
 
-function AstraApiClient:GetAdapterInfo(id, callback)
+function CesboApiClient:GetAdapterInfo(id, callback)
     return self:GetApi("/adapter-info/" .. url_encode(id), nil, callback)
 end
 
-function AstraApiClient:SetAdapter(id, adapterConfig, callback)
+function CesboApiClient:SetAdapter(id, adapterConfig, callback)
     return self:PostControl(control_cmd("set-adapter", {
         id = safe_tostring(id),
         adapter = adapterConfig or {},
     }), callback)
 end
 
-function AstraApiClient:RestartAdapter(id, callback)
+function CesboApiClient:RestartAdapter(id, callback)
     return self:PostControl(control_cmd("restart-adapter", { id = safe_tostring(id) }), callback)
 end
 
-function AstraApiClient:RemoveAdapter(id, callback)
+function CesboApiClient:RemoveAdapter(id, callback)
     return self:SetAdapter(id, { remove = true }, callback)
 end
 
-function AstraApiClient:GetAdapterStatus(id, time, callback)
+function CesboApiClient:GetAdapterStatus(id, time, callback)
     local t = tonumber(time) or 1
     return self:GetApi("/adapter-status/" .. url_encode(id), { t = tostring(t) }, callback)
 end
 
 -- ===== Streams API =====
 
-function AstraApiClient:GetStreamInfo(id, callback)
+function CesboApiClient:GetStreamInfo(id, callback)
     return self:GetApi("/stream-info/" .. url_encode(id), nil, callback)
 end
 
-function AstraApiClient:SetStream(id, streamConfig, callback)
+function CesboApiClient:SetStream(id, streamConfig, callback)
     return self:PostControl(control_cmd("set-stream", {
         id = safe_tostring(id),
         stream = streamConfig or {},
     }), callback)
 end
 
-function AstraApiClient:ToggleStream(id, callback)
+function CesboApiClient:ToggleStream(id, callback)
     return self:PostControl(control_cmd("toggle-stream", { id = safe_tostring(id) }), callback)
 end
 
-function AstraApiClient:RestartStream(id, callback)
+function CesboApiClient:RestartStream(id, callback)
     return self:PostControl(control_cmd("restart-stream", { id = safe_tostring(id) }), callback)
 end
 
-function AstraApiClient:SetStreamInput(id, input, callback)
+function CesboApiClient:SetStreamInput(id, input, callback)
     local payload = control_cmd("set-stream-input", { id = safe_tostring(id) })
     if input ~= nil then
         payload.input = tonumber(input) or input
@@ -393,34 +393,34 @@ function AstraApiClient:SetStreamInput(id, input, callback)
     return self:PostControl(payload, callback)
 end
 
-function AstraApiClient:RemoveStream(id, callback)
+function CesboApiClient:RemoveStream(id, callback)
     return self:SetStream(id, { remove = true }, callback)
 end
 
-function AstraApiClient:GetStreamStatus(id, time, callback)
+function CesboApiClient:GetStreamStatus(id, time, callback)
     local t = tonumber(time) or 1
     return self:GetApi("/stream-status/" .. url_encode(id), { t = tostring(t) }, callback)
 end
 
 -- ===== Other API Methods =====
 
-function AstraApiClient:GetVersion(callback)
+function CesboApiClient:GetVersion(callback)
     return self:PostControl(control_cmd("version"), callback)
 end
 
-function AstraApiClient:LoadConfiguration(callback)
+function CesboApiClient:LoadConfiguration(callback)
     return self:PostControl(control_cmd("load"), callback)
 end
 
-function AstraApiClient:UploadConfiguration(cfg, callback)
+function CesboApiClient:UploadConfiguration(cfg, callback)
     return self:PostControl(control_cmd("upload", { config = cfg or {} }), callback)
 end
 
-function AstraApiClient:SetLicense(serial, callback)
+function CesboApiClient:SetLicense(serial, callback)
     return self:PostControl(control_cmd("set-license", { license = safe_tostring(serial) }), callback)
 end
 
-function AstraApiClient:SetStreamImage(streamId, url, callback)
+function CesboApiClient:SetStreamImage(streamId, url, callback)
     return self:PostControl(control_cmd("set-stream-image", {
         id = safe_tostring(streamId),
         url = safe_tostring(url),
@@ -429,7 +429,7 @@ end
 
 -- ===== Scan API =====
 
-function AstraApiClient:ScanInit(scanAddress, callback)
+function CesboApiClient:ScanInit(scanAddress, callback)
     return self:PostControl(control_cmd("scan-init", { scan = safe_tostring(scanAddress) }), function(ok, data, resp)
         if not ok then
             callback(false, data, resp)
@@ -443,31 +443,31 @@ function AstraApiClient:ScanInit(scanAddress, callback)
     end)
 end
 
-function AstraApiClient:ScanKill(analyzerId, callback)
+function CesboApiClient:ScanKill(analyzerId, callback)
     return self:PostControl(control_cmd("scan-kill", { id = safe_tostring(analyzerId) }), callback)
 end
 
-function AstraApiClient:ScanCheck(analyzerId, callback)
+function CesboApiClient:ScanCheck(analyzerId, callback)
     return self:PostControl(control_cmd("scan-check", { id = safe_tostring(analyzerId) }), callback)
 end
 
 -- ===== Sessions API =====
 
-function AstraApiClient:GetSessions(callback)
+function CesboApiClient:GetSessions(callback)
     return self:PostControl(control_cmd("sessions"), callback)
 end
 
-function AstraApiClient:CloseSession(sessionId, callback)
+function CesboApiClient:CloseSession(sessionId, callback)
     return self:PostControl(control_cmd("close-session", { id = safe_tostring(sessionId) }), callback)
 end
 
 -- ===== Users API =====
 
-function AstraApiClient:GetUser(login, callback)
+function CesboApiClient:GetUser(login, callback)
     return self:PostControl(control_cmd("get-user", { id = safe_tostring(login) }), callback)
 end
 
-function AstraApiClient:SetUser(login, userConfig, passwordPlaintext, callback)
+function CesboApiClient:SetUser(login, userConfig, passwordPlaintext, callback)
     local user = deep_copy_table(userConfig or {})
     if passwordPlaintext ~= nil then
         user.password = safe_tostring(passwordPlaintext)
@@ -475,11 +475,10 @@ function AstraApiClient:SetUser(login, userConfig, passwordPlaintext, callback)
     return self:PostControl(control_cmd("set-user", { id = safe_tostring(login), user = user }), callback)
 end
 
-function AstraApiClient:RemoveUser(login, callback)
+function CesboApiClient:RemoveUser(login, callback)
     return self:SetUser(login, { remove = true }, nil, callback)
 end
 
-function AstraApiClient:ToggleUser(login, callback)
+function CesboApiClient:ToggleUser(login, callback)
     return self:PostControl(control_cmd("toggle-user", { id = safe_tostring(login) }), callback)
 end
-
