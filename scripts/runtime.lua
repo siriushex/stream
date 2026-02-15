@@ -1027,6 +1027,14 @@ local PASSTHROUGH_DP_RX_BATCH_DEFAULT = 32
 local PASSTHROUGH_DP_RX_BATCH_MIN = 1
 local PASSTHROUGH_DP_RX_BATCH_MAX = 64
 
+-- Watchdog для auto-mode:
+-- если dataplane видит входящие датаграммы, но не выдаёт bytes_out (и растёт bad_datagrams),
+-- считаем поток несовместимым (например, RTP/не кратно 188) и откатываемся в legacy.
+local PASSTHROUGH_DP_WATCHDOG_INTERVAL_SEC = 5
+local PASSTHROUGH_DP_WATCHDOG_GRACE_SEC = 3
+local PASSTHROUGH_DP_WATCHDOG_COOLDOWN_SEC = 300
+local PASSTHROUGH_DP_WATCHDOG_MIN_DATAGRAMS = 50
+
 local function normalize_io_list(value)
     if type(value) == "string" then
         return { value }
@@ -1144,9 +1152,20 @@ local DP_DISALLOWED_OUTPUT_KEYS = {
     "rtp",
 }
 
-local function build_udp_relay_opts_if_eligible(stream_id, cfg)
+local function build_udp_relay_opts_if_eligible(stream_id, cfg, cfg_hash)
     if type(cfg) ~= "table" then
         return nil, "config required"
+    end
+
+    -- Если dataplane уже пытались применить к этому stream_id и он оказался несовместимым (не TS188),
+    -- временно держим blacklist, чтобы не было рестарт-петли "dataplane -> fallback -> dataplane".
+    local bl = runtime.dp_blacklist and runtime.dp_blacklist[tostring(stream_id)] or nil
+    if type(bl) == "table" then
+        local until_ts = tonumber(bl.until_ts) or 0
+        local bl_hash = tostring(bl.hash or "")
+        if cfg_hash and bl_hash ~= "" and tostring(cfg_hash) == bl_hash and os.time() < until_ts then
+            return nil, "dataplane blacklisted (cooldown)"
+        end
     end
 
     -- Простейшие SPTS потоки (без MPTS и без транскода).
@@ -1284,6 +1303,66 @@ local function close_existing_stream(id, existing)
     kill_channel(existing.channel)
 end
 
+local function dataplane_watchdog_tick()
+    -- Watchdog актуален только для auto-mode: в force-mode пользователь явно требует dataplane.
+    if dp_mode_normalized() ~= PASSTHROUGH_DP_MODE_AUTO then
+        return
+    end
+    if not dataplane_available() then
+        return
+    end
+
+    if runtime.dp_blacklist == nil then
+        runtime.dp_blacklist = {}
+    end
+
+    for id, entry in pairs(runtime.streams or {}) do
+        if entry and entry.kind == "dataplane" and entry.relay and type(entry.relay.stats) == "function" then
+            local ok, st = pcall(function()
+                return entry.relay:stats()
+            end)
+            if ok and type(st) == "table" then
+                local uptime = tonumber(st.uptime_sec) or 0
+                if uptime < PASSTHROUGH_DP_WATCHDOG_GRACE_SEC then
+                    goto continue
+                end
+
+                local d_in = tonumber(st.datagrams_in) or 0
+                local b_out = tonumber(st.bytes_out) or 0
+                local bad = tonumber(st.bad_datagrams) or 0
+
+                -- Если идёт вход, но нет выхода и есть bad_datagrams — это почти всегда несовместимый формат.
+                if d_in >= PASSTHROUGH_DP_WATCHDOG_MIN_DATAGRAMS and b_out == 0 and bad > 0 then
+                    local sid = tostring(id)
+                    runtime.dp_blacklist[sid] = {
+                        until_ts = os.time() + PASSTHROUGH_DP_WATCHDOG_COOLDOWN_SEC,
+                        hash = tostring(entry.hash or ""),
+                    }
+
+                    log.warning("[runtime] dataplane fallback to legacy: " .. sid
+                        .. " (bad_datagrams=" .. tostring(bad) .. ")")
+
+                    local cfg = entry.config_snapshot
+                    if type(cfg) ~= "table" then
+                        goto continue
+                    end
+
+                    local channel, err = build_channel_safe(cfg)
+                    if not channel then
+                        log.error("[runtime] dataplane fallback failed to build legacy channel: " .. sid
+                            .. " (" .. tostring(err or "unknown error") .. ")")
+                        goto continue
+                    end
+
+                    close_existing_stream(id, entry)
+                    runtime.streams[id] = { kind = "stream", channel = channel, hash = entry.hash, config_snapshot = cfg }
+                end
+            end
+        end
+        ::continue::
+    end
+end
+
 local function apply_stream(id, row, force)
     local existing = runtime.streams[id]
     local enabled = (tonumber(row.enabled) or 0) ~= 0
@@ -1324,7 +1403,7 @@ local function apply_stream(id, row, force)
     local want_dp = (dp_mode ~= PASSTHROUGH_DP_MODE_OFF)
     local dp_desired_kind = "stream"
     if want_dp and dataplane_available() then
-        dp_opts, dp_err = build_udp_relay_opts_if_eligible(id, cfg)
+        dp_opts, dp_err = build_udp_relay_opts_if_eligible(id, cfg, hash)
         if dp_opts then
             dp_desired_kind = "dataplane"
         elseif dp_mode == PASSTHROUGH_DP_MODE_FORCE then
@@ -1358,6 +1437,9 @@ local function apply_stream(id, row, force)
                 return udp_relay.start(dp_opts)
             end)
             if ok and relay_or_err then
+                if runtime.dp_blacklist then
+                    runtime.dp_blacklist[tostring(id)] = nil
+                end
                 -- Для совместимости UI (/play, Analyze) оставляем "теневой" канал без outputs.
                 -- Он не держит input активным без клиентов (clients=0), но позволяет preview по /play.
                 local shadow = copy_table(cfg)
@@ -1679,6 +1761,14 @@ end
 
 function runtime.refresh(force)
     local start_ms = clock_ms()
+    if runtime.dp_watchdog_timer == nil and type(timer) == "function" then
+        runtime.dp_watchdog_timer = timer({
+            interval = PASSTHROUGH_DP_WATCHDOG_INTERVAL_SEC,
+            callback = function()
+                dataplane_watchdog_tick()
+            end,
+        })
+    end
     reconfigure_stream_sharding_from_settings()
     if (tonumber(runtime.stream_shard_count or 0) or 0) > 1 then
         load_stream_shard_map()
