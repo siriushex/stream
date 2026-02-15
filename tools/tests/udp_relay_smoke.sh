@@ -14,7 +14,10 @@ OUT_PORT=19351
 
 STREAM_BIN="${ROOT_DIR}/stream"
 if [[ ! -x "${STREAM_BIN}" ]]; then
-  echo "ERROR: ${STREAM_BIN} not found/executable"
+  STREAM_BIN="${ROOT_DIR}/astra"
+fi
+if [[ ! -x "${STREAM_BIN}" ]]; then
+  echo "ERROR: stream/astra binary not found/executable"
   exit 1
 fi
 
@@ -116,4 +119,3 @@ print("OK: received UDP packets:", count)
 PY
 
 echo "OK"
-
