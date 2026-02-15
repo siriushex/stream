@@ -331,6 +331,10 @@ select {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  /* В Table view длинные URL/конфиги (без пробелов) ломают авто‑layout таблицы:
+     браузер пытается расширить колонку по "max-content", а контейнер режет её по overflow.
+     Fixed layout + явные ширины колонок гарантируют ellipsis и стабильный вид. */
+  table-layout: fixed;
 }
 
 .stream-table-grid thead {
@@ -349,6 +353,22 @@ select {
 
 .stream-table-grid tr:last-child td {
   border-bottom: none;
+}
+
+.stream-table-grid .col-stream {
+  width: 220px;
+}
+
+.stream-table-grid .col-transcode {
+  width: 160px;
+}
+
+.stream-table-grid .col-dvr {
+  width: 90px;
+}
+
+.stream-table-grid .col-output {
+  width: 260px;
 }
 
 .stream-cell {
