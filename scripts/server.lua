@@ -1469,6 +1469,10 @@ WantedBy=multi-user.target
     end
 
     config.init({ data_dir = opt.data_dir, db_path = opt.db_path })
+    -- В multi-process режимах (stream sharding) только один процесс должен быть "писателем"
+    -- первичного конфига на диск, чтобы избежать гонок и откатов.
+    -- По умолчанию writer = тот, кто делает import (opt.no_import == false).
+    config.is_primary_writer = not opt.no_import
     if opt.no_web_auth then
         -- CLI override: force web auth off without mutating stored settings.
         config.runtime_overrides = config.runtime_overrides or {}

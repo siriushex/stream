@@ -7,6 +7,35 @@ local function now_ts()
     return os.time()
 end
 
+local function clamp_int(value, min_value, max_value, fallback)
+    local n = tonumber(value)
+    if not n then
+        return fallback
+    end
+    n = math.floor(n + 0.0)
+    if min_value ~= nil and n < min_value then
+        n = min_value
+    end
+    if max_value ~= nil and n > max_value then
+        n = max_value
+    end
+    return n
+end
+
+local function clamp_number(value, min_value, max_value, fallback)
+    local n = tonumber(value)
+    if not n then
+        return fallback
+    end
+    if min_value ~= nil and n < min_value then
+        n = min_value
+    end
+    if max_value ~= nil and n > max_value then
+        n = max_value
+    end
+    return n
+end
+
 local function ensure_dir(path)
     local stat = utils and utils.stat and utils.stat(path) or nil
     if not stat or stat.type ~= "directory" then
@@ -161,6 +190,11 @@ local function new_job(stream_id, settings)
         stream_id = stream_id,
         status = "stopped",
         start_ts = nil,
+        last_progress_ts = nil,
+        startup_grace_sec = 15,
+        no_progress_timeout_sec = 30,
+        max_restarts_per_10min = 10,
+        last_stall_log_ts = 0,
         stop_requested = false,
         settings = settings or {},
         ffmpeg = nil,
@@ -173,7 +207,7 @@ local function new_job(stream_id, settings)
         restart_count = 0,
         restart_window = {},
         auto_restart = true,
-        restart_delay = 4,
+        restart_delay_sec = 4,
         fifo_path = nil,
     }
     radio.jobs[stream_id] = job
@@ -239,7 +273,11 @@ local function should_restart(job)
         end
     end
     job.restart_window = filtered
-    if #filtered >= 10 then
+    local limit = tonumber(job.max_restarts_per_10min) or 10
+    if limit < 1 then
+        limit = 1
+    end
+    if #filtered >= limit then
         return false
     end
     return true
@@ -314,6 +352,13 @@ end
 
 local function build_curl_args(settings, fifo_path)
     local args = { "curl", "-sS", "--fail", "--location" }
+    -- Быстрый fail при обрывах/зависаниях, чтобы автоперезапуск был предсказуемым.
+    table.insert(args, "--connect-timeout")
+    table.insert(args, "5")
+    table.insert(args, "--speed-limit")
+    table.insert(args, "1024")
+    table.insert(args, "--speed-time")
+    table.insert(args, "15")
     if settings.user_agent and settings.user_agent ~= "" then
         table.insert(args, "-A")
         table.insert(args, settings.user_agent)
@@ -333,6 +378,7 @@ local function normalize_settings(raw)
     local out = {}
     out.audio_url = tostring(raw.audio_url or "")
     out.png_path = tostring(raw.png_path or "")
+    out.autostart = normalize_bool(raw.autostart, false)
     out.use_curl = normalize_bool(raw.use_curl, true)
     out.extra_headers = tostring(raw.extra_headers or "")
     out.user_agent = tostring(raw.user_agent or "")
@@ -341,29 +387,31 @@ local function normalize_settings(raw)
         fmt = "mp3"
     end
     out.audio_format = fmt
-    out.fps = tonumber(raw.fps) or 25
-    out.width = tonumber(raw.width) or 270
-    out.height = tonumber(raw.height) or 270
+    out.fps = clamp_number(raw.fps, 1, 120, 25)
+    out.width = clamp_int(raw.width, 16, 8192, 270)
+    out.height = clamp_int(raw.height, 16, 8192, 270)
     out.keep_aspect = normalize_bool(raw.keep_aspect, false)
     out.vcodec = tostring(raw.vcodec or "libx264")
     out.preset = tostring(raw.preset or "veryfast")
     out.video_bitrate = tostring(raw.video_bitrate or "1400k")
     out.pix_fmt = tostring(raw.pix_fmt or "yuv420p")
-    out.gop = tonumber(raw.gop) or math.floor(out.fps * 2)
+    out.gop = clamp_int(raw.gop, 1, 100000, math.floor(out.fps * 2))
     out.tune_stillimage = normalize_bool(raw.tune_stillimage, true)
     out.acodec = tostring(raw.acodec or "aac")
     out.audio_bitrate = tostring(raw.audio_bitrate or "256k")
-    out.channels = tonumber(raw.channels) or 2
-    out.sample_rate = tonumber(raw.sample_rate) or 48000
-    out.pcr_period = tonumber(raw.pcr_period) or 30
-    out.max_interleave_delta = tonumber(raw.max_interleave_delta) or 0
-    out.muxdelay = tonumber(raw.muxdelay) or 0.7
-    out.pkt_size = tonumber(raw.pkt_size) or 1316
+    out.channels = clamp_int(raw.channels, 1, 8, 2)
+    out.sample_rate = clamp_int(raw.sample_rate, 8000, 192000, 48000)
+    out.pcr_period = clamp_int(raw.pcr_period, 0, 10000, 30)
+    out.max_interleave_delta = clamp_int(raw.max_interleave_delta, 0, 100000, 0)
+    out.muxdelay = clamp_number(raw.muxdelay, 0, 100, 0.7)
+    out.pkt_size = clamp_int(raw.pkt_size, 188, 65507, 1316)
     local base_out = tostring(raw.output_url or "")
     out.output_url = build_udp_url(base_out, out.pkt_size)
     out.log_path = tostring(raw.log_path or "")
     out.auto_restart = normalize_bool(raw.auto_restart, true)
-    out.restart_delay = tonumber(raw.restart_delay) or 4
+    out.restart_delay_sec = clamp_number(raw.restart_delay_sec or raw.restart_delay, 0, 60, 4)
+    out.no_progress_timeout_sec = clamp_number(raw.no_progress_timeout_sec or raw.no_progress_timeout, 0, 600, 30)
+    out.max_restarts_per_10min = clamp_int(raw.max_restarts_per_10min, 1, 1000, 10)
     return out
 end
 
@@ -393,7 +441,7 @@ local function schedule_restart(job)
     end
     job.restart_count = job.restart_count + 1
     table.insert(job.restart_window, now_ts())
-    local delay = tonumber(job.restart_delay) or 4
+    local delay = tonumber(job.restart_delay_sec) or 4
     timer({
         interval = delay,
         callback = function(self)
@@ -401,6 +449,18 @@ local function schedule_restart(job)
             radio.start(job.stream_id, job.settings)
         end,
     })
+end
+
+local function mark_ffmpeg_progress(job, text)
+    if not job or not text or text == "" then
+        return
+    end
+    local s = tostring(text)
+    -- В логе ffmpeg обычно есть строки: "frame=... time=...". Это дешёвый и достаточно надёжный признак,
+    -- что генератор действительно продолжает выдавать TS.
+    if s:find("time=", 1, true) or s:find("frame=", 1, true) then
+        job.last_progress_ts = now_ts()
+    end
 end
 
 local function ensure_poller(job)
@@ -433,6 +493,7 @@ local function ensure_poller(job)
             end
             if job.ffmpeg then
                 local chunk = job.ffmpeg:read_stderr()
+                mark_ffmpeg_progress(job, chunk)
                 append_log(job, "[ffmpeg]", chunk)
                 local status = job.ffmpeg:poll()
                 if status then
@@ -447,6 +508,33 @@ local function ensure_poller(job)
                     end
                     schedule_restart(job)
                     return
+                end
+            end
+
+            -- Watchdog: если ffmpeg жив, но перестал писать прогресс (завис/замолчал), перезапускаем.
+            if job.status == "running" and job.ffmpeg and not job.stop_requested then
+                local now = now_ts()
+                local grace = tonumber(job.startup_grace_sec) or 15
+                local timeout = tonumber(job.no_progress_timeout_sec) or 0
+                if timeout > 0 and job.last_progress_ts and job.start_ts and (now - job.start_ts) >= grace then
+                    if (now - job.last_progress_ts) >= timeout then
+                        if not job.last_stall_log_ts or (now - job.last_stall_log_ts) >= 5 then
+                            append_log(job, "[watchdog]", "no ffmpeg progress for " ..
+                                tostring(now - job.last_progress_ts) .. "s, restarting")
+                            job.last_stall_log_ts = now
+                        end
+                        job.last_error = "ffmpeg stalled"
+                        if job.ffmpeg then
+                            stop_process(job.ffmpeg, 0)
+                            job.ffmpeg = nil
+                        end
+                        if job.curl then
+                            stop_process(job.curl, 0)
+                            job.curl = nil
+                        end
+                        schedule_restart(job)
+                        return
+                    end
                 end
             end
         end,
@@ -495,10 +583,14 @@ function radio.start(stream_id, raw_settings)
     job.log_path = settings.log_path
     job.stop_requested = false
     job.auto_restart = settings.auto_restart
-    job.restart_delay = settings.restart_delay
+    job.restart_delay_sec = settings.restart_delay_sec
+    job.no_progress_timeout_sec = settings.no_progress_timeout_sec
+    job.max_restarts_per_10min = settings.max_restarts_per_10min
     job.status = "starting"
     job.last_error = nil
     job.start_ts = now_ts()
+    job.last_progress_ts = job.start_ts
+    job.last_stall_log_ts = 0
 
     local fifo_path = nil
     if settings.use_curl then
@@ -587,4 +679,37 @@ function radio.get_logs(stream_id)
     local job = radio.jobs[stream_id]
     if not job then return "" end
     return logs_to_text(job)
+end
+
+-- Синхронизация радио-генератора с конфигом стрима (autostart).
+-- Вызывается из runtime.apply_stream(), поэтому должна быть максимально безопасной:
+-- ошибки не должны валить стрим-пайплайн.
+function radio.sync_from_stream_config(stream_id, stream_cfg, enabled)
+    local cfg = (type(stream_cfg) == "table") and stream_cfg.radio or nil
+    local want = enabled and type(cfg) == "table" and cfg.autostart == true
+
+    local job = radio.jobs[stream_id]
+    if not want then
+        if job and job.status ~= "stopped" then
+            pcall(function() radio.stop(stream_id) end)
+        end
+        return true
+    end
+
+    if job and (job.status == "running" or job.status == "starting") then
+        return true
+    end
+
+    local ok, err = pcall(function()
+        return radio.start(stream_id, cfg)
+    end)
+    if not ok then
+        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": " .. tostring(err))
+        return false, err
+    end
+    if err == false then
+        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": start returned false")
+        return false, "start failed"
+    end
+    return true
 end
