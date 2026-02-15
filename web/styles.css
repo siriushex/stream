@@ -359,6 +359,10 @@ select {
   width: 220px;
 }
 
+.stream-table-grid .col-input {
+  width: 420px;
+}
+
 .stream-table-grid .col-transcode {
   width: 160px;
 }
@@ -393,6 +397,14 @@ select {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.stream-input-url {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .stream-cell-sub {
