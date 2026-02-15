@@ -704,16 +704,14 @@ function radio.sync_from_stream_config(stream_id, stream_cfg, enabled)
         return true
     end
 
-    local ok, err = pcall(function()
-        return radio.start(stream_id, cfg)
-    end)
+    local ok, started, start_err = pcall(radio.start, stream_id, cfg)
     if not ok then
-        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": " .. tostring(err))
-        return false, err
+        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": " .. tostring(started))
+        return false, started
     end
-    if err == false then
-        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": start returned false")
-        return false, "start failed"
+    if not started then
+        log.warning("[radio] autostart failed for stream " .. tostring(stream_id) .. ": " .. tostring(start_err))
+        return false, start_err or "start failed"
     end
     return true
 end
