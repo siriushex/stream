@@ -214,7 +214,25 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
 См. также CLI режимы в `docs/CLI.md`.
 
 ## Remote Servers (admin)
-- `GET /servers/status`
-- `POST /servers/test`
-- `POST /servers/pull-streams`
-- `POST /servers/import`
+- `GET /api/v1/servers/status`
+- `POST /api/v1/servers/test`
+- `POST /api/v1/servers/pull-streams`
+- `POST /api/v1/servers/import`
+
+Все endpoints требуют admin-доступ (Bearer token / web session).
+
+### Пример: Test server
+```bash
+curl -s "http://127.0.0.1:8000/api/v1/servers/test" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"host":"http://127.0.0.1/base","port":8000,"login":"admin","password":"admin"}'
+```
+
+### Пример: Pull streams
+```bash
+curl -s "http://127.0.0.1:8000/api/v1/servers/pull-streams" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"remote-1"}'
+```

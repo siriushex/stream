@@ -22,6 +22,11 @@
   - API/Config: wrap config apply DB writes in a single SQLite transaction (faster on older SQLite without UPSERT) and add slow-apply timing breakdown to logs.
   - Config: on older SQLite without UPSERT, use `INSERT OR REPLACE` for settings/streams/adapters (faster saves on CentOS).
   - UI: avoid auto-triggering sharding apply when sharding is disabled (prevents noisy “systemd unit not detected” errors on manual runs).
+  - UI: Settings Save no longer auto-applies sharding; shard restarts are only via explicit “Apply sharding”.
+  - API: `/api/v1/sharding/apply` now preflights `systemctl` + unit detection and returns an immediate 400 when unavailable (no silent background failure).
+  - API: `/api/v1/servers/test` is now admin-only, reuses the shared remote health-check logic, and supports `HOST:PORT/base_path` without scheme.
+  - UI: Servers/Groups/Softcam save/delete avoids full `/api/v1/settings` reload for large configs; Server Test shows detailed API errors.
+  - Transcode: treat FFmpeg output backpressure (“buffers queued in output stream”) as a restart signal to avoid hangs.
   - Installer (CentOS): hide noisy HTTPS CA errors in bootstrap and skip rpmfusion when ffmpeg is already installed.
   - Build: PostgreSQL module now includes `libpq-events.h` without a distro-specific path (fixes detection/build on CentOS).
   - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
@@ -35,6 +40,8 @@
   - `./stream scripts/tests/process_spawn_env_unit.lua`
   - `./stream scripts/tests/config_export_reuse_unit.lua`
   - `./stream scripts/tests/sqlite_compat_replace_unit.lua`
+  - `./stream scripts/tests/sharding_apply_preflight_unit.lua`
+  - `./stream scripts/tests/servers_test_normalize_unit.lua`
   - `./stream scripts/tests/ai_context_api_unit.lua`
   - `./stream scripts/tests/cesbo_api_client_unit.lua`
   - `python3 -m py_compile tools/net_autotune.py tools/docs_admin_server.py`
