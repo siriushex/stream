@@ -1803,6 +1803,13 @@ local function apply_stream(id, row, force)
     local existing = runtime.streams[id]
     local enabled = (tonumber(row.enabled) or 0) ~= 0
 
+    -- Create radio: автозапуск/останов генератора по cfg.radio.autostart.
+    -- Важно: синхронизируем и для disabled stream, чтобы генератор не оставался висеть
+    -- после выключения канала (экономим CPU/процессы).
+    if radio and type(radio.sync_from_stream_config) == "function" then
+        pcall(function() radio.sync_from_stream_config(tostring(id), row.config or {}, enabled) end)
+    end
+
     if not enabled then
         if existing then
             close_existing_stream(id, existing)
@@ -1815,12 +1822,6 @@ local function apply_stream(id, row, force)
     cfg.id = id
     if not cfg.name then
         cfg.name = "Stream " .. id
-    end
-
-    -- Create radio: автозапуск/останов генератора по cfg.radio.autostart.
-    -- Делаем до split на transcode/non-transcode, чтобы работало в обоих режимах.
-    if radio and type(radio.sync_from_stream_config) == "function" then
-        pcall(function() radio.sync_from_stream_config(tostring(id), cfg, enabled) end)
     end
 
     local is_transcode = transcode and transcode.is_transcode_config and transcode.is_transcode_config(cfg)
