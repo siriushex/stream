@@ -292,7 +292,10 @@ local function rm_rf(path)
 end
 
 local function resolve_ffmpeg_bin()
-    local env = os.getenv("ASTRA_FFMPEG_PATH") or os.getenv("FFMPEG_PATH")
+    local env = os.getenv("STREAM_FFMPEG_PATH")
+        or os.getenv("ASTRA_FFMPEG_PATH")
+        or os.getenv("ASTRAL_FFMPEG_PATH")
+        or os.getenv("FFMPEG_PATH")
     if env and env ~= "" then
         return env
     end
@@ -311,7 +314,7 @@ local function pick_preview_tmp_root()
     local shm = "/dev/shm"
     local st = utils and utils.stat and utils.stat(shm) or {}
     if st.type == "directory" then
-        return shm .. "/astra-preview"
+        return shm .. "/stream-preview"
     end
     local base = (config and config.data_dir) and config.data_dir or "./data"
     return base .. "/preview"
