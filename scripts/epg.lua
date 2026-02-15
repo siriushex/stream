@@ -85,7 +85,7 @@ local function build_xmltv(channels, codepage)
     local lines = {}
     table.insert(lines, "<?xml version=\"1.0\" encoding=\"" .. encoding .. "\"?>")
     table.insert(lines, "<!DOCTYPE tv SYSTEM \"xmltv.dtd\">")
-    table.insert(lines, "<tv generator-info-name=\"astra\">")
+    table.insert(lines, "<tv generator-info-name=\"stream\">")
     for _, channel in ipairs(channels or {}) do
         local id = xml_escape(channel.id or "")
         local name = xml_escape(channel.name or channel.id or "")
@@ -188,6 +188,33 @@ function epg.export_all(reason)
         end
     end
     return exported
+end
+
+-- Debounced export request. Useful to avoid blocking config apply handlers on large setups.
+function epg.request_export(reason)
+    epg.pending_export_reason = tostring(reason or epg.pending_export_reason or "")
+    if epg.pending_export_timer then
+        return true
+    end
+    if not timer then
+        return epg.export_all(epg.pending_export_reason)
+    end
+    epg.pending_export_timer = timer({
+        interval = 0.5,
+        callback = function(self)
+            if epg.pending_export_timer then
+                epg.pending_export_timer:close()
+                epg.pending_export_timer = nil
+            end
+            local r = epg.pending_export_reason
+            epg.pending_export_reason = nil
+            local ok, err = pcall(epg.export_all, r ~= "" and r or nil)
+            if not ok then
+                log.error("[epg] export failed: " .. tostring(err))
+            end
+        end,
+    })
+    return true
 end
 
 function epg.configure_timer()
