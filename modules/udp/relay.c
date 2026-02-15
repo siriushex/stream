@@ -38,7 +38,7 @@
 typedef struct relay_output_t
 {
     asc_socket_t *sock;
-    const char *dst_addr;
+    char *dst_addr;
     int dst_port;
     struct sockaddr_in dst_sa;
     socklen_t dst_sa_len;
@@ -73,7 +73,7 @@ struct relay_ctx_t
 {
     // Immutable
     char *id;
-    const char *input_url;
+    char *input_url;
 
     asc_socket_t *in_sock;
     int in_fd;
@@ -107,17 +107,33 @@ struct relay_ctx_t
     // Stats (atomic-ish)
     uint64_t started_us;
     uint64_t last_rx_us;
+    uint64_t last_ok_us;
     uint64_t bytes_in;
     uint64_t bytes_out;
     uint64_t datagrams_in;
     uint64_t datagrams_out;
     uint64_t send_drops;
     uint64_t bad_datagrams;
+    uint64_t ok_datagrams;
 };
 
 static bool g_sendmmsg_available = true;
 
 static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t size);
+
+static bool relay_ts_sync_ok(const uint8_t *buf, int len)
+{
+    if(!buf || len <= 0)
+        return false;
+    if((len % (int)TS_PACKET_SIZE) != 0)
+        return false;
+    for(int i = 0; i <= len - (int)TS_PACKET_SIZE; i += (int)TS_PACKET_SIZE)
+    {
+        if(buf[i] != 0x47)
+            return false;
+    }
+    return true;
+}
 
 static uint32_t fnv1a_32(const char *s)
 {
@@ -255,7 +271,7 @@ static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t 
     }
 }
 
-static void relay_process_datagram(relay_ctx_t *ctx, const uint8_t *buf, int len)
+static void relay_process_datagram(relay_ctx_t *ctx, const uint8_t *buf, int len, uint64_t now_us)
 {
     if(len < (int)TS_PACKET_SIZE)
     {
@@ -269,6 +285,17 @@ static void relay_process_datagram(relay_ctx_t *ctx, const uint8_t *buf, int len
         __atomic_fetch_add(&ctx->bad_datagrams, 1, __ATOMIC_RELAXED);
         return;
     }
+
+    // Проверяем sync byte на каждой границе 188, чтобы не пропускать мусор/не-T S в dataplane.
+    // Это важно для устойчивости: watchdog может корректно уйти в legacy pipeline.
+    if(!relay_ts_sync_ok(buf, len))
+    {
+        __atomic_fetch_add(&ctx->bad_datagrams, 1, __ATOMIC_RELAXED);
+        return;
+    }
+
+    __atomic_fetch_add(&ctx->ok_datagrams, 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&ctx->last_ok_us, now_us, __ATOMIC_RELAXED);
 
     // Fast path: большинство UDP multicast TS приходят уже как 7*188 (1316).
     // Если буфер выровнен и у нас нет накопленного хвоста - можно отправить datagram как есть,
@@ -335,6 +362,12 @@ static void relay_ctx_on_read(relay_ctx_t *ctx)
                     can_batch = false;
                     break;
                 }
+                const uint8_t *buf = (const uint8_t *)ctx->rx_iov[n].iov_base;
+                if(!relay_ts_sync_ok(buf, len))
+                {
+                    can_batch = false;
+                    break;
+                }
                 in_bytes += (uint64_t)len;
             }
 
@@ -342,6 +375,8 @@ static void relay_ctx_on_read(relay_ctx_t *ctx)
             {
                 __atomic_fetch_add(&ctx->bytes_in, in_bytes, __ATOMIC_RELAXED);
                 __atomic_fetch_add(&ctx->datagrams_in, (uint64_t)r, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&ctx->ok_datagrams, (uint64_t)r, __ATOMIC_RELAXED);
+                __atomic_store_n(&ctx->last_ok_us, now_us, __ATOMIC_RELAXED);
 
                 relay_send_to_outputs_mmsg(ctx, r);
 
@@ -361,7 +396,7 @@ static void relay_ctx_on_read(relay_ctx_t *ctx)
             __atomic_fetch_add(&ctx->bytes_in, (uint64_t)len, __ATOMIC_RELAXED);
             __atomic_fetch_add(&ctx->datagrams_in, 1, __ATOMIC_RELAXED);
 
-            relay_process_datagram(ctx, buf, len);
+            relay_process_datagram(ctx, buf, len, now_us);
         }
 
         if(r < ctx->rx_batch)
@@ -646,6 +681,11 @@ static void free_ctx(relay_ctx_t *ctx)
                 asc_socket_close(ctx->outs[i].sock);
                 ctx->outs[i].sock = NULL;
             }
+            if(ctx->outs[i].dst_addr)
+            {
+                free(ctx->outs[i].dst_addr);
+                ctx->outs[i].dst_addr = NULL;
+            }
         }
         free(ctx->outs);
         ctx->outs = NULL;
@@ -682,6 +722,11 @@ static void free_ctx(relay_ctx_t *ctx)
     {
         free(ctx->id);
         ctx->id = NULL;
+    }
+    if(ctx->input_url)
+    {
+        free(ctx->input_url);
+        ctx->input_url = NULL;
     }
 
     pthread_mutex_destroy(&ctx->lock);
@@ -759,6 +804,7 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         return NULL;
 
     const char *worker_policy = table_get_string(L, opts_idx, "worker_policy");
+    const bool probe_only = table_get_int(L, opts_idx, "probe_only", 0) ? true : false;
 
     // input
     lua_getfield(L, opts_idx, "input");
@@ -780,17 +826,22 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
 
     // outputs
     lua_getfield(L, opts_idx, "outputs");
-    if(lua_type(L, -1) != LUA_TTABLE)
+    int outputs_idx = 0;
+    int out_len = 0;
+    if(lua_type(L, -1) == LUA_TTABLE)
     {
-        lua_pop(L, 1);
-        return NULL;
+        outputs_idx = lua_gettop(L);
+        out_len = (int)luaL_len(L, outputs_idx);
+        if(out_len < 0)
+            out_len = 0;
     }
-    const int outputs_idx = lua_gettop(L);
-    const int out_len = (int)luaL_len(L, outputs_idx);
-    if(out_len <= 0)
+    if(!probe_only)
     {
-        lua_pop(L, 1);
-        return NULL;
+        if(outputs_idx == 0 || out_len <= 0)
+        {
+            lua_pop(L, 1);
+            return NULL;
+        }
     }
 
     relay_ctx_t *ctx = (relay_ctx_t *)calloc(1, sizeof(relay_ctx_t));
@@ -809,7 +860,7 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
     ctx->packet_skip = 0;
 
     ctx->id = strdup(id);
-    ctx->input_url = input_url;
+    ctx->input_url = input_url ? strdup(input_url) : NULL;
 
     ctx->rx_batch = table_get_int(L, opts_idx, "rx_batch", RELAY_RX_BATCH_DEFAULT);
     ctx->rx_batch = clamp_int(ctx->rx_batch, 1, RELAY_RX_BATCH_MAX);
@@ -823,14 +874,17 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
     }
     ctx->in_fd = asc_socket_fd(ctx->in_sock);
 
-    ctx->outs = (relay_output_t *)calloc((size_t)out_len, sizeof(relay_output_t));
-    if(!ctx->outs)
+    if(out_len > 0)
     {
-        free_ctx(ctx);
-        lua_pop(L, 1);
-        return NULL;
+        ctx->outs = (relay_output_t *)calloc((size_t)out_len, sizeof(relay_output_t));
+        if(!ctx->outs)
+        {
+            free_ctx(ctx);
+            lua_pop(L, 1);
+            return NULL;
+        }
+        ctx->out_count = out_len;
     }
-    ctx->out_count = out_len;
 
     for(int i = 1; i <= out_len; ++i)
     {
@@ -858,7 +912,7 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         }
 
         ctx->outs[i - 1].sock = open_output_socket(out_addr, out_port, out_local, out_ttl, out_socket_size);
-        ctx->outs[i - 1].dst_addr = out_addr;
+        ctx->outs[i - 1].dst_addr = strdup(out_addr);
         ctx->outs[i - 1].dst_port = out_port;
         memset(&ctx->outs[i - 1].dst_sa, 0, sizeof(ctx->outs[i - 1].dst_sa));
         ctx->outs[i - 1].dst_sa.sin_family = AF_INET;
@@ -866,7 +920,7 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         ctx->outs[i - 1].dst_sa.sin_port = htons(out_port);
         ctx->outs[i - 1].dst_sa_len = sizeof(struct sockaddr_in);
         lua_pop(L, 1);
-        if(!ctx->outs[i - 1].sock)
+        if(!ctx->outs[i - 1].sock || !ctx->outs[i - 1].dst_addr)
         {
             free_ctx(ctx);
             lua_pop(L, 1);
@@ -909,7 +963,7 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         ctx->tx_msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
-    lua_pop(L, 1); // outputs
+    lua_pop(L, 1); // outputs (или nil)
     return ctx;
 }
 
@@ -987,9 +1041,14 @@ static int relay_handle_stats(lua_State *L)
     const uint64_t d_out = __atomic_load_n(&ctx->datagrams_out, __ATOMIC_RELAXED);
     const uint64_t drops = __atomic_load_n(&ctx->send_drops, __ATOMIC_RELAXED);
     const uint64_t bad = __atomic_load_n(&ctx->bad_datagrams, __ATOMIC_RELAXED);
+    const uint64_t ok = __atomic_load_n(&ctx->ok_datagrams, __ATOMIC_RELAXED);
+    const uint64_t last_ok_us = __atomic_load_n(&ctx->last_ok_us, __ATOMIC_RELAXED);
 
     const bool on_air = (last_rx_us != 0) && (now_us < last_rx_us + 2000000);
     const uint64_t uptime_sec = (now_us > started_us) ? ((now_us - started_us) / 1000000) : 0;
+    const int64_t last_ok_age_ms = (last_ok_us != 0 && now_us > last_ok_us)
+        ? (int64_t)((now_us - last_ok_us) / 1000)
+        : -1;
 
     lua_newtable(L);
 
@@ -1017,6 +1076,12 @@ static int relay_handle_stats(lua_State *L)
     lua_pushinteger(L, (lua_Integer)bad);
     lua_setfield(L, -2, "bad_datagrams");
 
+    lua_pushinteger(L, (lua_Integer)ok);
+    lua_setfield(L, -2, "ok_datagrams");
+
+    lua_pushinteger(L, (lua_Integer)last_ok_age_ms);
+    lua_setfield(L, -2, "last_ok_age_ms");
+
     lua_pushinteger(L, (lua_Integer)ctx->worker_index);
     lua_setfield(L, -2, "worker_index");
 
@@ -1032,6 +1097,113 @@ static int relay_handle_stats(lua_State *L)
         lua_setfield(L, -2, "input_url");
     }
 
+    return 1;
+}
+
+static int relay_handle_switch_input(lua_State *L)
+{
+    relay_ctx_t *ctx = check_handle(L);
+    if(!ctx)
+    {
+        lua_pushnil(L);
+        lua_pushstring(L, "invalid handle");
+        return 2;
+    }
+    if(lua_type(L, 2) != LUA_TTABLE)
+    {
+        lua_pushnil(L);
+        lua_pushstring(L, "input options table required");
+        return 2;
+    }
+
+    const char *in_addr = table_get_string(L, 2, "addr");
+    const int in_port = table_get_int(L, 2, "port", 0);
+    const char *in_local = table_get_string(L, 2, "localaddr");
+    const int in_socket_size = table_get_int(L, 2, "socket_size", 0);
+    const char *input_url = table_get_string(L, 2, "source_url");
+
+    if(!in_addr || !in_addr[0] || in_port <= 0 || in_port > 65535)
+    {
+        lua_pushnil(L);
+        lua_pushstring(L, "invalid input addr/port");
+        return 2;
+    }
+
+    asc_socket_t *new_sock = open_input_socket(in_addr, in_port, in_local, in_socket_size);
+    if(!new_sock)
+    {
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to open new input socket");
+        return 2;
+    }
+    const int new_fd = asc_socket_fd(new_sock);
+
+    pthread_mutex_lock(&ctx->lock);
+    if(ctx->closing)
+    {
+        pthread_mutex_unlock(&ctx->lock);
+        asc_socket_multicast_leave(new_sock);
+        asc_socket_close(new_sock);
+        lua_pushnil(L);
+        lua_pushstring(L, "handle is closing");
+        return 2;
+    }
+
+    if(ctx->worker_index < 0 || ctx->worker_index >= g_engine.workers_count)
+    {
+        pthread_mutex_unlock(&ctx->lock);
+        asc_socket_multicast_leave(new_sock);
+        asc_socket_close(new_sock);
+        lua_pushnil(L);
+        lua_pushstring(L, "worker index out of range");
+        return 2;
+    }
+
+    relay_worker_t *w = &g_engine.workers[ctx->worker_index];
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.events = EPOLLIN;
+    ev.data.ptr = ctx;
+
+    const int old_fd = ctx->in_fd;
+    asc_socket_t *old_sock = ctx->in_sock;
+    char *old_url = ctx->input_url;
+
+    // Удаляем старый fd из epoll, добавляем новый.
+    if(old_fd >= 0)
+        epoll_ctl(w->epoll_fd, EPOLL_CTL_DEL, old_fd, NULL);
+    if(epoll_ctl(w->epoll_fd, EPOLL_CTL_ADD, new_fd, &ev) != 0)
+    {
+        // Best-effort rollback: пробуем вернуть старый fd обратно.
+        if(old_fd >= 0)
+            epoll_ctl(w->epoll_fd, EPOLL_CTL_ADD, old_fd, &ev);
+        pthread_mutex_unlock(&ctx->lock);
+        asc_socket_multicast_leave(new_sock);
+        asc_socket_close(new_sock);
+        lua_pushnil(L);
+        lua_pushstring(L, "failed to register new input in engine");
+        return 2;
+    }
+
+    ctx->in_sock = new_sock;
+    ctx->in_fd = new_fd;
+    ctx->packet_skip = 0;
+    __atomic_store_n(&ctx->last_rx_us, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&ctx->last_ok_us, 0, __ATOMIC_RELAXED);
+
+    ctx->input_url = input_url ? strdup(input_url) : NULL;
+
+    pthread_mutex_unlock(&ctx->lock);
+
+    if(old_sock)
+    {
+        asc_socket_multicast_leave(old_sock);
+        asc_socket_close(old_sock);
+    }
+    if(old_url)
+        free(old_url);
+
+    lua_pushboolean(L, 1);
     return 1;
 }
 
@@ -1135,6 +1307,7 @@ LUA_API int luaopen_udp_relay(lua_State *L)
     static const luaL_Reg meta[] =
     {
         { "stats", relay_handle_stats },
+        { "switch_input", relay_handle_switch_input },
         { "close", relay_handle_close },
         { "__gc", relay_handle_gc },
         { NULL, NULL }
