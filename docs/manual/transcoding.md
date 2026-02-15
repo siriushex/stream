@@ -11,13 +11,19 @@
 
 ## Что нужно
 
-- В системе должен быть установлен `ffmpeg`.
+- Нужны `ffmpeg` и `ffprobe`.
+  - либо доступны в `PATH`,
+  - либо заданы через переменные окружения инстанса: `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` (например в `/etc/stream/<inst>.env`).
 
 Проверка:
 
 ```bash
 ffmpeg -version
 ```
+
+!!! note "CentOS 7"
+    На CentOS 7 часто доступен очень старый `ffmpeg` из репозиториев.
+    Рекомендуется использовать bundled-версию, которую ставит `install.sh` (бинарники: `/usr/local/bin/stream-ffmpeg`, `/usr/local/bin/stream-ffprobe`).
 
 ## Как включить
 

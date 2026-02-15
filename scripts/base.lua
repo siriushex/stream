@@ -330,9 +330,39 @@ function resolve_tool_path(name, opts)
 
     local env_key = opts.env_key
     if env_key then
-        local env_value = os.getenv(env_key)
-        if env_value and env_value ~= "" then
+        local function get_env(key)
+            local value = os.getenv(key)
+            if value and value ~= "" then
+                return value
+            end
+            return nil
+        end
+
+        local env_value = get_env(env_key)
+        if env_value then
             return env_value, "env", tool_exists(env_value), false
+        end
+
+        -- Backwards compatible env aliases for tool paths.
+        -- Prefer STREAM_* but accept legacy ASTRA_*/ASTRAL_*.
+        local prefixes = { "STREAM_", "ASTRA_", "ASTRAL_" }
+        local suffix = nil
+        for _, p in ipairs(prefixes) do
+            if env_key:sub(1, #p) == p then
+                suffix = env_key:sub(#p + 1)
+                break
+            end
+        end
+        if suffix and suffix ~= "" then
+            for _, p in ipairs(prefixes) do
+                local alt = p .. suffix
+                if alt ~= env_key then
+                    env_value = get_env(alt)
+                    if env_value then
+                        return env_value, "env", tool_exists(env_value), false
+                    end
+                end
+            end
         end
     end
 

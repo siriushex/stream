@@ -10,6 +10,26 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-16
+- Changes:
+  - Settings Save: defer primary config + revision snapshot + LKG export to an async helper process (reduces UI latency and avoids blocking the main event loop on large configs).
+  - Export: add `scripts/export_write.lua` (atomic multi-target writer) and `scripts/export_async.lua` (coalesced async export queue).
+  - SQLite: bundle SQLite amalgamation (v3.51.2) into `stream` to guarantee UPSERT support and improve CentOS 7 performance/predictability.
+  - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
+  - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.
+- Tests:
+  - `./configure.sh && make`
+  - `bash -n install.sh`
+  - `bash -n install-centos.sh`
+  - `bash -n deploy/stream.centv.ru/install.sh`
+  - `bash -n deploy/stream.centv.ru/install-centos.sh`
+  - `node --check web/app.js`
+  - `./stream scripts/tests/sharding_apply_preflight_unit.lua`
+  - `./stream scripts/tests/servers_test_normalize_unit.lua`
+  - `./stream scripts/tests/sqlite_compat_replace_unit.lua`
+  - `./stream scripts/tests/config_export_reuse_unit.lua`
+  - `./stream scripts/tests/process_spawn_env_unit.lua`
+  - `./stream scripts/tests/transcode_qsv_args_unit.lua`
 ### 2026-02-15
 - Changes:
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
