@@ -33,10 +33,16 @@
  *      sync        - number, if greater then 0, then use MPEG-TS syncing.
  *                            average value of the stream bitrate in megabit per second
  *      cbr         - number, constant bitrate
+ *      use_sendmmsg- boolean, use sendmmsg() for batched send (Linux only, default: off)
+ *      tx_batch    - number, max datagrams per sendmmsg() call (default: 8, range: 2..64)
  */
 
 #include <astra.h>
 #include <errno.h>
+#ifdef __linux__
+#include <sys/socket.h>
+#include <netinet/in.h>
+#endif
 
 #define MSG(_msg) "[udp_output %s:%d] " _msg, mod->addr, mod->port
 
@@ -85,12 +91,113 @@ struct module_data_t
         uint64_t last_log_us;
         int last_errno;
     } send_diag;
+
+#ifdef __linux__
+    struct
+    {
+        bool enabled;
+        int capacity;
+        int count;
+        struct mmsghdr *msgs;
+        struct iovec *iov;
+        uint8_t *buffers;
+        struct sockaddr_in dst;
+        socklen_t dst_len;
+    } txmmsg;
+#endif
 };
 
 static const uint8_t null_ts[TS_PACKET_SIZE] = { 0x47, 0x1F, 0xFF, 0x10, 0x00 };
 
+#ifdef __linux__
+static void udp_flush_mmsg(module_data_t *mod)
+{
+    if(!mod->txmmsg.enabled || mod->txmmsg.count <= 0)
+        return;
+
+    const int fd = asc_socket_fd(mod->sock);
+
+    errno = 0;
+    const int total = mod->txmmsg.count;
+    const int r = sendmmsg(fd, mod->txmmsg.msgs, (unsigned int)total, MSG_DONTWAIT);
+    const int err_raw = errno;
+
+    if(r == total)
+    {
+        mod->txmmsg.count = 0;
+        return;
+    }
+
+    int err = err_raw;
+    if(r >= 0 && err == 0)
+        err = EAGAIN;
+
+    const uint64_t now_us = asc_utime();
+    const bool transient = (err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS);
+    const bool changed_errno = (mod->send_diag.last_errno != err);
+
+    uint64_t dropped = (uint64_t)total;
+    if(r > 0)
+        dropped = (uint64_t)(total - r);
+
+    if(transient)
+    {
+        mod->send_diag.dropped_packets += dropped;
+
+        if(changed_errno || now_us >= mod->send_diag.last_log_us + 2000000)
+        {
+            asc_log_warning(MSG("send queue overflow: dropped %" PRIu64 " packets; last error [%s]"),
+                mod->send_diag.dropped_packets,
+                asc_socket_error());
+            mod->send_diag.dropped_packets = 0;
+            mod->send_diag.last_log_us = now_us;
+            mod->send_diag.last_errno = err;
+        }
+        mod->txmmsg.count = 0;
+        return;
+    }
+
+    if(changed_errno || now_us >= mod->send_diag.last_log_us + 1000000)
+    {
+        asc_log_warning(MSG("error on send [%s]"), asc_socket_error());
+        mod->send_diag.last_log_us = now_us;
+        mod->send_diag.last_errno = err;
+    }
+
+    mod->txmmsg.count = 0;
+}
+#endif
+
 static void udp_send_packet(module_data_t *mod, const uint8_t *buffer, size_t size)
 {
+#ifdef __linux__
+    if(mod->txmmsg.enabled)
+    {
+        if(mod->txmmsg.count < mod->txmmsg.capacity)
+        {
+            const int idx = mod->txmmsg.count;
+            uint8_t *dst = mod->txmmsg.buffers + ((size_t)idx * UDP_BUFFER_SIZE);
+            memcpy(dst, buffer, size);
+            mod->txmmsg.iov[idx].iov_base = dst;
+            mod->txmmsg.iov[idx].iov_len = size;
+
+            // msg_hdr заполнен заранее, здесь достаточно обновить iov/len.
+            mod->txmmsg.msgs[idx].msg_hdr.msg_iov = &mod->txmmsg.iov[idx];
+            mod->txmmsg.msgs[idx].msg_hdr.msg_iovlen = 1;
+            mod->txmmsg.msgs[idx].msg_hdr.msg_name = &mod->txmmsg.dst;
+            mod->txmmsg.msgs[idx].msg_hdr.msg_namelen = mod->txmmsg.dst_len;
+
+            ++mod->txmmsg.count;
+            if(mod->txmmsg.count >= mod->txmmsg.capacity)
+                udp_flush_mmsg(mod);
+            return;
+        }
+
+        // В норме сюда не попадём (flush при заполнении), но на всякий случай.
+        udp_flush_mmsg(mod);
+    }
+#endif
+
     if(asc_socket_sendto(mod->sock, buffer, size) != -1)
         return;
 
@@ -427,6 +534,46 @@ static void module_init(module_data_t *mod)
     asc_socket_multicast_join(mod->sock, mod->addr, NULL);
     asc_socket_set_sockaddr(mod->sock, mod->addr, mod->port);
 
+#ifdef __linux__
+    {
+        bool use_sendmmsg = false;
+        module_option_boolean("use_sendmmsg", &use_sendmmsg);
+
+        int tx_batch = 8;
+        module_option_number("tx_batch", &tx_batch);
+
+        if(use_sendmmsg && tx_batch >= 2)
+        {
+            if(tx_batch > 64)
+                tx_batch = 64;
+
+            mod->txmmsg.enabled = true;
+            mod->txmmsg.capacity = tx_batch;
+            mod->txmmsg.count = 0;
+            mod->txmmsg.msgs = (struct mmsghdr *)calloc((size_t)tx_batch, sizeof(struct mmsghdr));
+            mod->txmmsg.iov = (struct iovec *)calloc((size_t)tx_batch, sizeof(struct iovec));
+            mod->txmmsg.buffers = (uint8_t *)malloc((size_t)tx_batch * UDP_BUFFER_SIZE);
+
+            memset(&mod->txmmsg.dst, 0, sizeof(mod->txmmsg.dst));
+            mod->txmmsg.dst.sin_family = AF_INET;
+            mod->txmmsg.dst.sin_addr.s_addr = inet_addr(mod->addr);
+            mod->txmmsg.dst.sin_port = htons(mod->port);
+            mod->txmmsg.dst_len = sizeof(mod->txmmsg.dst);
+
+            if(!mod->txmmsg.msgs || !mod->txmmsg.iov || !mod->txmmsg.buffers)
+            {
+                asc_log_error(MSG("failed to allocate sendmmsg buffers; fallback to sendto()"));
+                if(mod->txmmsg.buffers) { free(mod->txmmsg.buffers); mod->txmmsg.buffers = NULL; }
+                if(mod->txmmsg.iov) { free(mod->txmmsg.iov); mod->txmmsg.iov = NULL; }
+                if(mod->txmmsg.msgs) { free(mod->txmmsg.msgs); mod->txmmsg.msgs = NULL; }
+                mod->txmmsg.enabled = false;
+                mod->txmmsg.capacity = 0;
+                mod->txmmsg.count = 0;
+            }
+        }
+    }
+#endif
+
     value = 0;
     module_option_number("sync", &value);
     if(value > 0)
@@ -464,6 +611,28 @@ static void module_destroy(module_data_t *mod)
         free(mod->sync.buffer);
         mod->sync.buffer = NULL;
     }
+
+#ifdef __linux__
+    udp_flush_mmsg(mod);
+    if(mod->txmmsg.buffers)
+    {
+        free(mod->txmmsg.buffers);
+        mod->txmmsg.buffers = NULL;
+    }
+    if(mod->txmmsg.iov)
+    {
+        free(mod->txmmsg.iov);
+        mod->txmmsg.iov = NULL;
+    }
+    if(mod->txmmsg.msgs)
+    {
+        free(mod->txmmsg.msgs);
+        mod->txmmsg.msgs = NULL;
+    }
+    mod->txmmsg.enabled = false;
+    mod->txmmsg.capacity = 0;
+    mod->txmmsg.count = 0;
+#endif
 
     if(mod->sock)
     {
