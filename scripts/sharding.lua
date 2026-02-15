@@ -510,6 +510,25 @@ function sharding.apply_systemd()
     return true
 end
 
+-- Preflight checks for systemd-based sharding apply.
+-- Returns: ok, info|err
+-- info = { unit = "...", prefix = "...", shard_index = 0 }
+function sharding.preflight_systemd()
+    if not systemctl_available() then
+        return nil, "systemctl not found"
+    end
+    if runtime and tonumber(runtime.stream_shard_count or 0) > 1 and tonumber(runtime.stream_shard_index or 0) ~= 0 then
+        return nil, "apply sharding must be executed on shard 0"
+    end
+    local unit = detect_systemd_unit_name()
+    local prefix, idx, err = parse_shard_prefix(unit)
+    prefix = sanitize_prefix(prefix)
+    if not prefix then
+        return nil, err or "systemd unit not detected"
+    end
+    return true, { unit = unit, prefix = prefix, shard_index = tonumber(idx) or 0 }
+end
+
 -- Best-effort reload of all shard processes after config/settings changes.
 -- Used when shards share one sqlite store; otherwise each process keeps old in-memory config.
 -- force=nil/true  -> full reload (историческое поведение)

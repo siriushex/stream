@@ -19,6 +19,8 @@ local error_patterns = {
     "application provided invalid",
     "too many packets buffered",
     "max delay reached",
+    -- FFmpeg output backpressure symptom (can lead to deadlocks/no progress).
+    "buffers queued in output stream",
 }
 
 local publish_network_error_patterns = {
@@ -4039,6 +4041,12 @@ local function read_process_output(job)
         return
     end
     local log_mode = get_log_to_main_mode(job.config and job.config.transcode)
+    local function match_output_backpressure(line)
+        if not line or line == "" then
+            return false
+        end
+        return string.lower(line):find("buffers queued in output stream", 1, true) ~= nil
+    end
 
     local out_chunk = job.proc:read_stdout()
     consume_lines(job, "stdout_buf", out_chunk, function(line)
@@ -4051,6 +4059,17 @@ local function read_process_output(job)
         local is_error = match_error_line(line)
         if is_error then
             mark_error_line(job, line)
+        end
+        if match_output_backpressure(line) then
+            -- Restart quickly on backpressure to avoid hanging encoders.
+            local now = os.time()
+            local last = tonumber(job.backpressure_last_ts or 0) or 0
+            if last <= 0 or (now - last) >= 30 then
+                job.backpressure_last_ts = now
+                schedule_restart(job, nil, "OUTPUT_BACKPRESSURE", "ffmpeg output backpressure", {
+                    line = line,
+                })
+            end
         end
         append_stderr_tail(job, line)
         log_ffmpeg_line(job, "[transcode " .. tostring(job.id) .. "] ", log_mode, is_error, line)
