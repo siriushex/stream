@@ -126,6 +126,7 @@ nav:
       - Build profiles (FULL/LITE): manual/build-profiles.md
       - Сервис (systemd): manual/service-systemd.md
       - API: manual/api.md
+      - Cesbo Astra API client: manual/astra-api-client.md
       - Метрики: manual/metrics.md
       - Логи: manual/logs.md
       - Безопасность: manual/security.md
