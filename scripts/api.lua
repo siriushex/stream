@@ -5232,6 +5232,8 @@ local function normalize_server_host(entry)
             base_path = ""
         end
     end
+    local insecure = (entry.insecure == true or entry.insecure == 1 or entry.insecure == "1"
+        or entry.tls_insecure == true or entry.tls_insecure == 1 or entry.tls_insecure == "1")
     return {
         host = hostname,
         port = port,
@@ -5239,6 +5241,7 @@ local function normalize_server_host(entry)
         password = entry.password or entry.pass or "",
         scheme = scheme,
         base_path = base_path,
+        insecure = insecure == true,
     }
 end
 
@@ -5511,6 +5514,7 @@ local function remote_https_login(cfg, callback)
         local args = {
             "curl",
             "-sS",
+            cfg.insecure == true and "-k" or nil,
             "-D",
             "-",
             "-o",
@@ -5523,6 +5527,13 @@ local function remote_https_login(cfg, callback)
             "-d",
             payload,
         }
+        local filtered = {}
+        for _, item in ipairs(args) do
+            if item ~= nil then
+                table.insert(filtered, item)
+            end
+        end
+        args = filtered
         run_curl(args, function(status, stdout, stderr)
             if not status then
                 return callback(false, nil, stderr or "login failed")
@@ -5549,6 +5560,9 @@ end
 local function remote_https_fetch_json(cfg, path, cookie, method, body, callback)
     local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, path))
     local args = { "curl", "-sS", "-w", "\nASTRA_HTTP_CODE:%{http_code}\n" }
+    if cfg.insecure == true then
+        table.insert(args, "-k")
+    end
     if cookie and cookie ~= "" then
         table.insert(args, "-H")
         table.insert(args, "Cookie: " .. cookie)
