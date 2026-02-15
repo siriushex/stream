@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PID="${1:-}"
-SECONDS="${2:-15}"
+DURATION_SEC="${2:-15}"
 OUT_DIR="${3:-}"
 
 if [[ -z "$PID" || -z "$OUT_DIR" ]]; then
@@ -26,24 +26,23 @@ run "env" bash -lc 'uname -a; echo; command -v lscpu >/dev/null && lscpu | egrep
 run "threads_top" bash -lc 'ps -L -p '"$PID"' -o pid,tid,psr,pcpu,comm --sort=-pcpu | head -n 50'
 
 if command -v mpstat >/dev/null 2>&1; then
-  run "mpstat_all" bash -lc "mpstat -P ALL 1 $SECONDS"
+  run "mpstat_all" bash -lc "mpstat -P ALL 1 $DURATION_SEC"
 fi
 
 if command -v pidstat >/dev/null 2>&1; then
-  run "pidstat_threads" bash -lc "pidstat -t -p $PID 1 $SECONDS"
+  run "pidstat_threads" bash -lc "pidstat -t -p $PID 1 $DURATION_SEC"
 fi
 
 if [[ -r /proc/net/softnet_stat ]]; then
   run "softnet_before" bash -lc "cat /proc/net/softnet_stat"
-  sleep "$SECONDS" || true
+  sleep "$DURATION_SEC" || true
   run "softnet_after" bash -lc "cat /proc/net/softnet_stat"
 fi
 
 if command -v perf >/dev/null 2>&1; then
   # Best-effort: perf может быть ограничен perf_event_paranoid или отсутствием symbols.
-  run "perf_record" bash -lc "perf record -q -F 99 -p $PID -g -o '$OUT_DIR/perf.data' -- sleep $SECONDS"
+  run "perf_record" bash -lc "perf record -q -F 99 -p $PID -g -o '$OUT_DIR/perf.data' -- sleep $DURATION_SEC"
   run "perf_report" bash -lc "perf report -i '$OUT_DIR/perf.data' --stdio --percent-limit 1 --sort comm,dso,symbol | head -n 200"
 fi
 
 echo "Saved to: $OUT_DIR"
-
