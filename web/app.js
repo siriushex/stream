@@ -6739,8 +6739,9 @@ async function saveServer() {
     };
   }
 
-  await saveSettings({ servers });
-  state.servers = normalizeServers(state.settings.servers);
+  // Avoid full settings reload (large configs). Patch local state instead.
+  await saveSettings({ servers }, { reload: false });
+  state.servers = normalizeServers(servers);
   renderServers();
   closeServerModal();
 }
@@ -6748,8 +6749,8 @@ async function saveServer() {
 async function deleteServer(id) {
   const servers = Array.isArray(state.servers) ? state.servers.slice() : [];
   const next = servers.filter((s) => s && s.id !== id);
-  await saveSettings({ servers: next });
-  state.servers = normalizeServers(state.settings.servers);
+  await saveSettings({ servers: next }, { reload: false });
+  state.servers = normalizeServers(next);
   renderServers();
 }
 
@@ -6886,8 +6887,8 @@ async function saveSoftcam() {
 async function deleteSoftcam(id) {
   const softcams = Array.isArray(state.softcams) ? state.softcams.slice() : [];
   const next = softcams.filter((s) => s && s.id !== id);
-  await saveSettings({ softcam: next });
-  state.softcams = normalizeSoftcams(state.settings.softcam);
+  await saveSettings({ softcam: next }, { reload: false });
+  state.softcams = normalizeSoftcams(next);
   renderSoftcams();
   refreshAllInputCamOptions();
 }
@@ -6966,19 +6967,19 @@ async function testServer(id, payload) {
 function openServerUrl(id) {
   const server = (state.servers || []).find((s) => s && s.id === id);
   if (!server) return;
-  let url = server.host || '';
-  if (!/^https?:\/\//i.test(url)) {
-    url = `http://${url}`;
-  }
-  if (server.port) {
-    const hostPart = url.replace(/^https?:\/\//i, '').split('/')[0];
-    const hasPort = /:\d+$/.test(hostPart);
-    if (!hasPort) {
-      const base = url.replace(/\/$/, '');
-      url = `${base}:${server.port}`;
+  const raw = String(server.host || '').trim();
+  if (!raw) return;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  try {
+    const u = new URL(withScheme);
+    // Preserve path/base_path; inject port only when it's not already in the URL.
+    if (server.port && !u.port) {
+      u.port = String(server.port);
     }
+    window.open(u.toString(), '_blank');
+  } catch (err) {
+    window.open(withScheme, '_blank');
   }
-  window.open(url, '_blank');
 }
 
 function syncGroupIdFromName() {
@@ -7033,8 +7034,8 @@ async function saveGroup() {
     groups[existingIdx] = { id, name };
   }
 
-  await saveSettings({ groups });
-  state.groups = normalizeGroups(state.settings.groups);
+  await saveSettings({ groups }, { reload: false });
+  state.groups = normalizeGroups(groups);
   renderGroups();
   updateStreamGroupOptions();
   closeGroupModal();
@@ -7043,8 +7044,8 @@ async function saveGroup() {
 async function deleteGroup(id) {
   const groups = Array.isArray(state.groups) ? state.groups.slice() : [];
   const next = groups.filter((g) => g && g.id !== id);
-  await saveSettings({ groups: next });
-  state.groups = normalizeGroups(state.settings.groups);
+  await saveSettings({ groups: next }, { reload: false });
+  state.groups = normalizeGroups(next);
   renderGroups();
   updateStreamGroupOptions();
 }
@@ -30137,11 +30138,14 @@ function bindEvents() {
         const shardingChanged = beforeEnabled !== afterEnabled
           || (afterEnabled && (beforeBasePort !== afterBasePort || beforeShards !== afterShards));
 
-        await saveSettings(payload, { silent: true });
+        await saveSettings(payload, { silent: true, reload: false });
+        // Mark form as clean without forcing a full /api/v1/settings reload.
+        syncGeneralSettingsUi({ resetSnapshot: true });
 
         if (shardingChanged) {
-          await apiJson('/api/v1/sharding/apply', { method: 'POST', body: JSON.stringify({}) });
-          setStatus('Settings saved. Sharding apply requested (services restarting)...', 'sticky');
+          // Do not auto-restart shard services on a normal Save.
+          // Sharding restart is explicit via the "Apply sharding" button.
+          setStatus('Settings saved. Sharding settings changed; click Apply sharding to restart shard services.', 'sticky');
         } else {
           setStatus('Settings saved');
         }
@@ -30714,6 +30718,7 @@ function bindEvents() {
   if (elements.serverTest) {
     elements.serverTest.addEventListener('click', async () => {
       try {
+        if (elements.serverError) elements.serverError.textContent = '';
         if (state.serverEditing && state.serverEditing.id) {
           await testServer(state.serverEditing.id);
           return;
@@ -30726,7 +30731,12 @@ function bindEvents() {
         };
         await testServer(null, payload);
       } catch (err) {
-        setStatus(err.message || 'Server test failed');
+        const payloadError = (err && err.payload && err.payload.error) ? String(err.payload.error) : '';
+        const message = payloadError
+          ? `HTTP ${err.status || 0}: ${payloadError}`
+          : (err && err.message) ? err.message : 'Server test failed';
+        setStatus(message);
+        if (elements.serverError) elements.serverError.textContent = message;
       }
     });
   }
