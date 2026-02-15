@@ -19,6 +19,7 @@
   - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.
   - Transcode: add resilient decode defaults for UDP/RTP/SRT (discardcorrupt + ignore_err + thread_queue_size) and restart quickly on FFmpeg output backpressure for per-output and ladder workers.
   - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
+  - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
 - Tests:
   - `./configure.sh && make`
   - `bash -n install.sh`
