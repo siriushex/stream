@@ -1,11 +1,11 @@
-# ASTRAL Transcode Bundle
+# Stream Transcode Bundle
 
-Коротко: это self-contained пакет, в котором `astral` поставляется вместе с `ffmpeg`/`ffprobe`.
+Коротко: это self-contained пакет, в котором `stream` поставляется вместе с `ffmpeg`/`ffprobe`.
 Пользователь распаковывает архив и запускает без установки системного ffmpeg.
 
 ## Что внутри
-- `bin/astra` — основной бинарь.
-- `bin/astral` — удобный wrapper, выставляет `ASTRA_BASE_DIR` и `ASTRA_EDITION=ASTRAL`.
+- `bin/stream-bin` — основной бинарь.
+- `bin/stream` — удобный wrapper, выставляет `STREAM_BASE_DIR`, добавляет bundled `bin/` в `PATH` и запускает `stream-bin` из корня bundle.
 - `bin/ffmpeg`, `bin/ffprobe` — bundled инструменты.
 - `web/`, `scripts/` — UI и runtime.
 - `LICENSES/` — лицензии и build-info.
@@ -16,19 +16,19 @@
 По умолчанию используется LGPL-профиль ffmpeg.
 
 ```bash
-scripts/release/build_astral_bundle.sh --arch linux-x86_64 --profile lgpl
+scripts/release/build_stream_bundle.sh --arch linux-x86_64 --profile lgpl
 ```
 
 Для GPL-профиля (явно помечается в имени архива):
 
 ```bash
-scripts/release/build_astral_bundle.sh --arch linux-x86_64 --profile gpl
+scripts/release/build_stream_bundle.sh --arch linux-x86_64 --profile gpl
 ```
 
 Если нужно использовать локальные бинарники ffmpeg/ffprobe (без интернета):
 
 ```bash
-scripts/release/build_astral_bundle.sh --ffmpeg-local /path/to/ffmpeg --ffprobe-local /path/to/ffprobe
+scripts/release/build_stream_bundle.sh --ffmpeg-local /path/to/ffmpeg --ffprobe-local /path/to/ffprobe
 ```
 
 Или скачать из своего источника (обязательно SHA256):
@@ -36,7 +36,7 @@ scripts/release/build_astral_bundle.sh --ffmpeg-local /path/to/ffmpeg --ffprobe-
 ```bash
 FFMPEG_URL=... \
 FFMPEG_SHA256=... \
-scripts/release/build_astral_bundle.sh
+scripts/release/build_stream_bundle.sh
 ```
 
 Артефакт появится в `./dist/` и будет сопровождаться `SHA256SUMS`.
@@ -44,15 +44,14 @@ scripts/release/build_astral_bundle.sh
 ## Как запустить
 
 ```bash
-tar -xzf astral-transcode-<version>-linux-<arch>-lgpl.tar.gz
-cd astral-transcode-<version>-linux-<arch>-lgpl
+tar -xzf stream-transcode-<version>-linux-<arch>-lgpl.tar.gz
+cd stream-transcode-<version>-linux-<arch>-lgpl
 ./run.sh scripts/server.lua -p 8000 --data-dir ./data --web-dir ./web
 ```
 
 ## Как проверить, что используется bundled ffmpeg
 1) В логах старта сервера:
-   - `[edition] ASTRAL (bundled tools: yes)`
-   - `[tools] ffmpeg=.../bin/ffmpeg (bundle)`
+   - `tools: ffmpeg=.../bin/ffmpeg (bundle, ...)`
 2) Через API:
 
 ```bash
@@ -64,12 +63,12 @@ curl http://127.0.0.1:8000/api/v1/tools
 ## Как переопределить ffmpeg/ffprobe
 Порядок приоритета:
 1) настройки `ffmpeg_path` / `ffprobe_path`
-2) env `ASTRA_FFMPEG_PATH` / `ASTRA_FFPROBE_PATH`
+2) env `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH`
 3) bundled `./bin/ffmpeg` / `./bin/ffprobe`
 4) PATH
 
 ## Обновление bundled ffmpeg
-Повторно запусти `build_astral_bundle.sh` с новым URL+SHA256.
+Повторно запусти `build_stream_bundle.sh` с новым URL+SHA256.
 Информация о сборке ffmpeg сохраняется в `LICENSES/FFMPEG_BUILD_INFO.txt`.
 
 ## Примечания по лицензиям

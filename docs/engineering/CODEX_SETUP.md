@@ -5,7 +5,7 @@
 ## 1. Рабочие директории
 - У каждого агента должна быть своя рабочая копия (worktree или отдельный клон).
 - Рекомендация: использовать `git worktree`:
-  - `git worktree add ../astra-<agent> -b codex/<agent>/<topic>`
+  - `git worktree add ../stream-<agent> -b codex/<agent>/<topic>`
 
 ## 2. Идентичность Git
 - Для каждого агента задаётся уникальный `user.name`/`user.email`:
@@ -26,7 +26,7 @@
 - SSH‑ключ: `~/.ssh/root_blast`.
 - Порт: `40242`.
 - Рекомендация: создать алиас в `~/.ssh/config`:
-  - `Host astra-prod`
+  - `Host stream-dev`
   - `  HostName 178.212.236.2`
   - `  User root`
   - `  Port 40242`

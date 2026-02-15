@@ -1,5 +1,5 @@
 [Unit]
-Description=ASTRAL Network Autotune Timer (%i)
+Description=Stream Network Autotune Timer (%i)
 
 [Timer]
 # Автотюнинг занимает 3-5 минут на стрим и делает изменения только для входов с `#net_tune=1`.
@@ -7,7 +7,7 @@ Description=ASTRAL Network Autotune Timer (%i)
 OnCalendar=*-*-* 00,06,12,18:25:00
 RandomizedDelaySec=1800
 Persistent=true
-Unit=astral-net-autotune@%i.service
+Unit=stream-net-autotune@%i.service
 
 [Install]
 WantedBy=timers.target

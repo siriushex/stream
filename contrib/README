@@ -1,4 +1,4 @@
 ffmpeg.sh - build ffmpeg, static library
 libdvbcsa.sh - build libdvbcsa, static and shared libraries
-systemd/astra.service - systemd unit template
-systemd/astra.env - systemd environment template
+systemd/stream.service - systemd unit template
+systemd/stream.env - systemd environment template

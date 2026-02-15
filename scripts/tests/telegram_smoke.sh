@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-API="${ASTRA_API:-http://127.0.0.1:8000}"
-USER="${ASTRA_USER:-admin}"
-PASS="${ASTRA_PASS:-admin}"
+API="${STREAM_API:-${ASTRA_API:-http://127.0.0.1:8000}}"
+USER="${STREAM_USER:-${ASTRA_USER:-admin}}"
+PASS="${STREAM_PASS:-${ASTRA_PASS:-admin}}"
 MOCK_HOST="${TELEGRAM_MOCK_HOST:-127.0.0.1}"
 MOCK_PORT="${TELEGRAM_MOCK_PORT:-18080}"
 
@@ -19,7 +19,7 @@ TOKEN=$(
   curl -i -s -X POST "$API/api/v1/auth/login" \
     -H "Content-Type: application/json" \
     --data-binary "{\"username\":\"$USER\",\"password\":\"$PASS\"}" \
-    | awk -F"astra_session=" "/Set-Cookie/ {print \$2}" | cut -d";" -f1 | head -n 1
+    | awk -F"stream_session=" "/Set-Cookie/ {print \$2}" | cut -d";" -f1 | head -n 1
 )
 
 if [[ -z "$TOKEN" ]]; then
@@ -28,7 +28,7 @@ if [[ -z "$TOKEN" ]]; then
 fi
 
 curl -s -X POST "$API/api/v1/notifications/telegram/test" \
-  -H "Cookie: astra_session=$TOKEN" \
+  -H "Cookie: stream_session=$TOKEN" \
   -H "X-CSRF-Token: $TOKEN" \
   -H "Content-Type: application/json" \
   --data-binary "{}" >/dev/null

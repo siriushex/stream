@@ -282,7 +282,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bind", default=os.environ.get("STREAM_DOCS_BIND", "127.0.0.1"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("STREAM_DOCS_PORT", "9377")))
-    ap.add_argument("--repo", default=os.environ.get("STREAM_DOCS_REPO", "/home/hex/astra"))
+    ap.add_argument("--repo", default=os.environ.get("STREAM_DOCS_REPO", "/home/hex/stream"))
     ap.add_argument("--docs-dir", default=os.environ.get("STREAM_DOCS_DOCS_DIR", "docs"))
     ap.add_argument("--mkdocs-yml", default=os.environ.get("STREAM_DOCS_MKDOCS_YML", "mkdocs.yml"))
     ap.add_argument("--site-dir", default=os.environ.get("STREAM_DOCS_SITE_DIR", "site"))

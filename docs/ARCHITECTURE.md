@@ -1,7 +1,7 @@
 # Architecture
 
 ## Overview
-Astral is a Linux-first IPTV streaming stack built around a C core with Lua-based
+Stream Hub is a Linux-first IPTV streaming stack built around a C core with Lua-based
 runtime scripts and a browser UI. The binary embeds Lua and loads modules for
 HTTP, HLS, UDP, MPEG-TS analysis, and optional components (DVB, softcam, buffer).
 
@@ -12,11 +12,11 @@ HTTP, HLS, UDP, MPEG-TS analysis, and optional components (DVB, softcam, buffer)
 - Lua runtime (`scripts/`): API server, config store, stream runtime, auth,
   monitoring, buffer/hlssplitter orchestration.
 - Web UI (`web/`): single-page app (index.html + app.js + styles.css).
-- SQLite config store (`data/astra.db` by default): streams, adapters, settings,
+- SQLite config store (`data/stream.db` by default): streams, adapters, settings,
   alerts, audit log, buffer/hlssplitter tables, config revisions.
 
 ## Processes
-- Single main process (`./astra`) for API/UI + runtime management.
+- Single main process (`./stream`) for API/UI + runtime management.
 - Optional external process: `hlssplitter` (managed by Stream Hub if configured).
 - Optional external processes: `ffmpeg` for transcode (spawned by runtime).
 
@@ -55,7 +55,7 @@ flowchart LR
 - Alerts: stored in SQLite table `alerts`, exposed by `/api/v1/alerts`.
 
 ## Storage
-- Primary state: SQLite in `data/astra.db` (default).
+- Primary state: SQLite in `data/stream.db` (default).
 - Snapshots: `data/backups/config/` (config revisions).
 - HLS files: `data/hls/` by default, or custom `hls_dir`.
 

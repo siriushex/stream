@@ -161,7 +161,7 @@ curl -i "http://SERVER:9060/play/STREAM_ID?token=TEST"
 
 По умолчанию Stream Hub берёт token из:
 - query параметра (обычно `token`)
-- cookie `astra_token`
+- cookie `stream_token`
 
 Если портал/клиент передаёт token иначе, задайте **Edit stream → Auth → Token source**:
 - `Query param` (например `query:token`)

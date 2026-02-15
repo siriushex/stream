@@ -47,7 +47,7 @@ MODE=dp     COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 
 ## Локальный короткий чек (macOS, 2026-02-11)
 
-- Сервер: `./astra scripts/server.lua -a 127.0.0.1 -p 18080 --data-dir ./data`
+- Сервер: `./stream scripts/server.lua -a 127.0.0.1 -p 18080 --data-dir ./data`
 - Результаты: `tools/perf/results/20260211_183927`
 
 | case | ok | errors | rps | p95 ms | p99 ms | avg cpu % | avg rss MB | avg threads | avg fds |
@@ -60,7 +60,7 @@ MODE=dp     COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 ## Короткий чек на `.2` (Linux, 2026-02-11)
 
 - Сервер: `178.212.236.2:9060`, процесс `astral@prod.service`
-- Результаты: `/home/hex/astra/tools/perf/results/prod_p12_20260211_184836`
+- Результаты: `/home/hex/stream/tools/perf/results/prod_p12_20260211_184836`
 
 | case | ok | errors | rps | p95 ms | p99 ms | avg cpu % | avg rss MB | avg threads | avg fds |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -69,7 +69,7 @@ MODE=dp     COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 
 Дополнительно:
 - process snapshot: `cpu_pct=8.3 rss_kb=36288 threads=4 fds=17`
-- timer hotspots: `/home/hex/astra/tools/perf/results/prod_p12_20260211_185523_timer_hotspots.txt`
+- timer hotspots: `/home/hex/stream/tools/perf/results/prod_p12_20260211_185523_timer_hotspots.txt`
 - вывод perf показал в основном kernel `hrtimer_*`; пользовательские timer symbols скрыты из-за strip бинарника.
 
 ## Smoke: Settings без forced restart (Linux `.2`, 2026-02-12)
@@ -79,17 +79,17 @@ MODE=dp     COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 Команды:
 
 ```bash
-/home/hex/astra/tools/perf/settings_no_restart_smoke.sh \
+/home/hex/stream/tools/perf/settings_no_restart_smoke.sh \
   --base http://127.0.0.1:9060 \
   --stream a014 \
   --check-local-pid
 
-/home/hex/astra/tools/perf/settings_no_restart_all_streams.sh \
+/home/hex/stream/tools/perf/settings_no_restart_all_streams.sh \
   --base http://127.0.0.1:9060 \
   --setting-key ui_status_polling_interval_sec \
   --setting-value 0.5
 
-/home/hex/astra/tools/perf/settings_general_matrix_smoke.py \
+/home/hex/stream/tools/perf/settings_general_matrix_smoke.py \
   --base http://127.0.0.1:9060 \
   --stream a014 \
   --check-local-pid

@@ -28,7 +28,7 @@ RUN STREAM_DISABLE_OPENSSL=1 ./configure.sh --arch=x86-64 --with-libdvbcsa \
  && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)"
 
 RUN mkdir -p /out \
- && cp -a ./astra /out/stream \
+ && cp -a ./stream /out/stream \
  && strip /out/stream || true
 
 FROM scratch AS artifact

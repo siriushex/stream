@@ -40,14 +40,14 @@
 2) На сервере проверьте, что появился дополнительный thread `descramble`:
 
 ```bash
-PID=<astra_pid>
+PID=<stream_pid>
 ps -T -p "$PID" -o pid,tid,psr,pcpu,comm | head
 ```
 
 3) Снимите инцидент/до-после (per-core/per-thread):
 
 ```bash
-PID=<astra_pid>
+PID=<stream_pid>
 OUT=tools/perf/results/incident_$(date +%Y%m%d_%H%M%S)
 tools/perf/capture_incident.sh "$PID" 15 "$OUT"
 ```
@@ -57,4 +57,3 @@ tools/perf/capture_incident.sh "$PID" 15 "$OUT"
 - Стартуйте с `batch_packets=64` и `queue_depth_batches=16`.
 - Если нужен меньший latency (или канал низкого битрейта) — уменьшайте `batch_packets` до 16–32.
 - Если наблюдаются drops — увеличьте `queue_depth_batches` (но это увеличит RAM).
-

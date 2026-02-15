@@ -89,7 +89,7 @@ Definition of Done:
 
 Gates/Tests:
 - CI: `contrib/ci/smoke.sh`.
-- CI: `./astra scripts/tests/telegram_unit.lua`.
+- CI: `./stream scripts/tests/telegram_unit.lua`.
 - Server smoke checklist in `AGENT.md` for any runtime/C changes.
 
 ### 1-2 Months (Productization)

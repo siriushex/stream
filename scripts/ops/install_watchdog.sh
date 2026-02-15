@@ -14,16 +14,16 @@ if ! command -v systemctl >/dev/null 2>&1; then
   exit 1
 fi
 
-install -m 755 "$SRC_DIR/astral-watchdog.sh" /usr/local/bin/astral-watchdog.sh
-install -m 644 "$SRC_DIR/astral-watchdog.service" /etc/systemd/system/astral-watchdog.service
-install -m 644 "$SRC_DIR/astral-watchdog.timer" /etc/systemd/system/astral-watchdog.timer
+install -m 755 "$SRC_DIR/stream-watchdog.sh" /usr/local/bin/stream-watchdog.sh
+install -m 644 "$SRC_DIR/stream-watchdog.service" /etc/systemd/system/stream-watchdog.service
+install -m 644 "$SRC_DIR/stream-watchdog.timer" /etc/systemd/system/stream-watchdog.timer
 
-if [ ! -f /etc/astral-watchdog.env ]; then
-  install -m 644 "$SRC_DIR/astral-watchdog.env" /etc/astral-watchdog.env
+if [ ! -f /etc/stream-watchdog.env ]; then
+  install -m 644 "$SRC_DIR/stream-watchdog.env" /etc/stream-watchdog.env
 fi
 
 systemctl daemon-reload
-systemctl enable --now astral-watchdog.timer
+systemctl enable --now stream-watchdog.timer
 
-echo "Astral watchdog installed and enabled."
-echo "Config: /etc/astral-watchdog.env"
+echo "Stream watchdog installed and enabled."
+echo "Config: /etc/stream-watchdog.env"

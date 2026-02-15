@@ -7,7 +7,7 @@ BUNDLE_TAR="${BUNDLE_TAR:-}"
 LOG_FILE="${LOG_FILE:-}"
 
 if [[ -z "$BUNDLE_TAR" ]]; then
-  latest="$(ls -t "$ROOT_DIR"/dist/astral-transcode-*.tar.gz 2>/dev/null | head -n 1 || true)"
+  latest="$(ls -t "$ROOT_DIR"/dist/stream-transcode-*.tar.gz 2>/dev/null | head -n 1 || true)"
   if [[ -z "$latest" ]]; then
     echo "BUNDLE_TAR not set and no bundle found in dist/" >&2
     exit 1
@@ -33,7 +33,7 @@ trap cleanup EXIT
 
 mkdir -p "$WORK_DIR"
 tar -xzf "$BUNDLE_TAR" -C "$WORK_DIR"
-BUNDLE_DIR="$(find "$WORK_DIR" -maxdepth 1 -type d -name 'astral-transcode-*' | head -n 1)"
+BUNDLE_DIR="$(find "$WORK_DIR" -maxdepth 1 -type d -name 'stream-transcode-*' | head -n 1)"
 if [[ -z "$BUNDLE_DIR" ]]; then
   echo "Bundle root not found after extract" >&2
   exit 1

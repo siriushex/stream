@@ -21,4 +21,4 @@ if ! curl -fsSL "$INSTALL_URL" -o "$TMP_FILE"; then
 fi
 
 chmod +x "$TMP_FILE"
-exec "$TMP_FILE" --base-url "$BASE_URL" "$@"
+exec "$TMP_FILE" --base-url "$BASE_URL" --verify-transcode "$@"

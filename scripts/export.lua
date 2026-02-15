@@ -17,7 +17,7 @@ local opt = {
 
 options_usage = [[
     --data-dir PATH     data directory (default: ./data)
-    --db PATH           sqlite db path (default: data-dir/astra.db)
+    --db PATH           sqlite db path (default: data-dir/stream.db)
     --output PATH       write export to file (default: stdout)
     --no-users          exclude users from export
     --no-settings       exclude settings from export

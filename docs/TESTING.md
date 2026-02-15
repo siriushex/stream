@@ -22,21 +22,21 @@ What it does:
 
 ## Telegram Unit Test
 ```sh
-./astra scripts/tests/telegram_unit.lua
+./stream scripts/tests/telegram_unit.lua
 ```
 
 ## AstralAI Tests
 ```sh
-./astra scripts/tests/ai_plan_smoke.lua
-./astra scripts/tests/ai_apply_smoke.lua
-./astra scripts/tests/ai_summary_unit.lua
-./astra scripts/tests/ai_charts_unit.lua
-./astra scripts/tests/ai_observability_unit.lua
-./astra scripts/tests/ai_context_unit.lua
-./astra scripts/tests/ai_context_cli_unit.lua
-./astra scripts/tests/ai_context_api_unit.lua
-./astra scripts/tests/ai_runtime_context_unit.lua
-./astra scripts/tests/ai_plan_context_unit.lua
+./stream scripts/tests/ai_plan_smoke.lua
+./stream scripts/tests/ai_apply_smoke.lua
+./stream scripts/tests/ai_summary_unit.lua
+./stream scripts/tests/ai_charts_unit.lua
+./stream scripts/tests/ai_observability_unit.lua
+./stream scripts/tests/ai_context_unit.lua
+./stream scripts/tests/ai_context_cli_unit.lua
+./stream scripts/tests/ai_context_api_unit.lua
+./stream scripts/tests/ai_runtime_context_unit.lua
+./stream scripts/tests/ai_plan_context_unit.lua
 ```
 
 ## Bundle Smoke (transcode)
@@ -46,7 +46,7 @@ contrib/ci/smoke_bundle_transcode.sh
 ```
 
 Environment:
-- `BUNDLE_TAR=/path/to/astral-transcode-<version>-linux-<arch>-<profile>.tar.gz`
+- `BUNDLE_TAR=/path/to/stream-transcode-<version>-linux-<arch>-<profile>.tar.gz`
 - `PORT=9065` (optional)
 
 ## MPTS Smoke (runtime apply)

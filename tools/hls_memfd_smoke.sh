@@ -36,10 +36,10 @@ need_cmd grep
 need_cmd awk
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASTRA_BIN="${ASTRA_BIN:-$ROOT_DIR/astra}"
+STREAM_BIN="${STREAM_BIN:-$ROOT_DIR/stream}"
 WEB_DIR="${WEB_DIR:-$ROOT_DIR/web}"
 
-[[ -x "$ASTRA_BIN" ]] || die "astra binary not found or not executable: $ASTRA_BIN"
+[[ -x "$STREAM_BIN" ]] || die "stream binary not found or not executable: $STREAM_BIN"
 [[ -d "$WEB_DIR" ]] || die "web dir not found: $WEB_DIR"
 
 PORT="${PORT:-$(pick_free_port)}"
@@ -47,22 +47,22 @@ UDP_PORT="${UDP_PORT:-$(pick_free_port)}"
 IDLE_TIMEOUT_SEC="${IDLE_TIMEOUT_SEC:-4}"
 STREAM_ID="${STREAM_ID:-hls_demo}"
 
-WORKDIR="${WORKDIR:-$(mktemp -d -t astra_hls_memfd_smoke.XXXXXX)}"
+WORKDIR="${WORKDIR:-$(mktemp -d -t stream_hls_memfd_smoke.XXXXXX)}"
 DATA_DIR="$WORKDIR/data"
 CFG="$WORKDIR/hls_memfd_smoke.json"
-ASTRA_LOG="$WORKDIR/astra.log"
+STREAM_LOG="$WORKDIR/stream.log"
 FFMPEG_LOG="$WORKDIR/ffmpeg.log"
 
-ASTRA_PID=""
+STREAM_PID=""
 FFMPEG_PID=""
 
 cleanup() {
   set +e
-  if [[ -n "$ASTRA_PID" ]]; then
-    kill "$ASTRA_PID" >/dev/null 2>&1 || true
+  if [[ -n "$STREAM_PID" ]]; then
+    kill "$STREAM_PID" >/dev/null 2>&1 || true
     sleep 0.3
-    kill -9 "$ASTRA_PID" >/dev/null 2>&1 || true
-    wait "$ASTRA_PID" >/dev/null 2>&1 || true
+    kill -9 "$STREAM_PID" >/dev/null 2>&1 || true
+    wait "$STREAM_PID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$FFMPEG_PID" ]]; then
     kill "$FFMPEG_PID" >/dev/null 2>&1 || true
@@ -112,10 +112,10 @@ ffmpeg -loglevel error -re \
   >"$FFMPEG_LOG" 2>&1 &
 FFMPEG_PID="$!"
 
-echo "Starting Astra on 127.0.0.1:${PORT} (data-dir=${DATA_DIR})..." >&2
+echo "Starting Stream on 127.0.0.1:${PORT} (data-dir=${DATA_DIR})..." >&2
 mkdir -p "$DATA_DIR"
-"$ASTRA_BIN" "$CFG" -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$ASTRA_LOG" 2>&1 &
-ASTRA_PID="$!"
+"$STREAM_BIN" "$CFG" -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$STREAM_LOG" 2>&1 &
+STREAM_PID="$!"
 
 PLAYLIST_URL="http://127.0.0.1:${PORT}/hls/${STREAM_ID}/index.m3u8"
 
@@ -132,7 +132,7 @@ for _ in $(seq 1 80); do
   sleep 0.25
 done
 
-[[ "${#SEGMENTS[@]}" -gt 0 ]] || die "playlist not ready (see $ASTRA_LOG)"
+[[ "${#SEGMENTS[@]}" -gt 0 ]] || die "playlist not ready (see $STREAM_LOG)"
 echo "Playlist ok; segments: ${SEGMENTS[*]}" >&2
 
 echo "Validating EXTINF durations..." >&2
@@ -204,8 +204,8 @@ echo "Waiting for idle deactivation (idle_timeout=${IDLE_TIMEOUT_SEC}s)..." >&2
 # Sweep interval is 2..5 seconds, so wait a bit longer than 2x idle.
 sleep "$((IDLE_TIMEOUT_SEC * 2 + 2))"
 
-grep -q "HLS deactivate stream=${STREAM_ID} reason=idle" "$ASTRA_LOG" \
-  || die "idle deactivation log not found (see $ASTRA_LOG)"
+grep -q "HLS deactivate stream=${STREAM_ID} reason=idle" "$STREAM_LOG" \
+  || die "idle deactivation log not found (see $STREAM_LOG)"
 
 echo "Checking that old segment returns 404 after idle..." >&2
 code="$(curl -s -o /dev/null -w '%{http_code}' "$SEG_URL" || true)"

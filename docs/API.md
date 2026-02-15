@@ -1,4 +1,4 @@
-# Astral API (v1)
+# Stream API (v1)
 
 Base URL: `http://<host>:<port>/api/v1`  
 Формат: JSON (кроме случаев, где явно указано: XML/Prometheus/text).
@@ -22,14 +22,14 @@ Response:
 ```json
 { "token": "<token>", "user": { "id": 1, "username": "admin", "is_admin": 1 } }
 ```
-Также устанавливает cookie `astra_session=<token>`.
+Также устанавливает cookie `stream_session=<token>`.
 
 ### `POST /auth/logout`
 Идемпотентный logout. Если сессия существует, удаляет её. Можно вызывать с Bearer или cookie.
 
 **Способы авторизации**
 - `Authorization: Bearer <token>`  
-- Cookie `astra_session` (CSRF нужен для state‑change).
+- Cookie `stream_session` (CSRF нужен для state‑change).
 
 **CSRF**
 - Для `POST/PUT/DELETE/PATCH` с cookie‑auth нужен `X-CSRF-Token: <session token>`.
