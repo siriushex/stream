@@ -84,3 +84,15 @@ http://host/stream.ts#net_profile=bad
 
 - Проверьте адрес. Ошибка в одном символе — и сигнала не будет.
 - Для multicast проверьте сеть и интерфейс.
+
+## Create radio (аудио + PNG → UDP TS)
+
+Если у вас есть только аудио поток (радио) — можно сделать “TV‑совместимый” MPEG‑TS:
+
+- откройте **Input settings**,
+- выберите **Type: Create radio**,
+- укажите **Audio URL** + PNG,
+- нажмите **Start**,
+- сохраните канал (**Save**).
+
+Детально: [Create radio](create-radio.md)

@@ -41,7 +41,7 @@ Multi‑bitrate (ladder) — это несколько профилей сраз
 ## Инструменты
 
 - [PNG to Stream](png-to-stream.md): делает короткий `.ts` из PNG и звука (для backup).
-- [Create radio](create-radio.md): делает UDP MPEG‑TS из аудио URL + PNG (для радио‑каналов).
+- [Create radio](create-radio.md): делает UDP MPEG‑TS из аудио URL + PNG (это отдельный тип входа, но тоже использует `ffmpeg`).
 
 ## Если не запускается
 
