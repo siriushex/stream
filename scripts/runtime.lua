@@ -1110,6 +1110,9 @@ local DP_DISALLOWED_INPUT_KEYS = {
     "shift",
     "biss",
 
+    -- RTP encapsulation (dataplane ожидает RAW TS, без RTP header).
+    "rtp",
+
     -- Quality detectors / анализаторы (CPU в Lua, не поддержано в dataplane).
     "cc_limit",
     "no_audio_on",
