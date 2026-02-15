@@ -1291,6 +1291,10 @@ local function close_existing_stream(id, existing)
         return
     end
     if existing.kind == "dataplane" then
+        -- Убираем из списка "pending" для watchdog, чтобы не делать лишнюю работу.
+        if runtime.dp_watchdog_pending then
+            runtime.dp_watchdog_pending[tostring(id)] = nil
+        end
         if existing.channel then
             kill_channel(existing.channel)
             existing.channel = nil
@@ -1301,6 +1305,13 @@ local function close_existing_stream(id, existing)
         return
     end
     kill_channel(existing.channel)
+end
+
+local function dataplane_watchdog_pending_add(id)
+    if runtime.dp_watchdog_pending == nil then
+        runtime.dp_watchdog_pending = {}
+    end
+    runtime.dp_watchdog_pending[tostring(id)] = true
 end
 
 local function dataplane_watchdog_tick()
@@ -1316,11 +1327,28 @@ local function dataplane_watchdog_tick()
         runtime.dp_blacklist = {}
     end
 
-    for id, entry in pairs(runtime.streams or {}) do
-        if entry and entry.kind == "dataplane" and entry.dp_verified == true then
+    local pending = runtime.dp_watchdog_pending
+    if type(pending) ~= "table" then
+        return
+    end
+
+    -- Не модифицируем таблицу прямо в pairs(), чтобы не пропускать элементы.
+    local ids = {}
+    for id, _ in pairs(pending) do
+        table.insert(ids, tostring(id))
+    end
+
+    for _, id in ipairs(ids) do
+        local entry = runtime.streams and runtime.streams[id] or nil
+        if not entry or entry.kind ~= "dataplane" then
+            pending[id] = nil
             goto continue
         end
-        if entry and entry.kind == "dataplane" and entry.relay and type(entry.relay.stats) == "function" then
+        if entry.dp_verified == true then
+            pending[id] = nil
+            goto continue
+        end
+        if entry.relay and type(entry.relay.stats) == "function" then
             local ok, st = pcall(function()
                 return entry.relay:stats()
             end)
@@ -1337,6 +1365,7 @@ local function dataplane_watchdog_tick()
                 -- Как только dataplane начал реально писать bytes_out — считаем поток совместимым и не проверяем его дальше.
                 if b_out > 0 then
                     entry.dp_verified = true
+                    pending[id] = nil
                     goto continue
                 end
 
@@ -1365,6 +1394,7 @@ local function dataplane_watchdog_tick()
 
                     close_existing_stream(id, entry)
                     runtime.streams[id] = { kind = "stream", channel = channel, hash = entry.hash, config_snapshot = cfg }
+                    pending[id] = nil
                 end
             end
         end
@@ -1472,6 +1502,7 @@ local function apply_stream(id, row, force)
                     dp_verified = false,
                     config_snapshot = copy_table(cfg),
                 }
+                dataplane_watchdog_pending_add(id)
                 return true
             end
             local err = ok and "failed to start dataplane relay" or tostring(relay_or_err)
