@@ -440,16 +440,16 @@ static int detect_allowed_cpus(int *out, int out_cap)
     return n;
 }
 
-static void maybe_pin_thread(pthread_t thread, int worker_index, bool enable_affinity, int workers_count)
+static int maybe_pin_thread(pthread_t thread, int worker_index, bool enable_affinity, int workers_count)
 {
     if(!enable_affinity)
-        return;
+        return -1;
 
     // Учитываем ограничения контейнера/cpuset: берём список разрешённых CPU.
     int allowed[CPU_SETSIZE];
     const int allowed_n = detect_allowed_cpus(allowed, (int)(sizeof(allowed) / sizeof(allowed[0])));
     if(allowed_n <= 1)
-        return;
+        return -1;
 
     // По умолчанию стараемся не трогать первый CPU из allowed списка, оставляя его под control plane.
     // Но если воркеров >= доступных CPU, то используем весь список (иначе получим коллизию и 100% одного ядра).
@@ -461,7 +461,7 @@ static void maybe_pin_thread(pthread_t thread, int worker_index, bool enable_aff
         target_n = allowed_n - 1;
     }
     if(target_n <= 0)
-        return;
+        return -1;
     const int cpu = allowed[start + (worker_index % target_n)];
 
     cpu_set_t mask;
@@ -474,7 +474,10 @@ static void maybe_pin_thread(pthread_t thread, int worker_index, bool enable_aff
         // Не критично: продолжаем работать без affinity.
         asc_log_warning("%s worker[%d/%d] setaffinity(cpu=%d) failed: %s",
             RELAY_MSG_PREFIX, worker_index, workers_count, cpu, strerror(rc));
+        return -1;
     }
+
+    return cpu;
 }
 
 static bool engine_ensure_started(int requested_workers, bool affinity)
@@ -524,7 +527,7 @@ static bool engine_ensure_started(int requested_workers, bool affinity)
 
         // Опционально пиним воркеры, чтобы scheduler не складывал их на одно ядро
         // (это типичная причина "одно ядро 100% и дергания").
-        maybe_pin_thread(w->thread, i, affinity, requested);
+        w->pinned_cpu = maybe_pin_thread(w->thread, i, affinity, requested);
         started = i + 1;
     }
 
@@ -1025,6 +1028,47 @@ static int relay_handle_stats(lua_State *L)
     return 1;
 }
 
+static int relay_engine_stats(lua_State *L)
+{
+    lua_newtable(L);
+
+    lua_pushboolean(L, g_engine.started ? 1 : 0);
+    lua_setfield(L, -2, "started");
+
+    lua_pushboolean(L, g_engine.affinity ? 1 : 0);
+    lua_setfield(L, -2, "affinity");
+
+    lua_pushinteger(L, (lua_Integer)g_engine.workers_count);
+    lua_setfield(L, -2, "workers_count");
+
+    lua_pushboolean(L, g_sendmmsg_available ? 1 : 0);
+    lua_setfield(L, -2, "sendmmsg_available");
+
+    lua_newtable(L);
+    if(g_engine.started && g_engine.workers && g_engine.workers_count > 0)
+    {
+        for(int i = 0; i < g_engine.workers_count; ++i)
+        {
+            relay_worker_t *w = &g_engine.workers[i];
+            lua_newtable(L);
+
+            lua_pushinteger(L, (lua_Integer)w->index);
+            lua_setfield(L, -2, "index");
+
+            lua_pushinteger(L, (lua_Integer)__atomic_load_n(&w->active_streams, __ATOMIC_RELAXED));
+            lua_setfield(L, -2, "active_streams");
+
+            lua_pushinteger(L, (lua_Integer)w->pinned_cpu);
+            lua_setfield(L, -2, "pinned_cpu");
+
+            lua_rawseti(L, -2, i + 1);
+        }
+    }
+    lua_setfield(L, -2, "workers");
+
+    return 1;
+}
+
 static int relay_start(lua_State *L)
 {
     if(lua_type(L, 1) != LUA_TTABLE)
@@ -1077,6 +1121,7 @@ LUA_API int luaopen_udp_relay(lua_State *L)
     static const luaL_Reg api[] =
     {
         { "start", relay_start },
+        { "engine_stats", relay_engine_stats },
         { NULL, NULL }
     };
 
