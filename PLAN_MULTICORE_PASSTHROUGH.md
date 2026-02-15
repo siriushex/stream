@@ -34,6 +34,10 @@
 1) **App‑уровень**: multi‑thread dataplane.
 2) **OS‑уровень**: RSS/IRQ/RPS + sysctl (опционально, но для прод‑масштаба почти обязательно).
 
+Быстрые диагностические скрипты:
+- `tools/perf/nic_rss_irq_check.sh <iface>` — RSS/IRQ/RPS.
+- `tools/perf/linux_udp_sysctl_check.sh` — backlog/UDP buffers (только показывает, ничего не меняет).
+
 ---
 
 ## 2) Оптимальный подход (рекомендую): Control‑Plane (Lua) + Data‑Plane (C workers)
