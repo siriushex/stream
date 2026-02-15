@@ -29,6 +29,9 @@
 #define RELAY_UDP_BUFFER_SIZE 1460
 #define RELAY_RX_BATCH_DEFAULT 32
 #define RELAY_RX_BATCH_MAX 64
+// Чтобы один "горячий" сокет не мог монополизировать воркер и вызывать джиттер у остальных стримов,
+// ограничиваем объём работы за один epoll event.
+#define RELAY_READ_BUDGET_LOOPS 4
 
 #define RELAY_MSG_PREFIX "[udp_relay]"
 
@@ -295,7 +298,8 @@ static void relay_ctx_on_read(relay_ctx_t *ctx)
         return;
     }
 
-    for(;;)
+    int loops = 0;
+    for(; loops < RELAY_READ_BUDGET_LOOPS; ++loops)
     {
         errno = 0;
         const int r = recvmmsg(ctx->in_fd, ctx->rx_msgs, (unsigned int)ctx->rx_batch, MSG_DONTWAIT, NULL);
