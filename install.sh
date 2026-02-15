@@ -290,8 +290,12 @@ install_deps_rhel() {
   run "$PKG_MGR" -y install libdvbcsa-devel postgresql-devel || true
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    enable_rpmfusion
-    run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+    if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+      log "ffmpeg already installed; skipping package install"
+    else
+      enable_rpmfusion
+      run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+    fi
   fi
 }
 
@@ -300,8 +304,12 @@ install_runtime_deps_rhel() {
   run "$PKG_MGR" -y install ca-certificates curl sqlite-libs openssl-libs || true
   run "$PKG_MGR" -y install libdvbcsa postgresql-libs || true
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    enable_rpmfusion
-    run "$PKG_MGR" -y install ffmpeg || true
+    if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+      log "ffmpeg already installed; skipping package install"
+    else
+      enable_rpmfusion
+      run "$PKG_MGR" -y install ffmpeg || true
+    fi
   fi
 }
 

@@ -19,7 +19,7 @@
  */
 
 #include <astra.h>
-#include <postgresql/libpq-events.h>
+#include <libpq-events.h>
 
 #define MSG(_msg) "[postgres] " _msg
 

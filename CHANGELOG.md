@@ -22,10 +22,13 @@
   - API/Config: wrap config apply DB writes in a single SQLite transaction (faster on older SQLite without UPSERT) and add slow-apply timing breakdown to logs.
   - Config: on older SQLite without UPSERT, use `INSERT OR REPLACE` for settings/streams/adapters (faster saves on CentOS).
   - UI: avoid auto-triggering sharding apply when sharding is disabled (prevents noisy “systemd unit not detected” errors on manual runs).
+  - Installer (CentOS): hide noisy HTTPS CA errors in bootstrap and skip rpmfusion when ffmpeg is already installed.
+  - Build: PostgreSQL module now includes `libpq-events.h` without a distro-specific path (fixes detection/build on CentOS).
   - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
   - Branding/version: user-facing version is now `STREAM_VERSION` (set to `1.2`), binary name is `stream`.
 - Tests:
   - `./configure.sh && make`
+  - `bash -n install-centos.sh`
   - `bash -n install.sh`
   - `node --check web/app.js`
   - `./stream scripts/tests/transcode_qsv_args_unit.lua`
