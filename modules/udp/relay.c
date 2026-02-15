@@ -179,6 +179,15 @@ static void relay_process_datagram(relay_ctx_t *ctx, const uint8_t *buf, int len
         return;
     }
 
+    // Fast path: большинство UDP multicast TS приходят уже как 7*188 (1316).
+    // Если буфер выровнен и у нас нет накопленного хвоста - можно отправить datagram как есть,
+    // избегая memcpy на каждый TS пакет.
+    if(ctx->packet_skip == 0 && len == (int)(TS_PACKET_SIZE * 7))
+    {
+        relay_send_to_outputs(ctx, buf, (size_t)len);
+        return;
+    }
+
     int i = 0;
     for(; i <= len - (int)TS_PACKET_SIZE; i += TS_PACKET_SIZE)
     {
