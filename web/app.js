@@ -14832,7 +14832,11 @@ function isInputRadioType(type) {
 function setInputRadioVisibility(format) {
   const show = isInputRadioType(format);
   if (elements.radioBlock) {
+    // Не полагаемся только на HTML-атрибут `hidden`: его легко "сломать" стилями
+    // (например, когда компонентные классы выставляют `display: grid`).
+    // Дублируем через inline `display`, чтобы блок гарантированно прятался.
     elements.radioBlock.hidden = !show;
+    elements.radioBlock.style.display = show ? '' : 'none';
   }
 }
 
