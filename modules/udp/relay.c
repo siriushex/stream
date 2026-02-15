@@ -958,6 +958,15 @@ static int relay_handle_stats(lua_State *L)
     lua_pushinteger(L, (lua_Integer)bad);
     lua_setfield(L, -2, "bad_datagrams");
 
+    lua_pushinteger(L, (lua_Integer)ctx->worker_index);
+    lua_setfield(L, -2, "worker_index");
+
+    lua_pushinteger(L, (lua_Integer)ctx->out_count);
+    lua_setfield(L, -2, "out_count");
+
+    lua_pushboolean(L, g_sendmmsg_available ? 1 : 0);
+    lua_setfield(L, -2, "sendmmsg_available");
+
     if(ctx->input_url)
     {
         lua_pushstring(L, ctx->input_url);
