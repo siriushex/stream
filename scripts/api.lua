@@ -109,6 +109,10 @@ local function setting_bool(key, fallback)
     return false
 end
 
+local function auth_enabled()
+    return setting_bool("http_auth_enabled", true)
+end
+
 local function setting_string(key, fallback)
     if not config or not config.get_setting then
         return fallback
@@ -159,6 +163,9 @@ local function get_token(request)
 end
 
 local function csrf_required(request)
+    if not auth_enabled() then
+        return false
+    end
     if not request or not is_state_change(request.method or "GET") then
         return false
     end
@@ -323,6 +330,18 @@ local function prune_rate_limits(bucket, window_sec)
 end
 
 local function require_auth(request)
+    if not auth_enabled() then
+        -- В режиме "без авторизации" (например --no-web-auth) API открыто.
+        -- Возвращаем "виртуальную" сессию admin, чтобы require_admin() тоже работал.
+        local admin = config and config.get_user_by_username and config.get_user_by_username("admin") or nil
+        local admin_id = admin and tonumber(admin.id) or 0
+        return {
+            user_id = admin_id,
+            expires_at = os.time() + 365 * 24 * 3600,
+            token = "",
+        }
+    end
+
     local token = get_token(request)
     if not token then
         return nil
