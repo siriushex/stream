@@ -398,6 +398,10 @@ build_from_source() {
     local archive="$WORKDIR/stream-src.tar.gz"
     fetch_artifact "$url" "$archive"
 
+    if ! tar -tf "$archive" >/dev/null 2>&1; then
+      die "Downloaded sources are not a valid tar archive (maybe an HTML error page): $url"
+    fi
+
     run tar -xf "$archive" -C "$WORKDIR"
     src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
     if [ -z "$src_root" ]; then
@@ -411,10 +415,14 @@ build_from_source() {
     log "Downloading sources: $url"
     local archive="$WORKDIR/stream-src.tar.gz"
     if fetch_artifact "$url" "$archive"; then
-      run tar -xf "$archive" -C "$WORKDIR"
-      src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
-      if [ -z "$src_root" ]; then
-        warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+      if tar -tf "$archive" >/dev/null 2>&1; then
+        run tar -xf "$archive" -C "$WORKDIR"
+        src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+        if [ -z "$src_root" ]; then
+          warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+        fi
+      else
+        warn "Source tarball is not a valid archive (maybe an HTML error page). Falling back to git clone."
       fi
     else
       warn "Source tarball download failed. Falling back to git clone."
