@@ -15,6 +15,7 @@
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
   - Transcode watchdog: rename monitor engine `astra_analyze` -> `stream_analyze` (legacy values still accepted).
   - Installer (CentOS): run transcode verification by default and prefer source tarball download with git clone fallback.
+  - Build: fix `contrib/libdvbcsa.sh` download/build on CentOS (use VideoLAN libdvbcsa tarball over HTTP, improve robustness).
   - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
   - Branding/version: user-facing version is now `STREAM_VERSION` (set to `1.2`), binary name is `stream`.
 - Tests:
