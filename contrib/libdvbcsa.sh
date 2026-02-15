@@ -1,4 +1,5 @@
 #!/bin/sh
+set -eu
 
 if [ -z "$1" ] ; then
     echo "Usage: $0 SYSTEM [GCC [\"CFLAGS\"]]"
@@ -6,7 +7,7 @@ if [ -z "$1" ] ; then
     exit 1
 fi
 
-cd `dirname $0`
+cd "$(dirname "$0")"
 
 if [ ! -d "build" ] ; then
     mkdir build
@@ -19,7 +20,9 @@ ARG_CFLAGS="$3"
 
 VER="1.1.0"
 ARC="libdvbcsa-$VER.tar.gz"
-URL="http://cesbo.com/download/astra/contrib/$ARC"
+# Stable public source. Use HTTP to keep it working on older distros with broken CA bundles.
+# Override with LIBDVBCSA_URL if needed (offline mirror, etc).
+URL="${LIBDVBCSA_URL:-http://downloads.videolan.org/pub/videolan/libdvbcsa/$VER/$ARC}"
 
 MAKEFILE="Makefile"
 CONFIG="src/config.h"
@@ -35,31 +38,40 @@ err()
 
 download()
 {
+    # If a previous attempt left a partial dir, re-download.
     if [ -d "libdvbcsa" ] ; then
-        return 0
+        if [ -f "libdvbcsa/src/dvbcsa_key.c" ] ; then
+            return 0
+        fi
+        rm -rf "libdvbcsa"
     fi
 
     if [ ! -f "$ARC" ] ; then
-        DCMD=""
-
-        if which curl >/dev/null ; then
-            DCMD="curl -O"
-        elif which wget >/dev/null ; then
-            DCMD="wget"
-        elif which fetch >/dev/null ; then
-            DCMD="fetch"
+        if command -v curl >/dev/null 2>&1 ; then
+            curl -fsSL -o "$ARC" "$URL" || err
+        elif command -v wget >/dev/null 2>&1 ; then
+            wget -q -O "$ARC" "$URL" || err
+        elif command -v fetch >/dev/null 2>&1 ; then
+            fetch -o "$ARC" "$URL" || err
         else
-            err
-        fi
-
-        $DCMD $URL
-        if [ $? -ne 0 ] ; then
             err
         fi
     fi
 
-    tar -xf $ARC
-    mv libdvbcsa-$VER libdvbcsa
+    # Ensure archive is valid and extract.
+    if ! tar -tzf "$ARC" >/dev/null 2>&1 ; then
+        err
+    fi
+    rm -rf "libdvbcsa-$VER" "libdvbcsa"
+    tar -xzf "$ARC"
+    if [ -d "libdvbcsa-$VER" ] ; then
+        mv "libdvbcsa-$VER" libdvbcsa
+    elif [ -d "libdvbcsa" ] ; then
+        # Unexpected layout, but keep working if it's already correct.
+        :
+    else
+        err
+    fi
 }
 
 download
@@ -69,7 +81,15 @@ GCC="gcc"
 if [ -n "$ARG_GCC" ] ; then
     GCC="$ARG_GCC"
 fi
-AR=`echo $GCC | sed 's/gcc$/ar/'`
+AR="ar"
+case "$GCC" in
+*gcc)
+    AR="$(echo "$GCC" | sed 's/gcc$/ar/')"
+    ;;
+esac
+if ! command -v "$AR" >/dev/null 2>&1 ; then
+    AR="ar"
+fi
 
 CFLAGS="-O3 -fomit-frame-pointer -funroll-loops"
 if [ -n "$ARG_CFLAGS" ] ; then
@@ -235,7 +255,7 @@ if [ $? -eq 0 ] ; then
     echo ""
     echo "make complete"
     echo "to install libdvbcsa use: sudo make -C build/libdvbcsa install"
-    echo "or build astra for built-in use"
+    echo "or build stream for built-in use"
     exit 0
 fi
 
