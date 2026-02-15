@@ -25,7 +25,7 @@ tools/perf/poll_status.py --url http://127.0.0.1:8000/api/v1/stream-status --bea
 ## 3) Полный suite для before/after (polling + CPU/RSS samples)
 
 ```bash
-PID=<astra_pid>
+PID=<stream_pid>
 tools/perf/run_polling_suite.sh --pid "$PID" --base-url http://127.0.0.1:8000 --requests 1000 --concurrency 20
 # если включена авторизация API:
 tools/perf/run_polling_suite.sh --pid "$PID" --base-url http://127.0.0.1:8000 --bearer <token>
@@ -46,7 +46,7 @@ Suite сохраняет:
 Полезно, когда “одно ядро 100%” и стримы дёргаются.
 
 ```bash
-PID=<astra_pid>
+PID=<stream_pid>
 OUT=tools/perf/results/incident_$(date +%Y%m%d_%H%M%S)
 tools/perf/capture_incident.sh "$PID" 15 "$OUT"
 ```
@@ -101,7 +101,7 @@ tools/perf/settings_general_matrix_smoke.py \
 ## 4) Hotspot-проверка таймеров (P1.2)
 
 ```bash
-PID=<astra_pid>
+PID=<stream_pid>
 tools/perf/timer_hotspots.sh "$PID" 20 tools/perf/timer_hotspots_before.txt
 # после изменений
 tools/perf/timer_hotspots.sh "$PID" 20 tools/perf/timer_hotspots_after.txt
@@ -159,7 +159,7 @@ tools/perf/generate_mock_streams.py --count 200 --out tools/perf/mock_streams.js
 
 Подготовка:
 - Linux host
-- Собранный бинарник (`./stream` или `./astra`)
+- Собранный бинарник (`./stream` или `./stream`)
 - `curl`, `python3`, опционально: `sysstat` (mpstat/pidstat), `perf`
 
 Команда:

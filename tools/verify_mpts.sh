@@ -45,7 +45,7 @@ EXPECT_NO_TOT="${EXPECT_NO_TOT:-0}"
 
 LOG_FILE="$(mktemp)"
 
-./astra scripts/analyze.lua -n "$DURATION_SEC" "$INPUT_URL" > "$LOG_FILE" 2>&1 || true
+./stream scripts/analyze.lua -n "$DURATION_SEC" "$INPUT_URL" > "$LOG_FILE" 2>&1 || true
 
 if ! grep -q "PAT:" "$LOG_FILE"; then
   echo "PAT not found"

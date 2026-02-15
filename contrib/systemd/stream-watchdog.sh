@@ -1,37 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ASTRA_DIR_DEFAULT="/opt/astra"
-ASTRA_CONFIG_DEFAULT="/etc/astra/astra.json"
-ASTRA_PORT_DEFAULT="8000"
-ASTRA_LOG_DEFAULT="/var/log/astra/astra.log"
+STREAM_DIR_DEFAULT="/opt/stream"
+STREAM_CONFIG_DEFAULT="/etc/stream/stream.json"
+STREAM_PORT_DEFAULT="8816"
+STREAM_LOG_DEFAULT="/var/log/stream/stream.log"
 
-ASTRA_DIR="${ASTRA_DIR:-$ASTRA_DIR_DEFAULT}"
-ASTRA_CONFIG="${ASTRA_CONFIG:-$ASTRA_CONFIG_DEFAULT}"
-ASTRA_PORT="${ASTRA_PORT:-$ASTRA_PORT_DEFAULT}"
-ASTRA_LOG="${ASTRA_LOG:-$ASTRA_LOG_DEFAULT}"
-ASTRA_ARGS="${ASTRA_ARGS:-}"
-ASTRA_CMD="${ASTRA_CMD:-}"
-ASTRA_PGREP="${ASTRA_PGREP:-}"
+STREAM_DIR="${STREAM_DIR:-$STREAM_DIR_DEFAULT}"
+STREAM_CONFIG="${STREAM_CONFIG:-$STREAM_CONFIG_DEFAULT}"
+STREAM_PORT="${STREAM_PORT:-$STREAM_PORT_DEFAULT}"
+STREAM_LOG="${STREAM_LOG:-$STREAM_LOG_DEFAULT}"
+STREAM_ARGS="${STREAM_ARGS:-}"
+STREAM_CMD="${STREAM_CMD:-}"
+STREAM_PGREP="${STREAM_PGREP:-}"
 
-STATE_FILE="${STATE_FILE:-/var/run/astral-watchdog.state}"
+STATE_FILE="${STATE_FILE:-/var/run/stream-watchdog.state}"
 CPU_LIMIT="${CPU_LIMIT:-300}"
 RSS_LIMIT_MB="${RSS_LIMIT_MB:-1500}"
 HITS_THRESHOLD="${HITS_THRESHOLD:-2}"
 
-if [ -f /etc/astral-watchdog.env ]; then
+if [ -f /etc/stream-watchdog.env ]; then
   # shellcheck disable=SC1091
-  source /etc/astral-watchdog.env
+  source /etc/stream-watchdog.env
 fi
 
-BIN="${ASTRA_DIR%/}/astra"
-PGREP_PATTERN="${ASTRA_PGREP:-astra .* -p ${ASTRA_PORT}}"
+BIN="${STREAM_DIR%/}/stream"
+PGREP_PATTERN="${STREAM_PGREP:-stream .* -p ${STREAM_PORT}}"
 
 log_warn() {
   local msg="$1"
-  logger -t astral-watchdog "$msg"
-  mkdir -p "$(dirname "$ASTRA_LOG")"
-  echo "$(date "+%b %d %H:%M:%S"): WARN: [watchdog] $msg" >> "$ASTRA_LOG"
+  logger -t stream-watchdog "$msg"
+  mkdir -p "$(dirname "$STREAM_LOG")"
+  echo "$(date "+%b %d %H:%M:%S"): WARN: [watchdog] $msg" >> "$STREAM_LOG"
 }
 
 cpu_hits=0
@@ -43,24 +43,24 @@ fi
 
 pid=$(pgrep -fo "$PGREP_PATTERN" || true)
 
-start_astra() {
-  if [ -n "$ASTRA_CMD" ]; then
-    nohup bash -lc "$ASTRA_CMD" >> "$ASTRA_LOG" 2>&1 &
+start_stream() {
+  if [ -n "$STREAM_CMD" ]; then
+    nohup bash -lc "$STREAM_CMD" >> "$STREAM_LOG" 2>&1 &
     return 0
   fi
   if [ ! -x "$BIN" ]; then
-    log_warn "astra binary not found at $BIN"
+    log_warn "stream binary not found at $BIN"
     return 1
   fi
-  nohup "$BIN" "$ASTRA_CONFIG" -p "$ASTRA_PORT" $ASTRA_ARGS >> "$ASTRA_LOG" 2>&1 &
+  nohup "$BIN" "$STREAM_CONFIG" -p "$STREAM_PORT" $STREAM_ARGS >> "$STREAM_LOG" 2>&1 &
 }
 
 if [ -z "$pid" ]; then
-  if ss -lntp | grep -q ":${ASTRA_PORT} "; then
+  if ss -lntp | grep -q ":${STREAM_PORT} "; then
     exit 0
   fi
-  start_astra
-  log_warn "restarted astra on port ${ASTRA_PORT} (process not found)"
+  start_stream
+  log_warn "restarted stream on port ${STREAM_PORT} (process not found)"
   echo "cpu_hits=0" > "$STATE_FILE"
   echo "mem_hits=0" >> "$STATE_FILE"
   exit 0
@@ -104,7 +104,7 @@ if [ "$cpu_hits" -ge "$HITS_THRESHOLD" ] || [ "$mem_hits" -ge "$HITS_THRESHOLD" 
   log_warn "resource limit exceeded (${reason}); restarting"
   pkill -f "$PGREP_PATTERN" || true
   sleep 1
-  start_astra
+  start_stream
   echo "cpu_hits=0" > "$STATE_FILE"
   echo "mem_hits=0" >> "$STATE_FILE"
 fi

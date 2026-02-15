@@ -78,8 +78,13 @@ LUA_API int luaopen_astra(lua_State *L)
 
     lua_setfield(lua, -2, "debug");
 
-    lua_pushstring(lua, ASTRA_VERSION_STR);
+    /* User-facing product version (Stream Hub). */
+    lua_pushstring(lua, STREAM_VERSION);
     lua_setfield(lua, -2, "version");
+
+    /* Engine version (upstream Astra core), kept for diagnostics. */
+    lua_pushstring(lua, ASTRA_VERSION_STR);
+    lua_setfield(lua, -2, "core_version");
 
     lua_newtable(lua);
 #ifdef HAVE_OPENSSL

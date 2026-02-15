@@ -1,18 +1,18 @@
--- Cesbo Astra API CLI demo (Stream project)
+-- Cesbo Stream API CLI demo (Stream project)
 --
--- Пример использования AstraApiClient:
+-- Пример использования CesboApiClient:
 -- 1) чтение system-status
 -- 2) restart-stream
 -- 3) sessions + close-session
 --
 -- Usage:
---   stream scripts/astra_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --status
---   stream scripts/astra_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --restart-stream a001
---   stream scripts/astra_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --sessions
---   stream scripts/astra_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --close-session 123
+--   stream scripts/cesbo_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --status
+--   stream scripts/cesbo_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --restart-stream a001
+--   stream scripts/cesbo_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --sessions
+--   stream scripts/cesbo_api_cli.lua --base http://127.0.0.1:8000 --login admin --password admin --close-session 123
 
 dofile("scripts/base.lua")
-dofile("scripts/astra_api_client.lua")
+dofile("scripts/cesbo_api_client.lua")
 
 log.set({ color = true })
 
@@ -86,7 +86,7 @@ local function fatal(msg)
 end
 
 local function mk_client()
-    local client, err = AstraApiClient.new({
+    local client, err = CesboApiClient.new({
         baseUrl = cli.base,
         login = cli.login,
         password = cli.password,
@@ -146,9 +146,9 @@ function main()
 
     if cli.restart then
         steps[#steps + 1] = function(done)
-            client:RestartAstra(function(ok, data, err)
+            client:RestartServer(function(ok, data, err)
                 if not ok then
-                    return fatal(err or "RestartAstra failed")
+                    return fatal(err or "RestartServer failed")
                 end
                 log.info("[restart] " .. pretty(data))
                 done()
@@ -202,4 +202,3 @@ end
 
 astra_parse_options(1)
 main()
-

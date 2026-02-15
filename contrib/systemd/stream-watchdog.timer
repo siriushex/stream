@@ -1,10 +1,10 @@
 [Unit]
-Description=Run Astral watchdog every 30s
+Description=Run Stream watchdog every 30s
 
 [Timer]
 OnBootSec=30
 OnUnitActiveSec=30
-Unit=astral-watchdog.service
+Unit=stream-watchdog.service
 
 [Install]
 WantedBy=timers.target

@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/hex/astra
+WorkingDirectory=/home/hex/stream
 Environment=PYTHONUNBUFFERED=1
 # Важно: сервис слушает только localhost, доступ извне делается через nginx + basic auth.
-ExecStart=/opt/stream-docs-admin/.venv/bin/python /home/hex/astra/tools/docs_admin_server.py --bind 127.0.0.1 --port 9377 --repo /home/hex/astra --publish-dir /var/www/stream.centv.ru --mkdocs-python /opt/stream-docs-admin/.venv/bin/python
+ExecStart=/opt/stream-docs-admin/.venv/bin/python /home/hex/stream/tools/docs_admin_server.py --bind 127.0.0.1 --port 9377 --repo /home/hex/stream --publish-dir /var/www/stream.centv.ru --mkdocs-python /opt/stream-docs-admin/.venv/bin/python
 Restart=on-failure
 RestartSec=2
 
@@ -17,4 +17,3 @@ PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-

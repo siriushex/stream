@@ -1414,7 +1414,7 @@ local function build_analyze_args(url, duration_sec)
         seconds = 1
     end
     return {
-        "./astra",
+        "./stream",
         "scripts/analyze.lua",
         "-n",
         tostring(seconds),

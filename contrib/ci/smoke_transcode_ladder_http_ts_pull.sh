@@ -99,7 +99,7 @@ with open(out_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
 PY
 
-SERVER_CMD=( ./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
+SERVER_CMD=( ./stream scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
 if command -v setsid >/dev/null 2>&1; then
   setsid "${SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
   SERVER_USE_SETSID=1

@@ -249,7 +249,7 @@ options_usage = [[
     -p PORT             listen port (default: 8000)
     --http-play-port P  http play server port override (default: setting http_play_port or PORT)
     --data-dir PATH     data directory (default: ./data or <config>.data)
-    --db PATH           sqlite db path (default: data-dir/astra.db)
+    --db PATH           sqlite db path (default: data-dir/stream.db)
     --no-import         do not import config file into sqlite on start (use existing db)
     --web-dir PATH      web ui directory (default: ./web)
     --hls-dir PATH      hls output directory (default: data-dir/hls)
@@ -464,7 +464,7 @@ local function default_data_dir(config_path)
     if not base or base == "" then
         base = "data"
     end
-    local root = os.getenv("ASTRA_DATA_ROOT") or os.getenv("ASTRAL_DATA_ROOT")
+    local root = os.getenv("STREAM_DATA_ROOT") or os.getenv("ASTRA_DATA_ROOT") or os.getenv("ASTRAL_DATA_ROOT")
     -- Default behavior:
     -- - if config has a directory, keep data next to config (safe + backwards compatible)
     -- - if config is a bare name, use /etc/stream as the default root
@@ -1447,7 +1447,7 @@ WantedBy=multi-user.target
             opt.data_dir = default_data_dir(opt.config_path)
         end
         if not opt.web_dir_set then
-            local env_web_dir = os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
+            local env_web_dir = os.getenv("STREAM_WEB_DIR") or os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
             if env_web_dir and env_web_dir ~= "" then
                 opt.web_dir = env_web_dir
             else
@@ -1547,7 +1547,7 @@ WantedBy=multi-user.target
         end
     end
 
-    local edition = os.getenv("ASTRA_EDITION") or os.getenv("ASTRAL_EDITION")
+    local edition = os.getenv("STREAM_EDITION") or os.getenv("ASTRA_EDITION") or os.getenv("ASTRAL_EDITION")
     local tool_info = nil
     if transcode and transcode.get_tool_info then
         tool_info = transcode.get_tool_info(true)
@@ -3753,10 +3753,10 @@ WantedBy=multi-user.target
                     end
                 end
                 if token and token ~= "" then
-                    table.insert(headers, "Set-Cookie: astra_token=" .. token .. "; Path=/; HttpOnly; SameSite=Lax")
+                    table.insert(headers, "Set-Cookie: stream_token=" .. token .. "; Path=/; HttpOnly; SameSite=Lax")
                 end
                 if session and session.session_id then
-                    table.insert(headers, "Set-Cookie: astra_sid=" .. session.session_id .. "; Path=/; HttpOnly; SameSite=Lax")
+                    table.insert(headers, "Set-Cookie: stream_sid=" .. session.session_id .. "; Path=/; HttpOnly; SameSite=Lax")
                 end
                 server:send(client, { code = 200, headers = headers, content = payload })
                 return

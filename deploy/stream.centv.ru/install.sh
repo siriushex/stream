@@ -437,11 +437,11 @@ build_from_source() {
   # даже если в системе нет libdvbcsa-dev.
   (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
 
-  if [ ! -x "$src_root/astra" ]; then
-    die "Build succeeded but binary 'astra' not found."
+  if [ ! -x "$src_root/stream" ]; then
+    die "Build succeeded but binary 'stream' not found."
   fi
 
-  run install -m 755 "$src_root/astra" "$BIN_PATH"
+  run install -m 755 "$src_root/stream" "$BIN_PATH"
 
   if [ "$INSTALL_WEB" -eq 1 ]; then
     run mkdir -p /usr/local/share/stream/web
@@ -633,13 +633,13 @@ write_instance_files() {
     PORT="8816"
   fi
 
-  {
-    printf 'STREAM_PORT=%s\n' "$PORT"
-    if [ "$INSTALL_WEB" -eq 1 ]; then
-      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/stream/web"
-    fi
-  } > "$env"
-}
+	  {
+	    printf 'STREAM_PORT=%s\n' "$PORT"
+	    if [ "$INSTALL_WEB" -eq 1 ]; then
+	      printf 'STREAM_WEB_DIR=%s\n' "/usr/local/share/stream/web"
+	    fi
+	  } > "$env"
+	}
 
 maybe_enable_service() {
   if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then

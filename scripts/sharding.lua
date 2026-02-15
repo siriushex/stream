@@ -116,11 +116,11 @@ end
 local function detect_systemd_unit_name()
     -- Prefer cgroup info (works inside systemd service).
     local raw = read_file("/proc/self/cgroup") or ""
-    local unit = raw:match("(astral%-sharded@[^/%s]+%.service)")
+    local unit = raw:match("(stream%-sharded@[^/%s]+%.service)")
     if unit then
         return unit
     end
-    unit = raw:match("(astral@[^/%s]+%.service)")
+    unit = raw:match("(stream@[^/%s]+%.service)")
     if unit then
         return unit
     end
@@ -131,7 +131,7 @@ local function parse_shard_prefix(unit_name)
     if not unit_name then
         return nil, nil, "systemd unit not detected"
     end
-    local instance = unit_name:match("^astral%-sharded@(.+)%.service$")
+    local instance = unit_name:match("^stream%-sharded@(.+)%.service$")
     if instance then
         local prefix, idx = instance:match("^(.+)%-%s*sh(%d+)$")
         if prefix then
@@ -139,7 +139,7 @@ local function parse_shard_prefix(unit_name)
         end
         return instance, 0
     end
-    instance = unit_name:match("^astral@(.+)%.service$")
+    instance = unit_name:match("^stream@(.+)%.service$")
     if instance then
         return instance, 0
     end
@@ -178,8 +178,8 @@ local function detect_active_shard_max_index(prefix)
     if not safe_prefix or not systemctl_available() then
         return -1
     end
-    local pattern = "astral%-sharded@" .. safe_prefix .. "%-sh(%d+)%.service"
-    local filter = "astral-sharded@" .. safe_prefix .. "-sh*.service"
+    local pattern = "stream%-sharded@" .. safe_prefix .. "%-sh(%d+)%.service"
+    local filter = "stream-sharded@" .. safe_prefix .. "-sh*.service"
     local cmd = "systemctl list-units --type=service --all --no-legend --plain "
         .. sh_quote(filter) .. " 2>/dev/null"
     local f = io.popen(cmd, "r")
@@ -261,9 +261,9 @@ local function build_shard_env(prefix, idx, shard_count, base_port, config_path,
         EXTRA_OPTS = table.concat(extra, " "),
     }
 
-    local web_dir = os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
+    local web_dir = os.getenv("STREAM_WEB_DIR") or os.getenv("ASTRA_WEB_DIR") or os.getenv("ASTRAL_WEB_DIR")
     if web_dir and web_dir ~= "" then
-        env.ASTRA_WEB_DIR = web_dir
+        env.STREAM_WEB_DIR = web_dir
     end
     local cpus = os.getenv("CPUS")
     if cpus and cpus ~= "" then
@@ -272,7 +272,7 @@ local function build_shard_env(prefix, idx, shard_count, base_port, config_path,
 
     return {
         instance = instance,
-        service = "astral-sharded@" .. instance .. ".service",
+        service = "stream-sharded@" .. instance .. ".service",
         env_path = env_dir .. "/" .. instance .. ".env",
         data_dir = data_dir,
         port = port,
@@ -280,10 +280,10 @@ local function build_shard_env(prefix, idx, shard_count, base_port, config_path,
     }
 end
 
--- Apply sharding by (re)starting `astral-sharded@<prefix>-shX` units.
+-- Apply sharding by (re)starting `stream-sharded@<prefix>-shX` units.
 -- This is intentionally conservative:
--- - Requires systemd + running under astral-sharded@... service (to derive prefix).
--- - Writes env files next to the primary config (usually /etc/astral).
+-- - Requires systemd + running under stream-sharded@... service (to derive prefix).
+-- - Writes env files next to the primary config (usually /etc/stream).
 -- - Restarts services after env update.
 function sharding.apply_systemd()
     if not systemctl_available() then
@@ -314,7 +314,7 @@ function sharding.apply_systemd()
     if not config_path or config_path == "" then
         return nil, "primary config path not set (start with --config)"
     end
-    local env_dir = path_dirname(config_path) or "/etc/astral"
+    local env_dir = path_dirname(config_path) or "/etc/stream"
     local shared_data_dir = (config and config.data_dir) or (env_dir .. "/" .. tostring(prefix) .. "-sh0.data")
 
     if not base_port then
@@ -474,7 +474,7 @@ function sharding.apply_systemd()
     local max_disable = math.max(last, map_shards, running_count, shards, 1)
     for i = shards, max_disable - 1 do
         local instance = tostring(prefix) .. "-sh" .. tostring(i)
-        local service = "astral-sharded@" .. instance .. ".service"
+        local service = "stream-sharded@" .. instance .. ".service"
         -- Best-effort stop/disable (ignore errors if unit does not exist).
         os.execute("systemctl disable --now " .. sh_quote(service) .. " >/dev/null 2>&1 || true")
     end

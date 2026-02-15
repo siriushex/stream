@@ -98,7 +98,7 @@ with open(out_path, "w", encoding="utf-8") as f:
     json.dump(cfg, f, indent=2)
 PY
 
-SERVER_CMD=( ./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
+SERVER_CMD=( ./stream scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
 if command -v setsid >/dev/null 2>&1; then
   setsid "${SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
   SERVER_USE_SETSID=1
@@ -186,7 +186,7 @@ if [[ "$CHECK_OUTPUT" == "1" ]]; then
   OUTPUT_OK=0
   for _ in $(seq 1 8); do
     set +e
-    ANALYZE_PRE="$(./astra scripts/analyze.lua -n 2 udp://127.0.0.1:${OUT1_PORT} 2>/dev/null)"
+    ANALYZE_PRE="$(./stream scripts/analyze.lua -n 2 udp://127.0.0.1:${OUT1_PORT} 2>/dev/null)"
     set -e
     if grep -q "PAT:" <<<"$ANALYZE_PRE"; then
       OUTPUT_OK=1
@@ -230,7 +230,7 @@ if [[ "$CHECK_OUTPUT" == "1" ]]; then
   OUTPUT_OK=0
   for _ in $(seq 1 8); do
     set +e
-    ANALYZE_POST="$(./astra scripts/analyze.lua -n 2 udp://127.0.0.1:${OUT1_PORT} 2>/dev/null)"
+    ANALYZE_POST="$(./stream scripts/analyze.lua -n 2 udp://127.0.0.1:${OUT1_PORT} 2>/dev/null)"
     set -e
     if grep -q "PAT:" <<<"$ANALYZE_POST"; then
       OUTPUT_OK=1

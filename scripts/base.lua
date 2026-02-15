@@ -274,8 +274,10 @@ local function join_path(base, suffix)
 end
 
 local function resolve_bundle_candidate(name)
-    local base = os.getenv("ASTRA_BASE_DIR")
+    local base = os.getenv("STREAM_BASE_DIR")
+        or os.getenv("ASTRA_BASE_DIR")
         or os.getenv("ASTRAL_BASE_DIR")
+        or os.getenv("STREAM_HOME")
         or os.getenv("ASTRA_HOME")
         or os.getenv("ASTRAL_HOME")
     if base and base ~= "" then
@@ -292,11 +294,14 @@ local function resolve_bundle_candidate(name)
 end
 
 function astra_brand_version()
-    local name = os.getenv("ASTRAL_NAME")
-        or os.getenv("ASTRA_NAME")
+    local name = os.getenv("STREAM_NAME")
+        or os.getenv("ASTRAL_NAME") -- legacy
+        or os.getenv("ASTRA_NAME") -- legacy
         or "Stream"
-    local version = os.getenv("ASTRAL_VERSION")
-        or os.getenv("ASTRA_VERSION")
+    local version = os.getenv("STREAM_VERSION")
+        or os.getenv("ASTRAL_VERSION") -- legacy
+        or os.getenv("ASTRA_VERSION") -- legacy
+        or (astra and astra.version)
         or "1.0"
     -- Важно: transcode считается доступным только если явно включен в build/feature flags.
     -- Если фича отсутствует (nil) - это тоже LITE.

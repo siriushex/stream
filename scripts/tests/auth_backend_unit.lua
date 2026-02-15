@@ -260,10 +260,14 @@ do
     local token3 = auth.get_token(req3, "token", "query:sid")
     assert_eq(token3, "QQ", "token query")
 
-    -- legacy default: query token + cookie astra_token
-    local req4 = make_request({ ["cookie"] = "astra_token=LEGACY" }, {})
+    -- legacy default: query token + cookie stream_token (fallback: astra_token)
+    local req4 = make_request({ ["cookie"] = "stream_token=LEGACY" }, {})
     local token4 = auth.get_token(req4, "token", "")
     assert_eq(token4, "LEGACY", "token legacy cookie")
+
+    local req5 = make_request({ ["cookie"] = "astra_token=LEGACY2" }, {})
+    local token5 = auth.get_token(req5, "token", "")
+    assert_eq(token5, "LEGACY2", "token legacy cookie fallback")
 end
 
 print("auth_backend_unit: ok")
