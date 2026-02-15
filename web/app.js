@@ -13389,14 +13389,13 @@ async function refreshRadioStatus() {
         radio.muxdelay = s.muxdelay || radio.muxdelay;
       }
       updateRadioUiFromState();
-      if (status.status === 'running') {
-        const overlayOpen = elements.inputOverlay && elements.inputOverlay.classList.contains('active');
-        const wantsPoll = overlayOpen && isInputRadioType(elements.inputType && elements.inputType.value);
-        if (wantsPoll) {
-          state.radioPollTimer = setTimeout(() => {
-            refreshRadioStatus();
-          }, 2000);
-        }
+      const overlayOpen = elements.inputOverlay && elements.inputOverlay.classList.contains('active');
+      const wantsPoll = overlayOpen && isInputRadioType(elements.inputType && elements.inputType.value);
+      const active = status.status === 'running' || status.status === 'starting' || status.status === 'restarting';
+      if (wantsPoll && active) {
+        state.radioPollTimer = setTimeout(() => {
+          refreshRadioStatus();
+        }, 2000);
       }
     }
   } catch (err) {
