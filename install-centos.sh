@@ -13,8 +13,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! curl -fsSL "$INSTALL_URL" -o "$TMP_FILE"; then
-  echo "WARN: HTTPS download failed. Falling back to HTTP for bootstrap: http://stream.centv.ru/install.sh" >&2
+# On older CentOS/RHEL the CA bundle is often outdated, so curl prints:
+#   curl: (60) Peer's Certificate issuer is not recognized.
+# Hide the noisy curl error and show a clear warning instead.
+if ! curl -fsSL "$INSTALL_URL" -o "$TMP_FILE" 2>/dev/null; then
+  echo "WARN: HTTPS download failed (old CA bundle?). Falling back to HTTP for bootstrap: http://stream.centv.ru/install.sh" >&2
   BASE_URL="http://stream.centv.ru"
   INSTALL_URL="${BASE_URL}/install.sh"
   curl -fsSL "$INSTALL_URL" -o "$TMP_FILE"
