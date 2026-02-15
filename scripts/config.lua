@@ -277,13 +277,16 @@ local function sanitize_adapter_config(id, cfg)
     return cfg, changed
 end
 
+-- Config export frequently clones large stream/adapters payloads.
+-- Deep copying is unnecessary for export (we only tweak top-level keys),
+-- and it can make config apply noticeably slower on large setups.
 local function copy_table(value)
     if type(value) ~= "table" then
         return value
     end
     local out = {}
     for k, v in pairs(value) do
-        out[k] = copy_table(v)
+        out[k] = v
     end
     return out
 end
@@ -3088,16 +3091,39 @@ function config.export_astra(opts)
     return payload
 end
 
+function config.export_astra_encoded(opts)
+    opts = opts or {}
+    local payload = opts.payload
+    if payload == nil then
+        payload = config.export_astra(opts)
+    end
+    local encoded = opts.encoded
+    if encoded == nil then
+        if json and type(json.encode_pretty) == "function" then
+            encoded = json.encode_pretty(payload)
+        else
+            encoded = json.encode(payload)
+        end
+    end
+    return payload, encoded
+end
+
 function config.export_astra_file(path, opts)
     if not path or path == "" then
         return nil, "empty path"
     end
-    local payload = config.export_astra(opts)
-    local encoded
-    if json and type(json.encode_pretty) == "function" then
-        encoded = json.encode_pretty(payload)
-    else
-        encoded = json.encode(payload)
+    opts = opts or {}
+    local payload = opts.payload
+    local encoded = opts.encoded
+    if payload == nil then
+        payload = config.export_astra(opts)
+    end
+    if encoded == nil then
+        if json and type(json.encode_pretty) == "function" then
+            encoded = json.encode_pretty(payload)
+        else
+            encoded = json.encode(payload)
+        end
     end
     local ok, err = write_file_atomic(path, encoded)
     if not ok then
