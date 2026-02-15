@@ -55,6 +55,7 @@ typedef struct
     int epoll_fd;
     int index;
     int pinned_cpu;
+    int active_streams;
 } relay_worker_t;
 
 typedef struct
@@ -96,6 +97,7 @@ struct relay_ctx_t
 
     // Worker assignment
     int worker_index;
+    bool worker_least_loaded;
 
     // Lifetime
     pthread_mutex_t lock;
@@ -560,12 +562,32 @@ static int pick_worker_index(const char *id)
     return (int)(h % (uint32_t)n);
 }
 
+static int pick_worker_index_least_loaded(void)
+{
+    const int n = g_engine.workers_count;
+    if(n <= 1)
+        return 0;
+
+    int best = 0;
+    int best_load = __atomic_load_n(&g_engine.workers[0].active_streams, __ATOMIC_RELAXED);
+    for(int i = 1; i < n; ++i)
+    {
+        const int load = __atomic_load_n(&g_engine.workers[i].active_streams, __ATOMIC_RELAXED);
+        if(load < best_load)
+        {
+            best = i;
+            best_load = load;
+        }
+    }
+    return best;
+}
+
 static bool ctx_register_in_engine(relay_ctx_t *ctx)
 {
     if(!g_engine.started || !g_engine.workers || g_engine.workers_count <= 0)
         return false;
 
-    const int widx = pick_worker_index(ctx->id);
+    const int widx = ctx->worker_least_loaded ? pick_worker_index_least_loaded() : pick_worker_index(ctx->id);
     if(widx < 0 || widx >= g_engine.workers_count)
         return false;
 
@@ -579,6 +601,7 @@ static bool ctx_register_in_engine(relay_ctx_t *ctx)
         return false;
 
     ctx->worker_index = widx;
+    __atomic_fetch_add(&w->active_streams, 1, __ATOMIC_RELAXED);
     return true;
 }
 
@@ -593,6 +616,7 @@ static void ctx_unregister_from_engine(relay_ctx_t *ctx)
 
     relay_worker_t *w = &g_engine.workers[widx];
     epoll_ctl(w->epoll_fd, EPOLL_CTL_DEL, ctx->in_fd, NULL);
+    __atomic_fetch_sub(&w->active_streams, 1, __ATOMIC_RELAXED);
 }
 
 static void free_ctx(relay_ctx_t *ctx)
@@ -728,6 +752,8 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
     if(!id || !id[0])
         return NULL;
 
+    const char *worker_policy = table_get_string(L, opts_idx, "worker_policy");
+
     // input
     lua_getfield(L, opts_idx, "input");
     if(lua_type(L, -1) != LUA_TTABLE)
@@ -770,7 +796,8 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
     pthread_mutex_init(&ctx->lock, NULL);
     ctx->closing = false;
     ctx->refcount = 0;
-    ctx->worker_index = 0;
+    ctx->worker_index = -1;
+    ctx->worker_least_loaded = (worker_policy && strcmp(worker_policy, "least_loaded") == 0) ? true : false;
     ctx->started_us = asc_utime();
     ctx->last_rx_us = 0;
     ctx->packet_skip = 0;
