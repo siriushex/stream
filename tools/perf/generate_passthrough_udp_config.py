@@ -44,6 +44,8 @@ def main():
     ap.add_argument("--dp-workers", type=int, default=0)
     ap.add_argument("--dp-rx-batch", type=int, default=32)
     ap.add_argument("--dp-affinity", action="store_true", help="Pin dataplane workers to separate CPU cores (Linux only)")
+    ap.add_argument("--dp-worker-policy", default="hash", choices=["hash", "least_loaded"],
+                    help="Dataplane worker assignment policy (default: hash)")
 
     args = ap.parse_args()
 
@@ -66,6 +68,7 @@ def main():
     settings["performance_passthrough_dataplane"] = str(args.dataplane)
     settings["performance_passthrough_workers"] = int(args.dp_workers)
     settings["performance_passthrough_rx_batch"] = int(args.dp_rx_batch)
+    settings["performance_passthrough_worker_policy"] = str(args.dp_worker_policy)
     if args.dp_affinity:
         settings["performance_passthrough_affinity"] = True
 

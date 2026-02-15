@@ -49,6 +49,7 @@ UDP_BATCHING="false"
 DATAPLANE="off"
 DP_WORKERS="0"
 DP_AFFINITY="${DP_AFFINITY:-false}"
+DP_WORKER_POLICY="${DP_WORKER_POLICY:-hash}"
 
 case "${MODE}" in
   legacy)
@@ -79,6 +80,7 @@ python3 "${ROOT_DIR}/tools/perf/generate_passthrough_udp_config.py" \
   --dp-workers "${DP_WORKERS}" \
   --dp-rx-batch 32 \
   $( [[ "${DP_AFFINITY}" == "true" || "${DP_AFFINITY}" == "1" ]] && echo "--dp-affinity" ) \
+  --dp-worker-policy "${DP_WORKER_POLICY}" \
   >/dev/null
 
 "${BIN}" scripts/server.lua -a 127.0.0.1 -p "${HTTP_PORT}" \

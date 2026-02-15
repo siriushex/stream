@@ -154,6 +154,9 @@ MODE=dp COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 
 # dataplane + CPU affinity (пинит worker threads на разные ядра)
 MODE=dp DP_AFFINITY=true COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+
+# dataplane + least-loaded worker assignment (полезно при неравномерных bitrate)
+MODE=dp DP_WORKER_POLICY=least_loaded COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 ```
 
 Результаты сохраняются в `tools/perf/results/passthrough_<ts>_<mode>/`:
