@@ -1415,6 +1415,10 @@ local function close_existing_stream(id, existing)
     if not existing then
         return
     end
+    -- Create radio: гарантированно останавливаем генератор при выключении/удалении стрима.
+    if radio and type(radio.stop) == "function" then
+        pcall(function() radio.stop(tostring(id)) end)
+    end
     if existing.kind == "transcode" and transcode then
         transcode.delete(id)
         return
@@ -1811,6 +1815,12 @@ local function apply_stream(id, row, force)
     cfg.id = id
     if not cfg.name then
         cfg.name = "Stream " .. id
+    end
+
+    -- Create radio: автозапуск/останов генератора по cfg.radio.autostart.
+    -- Делаем до split на transcode/non-transcode, чтобы работало в обоих режимах.
+    if radio and type(radio.sync_from_stream_config) == "function" then
+        pcall(function() radio.sync_from_stream_config(tostring(id), cfg, enabled) end)
     end
 
     local is_transcode = transcode and transcode.is_transcode_config and transcode.is_transcode_config(cfg)

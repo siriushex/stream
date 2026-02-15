@@ -12613,6 +12613,11 @@ function resetRadioStateFromStream(stream) {
   const radio = normalizeRadioState();
   const cfg = stream && stream.config ? stream.config : {};
   const rcfg = cfg && cfg.radio ? cfg.radio : {};
+  radio.autostart = rcfg.autostart === true;
+  radio.autoRestart = rcfg.auto_restart !== false;
+  radio.restartDelaySec = Number(rcfg.restart_delay_sec || rcfg.restart_delay) || 4;
+  radio.noProgressTimeoutSec = Number(rcfg.no_progress_timeout_sec || rcfg.no_progress_timeout) || 30;
+  radio.maxRestartsPer10min = Number(rcfg.max_restarts_per_10min) || 10;
   radio.audioUrl = rcfg.audio_url || '';
   radio.pngPath = rcfg.png_path || '';
   radio.pngDataUrl = '';
@@ -12966,6 +12971,11 @@ function setPngtsAsBackupInput(path, message) {
 function normalizeRadioState() {
   if (!state.radio) state.radio = {};
   const radio = state.radio;
+  radio.autostart = radio.autostart === true;
+  radio.autoRestart = radio.autoRestart !== false;
+  radio.restartDelaySec = Number.isFinite(Number(radio.restartDelaySec)) ? Number(radio.restartDelaySec) : 4;
+  radio.noProgressTimeoutSec = Number.isFinite(Number(radio.noProgressTimeoutSec)) ? Number(radio.noProgressTimeoutSec) : 30;
+  radio.maxRestartsPer10min = Number.isFinite(Number(radio.maxRestartsPer10min)) ? Number(radio.maxRestartsPer10min) : 10;
   radio.audioUrl = radio.audioUrl || '';
   radio.pngPath = radio.pngPath || '';
   radio.pngDataUrl = radio.pngDataUrl || '';
@@ -13148,6 +13158,9 @@ async function refreshRadioStatus() {
       const radio = normalizeRadioState();
       radio.status = status.status || 'stopped';
       radio.logs = status.logs || '';
+      if (status.desired_autostart !== undefined) {
+        radio.autostart = status.desired_autostart === true;
+      }
       if (status.settings && typeof status.settings === 'object') {
         const s = status.settings;
         radio.audioUrl = s.audio_url || radio.audioUrl;
@@ -13156,6 +13169,21 @@ async function refreshRadioStatus() {
         radio.userAgent = s.user_agent || radio.userAgent;
         radio.extraHeaders = s.extra_headers || radio.extraHeaders;
         radio.audioFormat = s.audio_format || radio.audioFormat;
+        if (s.autostart !== undefined && status.desired_autostart === undefined) {
+          radio.autostart = s.autostart === true;
+        }
+        if (s.auto_restart !== undefined) {
+          radio.autoRestart = s.auto_restart !== false;
+        }
+        if (s.restart_delay_sec !== undefined || s.restart_delay !== undefined) {
+          radio.restartDelaySec = Number(s.restart_delay_sec || s.restart_delay) || radio.restartDelaySec;
+        }
+        if (s.no_progress_timeout_sec !== undefined || s.no_progress_timeout !== undefined) {
+          radio.noProgressTimeoutSec = Number(s.no_progress_timeout_sec || s.no_progress_timeout) || radio.noProgressTimeoutSec;
+        }
+        if (s.max_restarts_per_10min !== undefined) {
+          radio.maxRestartsPer10min = Number(s.max_restarts_per_10min) || radio.maxRestartsPer10min;
+        }
         radio.fps = Number(s.fps) || radio.fps;
         radio.width = Number(s.width) || radio.width;
         radio.height = Number(s.height) || radio.height;
@@ -13220,6 +13248,7 @@ async function startRadio() {
       const radio = normalizeRadioState();
       radio.status = status.status || 'running';
       radio.logs = status.logs || '';
+      radio.autostart = true;
       updateRadioUiFromState();
     }
     useRadioAsInput(true);
@@ -13242,6 +13271,7 @@ async function stopRadio() {
       const radio = normalizeRadioState();
       radio.status = status.status || 'stopped';
       radio.logs = status.logs || '';
+      radio.autostart = false;
       updateRadioUiFromState();
     }
     stopRadioPoll();
@@ -13265,6 +13295,7 @@ async function restartRadio() {
       const radio = normalizeRadioState();
       radio.status = status.status || 'running';
       radio.logs = status.logs || '';
+      radio.autostart = true;
       updateRadioUiFromState();
     }
     refreshRadioStatus();
@@ -19619,6 +19650,11 @@ function readStreamForm() {
         user_agent: radio.userAgent || undefined,
         extra_headers: radio.extraHeaders || undefined,
         audio_format: radio.audioFormat || undefined,
+        autostart: radio.autostart === true,
+        auto_restart: radio.autoRestart !== false,
+        restart_delay_sec: radio.restartDelaySec,
+        no_progress_timeout_sec: radio.noProgressTimeoutSec,
+        max_restarts_per_10min: radio.maxRestartsPer10min,
         fps: radio.fps,
         width: radio.width,
         height: radio.height,
