@@ -16,6 +16,11 @@ tools/perf/summarize_polling_suite.py --dir tools/perf/results/<timestamp>
 tools/perf/timer_hotspots.sh "$PID" 20 tools/perf/timer_hotspots_after.txt
 
 tools/perf/play_clients.sh "http://127.0.0.1:8000/play/<stream_id>" 200 30
+
+# Mass UDP passthrough (legacy/mmsg/dataplane)
+MODE=legacy COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+MODE=mmsg   COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+MODE=dp     COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
 ```
 
 ## Результаты (после)
@@ -26,6 +31,9 @@ tools/perf/play_clients.sh "http://127.0.0.1:8000/play/<stream_id>" 200 30
 | 200 streams, no transcode | TBD | TBD | TBD | TBD | TBD | TBD |
 | + transcode (часть потоков) | TBD | TBD | TBD | TBD | TBD | TBD |
 | /play 200 clients | TBD | TBD | TBD | TBD | TBD | TBD |
+| 200 UDP passthrough (legacy) | TBD | TBD | TBD | TBD | TBD | TBD |
+| 200 UDP passthrough (mmsg) | TBD | TBD | TBD | TBD | TBD | TBD |
+| 200 UDP passthrough (dataplane) | TBD | TBD | TBD | TBD | TBD | TBD |
 
 ## Timer hotspots (P1.2)
 

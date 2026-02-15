@@ -130,3 +130,33 @@ tools/perf/generate_mock_streams.py --count 200 --out tools/perf/mock_streams.js
 ```
 
 Создаёт JSON с N потоками для тестового импорта/нагрузки.
+
+## 7) Mass UDP passthrough (legacy vs mmsg vs dataplane)
+
+Сценарий: много “обычных” UDP passthrough стримов в одном процессе, без шардирования.
+
+Подготовка:
+- Linux host
+- Собранный бинарник (`./stream` или `./astra`)
+- `curl`, `python3`, опционально: `sysstat` (mpstat/pidstat), `perf`
+
+Команда:
+
+```bash
+# legacy pipeline (без batching)
+MODE=legacy COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+
+# legacy pipeline + recvmmsg/sendmmsg (opt-in)
+MODE=mmsg COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+
+# dataplane (opt-in, Linux-only, eligible UDP->UDP streams)
+MODE=dp COUNT=200 PPS=50 DURATION=30 tools/perf/passthrough_benchmark.sh
+```
+
+Результаты сохраняются в `tools/perf/results/passthrough_<ts>_<mode>/`:
+- `snapshot_before.txt` / `snapshot_after.txt` (CPU/RSS/threads/fds)
+- `capture_incident.sh` артефакты (per-core/per-thread/perf), если утилиты доступны
+
+Замер “равномерно по ядрам”:
+- `mpstat -P ALL 1` во время теста
+- `pidstat -t -p <PID> 1` чтобы увидеть worker threads (dataplane)
