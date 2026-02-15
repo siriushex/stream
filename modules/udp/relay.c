@@ -19,6 +19,8 @@
 #include <pthread.h>
 #include <sched.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -35,6 +37,8 @@ typedef struct relay_output_t
     asc_socket_t *sock;
     const char *dst_addr;
     int dst_port;
+    struct sockaddr_in dst_sa;
+    socklen_t dst_sa_len;
     uint64_t dropped_packets;
     uint64_t last_log_us;
     int last_errno;
@@ -78,6 +82,11 @@ struct relay_ctx_t
     struct iovec *rx_iov;
     uint8_t *rx_buffers;
 
+    // Transmit batching:
+    // Linux sendmmsg() fast-path для типичного TS datagram size=1316 (7*188).
+    struct mmsghdr *tx_msgs;
+    struct iovec *tx_iov;
+
     // TS repacketization (как в udp_output: по 7 TS в датаграмму)
     uint8_t packet[RELAY_UDP_BUFFER_SIZE];
     size_t packet_skip;
@@ -100,6 +109,10 @@ struct relay_ctx_t
     uint64_t bad_datagrams;
 };
 
+static bool g_sendmmsg_available = true;
+
+static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t size);
+
 static uint32_t fnv1a_32(const char *s)
 {
     uint32_t h = 2166136261u;
@@ -113,7 +126,7 @@ static uint32_t fnv1a_32(const char *s)
     return h;
 }
 
-static void relay_log_send_error(const char *id, relay_output_t *out, const char *dst, int port, int err)
+static void relay_log_send_error(const char *id, relay_output_t *out, const char *dst, int port, int err, uint64_t dropped_packets)
 {
     const uint64_t now_us = asc_utime();
     const bool transient = (err == EAGAIN || err == EWOULDBLOCK || err == ENOBUFS);
@@ -121,7 +134,7 @@ static void relay_log_send_error(const char *id, relay_output_t *out, const char
 
     if(transient)
     {
-        ++out->dropped_packets;
+        out->dropped_packets += (dropped_packets > 0) ? dropped_packets : 1;
         if(changed_errno || now_us >= out->last_log_us + 2000000)
         {
             asc_log_warning("%s[%s] send overflow: dropped %" PRIu64 " packets; dst=%s:%d; last error [%s]",
@@ -147,6 +160,72 @@ static void relay_log_send_error(const char *id, relay_output_t *out, const char
     }
 }
 
+static void relay_send_to_outputs_mmsg(relay_ctx_t *ctx, int count)
+{
+    if(!ctx || count <= 0)
+        return;
+
+    if(!g_sendmmsg_available || !ctx->tx_msgs || !ctx->tx_iov)
+    {
+        // Fallback: старый путь sendto.
+        for(int n = 0; n < count; ++n)
+        {
+            const uint8_t *buf = (const uint8_t *)ctx->rx_buffers + ((size_t)n * RELAY_UDP_BUFFER_SIZE);
+            relay_send_to_outputs(ctx, buf, (size_t)(TS_PACKET_SIZE * 7));
+        }
+        return;
+    }
+
+    // Условия этого fast-path гарантируют, что у всех msg одинаковый размер 1316.
+    const size_t msg_size = (size_t)(TS_PACKET_SIZE * 7);
+
+    for(int i = 0; i < ctx->out_count; ++i)
+    {
+        relay_output_t *out = &ctx->outs[i];
+        if(!out->sock)
+            continue;
+
+        // Подставляем destination sockaddr в каждый mmsghdr. Это дешевле, чем sendto() на каждый датаграмм.
+        for(int n = 0; n < count; ++n)
+        {
+            ctx->tx_msgs[n].msg_hdr.msg_name = (void *)&out->dst_sa;
+            ctx->tx_msgs[n].msg_hdr.msg_namelen = out->dst_sa_len;
+        }
+
+        errno = 0;
+        const int fd = asc_socket_fd(out->sock);
+        const int sent = sendmmsg(fd, ctx->tx_msgs, (unsigned int)count, 0);
+        if(sent > 0)
+        {
+            __atomic_fetch_add(&ctx->bytes_out, (uint64_t)msg_size * (uint64_t)sent, __ATOMIC_RELAXED);
+            __atomic_fetch_add(&ctx->datagrams_out, (uint64_t)sent, __ATOMIC_RELAXED);
+        }
+
+        if(sent == count)
+            continue;
+
+        // Error or partial send: считаем оставшиеся сообщения dropped.
+        const int err = (sent < 0) ? errno : EAGAIN;
+        const int dropped = (sent < 0) ? count : (count - sent);
+
+        if(err == ENOSYS)
+        {
+            // На очень старом ядре sendmmsg может отсутствовать - откатываемся на sendto.
+            g_sendmmsg_available = false;
+            asc_log_warning("%s sendmmsg() not supported by kernel; falling back to sendto()", RELAY_MSG_PREFIX);
+
+            for(int n = 0; n < count; ++n)
+            {
+                const uint8_t *buf = (const uint8_t *)ctx->rx_buffers + ((size_t)n * RELAY_UDP_BUFFER_SIZE);
+                relay_send_to_outputs(ctx, buf, msg_size);
+            }
+            continue;
+        }
+
+        relay_log_send_error(ctx->id, out, out->dst_addr, out->dst_port, err, (uint64_t)dropped);
+    }
+}
+
 static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t size)
 {
     for(int i = 0; i < ctx->out_count; ++i)
@@ -164,7 +243,7 @@ static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t 
 
         const int err = errno;
         // best-effort logs, rate-limited
-        relay_log_send_error(ctx->id, out, out->dst_addr, out->dst_port, err);
+        relay_log_send_error(ctx->id, out, out->dst_addr, out->dst_port, err, 1);
     }
 }
 
@@ -231,6 +310,37 @@ static void relay_ctx_on_read(relay_ctx_t *ctx)
 
         const uint64_t now_us = asc_utime();
         __atomic_store_n(&ctx->last_rx_us, now_us, __ATOMIC_RELAXED);
+
+        // Super fast-path:
+        // типичный TS multicast уже приходит как 1316 bytes (7*188). Если у нас нет хвоста,
+        // то можно отправить весь batch через sendmmsg(), снизив число syscalls в ~count раз.
+        if(ctx->packet_skip == 0 && r >= 2)
+        {
+            bool can_batch = true;
+            uint64_t in_bytes = 0;
+            for(int n = 0; n < r; ++n)
+            {
+                const int len = (int)ctx->rx_msgs[n].msg_len;
+                if(len != (int)(TS_PACKET_SIZE * 7))
+                {
+                    can_batch = false;
+                    break;
+                }
+                in_bytes += (uint64_t)len;
+            }
+
+            if(can_batch)
+            {
+                __atomic_fetch_add(&ctx->bytes_in, in_bytes, __ATOMIC_RELAXED);
+                __atomic_fetch_add(&ctx->datagrams_in, (uint64_t)r, __ATOMIC_RELAXED);
+
+                relay_send_to_outputs_mmsg(ctx, r);
+
+                if(r < ctx->rx_batch)
+                    break;
+                continue;
+            }
+        }
 
         for(int n = 0; n < r; ++n)
         {
@@ -501,6 +611,16 @@ static void free_ctx(relay_ctx_t *ctx)
         free(ctx->rx_msgs);
         ctx->rx_msgs = NULL;
     }
+    if(ctx->tx_iov)
+    {
+        free(ctx->tx_iov);
+        ctx->tx_iov = NULL;
+    }
+    if(ctx->tx_msgs)
+    {
+        free(ctx->tx_msgs);
+        ctx->tx_msgs = NULL;
+    }
 
     if(ctx->id)
     {
@@ -682,6 +802,11 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         ctx->outs[i - 1].sock = open_output_socket(out_addr, out_port, out_local, out_ttl, out_socket_size);
         ctx->outs[i - 1].dst_addr = out_addr;
         ctx->outs[i - 1].dst_port = out_port;
+        memset(&ctx->outs[i - 1].dst_sa, 0, sizeof(ctx->outs[i - 1].dst_sa));
+        ctx->outs[i - 1].dst_sa.sin_family = AF_INET;
+        ctx->outs[i - 1].dst_sa.sin_addr.s_addr = inet_addr(out_addr);
+        ctx->outs[i - 1].dst_sa.sin_port = htons(out_port);
+        ctx->outs[i - 1].dst_sa_len = sizeof(struct sockaddr_in);
         lua_pop(L, 1);
         if(!ctx->outs[i - 1].sock)
         {
@@ -707,6 +832,23 @@ static relay_ctx_t *create_ctx(lua_State *L, int opts_idx)
         ctx->rx_iov[i].iov_len = RELAY_UDP_BUFFER_SIZE;
         ctx->rx_msgs[i].msg_hdr.msg_iov = &ctx->rx_iov[i];
         ctx->rx_msgs[i].msg_hdr.msg_iovlen = 1;
+    }
+
+    // allocate sendmmsg buffers (fast-path only for 1316)
+    ctx->tx_msgs = (struct mmsghdr *)calloc((size_t)ctx->rx_batch, sizeof(struct mmsghdr));
+    ctx->tx_iov = (struct iovec *)calloc((size_t)ctx->rx_batch, sizeof(struct iovec));
+    if(!ctx->tx_msgs || !ctx->tx_iov)
+    {
+        free_ctx(ctx);
+        lua_pop(L, 1);
+        return NULL;
+    }
+    for(int i = 0; i < ctx->rx_batch; ++i)
+    {
+        ctx->tx_iov[i].iov_base = ctx->rx_buffers + ((size_t)i * RELAY_UDP_BUFFER_SIZE);
+        ctx->tx_iov[i].iov_len = (size_t)(TS_PACKET_SIZE * 7);
+        ctx->tx_msgs[i].msg_hdr.msg_iov = &ctx->tx_iov[i];
+        ctx->tx_msgs[i].msg_hdr.msg_iovlen = 1;
     }
 
     lua_pop(L, 1); // outputs
