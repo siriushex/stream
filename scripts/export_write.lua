@@ -74,6 +74,9 @@ function main()
         data_dir = opt.data_dir,
         db_path = opt.db_path,
     })
+    if opt.primary and opt.primary ~= "" and config.set_primary_config_path then
+        config.set_primary_config_path(opt.primary)
+    end
 
     local payload, encoded = config.export_astra_encoded()
 
@@ -97,4 +100,3 @@ function main()
 
     astra.exit()
 end
-

@@ -2202,6 +2202,82 @@ function config.primary_config_is_json()
     return config.primary_config_ext == "json"
 end
 
+local PRIMARY_FINGERPRINT_KEY = "_config_primary_fingerprint"
+
+local function md5_hex(value)
+    if not value then
+        return nil
+    end
+    if not string or type(string.md5) ~= "function" or type(string.hex) ~= "function" then
+        return nil
+    end
+    return string.hex(string.md5(value))
+end
+
+-- Fingerprint of the primary config file on disk (to detect external edits and avoid
+-- redundant imports on boot). Stored in sqlite under an internal key that is excluded
+-- from JSON exports to prevent self-referential hashing.
+function config.primary_config_fingerprint(path)
+    if type(path) ~= "string" or path == "" then
+        return nil, "empty path"
+    end
+    local file, err = io.open(path, "rb")
+    if not file then
+        return nil, err
+    end
+    local content = file:read("*a") or ""
+    file:close()
+    local fp = md5_hex(content)
+    if not fp then
+        return nil, "md5 unavailable"
+    end
+    return fp
+end
+
+function config.get_primary_config_fingerprint()
+    if not config.get_setting then
+        return nil
+    end
+    local value = config.get_setting(PRIMARY_FINGERPRINT_KEY)
+    if value == nil then
+        return nil
+    end
+    value = tostring(value or "")
+    if value == "" then
+        return nil
+    end
+    return value
+end
+
+function config.set_primary_config_fingerprint(value)
+    if not (config and config.db and config.set_setting) then
+        return nil
+    end
+    local text = tostring(value or "")
+    if text == "" then
+        config.set_setting(PRIMARY_FINGERPRINT_KEY, "")
+        return true
+    end
+    config.set_setting(PRIMARY_FINGERPRINT_KEY, text)
+    return true
+end
+
+function config.should_import_primary_config(path)
+    local stored = config.get_primary_config_fingerprint and config.get_primary_config_fingerprint() or nil
+    local current, err = config.primary_config_fingerprint(path)
+    if not current then
+        -- If we can't fingerprint the file, fall back to legacy behavior (import on boot).
+        return true, "fingerprint failed: " .. tostring(err)
+    end
+    if stored and stored == current then
+        return false, "unchanged", current, stored
+    end
+    if stored then
+        return true, "changed", current, stored
+    end
+    return true, "bootstrap", current, stored
+end
+
 function config.export_primary_config()
     local path = config.primary_config_path
     if not path or path == "" then
@@ -2945,6 +3021,14 @@ function config.export_astra(opts)
 
     if include_settings and config.list_settings then
         local settings = copy_table(config.list_settings() or {})
+        -- Hide internal/private keys from JSON exports.
+        -- In particular, we store primary-config file fingerprint under `_...` and
+        -- it must not be exported (otherwise hashing becomes self-referential).
+        for key, _ in pairs(settings) do
+            if type(key) == "string" and key:sub(1, 1) == "_" then
+                settings[key] = nil
+            end
+        end
         if settings.gid ~= nil then
             payload.gid = settings.gid
             settings.gid = nil
@@ -3112,6 +3196,18 @@ function config.export_astra_file(path, opts)
     local ok, err = write_file_atomic(path, encoded)
     if not ok then
         return nil, err
+    end
+    if config
+        and config.db
+        and config.primary_config_path
+        and path == config.primary_config_path
+        and type(config.set_primary_config_fingerprint) == "function"
+    then
+        local fp = md5_hex(encoded)
+        if fp then
+            -- Best-effort: do not fail the export if we can't write to sqlite.
+            pcall(config.set_primary_config_fingerprint, fp)
+        end
     end
     return payload
 end
