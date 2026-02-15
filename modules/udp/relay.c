@@ -111,6 +111,7 @@ struct relay_ctx_t
     uint64_t bytes_out;
     uint64_t datagrams_in;
     uint64_t datagrams_out;
+    uint64_t send_drops;
     uint64_t bad_datagrams;
 };
 
@@ -212,6 +213,7 @@ static void relay_send_to_outputs_mmsg(relay_ctx_t *ctx, int count)
         // Error or partial send: считаем оставшиеся сообщения dropped.
         const int err = (sent < 0) ? errno : EAGAIN;
         const int dropped = (sent < 0) ? count : (count - sent);
+        __atomic_fetch_add(&ctx->send_drops, (uint64_t)dropped, __ATOMIC_RELAXED);
 
         if(err == ENOSYS)
         {
@@ -247,6 +249,7 @@ static void relay_send_to_outputs(relay_ctx_t *ctx, const uint8_t *data, size_t 
         }
 
         const int err = errno;
+        __atomic_fetch_add(&ctx->send_drops, 1, __ATOMIC_RELAXED);
         // best-effort logs, rate-limited
         relay_log_send_error(ctx->id, out, out->dst_addr, out->dst_port, err, 1);
     }
@@ -982,6 +985,7 @@ static int relay_handle_stats(lua_State *L)
     const uint64_t bytes_out = __atomic_load_n(&ctx->bytes_out, __ATOMIC_RELAXED);
     const uint64_t d_in = __atomic_load_n(&ctx->datagrams_in, __ATOMIC_RELAXED);
     const uint64_t d_out = __atomic_load_n(&ctx->datagrams_out, __ATOMIC_RELAXED);
+    const uint64_t drops = __atomic_load_n(&ctx->send_drops, __ATOMIC_RELAXED);
     const uint64_t bad = __atomic_load_n(&ctx->bad_datagrams, __ATOMIC_RELAXED);
 
     const bool on_air = (last_rx_us != 0) && (now_us < last_rx_us + 2000000);
@@ -1006,6 +1010,9 @@ static int relay_handle_stats(lua_State *L)
 
     lua_pushinteger(L, (lua_Integer)d_out);
     lua_setfield(L, -2, "datagrams_out");
+
+    lua_pushinteger(L, (lua_Integer)drops);
+    lua_setfield(L, -2, "send_drops");
 
     lua_pushinteger(L, (lua_Integer)bad);
     lua_setfield(L, -2, "bad_datagrams");
