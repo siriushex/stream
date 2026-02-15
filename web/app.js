@@ -1285,6 +1285,7 @@ const elements = {
   streamMap: $('#stream-map'),
   streamFilter: $('#stream-filter'),
   streamFilterExclude: $('#stream-filter-exclude'),
+  btnRemapAuto: $('#btn-remap-auto'),
   streamEpgId: $('#stream-epg-id'),
   streamEpgFormat: $('#stream-epg-format'),
   streamEpgDestination: $('#stream-epg-destination'),
@@ -4918,6 +4919,188 @@ function showDashboardNotice(message, ttl) {
       state.dashboardNoticeTimer = null;
       showDashboardNotice('');
     }, timeout);
+  }
+}
+
+async function runStreamAnalyzeBlocking(streamId, body) {
+  const payload = await apiJson(`/api/v1/streams/${streamId}/analyze`, {
+    method: 'POST',
+    body: JSON.stringify(body || { duration_sec: 4 }),
+  });
+  const jobId = payload && payload.id ? payload.id : null;
+  if (!jobId) throw new Error('Analyze returned empty job id');
+
+  const startedAt = Date.now();
+  const timeoutMs = 12000;
+  let job = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    job = await apiJson(`/api/v1/streams/analyze/${jobId}`);
+    if (job && job.status && job.status !== 'running') break;
+    await delay(350);
+  }
+  if (!job) throw new Error('Analyze returned empty job payload');
+  if (job.status === 'running') throw new Error('Analyze timeout');
+  if (job.status !== 'done') throw new Error(job.error || 'Analyze failed');
+  return job;
+}
+
+function pickAnalyzeChannel(job, preferredPnr) {
+  const channels = Array.isArray(job && job.channels) ? job.channels : [];
+  if (!channels.length) return null;
+
+  const want = Number(preferredPnr);
+  if (Number.isFinite(want) && want > 0) {
+    const exact = channels.find((channel) => Number(channel && channel.pnr) === want);
+    if (exact) return exact;
+  }
+  if (channels.length === 1) return channels[0];
+  return channels[0];
+}
+
+function buildRemapAutoMap(channel) {
+  const parts = [];
+  parts.push('pmt=100');
+  parts.push('video=101');
+
+  let nextPid = 102;
+  const audio = Array.isArray(channel && channel.audio) ? channel.audio : [];
+  const used = new Set();
+  let needsAudioFallback = false;
+
+  audio.forEach((row) => {
+    const lang = (row && typeof row.lang === 'string') ? row.lang.trim() : '';
+    if (!lang) {
+      needsAudioFallback = true;
+      return;
+    }
+    if (lang.length !== 3) {
+      needsAudioFallback = true;
+      return;
+    }
+    if (used.has(lang)) {
+      needsAudioFallback = true;
+      return;
+    }
+    used.add(lang);
+    parts.push(`${lang}=${nextPid}`);
+    nextPid += 1;
+  });
+
+  if (needsAudioFallback && nextPid <= 8190) {
+    parts.push(`audio=${nextPid}`);
+  }
+
+  return parts.join(',');
+}
+
+function collectRemapAutoPidsFromChannel(channel, intoSet) {
+  if (!channel || !intoSet) return;
+  const pushPid = (pid) => {
+    const val = Number(pid);
+    if (!Number.isFinite(val)) return;
+    const intVal = Math.floor(val);
+    if (intVal < 32 || intVal > 8190) return;
+    intoSet.add(intVal);
+  };
+
+  pushPid(channel.pmt_pid);
+  pushPid(channel.pcr);
+
+  const video = Array.isArray(channel.video) ? channel.video : [];
+  video.forEach((row) => pushPid(row && row.pid));
+
+  const audio = Array.isArray(channel.audio) ? channel.audio : [];
+  audio.forEach((row) => pushPid(row && row.pid));
+}
+
+function pidSetToString(set) {
+  const list = Array.from(set || []).filter((pid) => Number.isFinite(pid));
+  list.sort((a, b) => a - b);
+  return list.join(',');
+}
+
+async function runRemapAuto() {
+  if (!state.editing || !state.editing.stream) return;
+  const streamId = String(state.editing.stream.id || '').trim();
+  if (!streamId) {
+    setStatus('Remap auto: save stream first.');
+    return;
+  }
+  if (!elements.btnRemapAuto) return;
+
+  const prevLabel = elements.btnRemapAuto.textContent;
+  elements.btnRemapAuto.disabled = true;
+  elements.btnRemapAuto.textContent = 'Auto...';
+
+  try {
+    setStatus('Remap auto: analyzing active input...', 'sticky');
+    const activeJob = await runStreamAnalyzeBlocking(streamId, { duration_sec: 4 });
+    const activeChannel = pickAnalyzeChannel(activeJob, null);
+    if (!activeChannel) throw new Error('No program info found');
+
+    const desiredPnr = Number(activeChannel.pnr);
+    if (!Number.isFinite(desiredPnr) || desiredPnr < 1 || desiredPnr > 65535) {
+      throw new Error('Analyze returned invalid PNR');
+    }
+
+    let desiredTsid = Number(activeJob.pat_tsid || activeJob.sdt_tsid);
+    if (!Number.isFinite(desiredTsid) || desiredTsid < 1 || desiredTsid > 65535) {
+      desiredTsid = undefined;
+    }
+
+    const map = buildRemapAutoMap(activeChannel);
+
+    const inputUrls = (state.inputs || []).map((url) => String(url || '').trim()).filter(Boolean);
+    const union = new Set();
+    let allInputsAnalyzed = true;
+
+    if (inputUrls.length) {
+      for (let i = 0; i < inputUrls.length; i += 1) {
+        const inputUrl = inputUrls[i];
+        setStatus(`Remap auto: analyzing input ${i + 1}/${inputUrls.length}...`, 'sticky');
+        try {
+          const job = await runStreamAnalyzeBlocking(streamId, { duration_sec: 3, input_url: inputUrl });
+          const channel = pickAnalyzeChannel(job, desiredPnr);
+          if (!channel) throw new Error('No program info found');
+          collectRemapAutoPidsFromChannel(channel, union);
+        } catch (err) {
+          allInputsAnalyzed = false;
+          console.warn('[remap_auto] analyze failed:', inputUrl, err);
+        }
+      }
+    }
+
+    let allowlist = '';
+    if (union.size) {
+      allowlist = pidSetToString(union);
+    }
+
+    if (!allInputsAnalyzed && allowlist) {
+      const proceed = window.confirm(
+        'Не удалось проанализировать все backup inputs.\n' +
+        'Если выставить Filter PIDs по частичным данным, переключение на резерв может сломаться.\n\n' +
+        'Заполнить Filter PIDs всё равно?'
+      );
+      if (!proceed) {
+        allowlist = '';
+      }
+    }
+
+    if (elements.streamSetPnr) elements.streamSetPnr.value = String(desiredPnr);
+    if (elements.streamSetTsid && desiredTsid !== undefined) elements.streamSetTsid.value = String(desiredTsid);
+    if (elements.streamMap) elements.streamMap.value = map;
+    if (elements.streamFilter && allowlist) {
+      elements.streamFilter.value = allowlist;
+    }
+
+    setStatus('Remap auto: fields updated. Press Save.', 'sticky');
+    setTimeout(() => setStatus(''), 4000);
+  } catch (err) {
+    const msg = formatAnalyzeError(err) || (err && err.message) || 'Remap auto failed';
+    setStatus(`Remap auto: ${msg}`);
+  } finally {
+    elements.btnRemapAuto.disabled = false;
+    elements.btnRemapAuto.textContent = prevLabel;
   }
 }
 
@@ -19314,10 +19497,12 @@ function openEditor(stream, isNew) {
     elements.streamMap.value = mapToString(config.map);
   }
   if (elements.streamFilter) {
-    elements.streamFilter.value = mapToString(config.filter);
+    // Filter PIDs = allowlist (cfg["filter~"]).
+    elements.streamFilter.value = mapToString(config['filter~']);
   }
   if (elements.streamFilterExclude) {
-    elements.streamFilterExclude.value = mapToString(config['filter~']);
+    // Filter exclude PIDs = denylist (cfg.filter).
+    elements.streamFilterExclude.value = mapToString(config.filter);
   }
   if (elements.streamTimeout) {
     elements.streamTimeout.value = config.timeout || '';
@@ -19754,6 +19939,7 @@ function readStreamForm() {
   const mapValue = (elements.streamMap && elements.streamMap.value || '').trim();
   if (mapValue) config.map = mapValue;
 
+  // Filter PIDs: allowlist (cfg["filter~"]).
   const filterValue = (elements.streamFilter && elements.streamFilter.value || '').trim();
   if (filterValue) {
     const parts = filterValue.split(',').map((part) => part.trim()).filter(Boolean);
@@ -19766,8 +19952,10 @@ function readStreamForm() {
         throw new Error(`Filter PID must be between 32 and 8190: ${part} (Remap tab)`);
       }
     });
-    config.filter = parts.join(',');
+    config['filter~'] = parts.join(',');
   }
+
+  // Filter exclude PIDs: denylist (cfg.filter).
   const filterExcludeValue = (elements.streamFilterExclude && elements.streamFilterExclude.value || '').trim();
   if (filterExcludeValue) {
     const parts = filterExcludeValue.split(',').map((part) => part.trim()).filter(Boolean);
@@ -19780,7 +19968,7 @@ function readStreamForm() {
         throw new Error(`Exclude PID must be between 32 and 8190: ${part} (Remap tab)`);
       }
     });
-    config['filter~'] = parts.join(',');
+    config.filter = parts.join(',');
   }
 
   const serviceType = toNumber(elements.streamServiceType && elements.streamServiceType.value);
@@ -31065,6 +31253,11 @@ function bindEvents() {
   if (elements.btnRadioUseInput) {
     elements.btnRadioUseInput.addEventListener('click', () => {
       useRadioAsInput();
+    });
+  }
+  if (elements.btnRemapAuto) {
+    elements.btnRemapAuto.addEventListener('click', () => {
+      runRemapAuto();
     });
   }
   elements.streamForm.addEventListener('submit', saveStream);

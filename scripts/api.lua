@@ -2528,6 +2528,13 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         return error_response(server, client, 501, "analyze module is not found")
     end
     local body = parse_json_body(request) or {}
+    local input_url_override = body.input_url or body.input
+    if input_url_override ~= nil and type(input_url_override) ~= "string" then
+        return error_response(server, client, 400, "input_url must be a string")
+    end
+    if input_url_override ~= nil and input_url_override == "" then
+        input_url_override = nil
+    end
     local stream_id = stream_id_override or body.stream_id or body.id
     if not stream_id or stream_id == "" then
         return error_response(server, client, 400, "stream_id is required")
@@ -2540,13 +2547,21 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     if duration < 2 then duration = 2 end
     if duration > 10 then duration = 10 end
 
+    local analyze_key = input_url_override and tostring(input_url_override) or "__live__"
     for _, job in pairs(stream_analyze.jobs) do
-        if job and job.status == "running" and job.stream_id == tostring(stream_id) then
+        local job_key = job and (job.analyze_key or "__live__") or nil
+        if job and job.status == "running" and job.stream_id == tostring(stream_id) and job_key == analyze_key then
             return json_response(server, client, 200, { id = job.id, status = job.status, stream_id = job.stream_id })
         end
     end
 
-    local input_url, input_err = resolve_stream_input_url(stream_id)
+    local input_url = nil
+    local input_err = nil
+    if input_url_override then
+        input_url = tostring(input_url_override)
+    else
+        input_url, input_err = resolve_stream_input_url(stream_id)
+    end
 
     -- Prefer analyzing the live stream pipeline (post-remap, same as /play) when available.
     -- This avoids SSRF/allowlist problems for remote inputs and works for stream:// sources.
@@ -2558,7 +2573,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
     -- Если retain недоступен, но канал уже активен (active_input_id!=0) - можем анализировать без удержания.
     local can_retain = (channel_data and _G.channel_retain and _G.channel_release) and true or false
     local can_tail = channel_data and channel_data.tail or nil
-    local can_attach_live = can_tail and (can_retain or active_id ~= 0)
+    local can_attach_live = (not input_url_override) and can_tail and (can_retain or active_id ~= 0)
 
     if not can_attach_live and not input_url then
         return error_response(server, client, 400, input_err or "input url not found")
@@ -2577,6 +2592,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         stream_id = tostring(stream_id),
         stream_name = stream_name,
         input_url = input_url and tostring(input_url) or nil,
+        analyze_key = analyze_key,
         status = "running",
         started_at = os.time(),
         duration_sec = duration,
@@ -2587,12 +2603,12 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         pids = {},
     }
 
-    local analyze_name = "stream-analyze-" .. tostring(stream_id)
+    local analyze_name = "stream-analyze-" .. tostring(stream_id) .. "-" .. tostring(id)
     local upstream = nil
 
     -- If the stream exists in runtime but is idle, channel_data.tail can be nil until we activate inputs.
     -- Try to retain first (when available) to bring the pipeline up, then re-check tail.
-    if channel_data and can_retain and not can_tail then
+    if (not input_url_override) and channel_data and can_retain and not can_tail then
         job.channel_data = channel_data
         local ok, retained = pcall(_G.channel_retain, channel_data, "analyze")
         if ok and retained then
@@ -2614,6 +2630,20 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         end
         upstream = channel_data.tail:stream()
     else
+        if input_url_override and input_url then
+            local conf = parse_url(input_url)
+            if not conf then
+                return error_response(server, client, 400, "invalid input url")
+            end
+            conf.name = analyze_name
+
+            local input = init_input(conf)
+            if not input then
+                return error_response(server, client, 500, "failed to init input")
+            end
+            job.input = input
+            upstream = input.tail:stream()
+        else
         -- Fallback: analyze through loopback /play. This avoids SSRF allowlist issues for remote inputs
         -- and ensures the analyzed TS matches what external clients see.
         -- Даже если канал ещё не активен (нет viewers / on-demand), loopback /play
@@ -2641,6 +2671,7 @@ local function start_stream_analyze(server, client, request, stream_id_override)
         end
         job.input = input
         upstream = input.tail:stream()
+        end
     end
 
     stream_analyze.active = stream_analyze.active + 1
