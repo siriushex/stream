@@ -2240,12 +2240,24 @@ init_input_module.udp = function(conf)
         instance = { clients = 0, }
         udp_input_instance_list[instance_id] = instance
 
+        local use_recvmmsg = conf.use_recvmmsg
+        if use_recvmmsg == nil then
+            use_recvmmsg = (read_setting("performance_udp_batching") == true)
+        end
+
+        local rx_batch = conf.rx_batch
+        if rx_batch == nil and (read_setting("performance_udp_batching") == true) then
+            rx_batch = read_setting("performance_udp_rx_batch")
+        end
+
         instance.input = udp_input({
             addr = conf.addr, port = conf.port, localaddr = localaddr,
             socket_size = conf.socket_size,
             renew = conf.renew,
             rtp = conf.rtp,
             read_burst = conf.read_burst,
+            use_recvmmsg = use_recvmmsg,
+            rx_batch = rx_batch,
         })
     end
 

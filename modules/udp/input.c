@@ -30,12 +30,17 @@
  *      renew       - number, renewing multicast subscription interval in seconds
  *      rtp         - boolean, use RTP instead RAW UDP
  *      read_burst  - number, how many datagrams to drain per on_read callback (default: 1)
+ *      use_recvmmsg- boolean, use recvmmsg() for batched receive (Linux only, default: off)
+ *      rx_batch    - number, max datagrams per recvmmsg() call (default: 32, range: 1..64)
  *
  * Module Methods:
  *      port()      - return number, random port number
  */
 
 #include <astra.h>
+#ifdef __linux__
+#include <sys/socket.h>
+#endif
 
 #define UDP_BUFFER_SIZE 1460
 #define RTP_HEADER_SIZE 12
@@ -57,6 +62,8 @@ struct module_data_t
         const char *localaddr;
         bool rtp;
         int read_burst;
+        bool use_recvmmsg;
+        int rx_batch;
     } config;
 
     bool is_error_message;
@@ -65,6 +72,16 @@ struct module_data_t
     asc_timer_t *timer_renew;
 
     uint8_t buffer[UDP_BUFFER_SIZE];
+
+#ifdef __linux__
+    struct
+    {
+        struct mmsghdr *msgs;
+        struct iovec *iov;
+        uint8_t *buffers;
+        int capacity;
+    } rxmmsg;
+#endif
 };
 
 static void on_close(void *arg)
@@ -83,6 +100,25 @@ static void on_close(void *arg)
         asc_timer_destroy(mod->timer_renew);
         mod->timer_renew = NULL;
     }
+
+#ifdef __linux__
+    if(mod->rxmmsg.buffers)
+    {
+        free(mod->rxmmsg.buffers);
+        mod->rxmmsg.buffers = NULL;
+    }
+    if(mod->rxmmsg.iov)
+    {
+        free(mod->rxmmsg.iov);
+        mod->rxmmsg.iov = NULL;
+    }
+    if(mod->rxmmsg.msgs)
+    {
+        free(mod->rxmmsg.msgs);
+        mod->rxmmsg.msgs = NULL;
+    }
+    mod->rxmmsg.capacity = 0;
+#endif
 }
 
 static void on_read(void *arg)
@@ -92,6 +128,68 @@ static void on_read(void *arg)
     int burst = mod->config.read_burst;
     if(burst <= 0)
         burst = 1;
+
+#ifdef __linux__
+    if(mod->config.use_recvmmsg && mod->rxmmsg.msgs && mod->rxmmsg.iov && mod->rxmmsg.buffers)
+    {
+        int processed = 0;
+        const int fd = asc_socket_fd(mod->sock);
+
+        while(processed < burst)
+        {
+            int want = burst - processed;
+            if(want > mod->config.rx_batch)
+                want = mod->config.rx_batch;
+            if(want <= 0)
+                break;
+
+            errno = 0;
+            const int r = recvmmsg(fd, mod->rxmmsg.msgs, want, MSG_DONTWAIT, NULL);
+            if(r <= 0)
+            {
+                if(r == 0 || errno == EAGAIN || errno == EWOULDBLOCK)
+                    return;
+                on_close(mod);
+                return;
+            }
+
+            processed += r;
+
+            for(int n = 0; n < r; ++n)
+            {
+                const int len = mod->rxmmsg.msgs[n].msg_len;
+                const uint8_t *buffer = (const uint8_t *)mod->rxmmsg.iov[n].iov_base;
+                if(len <= 0)
+                    continue;
+
+                int i = 0;
+                if(mod->config.rtp)
+                {
+                    i = RTP_HEADER_SIZE;
+                    if(RTP_IS_EXT(buffer))
+                    {
+                        if(len < RTP_HEADER_SIZE + 4)
+                            continue;
+                        i += RTP_EXT_SIZE(buffer);
+                    }
+                }
+
+                for(; i <= len - TS_PACKET_SIZE; i += TS_PACKET_SIZE)
+                    module_stream_send(mod, &buffer[i]);
+
+                if(i != len && !mod->is_error_message)
+                {
+                    asc_log_error(MSG("wrong stream format. drop %d bytes"), len - i);
+                    mod->is_error_message = true;
+                }
+            }
+
+            if(r < want)
+                break;
+        }
+        return;
+    }
+#endif
 
     for(int n = 0; n < burst; ++n)
     {
@@ -165,6 +263,49 @@ static void module_init(module_data_t *mod)
     module_option_boolean("rtp", &mod->config.rtp);
     mod->config.read_burst = 1;
     module_option_number("read_burst", &mod->config.read_burst);
+
+    mod->config.use_recvmmsg = false;
+    module_option_boolean("use_recvmmsg", &mod->config.use_recvmmsg);
+
+    mod->config.rx_batch = 32;
+    module_option_number("rx_batch", &mod->config.rx_batch);
+    if(mod->config.rx_batch < 1)
+        mod->config.rx_batch = 1;
+    if(mod->config.rx_batch > 64)
+        mod->config.rx_batch = 64;
+
+#ifdef __linux__
+    if(mod->config.use_recvmmsg)
+    {
+        // Важно: если включили recvmmsg, но не задали read_burst, поднимем его до rx_batch,
+        // иначе профита по syscall не будет.
+        if(mod->config.read_burst <= 1)
+            mod->config.read_burst = mod->config.rx_batch;
+
+        mod->rxmmsg.capacity = mod->config.rx_batch;
+        mod->rxmmsg.msgs = (struct mmsghdr *)calloc(mod->rxmmsg.capacity, sizeof(struct mmsghdr));
+        mod->rxmmsg.iov = (struct iovec *)calloc(mod->rxmmsg.capacity, sizeof(struct iovec));
+        mod->rxmmsg.buffers = (uint8_t *)malloc((size_t)mod->rxmmsg.capacity * UDP_BUFFER_SIZE);
+
+        if(!mod->rxmmsg.msgs || !mod->rxmmsg.iov || !mod->rxmmsg.buffers)
+        {
+            asc_log_error(MSG("failed to allocate recvmmsg buffers"));
+            on_close(mod);
+            return;
+        }
+
+        for(int i = 0; i < mod->rxmmsg.capacity; ++i)
+        {
+            mod->rxmmsg.iov[i].iov_base = mod->rxmmsg.buffers + ((size_t)i * UDP_BUFFER_SIZE);
+            mod->rxmmsg.iov[i].iov_len = UDP_BUFFER_SIZE;
+            mod->rxmmsg.msgs[i].msg_hdr.msg_iov = &mod->rxmmsg.iov[i];
+            mod->rxmmsg.msgs[i].msg_hdr.msg_iovlen = 1;
+        }
+    }
+#else
+    if(mod->config.use_recvmmsg)
+        asc_log_warning(MSG("use_recvmmsg is not supported on this platform; ignored"));
+#endif
 
     asc_socket_set_on_read(mod->sock, on_read);
     asc_socket_set_on_close(mod->sock, on_close);

@@ -3011,6 +3011,17 @@ end
 init_output_module.udp = function(channel_data, output_id)
     local output_data = channel_data.output[output_id]
     local localaddr = resolve_output_localaddr(output_data.config)
+
+    local use_sendmmsg = output_data.config.use_sendmmsg
+    if use_sendmmsg == nil then
+        use_sendmmsg = setting_bool("performance_udp_batching", false)
+    end
+
+    local tx_batch = output_data.config.tx_batch
+    if tx_batch == nil and setting_bool("performance_udp_batching", false) then
+        tx_batch = get_setting("performance_udp_tx_batch")
+    end
+
     output_data.output = udp_output({
         upstream = channel_data.tail:stream(),
         addr = output_data.config.addr,
@@ -3021,6 +3032,8 @@ init_output_module.udp = function(channel_data, output_id)
         rtp = (output_data.config.format == "rtp"),
         sync = output_data.config.sync,
         cbr = output_data.config.cbr,
+        use_sendmmsg = use_sendmmsg,
+        tx_batch = tx_batch,
     })
 end
 
