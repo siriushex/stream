@@ -15735,6 +15735,9 @@ function closeInputModal() {
   state.inputRawInvalid = false;
   state.inputDetectorsInvalid = false;
   stopRadioPoll();
+  // Сбрасываем видимость блока Create radio при закрытии оверлея,
+  // чтобы он не "прилипал" при последующем открытии другого input.
+  setInputRadioVisibility('');
   setOverlay(elements.inputOverlay, false);
 }
 
