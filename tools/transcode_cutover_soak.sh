@@ -101,7 +101,7 @@ with open(out_path, "w", encoding="utf-8") as f:
   json.dump(cfg, f, indent=2)
 PY
 
-SERVER_CMD=( ./astra scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
+SERVER_CMD=( ./stream scripts/server.lua -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" --config "$RUNTIME_CONFIG_FILE" )
 if command -v setsid >/dev/null 2>&1; then
   setsid "${SERVER_CMD[@]}" >"$LOG_FILE" 2>&1 &
   SERVER_USE_SETSID=1
@@ -189,7 +189,7 @@ wait_pat() {
   for _ in $(seq 1 10); do
     set +e
     local out
-    out="$(./astra scripts/analyze.lua -n 2 "$url" 2>/dev/null)"
+    out="$(./stream scripts/analyze.lua -n 2 "$url" 2>/dev/null)"
     set -e
     if grep -q "PAT:" <<<"$out"; then
       ok=1

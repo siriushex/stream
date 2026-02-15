@@ -1,5 +1,5 @@
 [Unit]
-Description=ASTRAL Streaming Server (%i)
+Description=Stream server (%i)
 After=network.target
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -9,11 +9,11 @@ StartLimitBurst=3
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/home/hex/astra
-EnvironmentFile=/etc/astral/%i.env
+WorkingDirectory=/etc/stream
+EnvironmentFile=/etc/stream/%i.env
 ExecStartPre=/bin/sh -lc 'test -n "$PORT" && echo "$PORT" | grep -Eq "^[0-9]+$"'
 ExecStartPre=/bin/sh -lc 'test -n "$CONFIG" && test -r "$CONFIG"'
-ExecStart=/bin/sh -lc 'exec /home/hex/astra/astral -c "$CONFIG" -p "$PORT" $EXTRA_OPTS'
+ExecStart=/bin/sh -lc 'exec /usr/local/bin/stream -c "$CONFIG" -p "$PORT" $EXTRA_OPTS'
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=2

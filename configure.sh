@@ -7,7 +7,7 @@ Usage: $0 [OPTIONS]
     --help
 
     --bin=PATH                  - path to install binary file.
-                                  default value is /usr/bin/astra
+                                  default value is /usr/bin/stream
 
     --with-modules=PATH[:PATH]  - list of modules (by default: *)
                                   * - include all modules from ./modules dir.
@@ -35,7 +35,7 @@ SRCDIR=`dirname $0`
 MAKEFILE="Makefile"
 CONFFILE="config.h"
 
-APP="astra"
+APP="stream"
 APP_C="gcc"
 APP_STRIP="strip"
 

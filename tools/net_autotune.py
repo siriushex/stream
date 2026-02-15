@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Astral: scheduled per-input network autotune (HTTP/HTTPS/HLS).
+Stream: scheduled per-input network autotune (HTTP/HTTPS/HLS).
 
 Задача:
 - Для входов, помеченных опцией URL `#net_tune=1`, подобрать более устойчивый набор параметров.
@@ -153,30 +153,40 @@ def normalize_api_base(value: str) -> str:
     return base
 
 
-class AstralApiError(RuntimeError):
+class StreamApiError(RuntimeError):
     pass
 
 
-class AstralClient:
+class StreamClient:
     def __init__(self, api_base: str, username: str, password: str, timeout_sec: int = 30):
         self.api_base = normalize_api_base(api_base)
         self.timeout_sec = int(timeout_sec)
         self.cookiejar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookiejar))
-        self.session = None  # astra_session
+        self.session: Optional[str] = None
+        self.session_cookie_name: Optional[str] = None
         self._login(username, password)
 
     def _login(self, username: str, password: str) -> None:
         payload = {"username": username, "password": password}
         self._request_json("POST", "/auth/login", payload)
         token = None
+        cookie_name = None
         for c in self.cookiejar:
-            if c.name == "astra_session":
+            if c.name == "stream_session":
                 token = c.value
+                cookie_name = "stream_session"
                 break
         if not token:
-            raise AstralApiError("login ok but astra_session cookie is missing")
+            for c in self.cookiejar:
+                if c.name == "astra_session":
+                    token = c.value
+                    cookie_name = "astra_session"
+                    break
+        if not token:
+            raise StreamApiError("login ok but session cookie is missing")
         self.session = token
+        self.session_cookie_name = cookie_name
 
     def _request_json(self, method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
         url = self.api_base + path
@@ -188,7 +198,9 @@ class AstralClient:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         if self.session:
-            headers["Cookie"] = f"astra_session={self.session}"
+            # Use the cookie name returned by the server (supports older/newer deployments).
+            cookie_name = self.session_cookie_name or "stream_session"
+            headers["Cookie"] = f"{cookie_name}={self.session}"
             if method in ("POST", "PUT", "DELETE", "PATCH"):
                 headers["X-CSRF-Token"] = self.session
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
@@ -200,13 +212,13 @@ class AstralClient:
                 try:
                     return json.loads(raw)
                 except Exception:
-                    raise AstralApiError(f"invalid json from {path}")
+                    raise StreamApiError(f"invalid json from {path}")
         except urllib.error.HTTPError as e:
             raw = e.read().decode("utf-8", errors="replace") if hasattr(e, "read") else ""
             msg = raw.strip() or str(e)
-            raise AstralApiError(f"{method} {path}: HTTP {e.code}: {msg}")
+            raise StreamApiError(f"{method} {path}: HTTP {e.code}: {msg}")
         except urllib.error.URLError as e:
-            raise AstralApiError(f"{method} {path}: network error: {e}")
+            raise StreamApiError(f"{method} {path}: network error: {e}")
 
     def list_streams(self) -> List[Dict[str, Any]]:
         payload = self._request_json("GET", "/streams")
@@ -214,7 +226,7 @@ class AstralClient:
             return payload
         if isinstance(payload, dict) and isinstance(payload.get("streams"), list):
             return payload["streams"]
-        raise AstralApiError("unexpected /streams payload")
+        raise StreamApiError("unexpected /streams payload")
 
     def get_stream(self, stream_id: str) -> Dict[str, Any]:
         return self._request_json("GET", f"/streams/{stream_id}")
@@ -501,7 +513,7 @@ def acquire_lock(lock_file: str) -> Optional[int]:
 
 
 def tune_one_input(
-    client: AstralClient,
+    client: StreamClient,
     stream_id: str,
     input_index: int,
     original_url: str,
@@ -544,7 +556,7 @@ def tune_one_input(
             cfg = copy.deepcopy(cfg)
             inputs = normalize_input_list(cfg)
             if input_index < 0 or input_index >= len(inputs):
-                raise AstralApiError(f"stream {stream_id}: input index {input_index} out of range")
+                raise StreamApiError(f"stream {stream_id}: input index {input_index} out of range")
             # Поддержим и string и table input entries.
             entry = inputs[input_index]
             if isinstance(entry, str):
@@ -614,7 +626,7 @@ def tune_one_input(
 
 def main(argv: List[str]) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--api", required=True, help="Astral base URL, e.g. http://127.0.0.1:9060")
+    ap.add_argument("--api", required=True, help="Stream base URL, e.g. http://127.0.0.1:9060")
     ap.add_argument("--username", default="admin")
     ap.add_argument("--password", default="admin")
     ap.add_argument("--stream-id", action="append", help="Tune only this stream id (repeatable)")
@@ -623,7 +635,7 @@ def main(argv: List[str]) -> int:
     ap.add_argument("--poll-sec", type=int, default=10, help="Status polling interval (sec)")
     ap.add_argument("--candidates", default="bad,max,superbad", help="Comma-separated profiles to try")
     ap.add_argument("--jitter-variants-ms", default="2000,6000,12000", help="Comma-separated jitter_buffer_ms values for bad/max candidates")
-    ap.add_argument("--lock-file", default="/tmp/astral_net_autotune.lock", help="Lock file to avoid overlapping runs")
+    ap.add_argument("--lock-file", default="/tmp/stream_net_autotune.lock", help="Lock file to avoid overlapping runs")
     ap.add_argument("--dry-run", action="store_true", help="Don't apply changes, only print what would be done")
     args = ap.parse_args(argv)
 
@@ -651,7 +663,7 @@ def main(argv: List[str]) -> int:
     jitter_variants = sorted(set(jitter_variants))
     candidates = expand_candidates(base_candidates, jitter_variants)
 
-    client = AstralClient(args.api, args.username, args.password)
+    client = StreamClient(args.api, args.username, args.password)
 
     if args.stream_id:
         stream_ids = [str(x).strip() for x in args.stream_id if str(x).strip()]

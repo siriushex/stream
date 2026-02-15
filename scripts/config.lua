@@ -580,7 +580,21 @@ config.migrations = {
 function config.init(opts)
     opts = opts or {}
     local data_dir = opts.data_dir or "./data"
-    local db_path = opts.db_path or (data_dir .. "/astra.db")
+    local db_path = opts.db_path
+    if not db_path or tostring(db_path) == "" then
+        local preferred = data_dir .. "/stream.db"
+        local legacy = data_dir .. "/astra.db"
+        db_path = preferred
+        if utils and type(utils.stat) == "function" then
+            local st_preferred = utils.stat(preferred)
+            if not st_preferred or st_preferred.type ~= "file" then
+                local st_legacy = utils.stat(legacy)
+                if st_legacy and st_legacy.type == "file" then
+                    db_path = legacy
+                end
+            end
+        end
+    end
 
     ensure_dir(data_dir)
     config.data_dir = data_dir

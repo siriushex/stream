@@ -37,6 +37,8 @@ Service:
 Deps:
   --no-ffmpeg              Skip installing ffmpeg/ffprobe + dev libs.
   --runtime-only           Install only runtime deps (no compiler toolchain). Requires --mode binary.
+  --verify-transcode       After install, verify FULL build + ffmpeg availability (exit non-zero on failure).
+  --no-verify-transcode    Disable transcode verification (overrides --verify-transcode).
   --dry-run                Print actions without running them.
   -h, --help               Show help.
 
@@ -65,6 +67,7 @@ INSTANCE_NAME=""
 PORT=""
 ENABLE_SERVICE=0
 ALLOW_GENERIC=0
+VERIFY_TRANSCODE=0
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -128,6 +131,10 @@ while [ "${#:-0}" -gt 0 ]; do
       RUNTIME_ONLY=1; shift;;
     --allow-generic)
       ALLOW_GENERIC=1; shift;;
+    --verify-transcode)
+      VERIFY_TRANSCODE=1; shift;;
+    --no-verify-transcode)
+      VERIFY_TRANSCODE=0; shift;;
     --dry-run)
       DRY_RUN=1; shift;;
     --name)
@@ -397,13 +404,31 @@ build_from_source() {
       die "Could not find configure.sh in extracted sources. Provide --url explicitly."
     fi
   else
-    log "Cloning sources: $GIT_URL (ref: $GIT_REF)"
-    run mkdir -p "$WORKDIR"
-    run rm -rf "$WORKDIR/src"
-    (cd "$WORKDIR" && run git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src)
-    src_root="$WORKDIR/src"
-    if [ ! -f "$src_root/configure.sh" ]; then
-      die "Could not find configure.sh in cloned sources. Try --git-ref or --url."
+    # Prefer source tarball from the artifact host (stream-src.tar.gz).
+    # Fall back to git clone if the tarball doesn't exist or can't be downloaded.
+    local url
+    url=$(resolve_url)
+    log "Downloading sources: $url"
+    local archive="$WORKDIR/stream-src.tar.gz"
+    if fetch_artifact "$url" "$archive"; then
+      run tar -xf "$archive" -C "$WORKDIR"
+      src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+      if [ -z "$src_root" ]; then
+        warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+      fi
+    else
+      warn "Source tarball download failed. Falling back to git clone."
+    fi
+
+    if [ -z "$src_root" ]; then
+      log "Cloning sources: $GIT_URL (ref: $GIT_REF)"
+      run mkdir -p "$WORKDIR"
+      run rm -rf "$WORKDIR/src"
+      (cd "$WORKDIR" && run git clone --depth 1 --branch "$GIT_REF" "$GIT_URL" src)
+      src_root="$WORKDIR/src"
+      if [ ! -f "$src_root/configure.sh" ]; then
+        die "Could not find configure.sh in cloned sources. Try --git-ref or --url."
+      fi
     fi
   fi
 
@@ -412,11 +437,11 @@ build_from_source() {
   # даже если в системе нет libdvbcsa-dev.
   (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
 
-  if [ ! -x "$src_root/astra" ]; then
-    die "Build succeeded but binary 'astra' not found."
+  if [ ! -x "$src_root/stream" ]; then
+    die "Build succeeded but binary 'stream' not found."
   fi
 
-  run install -m 755 "$src_root/astra" "$BIN_PATH"
+  run install -m 755 "$src_root/stream" "$BIN_PATH"
 
   if [ "$INSTALL_WEB" -eq 1 ]; then
     run mkdir -p /usr/local/share/stream/web
@@ -532,6 +557,37 @@ check_runtime_libs() {
   fi
 }
 
+verify_transcode() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] verify transcode (skipped)"
+    return 0
+  fi
+
+  log "Verifying transcode..."
+
+  local out=""
+  local status=0
+  set +e
+  out="$("$BIN_PATH" --help 2>&1)"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    die "Failed to run ${BIN_PATH} --help (${status}). Output: ${out}"
+  fi
+  if ! echo "$out" | grep -q "Build: FULL"; then
+    die "Installed build is not FULL (no transcode). Reinstall FULL build or rebuild from sources without --without-transcode."
+  fi
+
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    die "ffmpeg not found. Re-run installer without --no-ffmpeg, or install ffmpeg manually."
+  fi
+  if ! ffmpeg -hide_banner -version >/dev/null 2>&1; then
+    die "ffmpeg is installed but not runnable. Check missing shared libraries or reinstall ffmpeg."
+  fi
+
+  log "Transcode verification: OK"
+}
+
 write_systemd_unit() {
   # В контейнерах (Docker) и некоторых минимальных окружениях systemd не работает.
   # Установку бинарника и конфигов делаем всё равно, а сервис пропускаем.
@@ -577,13 +633,13 @@ write_instance_files() {
     PORT="8816"
   fi
 
-  {
-    printf 'STREAM_PORT=%s\n' "$PORT"
-    if [ "$INSTALL_WEB" -eq 1 ]; then
-      printf 'ASTRAL_WEB_DIR=%s\n' "/usr/local/share/stream/web"
-    fi
-  } > "$env"
-}
+	  {
+	    printf 'STREAM_PORT=%s\n' "$PORT"
+	    if [ "$INSTALL_WEB" -eq 1 ]; then
+	      printf 'STREAM_WEB_DIR=%s\n' "/usr/local/share/stream/web"
+	    fi
+	  } > "$env"
+	}
 
 maybe_enable_service() {
   if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then
@@ -638,6 +694,10 @@ main() {
   write_systemd_unit
   write_instance_files
   maybe_enable_service
+
+  if [ "$VERIFY_TRANSCODE" -eq 1 ]; then
+    verify_transcode
+  fi
 
   log "Done. Binary: $BIN_PATH"
   log "Config root: $DATA_DIR"

@@ -10,10 +10,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 BIN="${ROOT_DIR}/stream"
 if [[ ! -x "${BIN}" ]]; then
-  BIN="${ROOT_DIR}/astra"
-fi
-if [[ ! -x "${BIN}" ]]; then
-  echo "ERROR: stream/astra binary not found: ${ROOT_DIR}"
+  echo "ERROR: stream binary not found: ${ROOT_DIR}"
   exit 1
 fi
 

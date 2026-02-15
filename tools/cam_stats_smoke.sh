@@ -34,10 +34,10 @@ need_cmd python3
 need_cmd ffmpeg
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ASTRA_BIN="${ASTRA_BIN:-$ROOT_DIR/astra}"
+STREAM_BIN="${STREAM_BIN:-$ROOT_DIR/stream}"
 WEB_DIR="${WEB_DIR:-$ROOT_DIR/web}"
 
-[[ -x "$ASTRA_BIN" ]] || die "astra binary not found or not executable: $ASTRA_BIN"
+[[ -x "$STREAM_BIN" ]] || die "stream binary not found or not executable: $STREAM_BIN"
 [[ -d "$WEB_DIR" ]] || die "web dir not found: $WEB_DIR"
 
 PORT="${PORT:-$(pick_free_port)}"
@@ -47,22 +47,22 @@ STREAM_ID="${STREAM_ID:-cam_demo}"
 SOFTCAM_ID="${SOFTCAM_ID:-sc_demo}"
 POOL_SIZE="${POOL_SIZE:-4}"
 
-WORKDIR="${WORKDIR:-$(mktemp -d -t astra_cam_stats_smoke.XXXXXX)}"
+WORKDIR="${WORKDIR:-$(mktemp -d -t stream_cam_stats_smoke.XXXXXX)}"
 DATA_DIR="$WORKDIR/data"
 CFG="$WORKDIR/cam_stats_smoke.json"
-ASTRA_LOG="$WORKDIR/astra.log"
+STREAM_LOG="$WORKDIR/stream.log"
 FFMPEG_LOG="$WORKDIR/ffmpeg.log"
 
-ASTRA_PID=""
+STREAM_PID=""
 FFMPEG_PID=""
 
 cleanup() {
   set +e
-  if [[ -n "$ASTRA_PID" ]]; then
-    kill "$ASTRA_PID" >/dev/null 2>&1 || true
+  if [[ -n "$STREAM_PID" ]]; then
+    kill "$STREAM_PID" >/dev/null 2>&1 || true
     sleep 0.3
-    kill -9 "$ASTRA_PID" >/dev/null 2>&1 || true
-    wait "$ASTRA_PID" >/dev/null 2>&1 || true
+    kill -9 "$STREAM_PID" >/dev/null 2>&1 || true
+    wait "$STREAM_PID" >/dev/null 2>&1 || true
   fi
   if [[ -n "$FFMPEG_PID" ]]; then
     kill "$FFMPEG_PID" >/dev/null 2>&1 || true
@@ -126,9 +126,9 @@ ffmpeg -loglevel error -re \
   >"$FFMPEG_LOG" 2>&1 &
 FFMPEG_PID="$!"
 
-echo "Starting Astra on 127.0.0.1:${PORT} (data-dir=${DATA_DIR})..." >&2
-"$ASTRA_BIN" "$CFG" -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$ASTRA_LOG" 2>&1 &
-ASTRA_PID="$!"
+echo "Starting Stream on 127.0.0.1:${PORT} (data-dir=${DATA_DIR})..." >&2
+"$STREAM_BIN" "$CFG" -p "$PORT" --data-dir "$DATA_DIR" --web-dir "$WEB_DIR" >"$STREAM_LOG" 2>&1 &
+STREAM_PID="$!"
 
 HEALTH_URL="http://127.0.0.1:${PORT}/api/v1/health"
 echo "Waiting for health: $HEALTH_URL" >&2
@@ -141,7 +141,7 @@ for _ in $(seq 1 80); do
 done
 
 code="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" || true)"
-[[ "$code" == "200" ]] || die "health endpoint not ready (see $ASTRA_LOG)"
+[[ "$code" == "200" ]] || die "health endpoint not ready (see $STREAM_LOG)"
 
 LOGIN_URL="http://127.0.0.1:${PORT}/api/v1/auth/login"
 echo "Logging in via API (admin/admin)..." >&2
@@ -157,7 +157,7 @@ token=data.get("token") or ""
 print(token)
 PY
 )"
-[[ -n "$TOKEN" ]] || die "login failed (see $LOGIN_JSON / $ASTRA_LOG)"
+[[ -n "$TOKEN" ]] || die "login failed (see $LOGIN_JSON / $STREAM_LOG)"
 
 CAM_URL="http://127.0.0.1:${PORT}/api/v1/streams/${STREAM_ID}/cam-stats"
 OUT_JSON="$WORKDIR/cam_stats.json"

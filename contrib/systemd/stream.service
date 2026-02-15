@@ -1,0 +1,17 @@
+[Unit]
+Description=Stream server
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/etc/stream
+EnvironmentFile=-/etc/default/stream
+ExecStart=/usr/local/bin/stream -c ${STREAM_CONFIG} -p ${STREAM_HTTP_PORT} --data-dir ${STREAM_DATA_DIR} --web-dir ${STREAM_WEB_DIR} ${STREAM_EXTRA_ARGS}
+Restart=on-failure
+RestartSec=2
+RestartPreventExitStatus=78
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

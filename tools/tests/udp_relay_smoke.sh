@@ -14,10 +14,7 @@ OUT_PORT=19351
 
 STREAM_BIN="${ROOT_DIR}/stream"
 if [[ ! -x "${STREAM_BIN}" ]]; then
-  STREAM_BIN="${ROOT_DIR}/astra"
-fi
-if [[ ! -x "${STREAM_BIN}" ]]; then
-  echo "ERROR: stream/astra binary not found/executable"
+  echo "ERROR: stream binary not found/executable: ${STREAM_BIN}"
   exit 1
 fi
 

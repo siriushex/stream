@@ -1,7 +1,7 @@
--- Cesbo Astra API client unit tests (basic request building + retries + errors)
+-- Cesbo Stream API client unit tests (basic request building + retries + errors)
 
 dofile("scripts/base.lua")
-dofile("scripts/astra_api_client.lua")
+dofile("scripts/cesbo_api_client.lua")
 
 local function assert_true(v, msg)
     if not v then
@@ -58,7 +58,7 @@ do
         { code = 200, headers = {}, content = "{\"ok\":true}" },
     }
 
-    local client, err = AstraApiClient.new({
+    local client, err = CesboApiClient.new({
         baseUrl = "http://example.com:8000",
         login = "admin",
         password = "pass",
@@ -89,7 +89,7 @@ do
         { code = 200, headers = {}, content = "{\"result\":\"ok\"}" },
     }
 
-    local client, err = AstraApiClient.new({
+    local client, err = CesboApiClient.new({
         baseUrl = "http://127.0.0.1:8000",
         login = "u",
         password = "p",
@@ -119,7 +119,7 @@ do
         { code = 200, headers = {}, content = "{\"x\":1}" },
     }
 
-    local client, err = AstraApiClient.new({
+    local client, err = CesboApiClient.new({
         baseUrl = "http://127.0.0.1:8000",
         login = "u",
         password = "p",
@@ -144,7 +144,7 @@ do
         { code = 403, headers = {}, content = "{\"err\":\"denied\"}" },
     }
 
-    local client, err = AstraApiClient.new({
+    local client, err = CesboApiClient.new({
         baseUrl = "http://127.0.0.1:8000",
         login = "u",
         password = "p",
@@ -162,6 +162,5 @@ do
     assert_eq(#requests, 1, "no retry on 4xx")
 end
 
-print("astra_api_client_unit: ok")
+print("cesbo_api_client_unit: ok")
 astra.exit()
-

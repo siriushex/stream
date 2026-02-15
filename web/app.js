@@ -5,7 +5,14 @@ const VIEW_DEFAULT_VERSION_KEY = 'ui_view_default_version';
 const TILE_DEFAULT_VERSION_KEY = 'ui_tiles_default_version';
 const SETTINGS_ADVANCED_KEY = 'astral.settings.advanced';
 const SETTINGS_DENSITY_KEY = 'astral.settings.density';
-const SHOW_DISABLED_KEY = 'astra.showDisabledStreams';
+const VIEW_MODE_KEY = 'stream.viewMode';
+const VIEW_MODE_KEY_LEGACY = 'astra.viewMode';
+const THEME_KEY = 'stream.theme';
+const THEME_KEY_LEGACY = 'astra.theme';
+const AUTH_TOKEN_KEY = 'stream_token';
+const AUTH_TOKEN_KEY_LEGACY = 'astra_token';
+const SHOW_DISABLED_KEY = 'stream.showDisabledStreams';
+const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const HELP_GUIDE_STATE_KEY = 'helpGuide.expanded';
 const SIDEBAR_HELP_KEYS = {
@@ -311,18 +318,19 @@ function loadTilesUiState() {
 }
 
 function loadViewModeState() {
-  const stored = localStorage.getItem('astra.viewMode');
+  const stored = localStorage.getItem(VIEW_MODE_KEY) || localStorage.getItem(VIEW_MODE_KEY_LEGACY);
   const version = localStorage.getItem(VIEW_DEFAULT_VERSION_KEY);
   const mode = normalizeViewMode((stored && version === '20260205') ? stored : 'cards');
   if (version !== '20260205') {
-    localStorage.setItem('astra.viewMode', mode);
+    localStorage.setItem(VIEW_MODE_KEY, mode);
     localStorage.setItem(VIEW_DEFAULT_VERSION_KEY, '20260205');
   }
   return mode;
 }
 
 function loadShowDisabledState() {
-  const stored = localStorage.getItem(SHOW_DISABLED_KEY);
+  const stored = localStorage.getItem(SHOW_DISABLED_KEY)
+    || localStorage.getItem(SHOW_DISABLED_KEY_LEGACY);
   if (stored === null || stored === undefined || stored === '') {
     localStorage.setItem(SHOW_DISABLED_KEY, '1');
     return true;
@@ -439,7 +447,7 @@ const state = {
   users: [],
   accessLogEntries: [],
   auditEntries: [],
-  token: localStorage.getItem('astra_token'),
+  token: localStorage.getItem(AUTH_TOKEN_KEY) || localStorage.getItem(AUTH_TOKEN_KEY_LEGACY),
   editing: null,
   streamIdAuto: false,
   adapterEditing: null,
@@ -642,7 +650,7 @@ const state = {
   aiChatBusy: false,
   aiChatPreviewUrls: [],
   viewMode: loadViewModeState(),
-  themeMode: localStorage.getItem('astra.theme') || 'auto',
+  themeMode: localStorage.getItem(THEME_KEY) || localStorage.getItem(THEME_KEY_LEGACY) || 'auto',
   tilesUi: loadTilesUiState(),
   showDisabledStreams: loadShowDisabledState(),
   dashboardNoticeTimer: null,
@@ -2041,7 +2049,7 @@ const elements = {
 
 const defaults = {
   hlsBase: '/hls',
-  hlsDir: '/tmp/astra-data/hls',
+  hlsDir: '/tmp/stream-data/hls',
 };
 
 const OUTPUT_AUDIO_FIX_DEFAULTS = {
@@ -3729,6 +3737,92 @@ const SETTINGS_GENERAL_SECTIONS = [
         },
       },
       {
+        id: 'transcode-qsv',
+        title: 'Intel QSV',
+        description: 'Env vars и дефолты для Quick Sync Video (QSV).',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-qsv-libva-driver-name',
+            label: 'LIBVA_DRIVER_NAME',
+            type: 'input',
+            inputType: 'text',
+            key: 'qsv_libva_driver_name',
+            level: 'advanced',
+            placeholder: 'iHD',
+          },
+          {
+            id: 'settings-qsv-libva-drivers-path',
+            label: 'LIBVA_DRIVERS_PATH',
+            type: 'input',
+            inputType: 'text',
+            key: 'qsv_libva_drivers_path',
+            level: 'advanced',
+            placeholder: '/opt/intel/mediasdk/lib64',
+          },
+          {
+            id: 'settings-qsv-preset',
+            label: 'Default QSV preset',
+            type: 'select',
+            key: 'qsv_preset',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: fast)' },
+              { value: 'fast', label: 'fast' },
+              { value: 'medium', label: 'medium' },
+              { value: 'slow', label: 'slow' },
+            ],
+          },
+          {
+            id: 'settings-qsv-lookahead-depth',
+            label: 'Default look_ahead_depth',
+            type: 'input',
+            inputType: 'number',
+            key: 'qsv_look_ahead_depth',
+            level: 'advanced',
+            placeholder: '50',
+          },
+          {
+            id: 'settings-qsv-h264-profile',
+            label: 'Default h264 profile',
+            type: 'select',
+            key: 'qsv_h264_profile',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: high)' },
+              { value: 'high', label: 'high' },
+              { value: 'main', label: 'main' },
+              { value: 'baseline', label: 'baseline' },
+            ],
+          },
+          {
+            id: 'settings-qsv-hevc-profile',
+            label: 'Default hevc profile',
+            type: 'select',
+            key: 'qsv_hevc_profile',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: main)' },
+              { value: 'main', label: 'main' },
+              { value: 'main10', label: 'main10' },
+            ],
+          },
+          {
+            type: 'note',
+            text: 'Применяется только при transcode.engine=qsv; значения можно переопределить на уровне stream.transcode (qsv_*).',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const name = readStringValue('settings-qsv-libva-driver-name', '') || 'iHD';
+          const path = readStringValue('settings-qsv-libva-drivers-path', '') || '/opt/intel/mediasdk/lib64';
+          const preset = readStringValue('settings-qsv-preset', '') || 'fast';
+          const lookahead = readNumberValue('settings-qsv-lookahead-depth', 50);
+          return `${preset} · lookahead=${lookahead} · ${name} · ${path}`;
+        },
+      },
+      {
         id: 'https-inputs',
         title: 'HTTP inputs',
         description: 'HTTPS‑входы через FFmpeg‑мост.',
@@ -4524,6 +4618,12 @@ function bindGeneralElements() {
     settingsInfluxInterval: 'settings-influx-interval',
     settingsFfmpegPath: 'settings-ffmpeg-path',
     settingsFfprobePath: 'settings-ffprobe-path',
+    settingsQsvLibvaDriverName: 'settings-qsv-libva-driver-name',
+    settingsQsvLibvaDriversPath: 'settings-qsv-libva-drivers-path',
+    settingsQsvPreset: 'settings-qsv-preset',
+    settingsQsvLookaheadDepth: 'settings-qsv-lookahead-depth',
+    settingsQsvH264Profile: 'settings-qsv-h264-profile',
+    settingsQsvHevcProfile: 'settings-qsv-hevc-profile',
     settingsHttpsBridgeEnabled: 'settings-https-bridge-enabled',
     settingsHttpCsrf: 'settings-http-csrf',
     settingsShowSecurityLimits: 'settings-show-security-limits',
@@ -7048,7 +7148,7 @@ function setViewMode(mode, opts) {
   const next = normalizeViewMode(mode);
   state.viewMode = next;
   if (!opts || opts.persist !== false) {
-    localStorage.setItem('astra.viewMode', next);
+    localStorage.setItem(VIEW_MODE_KEY, next);
   }
   if (elements.streamViews) {
     elements.streamViews.dataset.viewMode = next;
@@ -7075,7 +7175,7 @@ function setThemeMode(mode, opts) {
   const next = normalizeThemeMode(mode);
   state.themeMode = next;
   if (!opts || opts.persist !== false) {
-    localStorage.setItem('astra.theme', next);
+    localStorage.setItem(THEME_KEY, next);
   }
   applyThemeMode(next);
   updateViewMenuSelection();
@@ -8935,6 +9035,7 @@ function buildPresetProfile(profile) {
   const height = Number(profile && profile.height) || 0;
   const bitrateKbps = Number(profile && profile.bitrate_kbps) || 0;
   const maxrateKbps = Number(profile && profile.maxrate_kbps) || 0;
+  const bufsizeKbps = toNumber(profile && profile.bufsize_kbps);
   const audioBitrateKbps = Number(profile && profile.audio_bitrate_kbps) || 128;
   const audioSr = Number(profile && profile.audio_sr) || 48000;
   const audioChannels = Number(profile && profile.audio_channels) || 2;
@@ -8946,11 +9047,14 @@ function buildPresetProfile(profile) {
     fps,
     bitrate_kbps: bitrateKbps,
     maxrate_kbps: maxrateKbps || Math.floor(bitrateKbps * 1.2),
+    bufsize_kbps: bufsizeKbps,
     audio_mode: 'aac',
     audio_bitrate_kbps: audioBitrateKbps,
     audio_sr: audioSr,
     audio_channels: audioChannels,
     deinterlace: String(profile && profile.deinterlace || 'auto'),
+    video_codec: (profile && profile.video_codec) ? String(profile.video_codec) : undefined,
+    video_args: Array.isArray(profile && profile.video_args) ? profile.video_args.slice() : undefined,
   };
 }
 
@@ -8997,11 +9101,74 @@ const TRANSCODE_PRESETS = {
     decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
     profiles: getLadderPresetProfiles('3'),
   },
+  qsv_1080p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '1080p',
+      width: 1920,
+      height: 1080,
+      bitrate_kbps: 4500,
+      maxrate_kbps: 5500,
+      bufsize_kbps: 8000,
+    })],
+  },
+  qsv_720p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3200,
+      bufsize_kbps: 5000,
+    })],
+  },
+  qsv_540p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '540p',
+      width: 960,
+      height: 540,
+      bitrate_kbps: 1500,
+      maxrate_kbps: 1900,
+      bufsize_kbps: 2048,
+    })],
+  },
+  qsv_hevc_1080p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '1080p',
+      width: 1920,
+      height: 1080,
+      bitrate_kbps: 4500,
+      maxrate_kbps: 5500,
+      bufsize_kbps: 8000,
+      video_codec: 'hevc_qsv',
+    })],
+  },
+  qsv_hevc_720p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3200,
+      bufsize_kbps: 5000,
+      video_codec: 'hevc_qsv',
+    })],
+  },
 };
 
 function normalizeMonitorEngine(value) {
   const text = String(value || '').toLowerCase();
-  if (text === 'ffprobe' || text === 'astra_analyze' || text === 'auto') return text;
+  if (text === 'ffprobe' || text === 'auto') return text;
+  if (text === 'stream_analyze' || text === 'astra_analyze' || text === 'analyze' || text === 'astra') return 'stream_analyze';
   return 'auto';
 }
 
@@ -19104,7 +19271,7 @@ function updateStreamAuthTokenSourceUi() {
     if (needsName) {
       if (kind === 'query') elements.streamAuthTokenName.placeholder = 'token';
       else if (kind === 'header') elements.streamAuthTokenName.placeholder = 'Authorization';
-      else if (kind === 'cookie') elements.streamAuthTokenName.placeholder = 'astra_token';
+      else if (kind === 'cookie') elements.streamAuthTokenName.placeholder = 'stream_token';
       else elements.streamAuthTokenName.placeholder = 'token';
     }
   }
@@ -19922,7 +20089,7 @@ function readStreamForm() {
       const header = name || 'Authorization';
       config.auth_token_source = `header:${header}`;
     } else if (kind === 'cookie') {
-      const cookie = name || 'astra_token';
+      const cookie = name || 'stream_token';
       config.auth_token_source = `cookie:${cookie}`;
     }
   }
@@ -20872,6 +21039,9 @@ function formatTranscodeAlert(alert) {
   }
   if (alert.code === 'TRANSCODE_GPU_UNAVAILABLE') {
     return `${alert.message}. Switch engine to CPU or install NVIDIA drivers.`;
+  }
+  if (alert.code === 'TRANSCODE_QSV_UNAVAILABLE') {
+    return `${alert.message}. QSV not available on this host (check /dev/dri/renderD* and ffmpeg h264_qsv/hevc_qsv encoders).`;
   }
   if (alert.code === 'TRANSCODE_SPAWN_FAILED') {
     return `${alert.message}. Check ffmpeg path and permissions.`;
@@ -25356,6 +25526,24 @@ function applySettingsToUI() {
   if (elements.settingsFfprobePath) {
     elements.settingsFfprobePath.value = getSettingString('ffprobe_path', '');
   }
+  if (elements.settingsQsvLibvaDriverName) {
+    elements.settingsQsvLibvaDriverName.value = getSettingString('qsv_libva_driver_name', '');
+  }
+  if (elements.settingsQsvLibvaDriversPath) {
+    elements.settingsQsvLibvaDriversPath.value = getSettingString('qsv_libva_drivers_path', '');
+  }
+  if (elements.settingsQsvPreset) {
+    setSelectValue(elements.settingsQsvPreset, getSettingString('qsv_preset', ''), '');
+  }
+  if (elements.settingsQsvLookaheadDepth) {
+    elements.settingsQsvLookaheadDepth.value = getSettingNumber('qsv_look_ahead_depth', '');
+  }
+  if (elements.settingsQsvH264Profile) {
+    setSelectValue(elements.settingsQsvH264Profile, getSettingString('qsv_h264_profile', ''), '');
+  }
+  if (elements.settingsQsvHevcProfile) {
+    setSelectValue(elements.settingsQsvHevcProfile, getSettingString('qsv_hevc_profile', ''), '');
+  }
   if (elements.settingsHttpsBridgeEnabled) {
     elements.settingsHttpsBridgeEnabled.checked = getSettingBool('https_bridge_enabled', false);
   }
@@ -26104,6 +26292,34 @@ function collectGeneralSettings() {
   if (influxInterval !== undefined && influxInterval < 5) {
     throw new Error('Influx interval must be >= 5');
   }
+  const qsvLibvaDriverName = elements.settingsQsvLibvaDriverName
+    ? elements.settingsQsvLibvaDriverName.value.trim()
+    : '';
+  const qsvLibvaDriversPath = elements.settingsQsvLibvaDriversPath
+    ? elements.settingsQsvLibvaDriversPath.value.trim()
+    : '';
+  const qsvPreset = elements.settingsQsvPreset
+    ? String(elements.settingsQsvPreset.value || '').trim().toLowerCase()
+    : '';
+  if (qsvPreset && !['fast', 'medium', 'slow'].includes(qsvPreset)) {
+    throw new Error('QSV preset must be fast, medium or slow');
+  }
+  const qsvLookaheadDepth = toNumber(elements.settingsQsvLookaheadDepth && elements.settingsQsvLookaheadDepth.value);
+  if (qsvLookaheadDepth !== undefined && (qsvLookaheadDepth < 0 || qsvLookaheadDepth > 100)) {
+    throw new Error('QSV look-ahead depth must be 0..100');
+  }
+  const qsvH264Profile = elements.settingsQsvH264Profile
+    ? String(elements.settingsQsvH264Profile.value || '').trim().toLowerCase()
+    : '';
+  if (qsvH264Profile && !['high', 'main', 'baseline'].includes(qsvH264Profile)) {
+    throw new Error('QSV h264 profile must be high, main or baseline');
+  }
+  const qsvHevcProfile = elements.settingsQsvHevcProfile
+    ? String(elements.settingsQsvHevcProfile.value || '').trim().toLowerCase()
+    : '';
+  if (qsvHevcProfile && !['main', 'main10'].includes(qsvHevcProfile)) {
+    throw new Error('QSV hevc profile must be main or main10');
+  }
   const sessionTtl = toNumber(elements.settingsAuthSessionTtl && elements.settingsAuthSessionTtl.value);
   if (sessionTtl !== undefined && sessionTtl < 300) {
     throw new Error('Session TTL must be >= 300');
@@ -26379,6 +26595,12 @@ function collectGeneralSettings() {
   if (influxInterval !== undefined) payload.influx_interval_sec = influxInterval;
   if (elements.settingsFfmpegPath) payload.ffmpeg_path = elements.settingsFfmpegPath.value.trim();
   if (elements.settingsFfprobePath) payload.ffprobe_path = elements.settingsFfprobePath.value.trim();
+  if (elements.settingsQsvLibvaDriverName) payload.qsv_libva_driver_name = qsvLibvaDriverName;
+  if (elements.settingsQsvLibvaDriversPath) payload.qsv_libva_drivers_path = qsvLibvaDriversPath;
+  if (elements.settingsQsvPreset) payload.qsv_preset = qsvPreset;
+  if (qsvLookaheadDepth !== undefined) payload.qsv_look_ahead_depth = Math.floor(qsvLookaheadDepth);
+  if (elements.settingsQsvH264Profile) payload.qsv_h264_profile = qsvH264Profile;
+  if (elements.settingsQsvHevcProfile) payload.qsv_hevc_profile = qsvHevcProfile;
   if (elements.settingsHttpsBridgeEnabled) {
     payload.https_bridge_enabled = elements.settingsHttpsBridgeEnabled.checked;
   }
@@ -29745,7 +29967,8 @@ async function submitLogin(event) {
 
     if (data.token) {
       state.token = data.token;
-      localStorage.setItem('astra_token', data.token);
+      localStorage.setItem(AUTH_TOKEN_KEY, data.token);
+      localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
     }
 
     setOverlay(elements.loginOverlay, false);
@@ -29761,7 +29984,8 @@ async function logout() {
   } catch (err) {
   }
   state.token = null;
-  localStorage.removeItem('astra_token');
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
   pauseAllPolling();
   setOverlay(elements.loginOverlay, true);
 }

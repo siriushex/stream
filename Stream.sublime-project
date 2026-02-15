@@ -6,9 +6,9 @@
 			[
 				".hg*",
 				".git*",
-				"Astra.sublime-*"
+				"Stream.sublime-*"
 			],
-			"path": "/Volumes/Projects/Astra/Public"
+			"path": "."
 		}
 	],
 	"settings":
@@ -29,7 +29,7 @@
 	"build_systems":
 	[
 		{
-			"name": "Astra",
+			"name": "Stream",
 			"working_dir": "${project_path}",
 			"cmd": [ "make" ],
 			"variants":

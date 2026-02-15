@@ -3,16 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-ASTRA_PORT=19320
+HTTP_PORT=19320
 IN_PORT=19330
 OUT_PORT=19331
 
 STREAM_BIN="${ROOT_DIR}/stream"
 if [[ ! -x "${STREAM_BIN}" ]]; then
-  STREAM_BIN="${ROOT_DIR}/astra"
-fi
-if [[ ! -x "${STREAM_BIN}" ]]; then
-  echo "ERROR: stream/astra binary not found/executable"
+  echo "ERROR: stream binary not found/executable: ${STREAM_BIN}"
   exit 1
 fi
 
@@ -58,7 +55,7 @@ cat >"${CFG}" <<EOF
 }
 EOF
 
-"${STREAM_BIN}" scripts/server.lua -a 127.0.0.1 -p "${ASTRA_PORT}" \
+"${STREAM_BIN}" scripts/server.lua -a 127.0.0.1 -p "${HTTP_PORT}" \
   --config "${CFG}" \
   --data-dir "${TMP_DIR}/data" \
   --log "${TMP_DIR}/stream.log" \
@@ -67,7 +64,7 @@ STREAM_PID=$!
 
 # Ждём готовности HTTP сервера. У нас нет отдельного /health, поэтому проверяем root.
 for _ in $(seq 1 80); do
-  if curl -fsS "http://127.0.0.1:${ASTRA_PORT}/" >/dev/null 2>&1; then
+  if curl -fsS "http://127.0.0.1:${HTTP_PORT}/" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2

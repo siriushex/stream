@@ -1,5 +1,5 @@
 [Unit]
-Description=ASTRAL Streaming Server Shard (%i)
+Description=Stream server shard (%i)
 After=network.target
 Wants=network-online.target
 StartLimitIntervalSec=60
@@ -11,12 +11,12 @@ User=root
 Group=root
 # Important: do NOT use a working directory that contains ./scripts or ./web.
 # Otherwise the binary may pick up on-disk Lua/UI files instead of embedded assets.
-WorkingDirectory=/home/hex
-EnvironmentFile=/etc/astral/%i.env
+WorkingDirectory=/etc/stream
+EnvironmentFile=/etc/stream/%i.env
 ExecStartPre=/bin/sh -lc 'test -n "$PORT" && echo "$PORT" | grep -Eq "^[0-9]+$"'
 ExecStartPre=/bin/sh -lc 'test -n "$CONFIG" && test -r "$CONFIG"'
 # Optional CPU pinning via CPUS (for example: "0-2" or "1,3,5"). If empty - no pinning.
-ExecStart=/bin/sh -lc 'if [ -n "$CPUS" ]; then exec taskset -c "$CPUS" /home/hex/astra/astral -c "$CONFIG" -p "$PORT" $EXTRA_OPTS; else exec /home/hex/astra/astral -c "$CONFIG" -p "$PORT" $EXTRA_OPTS; fi'
+ExecStart=/bin/sh -lc 'if [ -n "$CPUS" ]; then exec taskset -c "$CPUS" /usr/local/bin/stream -c "$CONFIG" -p "$PORT" $EXTRA_OPTS; else exec /usr/local/bin/stream -c "$CONFIG" -p "$PORT" $EXTRA_OPTS; fi'
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=2
