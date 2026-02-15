@@ -10,6 +10,15 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-15
+- Changes:
+  - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
+  - Installer (CentOS): run transcode verification by default and prefer source tarball download with git clone fallback.
+  - Release: version suffix `.2` via `ASTRA_VERSION`.
+- Tests:
+  - `node --check web/app.js`
+  - `./astra scripts/tests/transcode_qsv_args_unit.lua`
+  - `./astra scripts/tests/process_spawn_env_unit.lua`
 ### 2026-02-14
 - Changes:
   - Input resilience: tune `bad`/`max` network profiles for unstable HTTP/HLS sources (bigger timeouts + larger default jitter buffer).

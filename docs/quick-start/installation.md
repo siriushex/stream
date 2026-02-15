@@ -30,6 +30,14 @@ curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --
 curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
 ```
 
+!!! note "Проверка транскода"
+    По умолчанию `install-centos.sh` делает проверку, что установлена **FULL**‑сборка и доступен `ffmpeg`.
+    Если нужно пропустить проверку:
+
+    ```bash
+    curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --no-verify-transcode
+    ```
+
 !!! note "Если HTTPS не работает"
     На некоторых минимальных образах CentOS/RHEL нет актуального набора CA‑сертификатов.
     Тогда `curl` может ругаться на сертификат. В этом случае используйте HTTP для запуска установщика:

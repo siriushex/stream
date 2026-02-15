@@ -102,6 +102,13 @@ curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
 ```bash
 curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash
 ```
+
+По умолчанию CentOS‑установщик проверяет, что установлена **FULL**‑сборка и доступен `ffmpeg`.
+Отключить проверку можно так:
+
+```bash
+curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash -s -- --no-verify-transcode
+```
 </div>
   </div>
 

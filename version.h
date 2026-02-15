@@ -4,5 +4,6 @@
 #define ASTRA_VERSION_MAJOR 4
 #define ASTRA_VERSION_MINOR 4
 #define ASTRA_VERSION_PATCH 187
+#define ASTRA_VERSION "4.4.187.2"
 
 #endif /* _VERSION_H_ */

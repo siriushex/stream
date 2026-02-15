@@ -34,9 +34,13 @@
 #include "version.h"
 #define __VSTR(_x) #_x
 #define _VSTR(_x) __VSTR(_x)
-#define _VERSION _VSTR(ASTRA_VERSION_MAJOR) "." \
-                 _VSTR(ASTRA_VERSION_MINOR) "." \
-                 _VSTR(ASTRA_VERSION_PATCH)
+#ifdef ASTRA_VERSION
+#   define _VERSION ASTRA_VERSION
+#else
+#   define _VERSION _VSTR(ASTRA_VERSION_MAJOR) "." \
+                    _VSTR(ASTRA_VERSION_MINOR) "." \
+                    _VSTR(ASTRA_VERSION_PATCH)
+#endif
 
 #ifdef DEBUG
 #   define _VDEBUG " debug"
