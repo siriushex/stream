@@ -200,6 +200,7 @@ local function new_job(stream_id, settings)
         ffmpeg = nil,
         curl = nil,
         poller = nil,
+        restart_timer = nil,
         logs = {},
         log_limit = 200,
         last_error = nil,
@@ -421,6 +422,10 @@ local function cleanup_job(job)
         job.poller:close()
         job.poller = nil
     end
+    if job.restart_timer then
+        job.restart_timer:close()
+        job.restart_timer = nil
+    end
     if job.ffmpeg then
         stop_process(job.ffmpeg, 0)
         job.ffmpeg = nil
@@ -436,8 +441,16 @@ local function cleanup_job(job)
 end
 
 local function schedule_restart(job)
+    if job.restart_timer then
+        -- Уже запланирован перезапуск. Не дублируем, иначе быстро упираемся в лимит
+        -- max_restarts_per_10min и получаем ложный "error".
+        return
+    end
     if not should_restart(job) then
         job.status = "error"
+        if not job.last_error or job.last_error == "" then
+            job.last_error = "restart limit reached"
+        end
         return
     end
     job.restart_count = job.restart_count + 1
@@ -446,11 +459,22 @@ local function schedule_restart(job)
     if delay <= 0 then
         delay = 0.5
     end
-    timer({
+    job.status = "restarting"
+    job.restart_timer = timer({
         interval = delay,
         callback = function(self)
             self:close()
-            radio.start(job.stream_id, job.settings)
+            job.restart_timer = nil
+            local ok, started, err = pcall(radio.start, job.stream_id, job.settings)
+            if not ok then
+                job.status = "error"
+                job.last_error = tostring(started or "restart failed")
+                return
+            end
+            if not started then
+                job.status = "error"
+                job.last_error = tostring(err or "restart failed")
+            end
         end,
     })
 end
@@ -641,6 +665,10 @@ function radio.stop(stream_id)
     end
     job.stop_requested = true
     job.auto_restart = false
+    if job.restart_timer then
+        job.restart_timer:close()
+        job.restart_timer = nil
+    end
     if job.ffmpeg then
         stop_process(job.ffmpeg, 1)
     end
