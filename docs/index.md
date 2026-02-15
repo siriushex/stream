@@ -20,7 +20,7 @@ hide:
       <div class="sh-hero-badges">
         <span class="sh-badge">Web UI + API</span>
         <span class="sh-badge">UDP / HTTP‑TS / HLS</span>
-        <span class="sh-badge">Транскодирование: по желанию</span>
+        <span class="sh-badge">transcoding / mpts</span>
       </div>
       <div class="sh-hero-contacts" aria-label="Контакты">
         <a class="sh-hero-contact" href="https://t.me/streamhubfree" target="_blank" rel="noopener">Чат в Telegram</a>
