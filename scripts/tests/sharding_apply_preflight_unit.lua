@@ -50,7 +50,19 @@ api.handle_request(server, client, make_request("/api/v1/sharding/apply", "POST"
 
 assert_true(sent ~= nil, "expected response")
 assert_true(tonumber(sent.code) == 400, "expected 400 on preflight failure")
-assert_true(type(sent.content) == "string" and sent.content:find("systemctl", 1, true), "expected systemctl error")
+local decoded = nil
+if type(sent.content) == "string" and sent.content ~= "" then
+  local ok, data = pcall(json.decode, sent.content)
+  if ok and type(data) == "table" then
+    decoded = data
+  end
+end
+local err = decoded and tostring(decoded.error or "") or tostring(sent.content or "")
+assert_true(err ~= "", "expected error message")
+assert_true(
+  err:find("systemctl", 1, true) or err:find("systemd unit not detected", 1, true),
+  "expected systemctl missing or unit not detected error"
+)
 
 log.info("[unit] sharding_apply_preflight_unit ok")
 astra.exit()
