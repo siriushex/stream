@@ -49,6 +49,8 @@
 - `encoder_preset`: `speed|balanced|quality` (default: `balanced`)  
   Применяется к ladder encode. Для `libx264` выбираются пресеты `veryfast/faster/slow`.  
   Для `h264_nvenc` — `p2/p4/p6` и базовые параметры качества.
+  Для `h264_qsv`/`hevc_qsv` — по умолчанию `-preset fast`, `-look_ahead_depth 50`,
+  `-profile:v high` (H.264) / `main` (HEVC); можно переопределить через `qsv_*` (см. ниже).
 - `gpu_filters`: `auto|on|off` (default: `auto`)  
   При `auto` включаются GPU‑фильтры для `nvidia`/`vaapi`:
   - NVIDIA: `yadif_cuda`, `scale_npp`
@@ -69,6 +71,21 @@
 - при `engine=vaapi` обычно требуется указать устройство, например  
   `ffmpeg_global_args: ["-vaapi_device", "/dev/dri/renderD128"]`  
   и при необходимости `decoder_args: ["-hwaccel", "vaapi"]`.
+
+Примечание по Intel QSV:
+- при `engine=qsv` используются encoder'ы `h264_qsv`/`hevc_qsv` и (обычно) требуется Intel iHD VAAPI драйвер.
+- Env vars для QSV можно задать глобально (settings) или на уровне stream через `transcode.qsv_libva_*`:
+  - `LIBVA_DRIVER_NAME` (default `iHD`)
+  - `LIBVA_DRIVERS_PATH` (default `/opt/intel/mediasdk/lib64`)
+- Проверка на хосте:
+  - наличие `/dev/dri/renderD*`
+  - `ffmpeg -encoders | grep -E 'h264_qsv|hevc_qsv'`
+
+QSV overrides (опционально, на уровне `stream.transcode`):
+- `qsv_preset`: `fast|medium|slow` (default `fast`)
+- `qsv_look_ahead_depth`: `0..100` (default `50`, `0` = disable)
+- `qsv_h264_profile`: `high|main|baseline` (default `high`)
+- `qsv_hevc_profile`: `main|main10` (default `main`)
 
 ## Публикации (publish)
 

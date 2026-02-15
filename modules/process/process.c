@@ -27,6 +27,13 @@ typedef struct
     int term_signal;
 } process_handle_t;
 
+typedef struct
+{
+    char **keys;
+    char **values;
+    int count;
+} env_list_t;
+
 static process_handle_t *check_proc(lua_State *L)
 {
     return (process_handle_t *)luaL_checkudata(L, 1, PROCESS_MT);
@@ -244,6 +251,107 @@ static void free_argv(char **argv)
     free(argv);
 }
 
+static void free_env_list(env_list_t *env)
+{
+    if(!env)
+        return;
+    for(int i = 0; i < env->count; i++)
+    {
+        free(env->keys[i]);
+        free(env->values[i]);
+    }
+    free(env->keys);
+    free(env->values);
+    env->keys = NULL;
+    env->values = NULL;
+    env->count = 0;
+}
+
+static int collect_env_list(lua_State *L, int idx, env_list_t *env)
+{
+    if(!env)
+        return 0;
+    memset(env, 0, sizeof(*env));
+    if(!lua_istable(L, idx))
+        return 1;
+
+    int cap = 0;
+    lua_pushnil(L);
+    while(lua_next(L, idx) != 0)
+    {
+        if(!lua_isstring(L, -2))
+        {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        const char *key = lua_tostring(L, -2);
+        if(!key || key[0] == '\0')
+        {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        if(lua_isnil(L, -1) || (lua_isboolean(L, -1) && !lua_toboolean(L, -1)))
+        {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        const char *value = lua_tostring(L, -1);
+        if(!value)
+        {
+            /* Convert non-string values (numbers, etc) to string. */
+            luaL_tolstring(L, -1, NULL);
+            value = lua_tostring(L, -1);
+            lua_pop(L, 1);
+        }
+        if(!value)
+        {
+            lua_pop(L, 1);
+            continue;
+        }
+
+        if(env->count >= cap)
+        {
+            cap = cap ? cap * 2 : 8;
+            char **next_keys = (char **)realloc(env->keys, (size_t)cap * sizeof(char *));
+            if(!next_keys)
+            {
+                free_env_list(env);
+                lua_pop(L, 1);
+                return 0;
+            }
+            env->keys = next_keys;
+
+            char **next_values = (char **)realloc(env->values, (size_t)cap * sizeof(char *));
+            if(!next_values)
+            {
+                free_env_list(env);
+                lua_pop(L, 1);
+                return 0;
+            }
+            env->values = next_values;
+        }
+
+        env->keys[env->count] = strdup(key);
+        env->values[env->count] = strdup(value);
+        if(!env->keys[env->count] || !env->values[env->count])
+        {
+            free(env->keys[env->count]);
+            free(env->values[env->count]);
+            free_env_list(env);
+            lua_pop(L, 1);
+            return 0;
+        }
+        env->count++;
+
+        lua_pop(L, 1);
+    }
+
+    return 1;
+}
+
 static int proc_spawn(lua_State *L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
@@ -259,6 +367,8 @@ static int proc_spawn(lua_State *L)
     int pipe_stdout = 0;
     int pipe_stderr = 0;
     const char *cwd = NULL;
+    env_list_t env;
+    memset(&env, 0, sizeof(env));
 
     if(lua_istable(L, 2))
     {
@@ -288,6 +398,18 @@ static int proc_spawn(lua_State *L)
         if(lua_isstring(L, -1))
             cwd = lua_tostring(L, -1);
         lua_pop(L, 1);
+
+        lua_getfield(L, 2, "env");
+        if(lua_istable(L, -1))
+        {
+            if(!collect_env_list(L, lua_gettop(L), &env))
+            {
+                lua_pop(L, 1);
+                free_argv(argv);
+                return luaL_error(L, "failed to parse env");
+            }
+        }
+        lua_pop(L, 1);
     }
 
     int stdout_pipe[2] = { -1, -1 };
@@ -295,6 +417,7 @@ static int proc_spawn(lua_State *L)
     if(pipe_stdout && pipe(stdout_pipe) != 0)
     {
         free_argv(argv);
+        free_env_list(&env);
         return luaL_error(L, "failed to create stdout pipe");
     }
     if(pipe_stderr && pipe(stderr_pipe) != 0)
@@ -305,6 +428,7 @@ static int proc_spawn(lua_State *L)
             close(stdout_pipe[1]);
         }
         free_argv(argv);
+        free_env_list(&env);
         return luaL_error(L, "failed to create stderr pipe");
     }
 
@@ -322,6 +446,7 @@ static int proc_spawn(lua_State *L)
             close(stderr_pipe[1]);
         }
         free_argv(argv);
+        free_env_list(&env);
         return luaL_error(L, "fork failed");
     }
 
@@ -342,6 +467,14 @@ static int proc_spawn(lua_State *L)
         if(cwd && chdir(cwd) != 0)
         {
             _exit(127);
+        }
+
+        for(int i = 0; i < env.count; i++)
+        {
+            if(env.keys[i] && env.values[i])
+            {
+                setenv(env.keys[i], env.values[i], 1);
+            }
         }
 
         /*
@@ -383,6 +516,7 @@ static int proc_spawn(lua_State *L)
     lua_setmetatable(L, -2);
 
     free_argv(argv);
+    free_env_list(&env);
     return 1;
 }
 

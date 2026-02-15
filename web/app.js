@@ -3729,6 +3729,92 @@ const SETTINGS_GENERAL_SECTIONS = [
         },
       },
       {
+        id: 'transcode-qsv',
+        title: 'Intel QSV',
+        description: 'Env vars и дефолты для Quick Sync Video (QSV).',
+        level: 'advanced',
+        collapsible: true,
+        fields: [
+          {
+            id: 'settings-qsv-libva-driver-name',
+            label: 'LIBVA_DRIVER_NAME',
+            type: 'input',
+            inputType: 'text',
+            key: 'qsv_libva_driver_name',
+            level: 'advanced',
+            placeholder: 'iHD',
+          },
+          {
+            id: 'settings-qsv-libva-drivers-path',
+            label: 'LIBVA_DRIVERS_PATH',
+            type: 'input',
+            inputType: 'text',
+            key: 'qsv_libva_drivers_path',
+            level: 'advanced',
+            placeholder: '/opt/intel/mediasdk/lib64',
+          },
+          {
+            id: 'settings-qsv-preset',
+            label: 'Default QSV preset',
+            type: 'select',
+            key: 'qsv_preset',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: fast)' },
+              { value: 'fast', label: 'fast' },
+              { value: 'medium', label: 'medium' },
+              { value: 'slow', label: 'slow' },
+            ],
+          },
+          {
+            id: 'settings-qsv-lookahead-depth',
+            label: 'Default look_ahead_depth',
+            type: 'input',
+            inputType: 'number',
+            key: 'qsv_look_ahead_depth',
+            level: 'advanced',
+            placeholder: '50',
+          },
+          {
+            id: 'settings-qsv-h264-profile',
+            label: 'Default h264 profile',
+            type: 'select',
+            key: 'qsv_h264_profile',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: high)' },
+              { value: 'high', label: 'high' },
+              { value: 'main', label: 'main' },
+              { value: 'baseline', label: 'baseline' },
+            ],
+          },
+          {
+            id: 'settings-qsv-hevc-profile',
+            label: 'Default hevc profile',
+            type: 'select',
+            key: 'qsv_hevc_profile',
+            level: 'advanced',
+            options: [
+              { value: '', label: '(default: main)' },
+              { value: 'main', label: 'main' },
+              { value: 'main10', label: 'main10' },
+            ],
+          },
+          {
+            type: 'note',
+            text: 'Применяется только при transcode.engine=qsv; значения можно переопределить на уровне stream.transcode (qsv_*).',
+            level: 'advanced',
+          },
+        ],
+        summary: () => {
+          const name = readStringValue('settings-qsv-libva-driver-name', '') || 'iHD';
+          const path = readStringValue('settings-qsv-libva-drivers-path', '') || '/opt/intel/mediasdk/lib64';
+          const preset = readStringValue('settings-qsv-preset', '') || 'fast';
+          const lookahead = readNumberValue('settings-qsv-lookahead-depth', 50);
+          return `${preset} · lookahead=${lookahead} · ${name} · ${path}`;
+        },
+      },
+      {
         id: 'https-inputs',
         title: 'HTTP inputs',
         description: 'HTTPS‑входы через FFmpeg‑мост.',
@@ -4524,6 +4610,12 @@ function bindGeneralElements() {
     settingsInfluxInterval: 'settings-influx-interval',
     settingsFfmpegPath: 'settings-ffmpeg-path',
     settingsFfprobePath: 'settings-ffprobe-path',
+    settingsQsvLibvaDriverName: 'settings-qsv-libva-driver-name',
+    settingsQsvLibvaDriversPath: 'settings-qsv-libva-drivers-path',
+    settingsQsvPreset: 'settings-qsv-preset',
+    settingsQsvLookaheadDepth: 'settings-qsv-lookahead-depth',
+    settingsQsvH264Profile: 'settings-qsv-h264-profile',
+    settingsQsvHevcProfile: 'settings-qsv-hevc-profile',
     settingsHttpsBridgeEnabled: 'settings-https-bridge-enabled',
     settingsHttpCsrf: 'settings-http-csrf',
     settingsShowSecurityLimits: 'settings-show-security-limits',
@@ -8935,6 +9027,7 @@ function buildPresetProfile(profile) {
   const height = Number(profile && profile.height) || 0;
   const bitrateKbps = Number(profile && profile.bitrate_kbps) || 0;
   const maxrateKbps = Number(profile && profile.maxrate_kbps) || 0;
+  const bufsizeKbps = toNumber(profile && profile.bufsize_kbps);
   const audioBitrateKbps = Number(profile && profile.audio_bitrate_kbps) || 128;
   const audioSr = Number(profile && profile.audio_sr) || 48000;
   const audioChannels = Number(profile && profile.audio_channels) || 2;
@@ -8946,11 +9039,14 @@ function buildPresetProfile(profile) {
     fps,
     bitrate_kbps: bitrateKbps,
     maxrate_kbps: maxrateKbps || Math.floor(bitrateKbps * 1.2),
+    bufsize_kbps: bufsizeKbps,
     audio_mode: 'aac',
     audio_bitrate_kbps: audioBitrateKbps,
     audio_sr: audioSr,
     audio_channels: audioChannels,
     deinterlace: String(profile && profile.deinterlace || 'auto'),
+    video_codec: (profile && profile.video_codec) ? String(profile.video_codec) : undefined,
+    video_args: Array.isArray(profile && profile.video_args) ? profile.video_args.slice() : undefined,
   };
 }
 
@@ -8996,6 +9092,68 @@ const TRANSCODE_PRESETS = {
     gpu_device: 0,
     decoder_args: ['-hwaccel', 'nvdec', '-c:v', 'h264_cuvid'],
     profiles: getLadderPresetProfiles('3'),
+  },
+  qsv_1080p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '1080p',
+      width: 1920,
+      height: 1080,
+      bitrate_kbps: 4500,
+      maxrate_kbps: 5500,
+      bufsize_kbps: 8000,
+    })],
+  },
+  qsv_720p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3200,
+      bufsize_kbps: 5000,
+    })],
+  },
+  qsv_540p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '540p',
+      width: 960,
+      height: 540,
+      bitrate_kbps: 1500,
+      maxrate_kbps: 1900,
+      bufsize_kbps: 2048,
+    })],
+  },
+  qsv_hevc_1080p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '1080p',
+      width: 1920,
+      height: 1080,
+      bitrate_kbps: 4500,
+      maxrate_kbps: 5500,
+      bufsize_kbps: 8000,
+      video_codec: 'hevc_qsv',
+    })],
+  },
+  qsv_hevc_720p: {
+    engine: 'qsv',
+    profiles: [buildPresetProfile({
+      id: 'HDHigh',
+      name: '720p',
+      width: 1280,
+      height: 720,
+      bitrate_kbps: 2500,
+      maxrate_kbps: 3200,
+      bufsize_kbps: 5000,
+      video_codec: 'hevc_qsv',
+    })],
   },
 };
 
@@ -20873,6 +21031,9 @@ function formatTranscodeAlert(alert) {
   if (alert.code === 'TRANSCODE_GPU_UNAVAILABLE') {
     return `${alert.message}. Switch engine to CPU or install NVIDIA drivers.`;
   }
+  if (alert.code === 'TRANSCODE_QSV_UNAVAILABLE') {
+    return `${alert.message}. QSV not available on this host (check /dev/dri/renderD* and ffmpeg h264_qsv/hevc_qsv encoders).`;
+  }
   if (alert.code === 'TRANSCODE_SPAWN_FAILED') {
     return `${alert.message}. Check ffmpeg path and permissions.`;
   }
@@ -25356,6 +25517,24 @@ function applySettingsToUI() {
   if (elements.settingsFfprobePath) {
     elements.settingsFfprobePath.value = getSettingString('ffprobe_path', '');
   }
+  if (elements.settingsQsvLibvaDriverName) {
+    elements.settingsQsvLibvaDriverName.value = getSettingString('qsv_libva_driver_name', '');
+  }
+  if (elements.settingsQsvLibvaDriversPath) {
+    elements.settingsQsvLibvaDriversPath.value = getSettingString('qsv_libva_drivers_path', '');
+  }
+  if (elements.settingsQsvPreset) {
+    setSelectValue(elements.settingsQsvPreset, getSettingString('qsv_preset', ''), '');
+  }
+  if (elements.settingsQsvLookaheadDepth) {
+    elements.settingsQsvLookaheadDepth.value = getSettingNumber('qsv_look_ahead_depth', '');
+  }
+  if (elements.settingsQsvH264Profile) {
+    setSelectValue(elements.settingsQsvH264Profile, getSettingString('qsv_h264_profile', ''), '');
+  }
+  if (elements.settingsQsvHevcProfile) {
+    setSelectValue(elements.settingsQsvHevcProfile, getSettingString('qsv_hevc_profile', ''), '');
+  }
   if (elements.settingsHttpsBridgeEnabled) {
     elements.settingsHttpsBridgeEnabled.checked = getSettingBool('https_bridge_enabled', false);
   }
@@ -26104,6 +26283,34 @@ function collectGeneralSettings() {
   if (influxInterval !== undefined && influxInterval < 5) {
     throw new Error('Influx interval must be >= 5');
   }
+  const qsvLibvaDriverName = elements.settingsQsvLibvaDriverName
+    ? elements.settingsQsvLibvaDriverName.value.trim()
+    : '';
+  const qsvLibvaDriversPath = elements.settingsQsvLibvaDriversPath
+    ? elements.settingsQsvLibvaDriversPath.value.trim()
+    : '';
+  const qsvPreset = elements.settingsQsvPreset
+    ? String(elements.settingsQsvPreset.value || '').trim().toLowerCase()
+    : '';
+  if (qsvPreset && !['fast', 'medium', 'slow'].includes(qsvPreset)) {
+    throw new Error('QSV preset must be fast, medium or slow');
+  }
+  const qsvLookaheadDepth = toNumber(elements.settingsQsvLookaheadDepth && elements.settingsQsvLookaheadDepth.value);
+  if (qsvLookaheadDepth !== undefined && (qsvLookaheadDepth < 0 || qsvLookaheadDepth > 100)) {
+    throw new Error('QSV look-ahead depth must be 0..100');
+  }
+  const qsvH264Profile = elements.settingsQsvH264Profile
+    ? String(elements.settingsQsvH264Profile.value || '').trim().toLowerCase()
+    : '';
+  if (qsvH264Profile && !['high', 'main', 'baseline'].includes(qsvH264Profile)) {
+    throw new Error('QSV h264 profile must be high, main or baseline');
+  }
+  const qsvHevcProfile = elements.settingsQsvHevcProfile
+    ? String(elements.settingsQsvHevcProfile.value || '').trim().toLowerCase()
+    : '';
+  if (qsvHevcProfile && !['main', 'main10'].includes(qsvHevcProfile)) {
+    throw new Error('QSV hevc profile must be main or main10');
+  }
   const sessionTtl = toNumber(elements.settingsAuthSessionTtl && elements.settingsAuthSessionTtl.value);
   if (sessionTtl !== undefined && sessionTtl < 300) {
     throw new Error('Session TTL must be >= 300');
@@ -26379,6 +26586,12 @@ function collectGeneralSettings() {
   if (influxInterval !== undefined) payload.influx_interval_sec = influxInterval;
   if (elements.settingsFfmpegPath) payload.ffmpeg_path = elements.settingsFfmpegPath.value.trim();
   if (elements.settingsFfprobePath) payload.ffprobe_path = elements.settingsFfprobePath.value.trim();
+  if (elements.settingsQsvLibvaDriverName) payload.qsv_libva_driver_name = qsvLibvaDriverName;
+  if (elements.settingsQsvLibvaDriversPath) payload.qsv_libva_drivers_path = qsvLibvaDriversPath;
+  if (elements.settingsQsvPreset) payload.qsv_preset = qsvPreset;
+  if (qsvLookaheadDepth !== undefined) payload.qsv_look_ahead_depth = Math.floor(qsvLookaheadDepth);
+  if (elements.settingsQsvH264Profile) payload.qsv_h264_profile = qsvH264Profile;
+  if (elements.settingsQsvHevcProfile) payload.qsv_hevc_profile = qsvHevcProfile;
   if (elements.settingsHttpsBridgeEnabled) {
     payload.https_bridge_enabled = elements.settingsHttpsBridgeEnabled.checked;
   }
