@@ -1007,17 +1007,268 @@ local function has_file_output(cfg)
     return false
 end
 
+-- ==========================
+-- Passthrough Data Plane (UDP -> UDP)
+-- ==========================
+--
+-- Цель: для "простых" passthrough потоков (UDP input -> UDP outputs) вынести горячий путь в C workers,
+-- чтобы нагрузка распределялась по ядрам CPU. По умолчанию выключено.
+--
+-- Важно:
+-- - включается настройкой `performance_passthrough_dataplane = off|auto|force`
+-- - применяется только к eligible конфигам (иначе legacy make_channel())
+-- - не ломаем совместимость конфигов: если поток не подходит, работаем как раньше
+
+local PASSTHROUGH_DP_MODE_OFF = "off"
+local PASSTHROUGH_DP_MODE_AUTO = "auto"
+local PASSTHROUGH_DP_MODE_FORCE = "force"
+
+local PASSTHROUGH_DP_RX_BATCH_DEFAULT = 32
+local PASSTHROUGH_DP_RX_BATCH_MIN = 1
+local PASSTHROUGH_DP_RX_BATCH_MAX = 64
+
+local function normalize_io_list(value)
+    if type(value) == "string" then
+        return { value }
+    end
+    if type(value) == "table" then
+        -- Single object entry (e.g. { url=... } or { format=... }).
+        if value.format or value.url or value.source_url or value.addr then
+            return { value }
+        end
+        return value
+    end
+    return nil
+end
+
+local function parse_udp_url_entry(entry)
+    if entry == nil then
+        return nil
+    end
+    local parsed = nil
+    if type(entry) == "string" then
+        parsed = parse_url(entry)
+    elseif type(entry) == "table" then
+        if type(entry.url) == "string" then
+            parsed = parse_url(entry.url) or entry
+        else
+            parsed = entry
+        end
+    end
+    if type(parsed) ~= "table" then
+        return nil
+    end
+    if tostring(parsed.format or ""):lower() ~= "udp" then
+        return nil
+    end
+    return parsed
+end
+
+local function dp_mode_normalized()
+    local text = tostring(get_setting("performance_passthrough_dataplane") or PASSTHROUGH_DP_MODE_OFF):lower()
+    if text == "1" or text == "true" or text == "on" or text == "enabled" then
+        return PASSTHROUGH_DP_MODE_AUTO
+    end
+    if text ~= PASSTHROUGH_DP_MODE_AUTO and text ~= PASSTHROUGH_DP_MODE_FORCE then
+        return PASSTHROUGH_DP_MODE_OFF
+    end
+    return text
+end
+
+local function dataplane_available()
+    return type(udp_relay) == "table" and type(udp_relay.start) == "function"
+end
+
+local function has_any_key(t, keys)
+    if type(t) ~= "table" then
+        return false
+    end
+    for _, key in ipairs(keys or {}) do
+        if t[key] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local DP_DISALLOWED_INPUT_KEYS = {
+    -- SoftCAM / BISS / CAS и похожие вещи.
+    "cam",
+    "cam_backup",
+    "cam_backup_mode",
+    "cam_backup_hedge_ms",
+    "cam_prefer_primary_ms",
+    "cas",
+    "ecm_pid",
+    "shift",
+    "biss",
+
+    -- Quality detectors / анализаторы (CPU в Lua, не поддержано в dataplane).
+    "cc_limit",
+    "no_audio_on",
+    "stop_video",
+    "stop_video_timeout_sec",
+    "stop_video_freeze_sec",
+    "detect_av",
+    "detect_av_threshold_ms",
+    "detect_av_hold_sec",
+    "detect_av_stable_sec",
+    "detect_av_resend_interval_sec",
+    "av_threshold_ms",
+    "av_hold_sec",
+    "av_stable_sec",
+    "av_resend_interval_sec",
+    "silencedetect",
+    "silencedetect_duration",
+    "silencedetect_interval",
+    "silencedetect_noise",
+    "silence_duration",
+    "silence_interval",
+    "silence_noise",
+}
+
+local DP_DISALLOWED_OUTPUT_KEYS = {
+    -- Пейсинг/CBR/иные режимы udp_output сейчас не реализованы в dataplane.
+    "sync",
+    "cbr",
+    "rtp",
+}
+
+local function build_udp_relay_opts_if_eligible(stream_id, cfg)
+    if type(cfg) ~= "table" then
+        return nil, "config required"
+    end
+
+    -- Простейшие SPTS потоки (без MPTS и без транскода).
+    if cfg.mpts == true then
+        return nil, "mpts not supported"
+    end
+    if type(cfg.transcode) == "table" and cfg.transcode.enabled == true then
+        return nil, "transcode not supported"
+    end
+    -- Любые TS-манипуляции/ремап/фильтры требуют legacy pipeline.
+    -- Не проверяем просто "наличие ключа", потому что UI может хранить флаги как false.
+    if cfg.map ~= nil or cfg.filter ~= nil or cfg["filter~"] ~= nil then
+        return nil, "stream options require legacy pipeline"
+    end
+    if cfg.set_pnr ~= nil or cfg.set_tsid ~= nil or cfg.pid ~= nil or cfg.pnr ~= nil then
+        return nil, "service selection not supported"
+    end
+    if (cfg.service_provider and cfg.service_provider ~= "")
+        or (cfg.service_name and cfg.service_name ~= "")
+        or (cfg.service_type_id ~= nil)
+    then
+        return nil, "service metadata not supported"
+    end
+    if cfg.no_sdt == true or cfg.no_eit == true
+        or cfg.pass_sdt == true or cfg.pass_eit == true or cfg.pass_nit == true or cfg.pass_tdt == true
+    then
+        return nil, "table passthrough flags not supported"
+    end
+
+    -- Backup/failover на первом этапе не поддерживаем (экономим CPU и упрощаем гарантию порядка).
+    local backup_type = tostring(cfg.backup_type or ""):lower()
+    if backup_type ~= "" and backup_type ~= "disabled" and backup_type ~= "disable" and backup_type ~= "off" and backup_type ~= "none" then
+        return nil, "backup not supported"
+    end
+
+    -- Audio-fix и любые внешние процессы не поддерживаем в dataplane.
+    if type(cfg.audio_fix) == "table" and cfg.audio_fix.enabled == true then
+        return nil, "audio_fix not supported"
+    end
+
+    local inputs = normalize_io_list(cfg.input)
+    if type(inputs) ~= "table" or #inputs ~= 1 then
+        return nil, "single udp input required"
+    end
+    local input_parsed = parse_udp_url_entry(inputs[1])
+    if not input_parsed then
+        return nil, "udp input required"
+    end
+    if has_any_key(input_parsed, DP_DISALLOWED_INPUT_KEYS) then
+        return nil, "input options require legacy pipeline"
+    end
+
+    local outputs = normalize_io_list(cfg.output)
+    if type(outputs) ~= "table" or #outputs == 0 then
+        return nil, "at least one udp output required"
+    end
+
+    local out_list = {}
+    for _, entry in ipairs(outputs) do
+        local out_parsed = parse_udp_url_entry(entry)
+        if not out_parsed then
+            return nil, "udp outputs required"
+        end
+        if has_any_key(out_parsed, DP_DISALLOWED_OUTPUT_KEYS) then
+            return nil, "output options require legacy pipeline"
+        end
+        -- pkt_size: dataplane всегда выдаёт 1316 (7 TS). Если задано другое - не трогаем, уходим в legacy.
+        local pkt = out_parsed.pkt_size or out_parsed.pkt
+        if pkt ~= nil then
+            local n = tonumber(pkt)
+            if n ~= nil and n ~= 1316 then
+                return nil, "output pkt_size not supported in dataplane"
+            end
+        end
+
+        table.insert(out_list, {
+            addr = out_parsed.addr,
+            port = tonumber(out_parsed.port),
+            localaddr = out_parsed.localaddr,
+            ttl = tonumber(out_parsed.ttl) or 32,
+            socket_size = tonumber(out_parsed.socket_size) or 0,
+        })
+    end
+
+    local workers = setting_number("performance_passthrough_workers", 0)
+    if workers < 0 then
+        workers = 0
+    end
+    local rx_batch = setting_number("performance_passthrough_rx_batch", PASSTHROUGH_DP_RX_BATCH_DEFAULT)
+    rx_batch = clamp_number(rx_batch, PASSTHROUGH_DP_RX_BATCH_MIN, PASSTHROUGH_DP_RX_BATCH_MAX)
+
+    local opts = {
+        id = tostring(stream_id),
+        workers = workers,
+        rx_batch = rx_batch,
+        input = {
+            addr = input_parsed.addr,
+            port = tonumber(input_parsed.port),
+            localaddr = input_parsed.localaddr,
+            socket_size = tonumber(input_parsed.socket_size) or 0,
+            source_url = tostring(input_parsed.source_url or ""),
+        },
+        outputs = out_list,
+    }
+
+    return opts, nil
+end
+
+local function close_existing_stream(id, existing)
+    if not existing then
+        return
+    end
+    if existing.kind == "transcode" and transcode then
+        transcode.delete(id)
+        return
+    end
+    if existing.kind == "dataplane" then
+        if existing.relay and type(existing.relay.close) == "function" then
+            pcall(function() existing.relay:close() end)
+        end
+        return
+    end
+    kill_channel(existing.channel)
+end
+
 local function apply_stream(id, row, force)
     local existing = runtime.streams[id]
     local enabled = (tonumber(row.enabled) or 0) ~= 0
 
     if not enabled then
         if existing then
-            if existing.kind == "transcode" and transcode then
-                transcode.delete(id)
-            else
-                kill_channel(existing.channel)
-            end
+            close_existing_stream(id, existing)
             runtime.streams[id] = nil
         end
         return true
@@ -1044,7 +1295,26 @@ local function apply_stream(id, row, force)
         return true
     end
 
-    if existing and existing.hash == hash and not force then
+    -- Важно: dataplane - это отдельный runtime-kind. Если пользователь включил/выключил его,
+    -- нужно пересоздать поток даже при одинаковом config hash.
+    local dp_mode = dp_mode_normalized()
+    local dp_opts, dp_err = nil, nil
+    local want_dp = (dp_mode ~= PASSTHROUGH_DP_MODE_OFF)
+    local dp_desired_kind = "stream"
+    if want_dp and dataplane_available() then
+        dp_opts, dp_err = build_udp_relay_opts_if_eligible(id, cfg)
+        if dp_opts then
+            dp_desired_kind = "dataplane"
+        elseif dp_mode == PASSTHROUGH_DP_MODE_FORCE then
+            log.error("[runtime] dataplane forced but stream not eligible: " .. tostring(id) .. " (" .. tostring(dp_err or "unknown") .. ")")
+            return false, dp_err or "dataplane: stream not eligible"
+        end
+    elseif dp_mode == PASSTHROUGH_DP_MODE_FORCE then
+        log.error("[runtime] dataplane forced but udp_relay module is not available")
+        return false, "dataplane: udp_relay not available"
+    end
+
+    if existing and existing.hash == hash and not force and existing.kind == dp_desired_kind then
         if not existing.config_snapshot then
             existing.config_snapshot = copy_table(cfg)
         end
@@ -1061,28 +1331,39 @@ local function apply_stream(id, row, force)
 
     local file_output = has_file_output(cfg)
     if not file_output then
+        if dp_desired_kind == "dataplane" and dp_opts then
+            local ok, relay_or_err = pcall(function()
+                return udp_relay.start(dp_opts)
+            end)
+            if ok and relay_or_err then
+                if existing then
+                    close_existing_stream(id, existing)
+                end
+                runtime.streams[id] = { kind = "dataplane", relay = relay_or_err, hash = hash, config_snapshot = copy_table(cfg) }
+                return true
+            end
+            local err = ok and "failed to start dataplane relay" or tostring(relay_or_err)
+            if dp_mode == PASSTHROUGH_DP_MODE_FORCE then
+                log.error("[runtime] dataplane start failed: " .. tostring(id) .. " (" .. tostring(err) .. ")")
+                return false, "dataplane start failed: " .. tostring(err)
+            end
+            log.warning("[runtime] dataplane start failed, falling back to legacy: " .. tostring(id) .. " (" .. tostring(err) .. ")")
+        end
+
         local channel, err = build_channel_safe(cfg)
         if not channel then
             log.error("[runtime] failed to create stream: " .. id .. " (" .. tostring(err or "unknown error") .. ")")
             return false, err or "failed to create stream"
         end
         if existing then
-            if existing.kind == "transcode" and transcode then
-                transcode.delete(id)
-            else
-                kill_channel(existing.channel)
-            end
+            close_existing_stream(id, existing)
         end
         runtime.streams[id] = { kind = "stream", channel = channel, hash = hash, config_snapshot = copy_table(cfg) }
         return true
     end
 
     if existing then
-        if existing.kind == "transcode" and transcode then
-            transcode.delete(id)
-        else
-            kill_channel(existing.channel)
-        end
+        close_existing_stream(id, existing)
     end
 
     local channel, err = build_channel_safe(cfg)
@@ -1301,7 +1582,7 @@ function runtime.apply_streams(rows, force)
 
     for id, current in pairs(runtime.streams) do
         if not desired[id] then
-            kill_channel(current.channel)
+            close_existing_stream(id, current)
             runtime.streams[id] = nil
         end
     end
@@ -1531,6 +1812,56 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
             clients = clients_count,
             updated_at = tc_status.updated_at,
         }
+    end
+
+    if stream.kind == "dataplane" then
+        local relay = stream.relay
+        if not relay or type(relay.stats) ~= "function" then
+            return nil
+        end
+        local ok, st = pcall(function()
+            return relay:stats()
+        end)
+        if not ok or type(st) ~= "table" then
+            return nil
+        end
+
+        local entry = {
+            on_air = st.on_air == true,
+            uptime_sec = tonumber(st.uptime_sec) or nil,
+            clients_count = clients_count,
+            clients = clients_count,
+            updated_at = os.time(),
+            dataplane = st,
+        }
+
+        entry.active_input_id = 1
+        entry.active_input_index = 0
+        entry.active_input_url = st.input_url or nil
+        entry.inputs = {
+            {
+                url = st.input_url or nil,
+                active = true,
+                uptime_sec = tonumber(st.uptime_sec) or nil,
+            },
+        }
+        entry.inputs_status = entry.inputs
+
+        -- Для UI достаточно приблизительного bitrate (средний с момента старта dataplane).
+        local up = tonumber(st.uptime_sec) or 0
+        if up > 0 then
+            local in_bytes = tonumber(st.bytes_in) or 0
+            local out_bytes = tonumber(st.bytes_out) or 0
+            entry.in_kbps = math.floor(((in_bytes * 8) / 1000) / up + 0.5)
+            entry.out_kbps = math.floor(((out_bytes * 8) / 1000) / up + 0.5)
+        end
+
+        if not lite then
+            -- Dataplane сейчас поддерживает только UDP outputs, без детального per-output status.
+            entry.outputs_status = nil
+        end
+
+        return entry
     end
 
     local channel = stream.channel
