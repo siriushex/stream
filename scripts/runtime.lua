@@ -1761,13 +1761,20 @@ end
 
 function runtime.refresh(force)
     local start_ms = clock_ms()
-    if runtime.dp_watchdog_timer == nil and type(timer) == "function" then
-        runtime.dp_watchdog_timer = timer({
-            interval = PASSTHROUGH_DP_WATCHDOG_INTERVAL_SEC,
-            callback = function()
-                dataplane_watchdog_tick()
-            end,
-        })
+    if runtime.dp_watchdog_timer == nil and timer ~= nil then
+        local ok, t = pcall(function()
+            return timer({
+                interval = PASSTHROUGH_DP_WATCHDOG_INTERVAL_SEC,
+                callback = function()
+                    dataplane_watchdog_tick()
+                end,
+            })
+        end)
+        if ok and t then
+            runtime.dp_watchdog_timer = t
+        else
+            log.warning("[runtime] failed to create dataplane watchdog timer: " .. tostring(t or "unknown error"))
+        end
     end
     reconfigure_stream_sharding_from_settings()
     if (tonumber(runtime.stream_shard_count or 0) or 0) > 1 then
