@@ -36,6 +36,8 @@ Service:
 
 Deps:
   --no-ffmpeg              Skip installing ffmpeg/ffprobe + dev libs.
+  --ffmpeg-bundle          Install a bundled ffmpeg/ffprobe (recommended on CentOS 7).
+  --ffmpeg-system          Use distro packages for ffmpeg/ffprobe (default on Debian/Ubuntu).
   --runtime-only           Install only runtime deps (no compiler toolchain). Requires --mode binary.
   --verify-transcode       After install, verify FULL build + ffmpeg availability (exit non-zero on failure).
   --no-verify-transcode    Disable transcode verification (overrides --verify-transcode).
@@ -61,6 +63,7 @@ DATA_DIR="/etc/stream"
 WORKDIR="/tmp/stream-build"
 INSTALL_WEB=0
 INSTALL_FFMPEG=1
+FFMPEG_MODE="auto"
 RUNTIME_ONLY=0
 DRY_RUN=0
 INSTANCE_NAME=""
@@ -127,6 +130,10 @@ while [ "${#:-0}" -gt 0 ]; do
       INSTALL_WEB=0; shift;;
     --no-ffmpeg)
       INSTALL_FFMPEG=0; shift;;
+    --ffmpeg-bundle)
+      FFMPEG_MODE="bundle"; shift;;
+    --ffmpeg-system)
+      FFMPEG_MODE="system"; shift;;
     --runtime-only)
       RUNTIME_ONLY=1; shift;;
     --allow-generic)
@@ -177,6 +184,167 @@ OS_CODENAME="${VERSION_CODENAME:-}"
 
 ARCH="$(uname -m)"
 
+normalize_ffmpeg_arch() {
+  case "${ARCH:-}" in
+    x86_64|amd64)
+      printf '%s' "linux-x86_64"
+      ;;
+    aarch64|arm64)
+      printf '%s' "linux-aarch64"
+      ;;
+    *)
+      printf '%s' ""
+      ;;
+  esac
+}
+
+resolve_sha256_cmd() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "sha256sum"
+    return 0
+  fi
+  if command -v shasum >/dev/null 2>&1; then
+    printf '%s' "shasum -a 256"
+    return 0
+  fi
+  printf '%s' ""
+  return 0
+}
+
+ffmpeg_bundle_url_sha() {
+  # Returns: "url|sha256"
+  local arch="$1"
+  local profile="$2"
+  case "$arch/$profile" in
+    linux-x86_64/lgpl)
+      printf '%s' "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linux64-lgpl.tar.xz|00e8808415fc081af9f96ed0a36c1022a9e0766429f1c0835a4c2320d7e6e35e"
+      ;;
+    linux-x86_64/gpl)
+      printf '%s' "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linux64-gpl.tar.xz|9f63ca812df522e944065c8011ff10f8aa6d043230a0cf28e868bf5c05d18877"
+      ;;
+    linux-aarch64/lgpl)
+      printf '%s' "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linuxarm64-lgpl.tar.xz|cb1ed6d420523fba7d81313458cc0ea9271c392976f399384d617105ee42a160"
+      ;;
+    linux-aarch64/gpl)
+      printf '%s' "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linuxarm64-gpl.tar.xz|061235d7f44059fbf0b2e2068f43f1fbddcdf35400e1c25dc7a2c84161b031eb"
+      ;;
+    *)
+      printf '%s' ""
+      ;;
+  esac
+}
+
+FFMPEG_BUNDLE_INSTALLED=0
+FFMPEG_BUNDLE_PROFILE="${FFMPEG_BUNDLE_PROFILE:-lgpl}"
+FFMPEG_BIN_PATH="/usr/local/bin/stream-ffmpeg"
+FFPROBE_BIN_PATH="/usr/local/bin/stream-ffprobe"
+
+install_ffmpeg_bundle() {
+  if [ -x "$FFMPEG_BIN_PATH" ] && [ -x "$FFPROBE_BIN_PATH" ]; then
+    log "ffmpeg bundle already installed; skipping download"
+    FFMPEG_BUNDLE_INSTALLED=1
+    return 0
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] install ffmpeg bundle -> ${FFMPEG_BIN_PATH}, ${FFPROBE_BIN_PATH}"
+    FFMPEG_BUNDLE_INSTALLED=1
+    return 0
+  fi
+
+  local arch
+  arch="$(normalize_ffmpeg_arch)"
+  if [ -z "$arch" ]; then
+    warn "Unsupported arch for ffmpeg bundle: ${ARCH:-unknown}"
+    return 1
+  fi
+
+  local sha_cmd
+  sha_cmd="$(resolve_sha256_cmd)"
+  if [ -z "$sha_cmd" ]; then
+    warn "Missing sha256sum (or shasum) for ffmpeg bundle verification"
+    return 1
+  fi
+
+  local line
+  line="$(ffmpeg_bundle_url_sha "$arch" "$FFMPEG_BUNDLE_PROFILE")"
+  if [ -z "$line" ]; then
+    warn "No ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    return 1
+  fi
+  local url sha
+  IFS='|' read -r url sha <<<"$line"
+  if [ -z "$url" ] || [ -z "$sha" ]; then
+    warn "Invalid ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    return 1
+  fi
+
+  local work
+  work="$(mktemp -d -t stream-ffmpeg.XXXXXX)"
+  local archive="$work/ffmpeg.tar.xz"
+  local extract="$work/extract"
+  mkdir -p "$extract"
+
+  log "Downloading ffmpeg bundle: $url"
+  if ! curl -fsSL "$url" -o "$archive"; then
+    warn "ffmpeg bundle download failed: $url"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if ! echo "${sha}  ${archive}" | $sha_cmd -c - >/dev/null; then
+    warn "ffmpeg bundle checksum mismatch"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if ! tar -xJf "$archive" -C "$extract"; then
+    warn "ffmpeg bundle extract failed"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  local ffmpeg_src ffprobe_src
+  ffmpeg_src="$(find "$extract" -type f -name ffmpeg -perm -111 | head -n 1 || true)"
+  ffprobe_src="$(find "$extract" -type f -name ffprobe -perm -111 | head -n 1 || true)"
+  if [ -z "$ffmpeg_src" ] || [ -z "$ffprobe_src" ]; then
+    warn "ffmpeg/ffprobe binaries not found in downloaded bundle"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  if ! run install -m 755 "$ffmpeg_src" "$FFMPEG_BIN_PATH"; then
+    warn "failed to install ffmpeg bundle binary"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! run install -m 755 "$ffprobe_src" "$FFPROBE_BIN_PATH"; then
+    warn "failed to install ffmpeg bundle ffprobe binary"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  FFMPEG_BUNDLE_INSTALLED=1
+  rm -rf "$work" >/dev/null 2>&1 || true
+  return 0
+}
+
+resolve_ffmpeg_mode() {
+  if [ "$INSTALL_FFMPEG" -ne 1 ]; then
+    printf '%s' "none"
+    return 0
+  fi
+  local mode="${FFMPEG_MODE:-auto}"
+  if [ "$mode" = "auto" ]; then
+    if [ "$PKG_MGR" = "apt" ]; then
+      mode="system"
+    else
+      mode="bundle"
+    fi
+  fi
+  printf '%s' "$mode"
+  return 0
+}
+
 apt_has_candidate() {
   # apt-cache show может возвращать 0 даже если пакета нет. Используем policy.
   # Возвращает 0, если у пакета есть Candidate (не "(none)").
@@ -195,9 +363,12 @@ ensure_dirs() {
 }
 
 install_deps_debian() {
+  local ffmpeg_mode
+  ffmpeg_mode="$(resolve_ffmpeg_mode)"
+
   run apt-get update -y
   # Ubuntu keeps ffmpeg and some optional deps in "universe". Enable it on-demand.
-  if [ "${OS_ID:-}" = "ubuntu" ]; then
+  if [ "$ffmpeg_mode" = "system" ] && [ "${OS_ID:-}" = "ubuntu" ]; then
     if ! apt-cache show ffmpeg >/dev/null 2>&1; then
       run apt-get install -y --no-install-recommends software-properties-common
       if command -v add-apt-repository >/dev/null 2>&1; then
@@ -213,7 +384,13 @@ install_deps_debian() {
     openssl libssl-dev libsqlite3-dev
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    run apt-get install -y --no-install-recommends ffmpeg libavcodec-dev libavutil-dev
+    if [ "$ffmpeg_mode" = "bundle" ]; then
+      if ! install_ffmpeg_bundle; then
+        die "ffmpeg bundle install failed (re-run with --ffmpeg-system)"
+      fi
+    else
+      run apt-get install -y --no-install-recommends ffmpeg libavcodec-dev libavutil-dev
+    fi
   fi
 
   # Optional deps (soft failure if missing in repo)
@@ -221,10 +398,13 @@ install_deps_debian() {
 }
 
 install_runtime_deps_debian() {
+  local ffmpeg_mode
+  ffmpeg_mode="$(resolve_ffmpeg_mode)"
+
   run apt-get update -y
 
   # Ubuntu: ensure universe for ffmpeg/libdvbcsa runtime packages.
-  if [ "${OS_ID:-}" = "ubuntu" ]; then
+  if [ "$ffmpeg_mode" = "system" ] && [ "${OS_ID:-}" = "ubuntu" ]; then
     if ! apt-cache show ffmpeg >/dev/null 2>&1; then
       run apt-get install -y --no-install-recommends software-properties-common
       if command -v add-apt-repository >/dev/null 2>&1; then
@@ -239,7 +419,13 @@ install_runtime_deps_debian() {
   run apt-get install -y --no-install-recommends ca-certificates curl
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    run apt-get install -y --no-install-recommends ffmpeg
+    if [ "$ffmpeg_mode" = "bundle" ]; then
+      if ! install_ffmpeg_bundle; then
+        die "ffmpeg bundle install failed (re-run with --ffmpeg-system)"
+      fi
+    else
+      run apt-get install -y --no-install-recommends ffmpeg
+    fi
   fi
 
   # Runtime libraries for dynamically linked builds.
@@ -282,6 +468,9 @@ enable_rpmfusion() {
 }
 
 install_deps_rhel() {
+  local ffmpeg_mode
+  ffmpeg_mode="$(resolve_ffmpeg_mode)"
+
   enable_epel_rhel
   run "$PKG_MGR" -y install ca-certificates curl tar gzip xz git gcc make pkgconfig \
     openssl-devel sqlite-devel
@@ -290,18 +479,61 @@ install_deps_rhel() {
   run "$PKG_MGR" -y install libdvbcsa-devel postgresql-devel || true
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    enable_rpmfusion
-    run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+    if [ "$ffmpeg_mode" = "bundle" ]; then
+      if ! install_ffmpeg_bundle; then
+        if [ "${FFMPEG_MODE:-auto}" = "auto" ]; then
+          warn "ffmpeg bundle install failed; falling back to system packages"
+          if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+            log "ffmpeg already installed; skipping package install"
+          else
+            enable_rpmfusion
+            run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+          fi
+        else
+          die "ffmpeg bundle install failed"
+        fi
+      fi
+    else
+      if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+        log "ffmpeg already installed; skipping package install"
+      else
+        enable_rpmfusion
+        run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+      fi
+    fi
   fi
 }
 
 install_runtime_deps_rhel() {
+  local ffmpeg_mode
+  ffmpeg_mode="$(resolve_ffmpeg_mode)"
+
   enable_epel_rhel
   run "$PKG_MGR" -y install ca-certificates curl sqlite-libs openssl-libs || true
   run "$PKG_MGR" -y install libdvbcsa postgresql-libs || true
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
-    enable_rpmfusion
-    run "$PKG_MGR" -y install ffmpeg || true
+    if [ "$ffmpeg_mode" = "bundle" ]; then
+      if ! install_ffmpeg_bundle; then
+        if [ "${FFMPEG_MODE:-auto}" = "auto" ]; then
+          warn "ffmpeg bundle install failed; falling back to system packages"
+          if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+            log "ffmpeg already installed; skipping package install"
+          else
+            enable_rpmfusion
+            run "$PKG_MGR" -y install ffmpeg || true
+          fi
+        else
+          die "ffmpeg bundle install failed"
+        fi
+      fi
+    else
+      if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+        log "ffmpeg already installed; skipping package install"
+      else
+        enable_rpmfusion
+        run "$PKG_MGR" -y install ffmpeg || true
+      fi
+    fi
   fi
 }
 
@@ -398,6 +630,10 @@ build_from_source() {
     local archive="$WORKDIR/stream-src.tar.gz"
     fetch_artifact "$url" "$archive"
 
+    if ! tar -tf "$archive" >/dev/null 2>&1; then
+      die "Downloaded sources are not a valid tar archive (maybe an HTML error page): $url"
+    fi
+
     run tar -xf "$archive" -C "$WORKDIR"
     src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
     if [ -z "$src_root" ]; then
@@ -411,10 +647,14 @@ build_from_source() {
     log "Downloading sources: $url"
     local archive="$WORKDIR/stream-src.tar.gz"
     if fetch_artifact "$url" "$archive"; then
-      run tar -xf "$archive" -C "$WORKDIR"
-      src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
-      if [ -z "$src_root" ]; then
-        warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+      if tar -tf "$archive" >/dev/null 2>&1; then
+        run tar -xf "$archive" -C "$WORKDIR"
+        src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+        if [ -z "$src_root" ]; then
+          warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+        fi
+      else
+        warn "Source tarball is not a valid archive (maybe an HTML error page). Falling back to git clone."
       fi
     else
       warn "Source tarball download failed. Falling back to git clone."
@@ -578,11 +818,24 @@ verify_transcode() {
     die "Installed build is not FULL (no transcode). Reinstall FULL build or rebuild from sources without --without-transcode."
   fi
 
-  if ! command -v ffmpeg >/dev/null 2>&1; then
+  local ffmpeg_bin=""
+  local ffprobe_bin=""
+  if [ -x "$FFMPEG_BIN_PATH" ] && [ -x "$FFPROBE_BIN_PATH" ]; then
+    ffmpeg_bin="$FFMPEG_BIN_PATH"
+    ffprobe_bin="$FFPROBE_BIN_PATH"
+  elif command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+    ffmpeg_bin="ffmpeg"
+    ffprobe_bin="ffprobe"
+  fi
+
+  if [ -z "$ffmpeg_bin" ]; then
     die "ffmpeg not found. Re-run installer without --no-ffmpeg, or install ffmpeg manually."
   fi
-  if ! ffmpeg -hide_banner -version >/dev/null 2>&1; then
+  if ! "$ffmpeg_bin" -hide_banner -version >/dev/null 2>&1; then
     die "ffmpeg is installed but not runnable. Check missing shared libraries or reinstall ffmpeg."
+  fi
+  if [ -n "$ffprobe_bin" ] && ! "$ffprobe_bin" -hide_banner -version >/dev/null 2>&1; then
+    die "ffprobe is installed but not runnable. Check missing shared libraries or reinstall ffprobe."
   fi
 
   log "Transcode verification: OK"
@@ -633,13 +886,21 @@ write_instance_files() {
     PORT="8816"
   fi
 
-	  {
-	    printf 'STREAM_PORT=%s\n' "$PORT"
-	    if [ "$INSTALL_WEB" -eq 1 ]; then
-	      printf 'STREAM_WEB_DIR=%s\n' "/usr/local/share/stream/web"
-	    fi
-	  } > "$env"
-	}
+  {
+    printf 'STREAM_PORT=%s\n' "$PORT"
+    if [ "$INSTALL_WEB" -eq 1 ]; then
+      printf 'STREAM_WEB_DIR=%s\n' "/usr/local/share/stream/web"
+    fi
+    if [ "$FFMPEG_BUNDLE_INSTALLED" -eq 1 ]; then
+      # Prefer the bundled tools for this instance only.
+      printf 'STREAM_FFMPEG_PATH=%s\n' "$FFMPEG_BIN_PATH"
+      printf 'STREAM_FFPROBE_PATH=%s\n' "$FFPROBE_BIN_PATH"
+      # Legacy env keys (kept for backwards compatibility).
+      printf 'ASTRA_FFMPEG_PATH=%s\n' "$FFMPEG_BIN_PATH"
+      printf 'ASTRA_FFPROBE_PATH=%s\n' "$FFPROBE_BIN_PATH"
+    fi
+  } > "$env"
+}
 
 maybe_enable_service() {
   if [ "$ENABLE_SERVICE" -ne 1 ] || [ -z "$INSTANCE_NAME" ]; then

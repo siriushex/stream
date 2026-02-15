@@ -1,21 +1,6 @@
-SOURCES="sqlite.c"
+SOURCES="sqlite.c sqlite3.c"
 MODULES="sqlite"
-LDFLAGS="-lsqlite3"
 
-check_sqlite()
-{
-    cat <<'EOC' | $APP_C $APP_CFLAGS -x c - -o /dev/null -lsqlite3 >/dev/null 2>&1
-#include <sqlite3.h>
-int main(void)
-{
-    sqlite3 *db = 0;
-    sqlite3_open(":memory:", &db);
-    sqlite3_close(db);
-    return 0;
-}
-EOC
-}
-
-if ! check_sqlite ; then
-    ERROR="sqlite3 not found"
-fi
+# Bundled SQLite (amalgamation) to guarantee modern features (UPSERT/WAL) on older distros.
+# This avoids runtime dependency on libsqlite3 and improves stability/perf on CentOS 7.
+CFLAGS="-DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION"
