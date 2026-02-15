@@ -2745,8 +2745,8 @@ details.fold {
   padding: 10px 12px;
 }
 
-/* В модалках fold по умолчанию выглядит слишком "плотно". Чуть больше воздуха. */
-.modal-body-scroll details.fold {
+/* Auth backend modal: fold чуть мягче, чтобы форма выглядела компактнее. */
+#auth-backend-overlay details.fold {
   background: var(--panel-2);
 }
 
