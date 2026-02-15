@@ -213,6 +213,7 @@ local opt = {
     hls_route = "/hls",
     config_path = nil,
     import_mode = "merge",
+    import_always = false,
     reset_pass = false,
     systemd_init = false,
     systemd_remove = false,
@@ -262,7 +263,8 @@ options_usage = [[
     --init              register systemd service template (stream@.service)
                        (use with -c/-p to create /etc/stream/<name>.json/.env and enable stream@<name>)
     --remove            remove systemd service template (stream@.service)
-    --config PATH       import config (.json or .lua) before start
+    --config PATH       load config (.json or .lua) and import into sqlite on boot (skipped if unchanged)
+    --import-always     always import config into sqlite on boot (legacy behavior)
     --import PATH       legacy alias for --config (json)
     --import-mode MODE  import mode: merge or replace (default: merge)
 ]]
@@ -351,6 +353,10 @@ options = {
     ["--import"] = function(idx)
         opt.config_path = argv[idx + 1]
         return 1
+    end,
+    ["--import-always"] = function(idx)
+        opt.import_always = true
+        return 0
     end,
     ["--import-mode"] = function(idx)
         opt.import_mode = argv[idx + 1]
@@ -1504,26 +1510,46 @@ WantedBy=multi-user.target
             log.error("[server] import failed: " .. tostring(created))
             os.exit(78)
         end
-        if created then
-            log.warning("[server] config file missing, created defaults: " .. tostring(opt.config_path))
-        end
-        if not opt.no_import then
-            local summary, err = config.import_astra_file(opt.config_path, { mode = opt.import_mode })
-            if not summary then
-                log.error("[server] import failed: " .. tostring(err))
-                os.exit(78)
+	        if created then
+	            log.warning("[server] config file missing, created defaults: " .. tostring(opt.config_path))
+	        end
+	        if not opt.no_import then
+	            local should_import = true
+	            local import_reason = nil
+	            local fp = nil
+	            if opt.import_always then
+	                should_import = true
+	                import_reason = "forced"
+	            elseif config and type(config.should_import_primary_config) == "function" then
+	                local ok, why, current_fp = config.should_import_primary_config(opt.config_path)
+	                should_import = (ok ~= false)
+	                import_reason = why
+	                fp = current_fp
+	            end
+
+            if should_import then
+                local summary, err = config.import_astra_file(opt.config_path, { mode = opt.import_mode })
+                if not summary then
+                    log.error("[server] import failed: " .. tostring(err))
+                    os.exit(78)
+                else
+                    if fp and type(config.set_primary_config_fingerprint) == "function" then
+                        pcall(config.set_primary_config_fingerprint, fp)
+                    end
+                    log.info(string.format(
+                        "[server] import ok: settings=%d users=%d adapters=%d streams=%d softcam=%d splitters=%d splitter_links=%d splitter_allow=%d",
+                        summary.settings or 0,
+                        summary.users or 0,
+                        summary.adapters or 0,
+                        summary.streams or 0,
+                        summary.softcam or 0,
+                        summary.splitters or 0,
+                        summary.splitter_links or 0,
+                        summary.splitter_allow or 0
+                    ))
+                end
             else
-                log.info(string.format(
-                    "[server] import ok: settings=%d users=%d adapters=%d streams=%d softcam=%d splitters=%d splitter_links=%d splitter_allow=%d",
-                    summary.settings or 0,
-                    summary.users or 0,
-                    summary.adapters or 0,
-                    summary.streams or 0,
-                    summary.softcam or 0,
-                    summary.splitters or 0,
-                    summary.splitter_links or 0,
-                    summary.splitter_allow or 0
-                ))
+                log.info("[server] import skipped (config unchanged)" .. (import_reason and (": " .. tostring(import_reason)) or ""))
             end
         end
     end

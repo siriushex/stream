@@ -42,13 +42,15 @@ stream --femon dvb://#adapter=0&type=S2&tp=...
   --http-play-port P  http play server port override (default: setting http_play_port or PORT)
   --data-dir PATH     data directory (default: ./data or <config>.data)
   --db PATH           sqlite db path (default: data-dir/stream.db)
+  --no-import         do not import config file into sqlite on boot (use existing db)
   --web-dir PATH      web ui directory (default: ./web)
   --hls-dir PATH      hls output directory (default: data-dir/hls)
   --hls-route PATH    hls url prefix (default: /hls)
   --stream-shard S/C  run only a shard of streams (example: 0/4)
   -c PATH             alias for --config
   -pass               reset admin password to default (admin/admin)
-  --config PATH       import config (.json or .lua) before start
+  --config PATH       load config (.json or .lua) and import into sqlite on boot (skipped if unchanged)
+  --import-always     always import config into sqlite on boot (legacy behavior)
   --import PATH       legacy alias for --config (json)
   --import-mode MODE  import mode: merge or replace (default: merge)
 ```
