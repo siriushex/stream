@@ -74,6 +74,11 @@
   box-sizing: border-box;
 }
 
+/* Ensure the HTML `hidden` attribute always works, even when component classes set `display`. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
