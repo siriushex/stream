@@ -3545,6 +3545,15 @@ local function list_metrics(server, client, request)
         lua_mem_kb = math.floor(collectgarbage("count") + 0.5)
     end
     local perf = (runtime and runtime.perf) or {}
+    local dataplane_engine = nil
+    if type(udp_relay) == "table" and type(udp_relay.engine_stats) == "function" then
+        local ok, st = pcall(function()
+            return udp_relay.engine_stats()
+        end)
+        if ok and type(st) == "table" then
+            dataplane_engine = st
+        end
+    end
 
     local mpts_metrics = nil
     for id, entry in pairs(status) do
@@ -3589,6 +3598,11 @@ local function list_metrics(server, client, request)
             adapter_refresh_ts = perf.last_adapter_refresh_ts,
         },
     }
+    if dataplane_engine then
+        payload.dataplane = {
+            engine = dataplane_engine,
+        }
+    end
     if mpts_metrics then
         payload.mpts = mpts_metrics
     end
@@ -3626,6 +3640,20 @@ local function list_metrics(server, client, request)
         end
         if perf.last_adapter_refresh_ms then
             table.insert(lines, "astra_perf_adapter_refresh_ms " .. tostring(perf.last_adapter_refresh_ms))
+        end
+        if dataplane_engine then
+            table.insert(lines, "astra_dataplane_workers_count " .. tostring(dataplane_engine.workers_count or 0))
+            table.insert(lines, "astra_dataplane_sendmmsg_available " .. tostring((dataplane_engine.sendmmsg_available == true) and 1 or 0))
+            if type(dataplane_engine.workers) == "table" then
+                for _, w in ipairs(dataplane_engine.workers) do
+                    local widx = tonumber(w.index) or 0
+                    local label = string.format("{worker=\"%d\"}", widx)
+                    table.insert(lines, "astra_dataplane_worker_active_streams" .. label .. " " .. tostring(w.active_streams or 0))
+                    if w.pinned_cpu ~= nil then
+                        table.insert(lines, "astra_dataplane_worker_pinned_cpu" .. label .. " " .. tostring(w.pinned_cpu))
+                    end
+                end
+            end
         end
         if mpts_metrics then
             for stream_id, stats in pairs(mpts_metrics) do
