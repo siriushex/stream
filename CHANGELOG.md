@@ -13,6 +13,7 @@
 ### 2026-02-16
 - Changes:
   - Settings Save: defer primary config + revision snapshot + LKG export to an async helper process (reduces UI latency and avoids blocking the main event loop on large configs).
+  - Boot/import: track primary config file fingerprint and skip import when the file is unchanged (prevents overwriting newer SQLite state after restarts and reduces boot work on large configs).
   - Export: add `scripts/export_write.lua` (atomic multi-target writer) and `scripts/export_async.lua` (coalesced async export queue).
   - SQLite: bundle SQLite amalgamation (v3.51.2) into `stream` to guarantee UPSERT support and improve CentOS 7 performance/predictability.
   - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
@@ -22,6 +23,7 @@
   - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
 - Tests:
   - `./configure.sh && make`
+  - `./stream scripts/tests/config_primary_fingerprint_unit.lua`
   - `bash -n install.sh`
   - `bash -n install-centos.sh`
   - `bash -n deploy/stream.centv.ru/install.sh`
