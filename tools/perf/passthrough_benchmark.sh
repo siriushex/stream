@@ -102,6 +102,9 @@ echo "stream_pid=${STREAM_PID}"
 echo "config=${CFG}"
 echo "mode=${MODE} count=${COUNT} pps=${PPS} duration=${DURATION}s"
 
+# Best-effort: capture metrics (prometheus format) for dataplane visibility.
+METRICS_URL="http://127.0.0.1:${HTTP_PORT}/api/v1/metrics?format=prometheus"
+
 # Start sender.
 python3 "${ROOT_DIR}/tools/perf/udp_multi_sender.py" \
   --addr 127.0.0.1 \
@@ -116,11 +119,13 @@ GEN_PID=$!
 OUT_DIR="${ROOT_DIR}/tools/perf/results/passthrough_$(date +%Y%m%d_%H%M%S)_${MODE}"
 mkdir -p "${OUT_DIR}"
 tools/perf/process_snapshot.sh "${STREAM_PID}" | tee "${OUT_DIR}/snapshot_before.txt"
+curl -fsS "${METRICS_URL}" > "${OUT_DIR}/metrics_before.prom" 2>/dev/null || true
 
 tools/perf/capture_incident.sh "${STREAM_PID}" 15 "${OUT_DIR}" || true
 
 wait "${GEN_PID}" || true
 tools/perf/process_snapshot.sh "${STREAM_PID}" | tee "${OUT_DIR}/snapshot_after.txt"
+curl -fsS "${METRICS_URL}" > "${OUT_DIR}/metrics_after.prom" 2>/dev/null || true
 
 echo "results=${OUT_DIR}"
 echo "log=${LOG}"
