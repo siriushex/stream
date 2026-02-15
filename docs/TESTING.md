@@ -46,7 +46,7 @@ contrib/ci/smoke_bundle_transcode.sh
 ```
 
 Environment:
-- `BUNDLE_TAR=/path/to/astral-transcode-<version>-linux-<arch>-<profile>.tar.gz`
+- `BUNDLE_TAR=/path/to/stream-transcode-<version>-linux-<arch>-<profile>.tar.gz`
 - `PORT=9065` (optional)
 
 ## MPTS Smoke (runtime apply)

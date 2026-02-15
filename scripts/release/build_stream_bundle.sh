@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: build_astral_bundle.sh [options]
+Usage: build_stream_bundle.sh [options]
 
 Options:
   --arch <linux-x86_64|linux-aarch64>   Target arch (default: host)
@@ -19,8 +19,8 @@ Environment overrides:
   FFMPEG_FFPROBE_URL / FFMPEG_FFPROBE_SHA256  Optional separate ffprobe download
 
 Examples:
-  scripts/release/build_astral_bundle.sh --arch linux-x86_64 --profile lgpl
-  FFMPEG_URL=... FFMPEG_SHA256=... scripts/release/build_astral_bundle.sh
+  scripts/release/build_stream_bundle.sh --arch linux-x86_64 --profile lgpl
+  FFMPEG_URL=... FFMPEG_SHA256=... scripts/release/build_stream_bundle.sh
 USAGE
 }
 
@@ -140,15 +140,7 @@ fi
 VERSION="$VERSION_OVERRIDE"
 if [[ -z "$VERSION" ]]; then
   if [[ -f "$ROOT_DIR/version.h" ]]; then
-    VERSION="$(grep -E '^#define ASTRA_VERSION "' "$ROOT_DIR/version.h" | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1 || true)"
-    if [[ -z "$VERSION" ]]; then
-      ver_major="$(grep -E '^#define ASTRA_VERSION_MAJOR ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
-      ver_minor="$(grep -E '^#define ASTRA_VERSION_MINOR ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
-      ver_patch="$(grep -E '^#define ASTRA_VERSION_PATCH ' "$ROOT_DIR/version.h" | awk '{print $3}' | head -n 1 || true)"
-      if [[ -n "$ver_major" && -n "$ver_minor" && -n "$ver_patch" ]]; then
-        VERSION="${ver_major}.${ver_minor}.${ver_patch}"
-      fi
-    fi
+    VERSION="$(grep -E '^#define STREAM_VERSION "' "$ROOT_DIR/version.h" | sed -E 's/.*"([^"]+)".*/\1/' | head -n 1 || true)"
   fi
 fi
 if [[ -z "$VERSION" ]]; then
@@ -156,7 +148,7 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 WORK_DIR="$(mktemp -d)"
-STAGE_DIR="$WORK_DIR/astral-transcode-${VERSION}-${ARCH}-${PROFILE}"
+STAGE_DIR="$WORK_DIR/stream-transcode-${VERSION}-${ARCH}-${PROFILE}"
 mkdir -p "$STAGE_DIR/bin" "$STAGE_DIR/LICENSES"
 
 cleanup() {
@@ -307,35 +299,36 @@ if [[ ! -x "$FFPROBE_BIN" ]]; then
   chmod +x "$FFPROBE_BIN" 2>/dev/null || true
 fi
 
-if [[ ! -x "$ROOT_DIR/astra" ]]; then
-  echo "Building astra..."
+if [[ ! -x "$ROOT_DIR/stream" ]]; then
+  echo "Building stream..."
   (cd "$ROOT_DIR" && ./configure.sh && make)
 fi
-if [[ ! -x "$ROOT_DIR/astra" ]]; then
-  echo "astra binary not found after build" >&2
+if [[ ! -x "$ROOT_DIR/stream" ]]; then
+  echo "stream binary not found after build" >&2
   exit 1
 fi
 
-cp "$ROOT_DIR/astra" "$STAGE_DIR/bin/astra"
-cat > "$STAGE_DIR/bin/astral" <<'SH'
+cp "$ROOT_DIR/stream" "$STAGE_DIR/bin/stream-bin"
+cat > "$STAGE_DIR/bin/stream" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export ASTRA_BASE_DIR="$BASE_DIR"
-export ASTRA_EDITION="${ASTRA_EDITION:-ASTRAL}"
+export STREAM_BASE_DIR="$BASE_DIR"
+export STREAM_EDITION="${STREAM_EDITION:-BUNDLED}"
 export PATH="$BASE_DIR/bin:$PATH"
-exec "$BASE_DIR/bin/astra" "$@"
+cd "$BASE_DIR"
+exec "$BASE_DIR/bin/stream-bin" "$@"
 SH
-chmod +x "$STAGE_DIR/bin/astral"
+chmod +x "$STAGE_DIR/bin/stream"
 
 cat > "$STAGE_DIR/run.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export ASTRA_BASE_DIR="$BASE_DIR"
-export ASTRA_EDITION="${ASTRA_EDITION:-ASTRAL}"
+export STREAM_BASE_DIR="$BASE_DIR"
+export STREAM_EDITION="${STREAM_EDITION:-BUNDLED}"
 export PATH="$BASE_DIR/bin:$PATH"
-exec "$BASE_DIR/bin/astral" "$@"
+exec "$BASE_DIR/bin/stream" "$@"
 SH
 chmod +x "$STAGE_DIR/run.sh"
 
@@ -346,7 +339,7 @@ cp "$FFMPEG_BIN" "$STAGE_DIR/bin/ffmpeg"
 cp "$FFPROBE_BIN" "$STAGE_DIR/bin/ffprobe"
 
 if [[ -f "$ROOT_DIR/COPYING" ]]; then
-  cp "$ROOT_DIR/COPYING" "$STAGE_DIR/LICENSES/ASTRA_LICENSE.txt"
+  cp "$ROOT_DIR/COPYING" "$STAGE_DIR/LICENSES/STREAM_LICENSE.txt"
 fi
 
 if [[ -n "${EXTRACT_DIR:-}" ]]; then
@@ -388,7 +381,7 @@ if [[ -d "$ROOT_DIR/contrib/systemd" ]]; then
 fi
 
 mkdir -p "$OUTPUT_DIR"
-BUNDLE_NAME="astral-transcode-${VERSION}-${ARCH}"
+BUNDLE_NAME="stream-transcode-${VERSION}-${ARCH}"
 if [[ "$PROFILE" == "gpl" ]]; then
   BUNDLE_NAME+="-gpl"
 else
