@@ -1049,11 +1049,18 @@ local function parse_udp_url_entry(entry)
     if type(entry) == "string" then
         parsed = parse_url(entry)
     elseif type(entry) == "table" then
+        -- Важно: stream configs могут хранить UDP вход/выход как table с дополнительными ключами
+        -- (например socket_size, ttl). Для eligibility нужно видеть ВСЕ ключи, поэтому делаем merge.
+        local merged = copy_table(entry)
         if type(entry.url) == "string" then
-            parsed = parse_url(entry.url) or entry
-        else
-            parsed = entry
+            local u = parse_url(entry.url)
+            if type(u) == "table" then
+                for k, v in pairs(u) do
+                    merged[k] = v
+                end
+            end
         end
+        parsed = merged
     end
     if type(parsed) ~= "table" then
         return nil
@@ -1254,6 +1261,10 @@ local function close_existing_stream(id, existing)
         return
     end
     if existing.kind == "dataplane" then
+        if existing.channel then
+            kill_channel(existing.channel)
+            existing.channel = nil
+        end
         if existing.relay and type(existing.relay.close) == "function" then
             pcall(function() existing.relay:close() end)
         end
@@ -1336,10 +1347,28 @@ local function apply_stream(id, row, force)
                 return udp_relay.start(dp_opts)
             end)
             if ok and relay_or_err then
+                -- Для совместимости UI (/play, Analyze) оставляем "теневой" канал без outputs.
+                -- Он не держит input активным без клиентов (clients=0), но позволяет preview по /play.
+                local shadow = copy_table(cfg)
+                shadow.output = {}
+                shadow.__internal_loop = true
+                shadow.__dataplane_shadow = true
+                local shadow_channel, shadow_err = build_channel_safe(shadow)
+                if not shadow_channel then
+                    log.warning("[runtime] dataplane shadow channel init failed: " .. tostring(id) .. " ("
+                        .. tostring(shadow_err or "unknown error") .. "); /play may be unavailable")
+                end
+
                 if existing then
                     close_existing_stream(id, existing)
                 end
-                runtime.streams[id] = { kind = "dataplane", relay = relay_or_err, hash = hash, config_snapshot = copy_table(cfg) }
+                runtime.streams[id] = {
+                    kind = "dataplane",
+                    relay = relay_or_err,
+                    channel = shadow_channel,
+                    hash = hash,
+                    config_snapshot = copy_table(cfg),
+                }
                 return true
             end
             local err = ok and "failed to start dataplane relay" or tostring(relay_or_err)
