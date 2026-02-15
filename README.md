@@ -560,7 +560,7 @@ Per-output config (UDP only):
   - ffmpeg is always started with a single input (the active one); backup switches
     restart ffmpeg with the new input.
 - Config keys (per stream):
-  - `transcode.engine`: `cpu` | `nvidia` (defaults output codecs).
+  - `transcode.engine`: `cpu` | `nvidia` | `vaapi` | `qsv` (defaults output codecs).
   - `transcode.process_per_output`: when `true`, run one ffmpeg process per output
     (fault isolation, independent restarts; status includes `workers[]`).
   - `transcode.seamless_udp_proxy`: when `true` and the output URL is UDP/RTP,
@@ -594,7 +594,7 @@ Per-output config (UDP only):
     an output does not define its own watchdog.
   - Global: `monitor_analyze_max_concurrency` limits parallel Astra Analyze probes
     (default 4).
-- UI tip: transcode output presets are available for common CPU/NVIDIA 1080p/720p/540p
+- UI tip: transcode output presets are available for common CPU/NVIDIA/Intel QSV 1080p/720p/540p
   profiles; transcode presets can also set engine/decoder/watchdog defaults and
   add a preset output if none exist. The output modal includes presets for
   HTTP/HLS/UDP/RTP/SRT/NetworkPush/file outputs.
@@ -604,6 +604,18 @@ Per-output config (UDP only):
 - NVIDIA engine validation checks for `/dev/nvidia0`, `/dev/nvidiactl`, or
   `/proc/driver/nvidia/version`; if none are found the job moves to `ERROR`
   and emits `TRANSCODE_GPU_UNAVAILABLE`.
+- Intel QSV engine validation checks for `/dev/dri/renderD*` and FFmpeg encoder
+  support (`ffmpeg -encoders | grep -E 'h264_qsv|hevc_qsv'`). If missing, the job
+  moves to `ERROR` and emits `TRANSCODE_QSV_UNAVAILABLE`.
+- Intel QSV typically requires the Intel iHD VAAPI driver (often packaged as
+  `intel-media-va-driver`) and permissions to access `/dev/dri/renderD*`.
+- Intel QSV settings (global, can be overridden per-stream via `transcode.qsv_*`):
+  - `qsv_libva_driver_name` (default `iHD`)
+  - `qsv_libva_drivers_path` (default `/opt/intel/mediasdk/lib64`)
+  - `qsv_preset` (default `fast`)
+  - `qsv_look_ahead_depth` (default `50`; set `0` to disable)
+  - `qsv_h264_profile` (default `high`)
+  - `qsv_hevc_profile` (default `main`)
 - CPU example (minimum):
 ```json
 {
@@ -645,6 +657,18 @@ Per-output config (UDP only):
         "format_args": ["-f", "mpegts"],
         "url": "udp://234.1.2.3:1234?pkt_size=1316"
       }
+    ]
+  }
+}
+```
+
+- Intel QSV example (excerpt):
+```json
+{
+  "transcode": {
+    "engine": "qsv",
+    "profiles": [
+      {"id":"HD","width":1280,"height":720,"fps":25,"bitrate_kbps":2500,"maxrate_kbps":3200,"bufsize_kbps":5000}
     ]
   }
 }

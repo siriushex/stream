@@ -587,7 +587,10 @@ local function normalize_engine(tc)
     if engine == "intel" then
         engine = "vaapi"
     end
-    if engine ~= "cpu" and engine ~= "nvidia" and engine ~= "vaapi" then
+    if engine == "intel_qsv" or engine == "quicksync" or engine == "quick_sync" then
+        engine = "qsv"
+    end
+    if engine ~= "cpu" and engine ~= "nvidia" and engine ~= "vaapi" and engine ~= "qsv" then
         log.warning("[transcode] unknown engine: " .. tostring(tc.engine) .. ", using cpu")
         engine = "cpu"
     end
@@ -623,6 +626,28 @@ local tool_version_cache = {}
 local function shell_escape(value)
     local text = tostring(value or "")
     return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+function transcode._argv_to_log_string(argv)
+    if type(argv) ~= "table" then
+        return ""
+    end
+    local function sanitize_url_arg(value)
+        local text = tostring(value or "")
+        if text == "" then
+            return text
+        end
+        -- Redact URL userinfo (user:pass@) and common token params.
+        text = text:gsub("^(%w+://)([^/@%s]+):([^@/%s]+)@", "%1%2:***@")
+        text = text:gsub("([?&]token=)[^&?#]+", "%1***")
+        text = text:gsub("([?&]access_token=)[^&?#]+", "%1***")
+        return text
+    end
+    local out = {}
+    for _, v in ipairs(argv) do
+        table.insert(out, shell_escape(sanitize_url_arg(v)))
+    end
+    return table.concat(out, " ")
 end
 
 local function read_tool_version(path)
@@ -760,6 +785,148 @@ local function check_nvidia_support()
         end
     end
     return false, "nvidia device not found"
+end
+
+transcode._qsv_encoder_cache = transcode._qsv_encoder_cache or {}
+
+function transcode._qsv_has_render_device()
+    if not utils or type(utils.readdir) ~= "function" or type(utils.stat) ~= "function" then
+        return true, nil
+    end
+    local ok, iter = pcall(utils.readdir, "/dev/dri")
+    if not ok or not iter then
+        return false, "/dev/dri not found"
+    end
+    for name in iter do
+        if tostring(name):match("^renderD%d+$") then
+            return true, nil
+        end
+    end
+    return false, "render device not found (/dev/dri/renderD*)"
+end
+
+function transcode._qsv_cached_ffmpeg_encoders(ffmpeg_path)
+    if not ffmpeg_path or ffmpeg_path == "" then
+        return nil
+    end
+    local entry = transcode._qsv_encoder_cache["ffmpeg_encoders"]
+    local now = os.time()
+    if entry and entry.path == ffmpeg_path and entry.checked_at and now - entry.checked_at < 300 then
+        return entry.raw
+    end
+    local cmd = shell_escape(ffmpeg_path) .. " -hide_banner -encoders 2>/dev/null"
+    local ok, handle = pcall(io.popen, cmd)
+    if not ok or not handle then
+        transcode._qsv_encoder_cache["ffmpeg_encoders"] = {
+            path = ffmpeg_path,
+            raw = "",
+            checked_at = now,
+        }
+        return ""
+    end
+    local raw = handle:read("*a") or ""
+    handle:close()
+    transcode._qsv_encoder_cache["ffmpeg_encoders"] = {
+        path = ffmpeg_path,
+        raw = raw,
+        checked_at = now,
+    }
+    return raw
+end
+
+function transcode._qsv_ffmpeg_has_encoder(ffmpeg_path, encoder_name)
+    if not ffmpeg_path or ffmpeg_path == "" or not encoder_name or encoder_name == "" then
+        return false
+    end
+    local raw = transcode._qsv_cached_ffmpeg_encoders(ffmpeg_path)
+    if not raw or raw == "" then
+        return false
+    end
+    return raw:find("%s" .. tostring(encoder_name) .. "%s") ~= nil
+end
+
+function transcode._check_qsv_support(tc, profiles, outputs)
+    local ok, err = transcode._qsv_has_render_device()
+    if not ok then
+        return false, err
+    end
+
+    local ffmpeg_path = resolve_ffmpeg_path(tc)
+
+    local need_h264 = false
+    local need_hevc = false
+
+    local function scan_codec(vcodec)
+        local c = tostring(vcodec or ""):lower()
+        if c:find("hevc_qsv") or c:find("h265_qsv") then
+            need_hevc = true
+        elseif c:find("h264_qsv") then
+            need_h264 = true
+        end
+    end
+
+    if type(outputs) == "table" and #outputs > 0 then
+        for _, out in ipairs(outputs) do
+            local vcodec = out and out.vcodec
+            if vcodec == nil or tostring(vcodec) == "" then
+                need_h264 = true
+            else
+                scan_codec(vcodec)
+            end
+        end
+    elseif type(profiles) == "table" and #profiles > 0 then
+        for _, p in ipairs(profiles) do
+            local vcodec = p and p.video_codec
+            if vcodec == nil or tostring(vcodec) == "" then
+                need_h264 = true
+            else
+                scan_codec(vcodec)
+            end
+        end
+    end
+
+    if not need_h264 and not need_hevc then
+        need_h264 = true
+    end
+
+    if need_h264 and not transcode._qsv_ffmpeg_has_encoder(ffmpeg_path, "h264_qsv") then
+        return false, "ffmpeg encoder not found: h264_qsv"
+    end
+    if need_hevc and not transcode._qsv_ffmpeg_has_encoder(ffmpeg_path, "hevc_qsv") then
+        return false, "ffmpeg encoder not found: hevc_qsv"
+    end
+    return true, nil
+end
+
+function transcode._build_qsv_env(tc)
+    local env = {}
+    local driver_name = tc and tostring(tc.qsv_libva_driver_name or "") or ""
+    if driver_name == "" and config and config.get_setting then
+        driver_name = tostring(config.get_setting("qsv_libva_driver_name") or "")
+    end
+    if driver_name == "" then
+        driver_name = "iHD"
+    end
+
+    local drivers_path = tc and tostring(tc.qsv_libva_drivers_path or "") or ""
+    if drivers_path == "" and config and config.get_setting then
+        drivers_path = tostring(config.get_setting("qsv_libva_drivers_path") or "")
+    end
+    if drivers_path == "" then
+        drivers_path = "/opt/intel/mediasdk/lib64"
+    end
+
+    if driver_name ~= "" then
+        env.LIBVA_DRIVER_NAME = driver_name
+    end
+    if drivers_path ~= "" then
+        env.LIBVA_DRIVERS_PATH = drivers_path
+    end
+
+    if next(env) == nil then
+        return nil
+    end
+    return env
 end
 
 local function parse_nvidia_smi_output(raw)
@@ -937,6 +1104,7 @@ local function build_ffmpeg_args(cfg, opts)
     local engine = normalize_engine(tc)
     local default_vcodec = engine == "nvidia" and "h264_nvenc"
         or (engine == "vaapi" and "h264_vaapi")
+        or (engine == "qsv" and "h264_qsv")
         or "libx264"
     local default_acodec = "aac"
     table.insert(argv, bin)
@@ -5480,6 +5648,47 @@ local function append_encoder_preset_args(v_args, vcodec, preset, tc)
         end
         return
     end
+    if codec:find("_qsv") then
+        local tc_preset = tc and tostring(tc.qsv_preset or "") or ""
+        local global_preset = (config and config.get_setting) and tostring(config.get_setting("qsv_preset") or "") or ""
+        local qsv_preset = (tc_preset ~= "" and tc_preset) or (global_preset ~= "" and global_preset) or nil
+        if not qsv_preset then
+            -- Default to "fast" to match typical low-latency IPTV presets.
+            local map = { speed = "fast", balanced = "fast", quality = "slow" }
+            qsv_preset = map[preset] or "fast"
+        end
+        if not args_has_flag(v_args, "-preset") then
+            table.insert(v_args, "-preset")
+            table.insert(v_args, tostring(qsv_preset))
+        end
+
+        if not args_has_flag(v_args, "-look_ahead_depth") then
+            local depth = tonumber(tc and tc.qsv_look_ahead_depth) or
+                (config and config.get_setting and tonumber(config.get_setting("qsv_look_ahead_depth")) or nil) or
+                50
+            if depth and depth > 0 then
+                depth = math.max(1, math.min(100, math.floor(depth)))
+                table.insert(v_args, "-look_ahead_depth")
+                table.insert(v_args, tostring(depth))
+            end
+        end
+
+        if not args_has_flag(v_args, "-profile:v") and not args_has_flag(v_args, "-profile") and not args_has_flag(v_args, "-vprofile") then
+            local is_hevc = codec:find("hevc") or codec:find("h265")
+            local profile_key = is_hevc and "qsv_hevc_profile" or "qsv_h264_profile"
+            local default_profile = is_hevc and "main" or "high"
+            local profile = tc and tostring(tc[profile_key] or tc.qsv_profile or "") or ""
+            if profile == "" and config and config.get_setting then
+                profile = tostring(config.get_setting(profile_key) or config.get_setting("qsv_profile") or "")
+            end
+            if profile == "" then
+                profile = default_profile
+            end
+            table.insert(v_args, "-profile:v")
+            table.insert(v_args, tostring(profile))
+        end
+        return
+    end
     if codec:find("libx264") or codec:find("libx265") then
         local map = { speed = "veryfast", balanced = "faster", quality = "slow" }
         local x_preset = map[preset] or "faster"
@@ -5495,6 +5704,7 @@ local function build_ladder_output(job, profile, bus_port)
     local engine = normalize_engine(tc)
     local default_vcodec = engine == "nvidia" and "h264_nvenc"
         or (engine == "vaapi" and "h264_vaapi")
+        or (engine == "qsv" and "h264_qsv")
         or "libx264"
     local vcodec = profile.video_codec or default_vcodec
 
@@ -6210,6 +6420,35 @@ local function schedule_publish_restart(job, worker, code, message, meta)
     return true
 end
 
+function transcode._build_ffmpeg_spawn_opts(job)
+    local opts = { stdout = "pipe", stderr = "pipe" }
+    local tc = job and job.config and job.config.transcode or {}
+    local engine = normalize_engine(tc)
+    if engine == "qsv" then
+        opts.env = transcode._build_qsv_env(tc)
+    end
+    return opts
+end
+
+function transcode._log_spawn_ffmpeg(job, label, argv, opts)
+    if not job then
+        return
+    end
+    if type(opts) == "table" and type(opts.env) == "table" then
+        local kv = {}
+        for k, v in pairs(opts.env) do
+            table.insert(kv, tostring(k) .. "=" .. tostring(v))
+        end
+        table.sort(kv)
+        if #kv > 0 then
+            log.info("[transcode " .. tostring(job.id) .. "] ffmpeg env (" .. tostring(label) .. "): " ..
+                table.concat(kv, " "))
+        end
+    end
+    log.info("[transcode " .. tostring(job.id) .. "] ffmpeg argv (" .. tostring(label) .. "): " ..
+        transcode._argv_to_log_string(argv))
+end
+
 start_publish_worker = function(job, worker)
     if not job or not worker then
         return false
@@ -6680,7 +6919,9 @@ start_ladder_encoder = function(job, worker)
         job.ffmpeg_bundled = bin_info.bundled
     end
 
-    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    local spawn_opts = transcode._build_ffmpeg_spawn_opts(job)
+    transcode._log_spawn_ffmpeg(job, "ladder_encoder", argv, spawn_opts)
+    local ok, proc = pcall(process.spawn, argv, spawn_opts)
     if not ok or not proc then
         record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg ladder encoder", nil)
         worker.state = "ERROR"
@@ -6720,7 +6961,9 @@ start_ladder_encoder_standby = function(job, worker)
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid ladder config", nil)
         return false
     end
-    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    local spawn_opts = transcode._build_ffmpeg_spawn_opts(job)
+    transcode._log_spawn_ffmpeg(job, "ladder_encoder_standby", argv, spawn_opts)
+    local ok, proc = pcall(process.spawn, argv, spawn_opts)
     if not ok or not proc then
         record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg ladder encoder standby", nil)
         return false
@@ -6791,7 +7034,9 @@ start_worker = function(job, worker)
         job.ffmpeg_bundled = bin_info.bundled
     end
 
-    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    local spawn_opts = transcode._build_ffmpeg_spawn_opts(job)
+    transcode._log_spawn_ffmpeg(job, "output_worker:" .. tostring(worker.index), argv, spawn_opts)
+    local ok, proc = pcall(process.spawn, argv, spawn_opts)
     if not ok or not proc then
         record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg", {
             output_index = worker.index,
@@ -6827,7 +7072,9 @@ start_worker_standby = function(job, worker)
         })
         return false
     end
-    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    local spawn_opts = transcode._build_ffmpeg_spawn_opts(job)
+    transcode._log_spawn_ffmpeg(job, "output_worker_standby:" .. tostring(worker.index), argv, spawn_opts)
+    local ok, proc = pcall(process.spawn, argv, spawn_opts)
     if not ok or not proc then
         record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg standby", {
             output_index = worker.index,
@@ -7488,6 +7735,16 @@ function transcode.start(job, opts)
             end
         end
     end
+    if engine == "qsv" then
+        local ok, err = transcode._check_qsv_support(tc, job.profiles, job.outputs)
+        if not ok then
+            record_alert(job, "TRANSCODE_QSV_UNAVAILABLE", err or "qsv not available", {
+                engine = engine,
+            })
+            job.state = "ERROR"
+            return false
+        end
+    end
     if not opts.skip_preprobe and should_preprobe_udp(job) then
         start_input_probe(job)
         if job.input_probe_inflight then
@@ -7626,7 +7883,9 @@ function transcode.start(job, opts)
     close_log_file(job)
     open_log_file(job, job.log_file_path)
 
-    local ok, proc = pcall(process.spawn, argv, { stdout = "pipe", stderr = "pipe" })
+    local spawn_opts = transcode._build_ffmpeg_spawn_opts(job)
+    transcode._log_spawn_ffmpeg(job, "legacy", argv, spawn_opts)
+    local ok, proc = pcall(process.spawn, argv, spawn_opts)
     if not ok or not proc then
         record_alert(job, "TRANSCODE_SPAWN_FAILED", "failed to start ffmpeg", nil)
         job.state = "ERROR"
