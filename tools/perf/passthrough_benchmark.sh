@@ -87,6 +87,7 @@ python3 "${ROOT_DIR}/tools/perf/generate_passthrough_udp_config.py" \
   --config "${CFG}" \
   --data-dir "${TMP_DIR}/data" \
   --log "${LOG}" \
+  --no-web-auth \
   --no-stdout &
 STREAM_PID=$!
 
