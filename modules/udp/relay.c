@@ -692,7 +692,6 @@ static asc_socket_t *open_output_socket(const char *addr, int port, const char *
     if(ttl <= 0)
         ttl = 32;
     asc_socket_set_multicast_ttl(sock, ttl);
-    asc_socket_multicast_join(sock, addr, NULL);
     asc_socket_set_sockaddr(sock, addr, port);
     return sock;
 }
