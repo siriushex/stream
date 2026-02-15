@@ -715,3 +715,11 @@ function radio.sync_from_stream_config(stream_id, stream_cfg, enabled)
     end
     return true
 end
+
+-- Внутренние хелперы для unit-тестов (не использовать в runtime напрямую).
+radio._test = {
+    normalize_settings = normalize_settings,
+    build_udp_url = build_udp_url,
+    build_curl_args = build_curl_args,
+    build_ffmpeg_args = build_ffmpeg_args,
+}
