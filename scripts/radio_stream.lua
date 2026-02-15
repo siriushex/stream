@@ -409,7 +409,8 @@ local function normalize_settings(raw)
     out.output_url = build_udp_url(base_out, out.pkt_size)
     out.log_path = tostring(raw.log_path or "")
     out.auto_restart = normalize_bool(raw.auto_restart, true)
-    out.restart_delay_sec = clamp_number(raw.restart_delay_sec or raw.restart_delay, 0, 60, 4)
+    -- Внутренний timer требует interval > 0 (0 приведёт к abort), поэтому минимальный delay > 0.
+    out.restart_delay_sec = clamp_number(raw.restart_delay_sec or raw.restart_delay, 0.1, 60, 4)
     out.no_progress_timeout_sec = clamp_number(raw.no_progress_timeout_sec or raw.no_progress_timeout, 0, 600, 30)
     out.max_restarts_per_10min = clamp_int(raw.max_restarts_per_10min, 1, 1000, 10)
     return out
@@ -442,6 +443,9 @@ local function schedule_restart(job)
     job.restart_count = job.restart_count + 1
     table.insert(job.restart_window, now_ts())
     local delay = tonumber(job.restart_delay_sec) or 4
+    if delay <= 0 then
+        delay = 0.5
+    end
     timer({
         interval = delay,
         callback = function(self)
