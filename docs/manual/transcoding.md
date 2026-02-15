@@ -60,3 +60,23 @@ Multi‑bitrate (ladder) — это несколько профилей сраз
 2. Проверьте вход: ONLINE и битрейт > 0.
 3. Проверьте, что хватает ресурсов (CPU/RAM, место на диске).
 4. Если включён push (RTMP/RTSP/DASH) — проверьте сеть и доступность удалённой стороны.
+
+## Resilient decode (битые UDP источники)
+
+Если вход UDP/RTP/SRT “сыпется” (корруптные кадры, ошибки декодера, зависания), Stream может автоматически добавить
+устойчивые параметры декодинга для `ffmpeg`:
+
+- `-fflags +discardcorrupt` (мерджится с уже заданными `-fflags`)
+- `-err_detect ignore_err`
+- `-thread_queue_size 1024`
+
+Режимы:
+
+- `auto` (по умолчанию): включается для UDP/RTP/SRT и может включиться автоматически после рестартов по `NO_PROGRESS`/`ERROR_RATE`/`OUTPUT_BACKPRESSURE`.
+- `on`: всегда включено.
+- `off`: выключено.
+
+Где настраивается:
+
+- глобально: setting `transcode_resilient_decode`
+- на конкретном стриме: `stream.transcode.resilient_decode`

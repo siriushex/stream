@@ -3507,6 +3507,7 @@ function transcode._classify_restart_reason(reason_code)
         or reason_code == "EXIT_UNEXPECTED"
         or reason_code == "INPUT_NO_DATA"
         or reason_code == "OUTPUT_PROBE_FAIL"
+        or reason_code == "OUTPUT_BACKPRESSURE"
         or reason_code == "WARMUP_FAIL"
         or reason_code == "WARMUP_TIMEOUT"
         or reason_code == "PUBLISH_NO_PROGRESS"
@@ -4361,6 +4362,13 @@ schedule_worker_restart = function(job, worker, code, message, meta)
     end
     local now = os.time()
     local reason_code = resolve_restart_reason_code(code)
+    if reason_code == "NO_PROGRESS"
+        or reason_code == "ERROR_RATE"
+        or reason_code == "OUTPUT_BACKPRESSURE"
+    then
+        worker.force_resilient_decode = true
+        job.force_resilient_decode = true
+    end
     local cooldown, cooldown_lane = transcode._resolve_reason_cooldown(watchdog, reason_code)
     if cooldown > 0 and worker.last_restart_ts then
         local note = now - worker.last_restart_ts
@@ -4440,6 +4448,12 @@ schedule_restart = function(job, output_state, code, message, meta)
     end
     local now = os.time()
     local reason_code = resolve_restart_reason_code(code)
+    if reason_code == "NO_PROGRESS"
+        or reason_code == "ERROR_RATE"
+        or reason_code == "OUTPUT_BACKPRESSURE"
+    then
+        job.force_resilient_decode = true
+    end
     local cooldown, cooldown_lane = transcode._resolve_reason_cooldown(watchdog, reason_code)
     if output_state and cooldown > 0 and output_state.last_restart_ts then
         local note = now - output_state.last_restart_ts
@@ -6869,6 +6883,103 @@ transcode._build_worker_output_override = function(job, worker)
     return worker.output
 end
 
+function transcode._should_enable_resilient_decode(job, worker)
+    if not job or not job.config then
+        return false
+    end
+    local tc = job.config.transcode or {}
+    local mode = tc.resilient_decode
+    if mode == nil and config and config.get_setting then
+        mode = config.get_setting("transcode_resilient_decode")
+    end
+    if mode == false then
+        return false
+    end
+    if mode == true then
+        return true
+    end
+    local text = tostring(mode or ""):lower()
+    if text == "0" or text == "false" or text == "off" or text == "disabled" then
+        return false
+    end
+    if text == "1" or text == "true" or text == "on" or text == "enabled" then
+        return true
+    end
+    -- auto (default): enabled for lossy realtime inputs; can also be forced after restarts.
+    if (worker and worker.force_resilient_decode == true) or job.force_resilient_decode == true then
+        return true
+    end
+    local inputs = ensure_list(job.config.input)
+    for _, input in ipairs(inputs) do
+        local url = get_input_url(input)
+        if url and url ~= "" then
+            local lower = tostring(url):lower()
+            if lower:find("^udp://") == 1
+                or lower:find("^rtp://") == 1
+                or lower:find("^srt://") == 1
+            then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function transcode._apply_resilient_decode_argv(job, worker, argv)
+    if type(argv) ~= "table" then
+        return argv
+    end
+    if not transcode._should_enable_resilient_decode(job, worker) then
+        return argv
+    end
+    local first_i = nil
+    for idx, v in ipairs(argv) do
+        if v == "-i" then
+            first_i = idx
+            break
+        end
+    end
+    if not first_i or first_i <= 1 then
+        return argv
+    end
+
+    if not args_has_flag(argv, "-thread_queue_size") then
+        table.insert(argv, first_i, "1024")
+        table.insert(argv, first_i, "-thread_queue_size")
+        first_i = first_i + 2
+    end
+    if not args_has_flag(argv, "-err_detect") then
+        table.insert(argv, first_i, "ignore_err")
+        table.insert(argv, first_i, "-err_detect")
+        first_i = first_i + 2
+    end
+
+    -- Merge +discardcorrupt into existing -fflags value (if present); otherwise insert.
+    local fflags_idx = nil
+    for i = 1, first_i - 1 do
+        if argv[i] == "-fflags" then
+            fflags_idx = i
+        end
+    end
+    if fflags_idx and argv[fflags_idx + 1] then
+        local val = tostring(argv[fflags_idx + 1] or "")
+        if not val:lower():find("discardcorrupt", 1, true) then
+            if val == "" then
+                val = "+discardcorrupt"
+            else
+                val = val .. "+discardcorrupt"
+            end
+            argv[fflags_idx + 1] = val
+        end
+    else
+        table.insert(argv, first_i, "+discardcorrupt")
+        table.insert(argv, first_i, "-fflags")
+        first_i = first_i + 2
+    end
+
+    return argv
+end
+
 transcode._build_worker_ffmpeg_args = function(job, worker)
 	    local output_override = transcode._build_worker_output_override(job, worker)
 	    local play_input_url = resolve_job_input_url(job)
@@ -6881,6 +6992,7 @@ transcode._build_worker_ffmpeg_args = function(job, worker)
 	        play_input_url = play_input_url,
 	        require_play_input_url = require_loopback,
 	    })
+        transcode._apply_resilient_decode_argv(job, worker, argv)
 	    return argv, err, selected_url, bin_info
 	end
 
@@ -6908,6 +7020,7 @@ transcode._build_ladder_encoder_ffmpeg_args = function(job)
 	        play_input_url = play_input_url,
 	        require_play_input_url = require_loopback,
 	    })
+        transcode._apply_resilient_decode_argv(job, nil, argv)
 		    return argv, err, selected_url, bin_info
 		end
 
@@ -7009,12 +7122,21 @@ start_ladder_encoder_standby = function(job, worker)
     return true
 end
 
-local function read_worker_output(job, worker)
+local function read_worker_output(job, worker, allow_restart)
     if not worker.proc then
         return
     end
     local tc = job.config and job.config.transcode or nil
     local log_mode = get_log_to_main_mode(tc)
+    if allow_restart == nil then
+        allow_restart = true
+    end
+    local function match_output_backpressure(line)
+        if not line or line == "" then
+            return false
+        end
+        return string.lower(line):find("buffers queued in output stream", 1, true) ~= nil
+    end
 
     local out_chunk = worker.proc:read_stdout()
     consume_lines(worker, "stdout_buf", out_chunk, function(line)
@@ -7027,6 +7149,17 @@ local function read_worker_output(job, worker)
         local is_error = match_error_line(line)
         if is_error then
             mark_error_line(worker, line)
+        end
+        if allow_restart and match_output_backpressure(line) then
+            -- Restart quickly on backpressure to avoid hanging encoders.
+            local now = os.time()
+            local last = tonumber(worker.backpressure_last_ts or 0) or 0
+            if last <= 0 or (now - last) >= 30 then
+                worker.backpressure_last_ts = now
+                schedule_worker_restart(job, worker, "OUTPUT_BACKPRESSURE", "ffmpeg output backpressure", {
+                    line = line,
+                })
+            end
         end
         append_stderr_tail(worker, line)
         log_ffmpeg_line(worker, "[transcode " .. tostring(job.id) .. " output " .. tostring(worker.index) .. "] ", log_mode, is_error, line)
@@ -7151,7 +7284,7 @@ tick_worker = function(job, worker, now)
     -- Tick standby process (during cutover).
     local standby = worker.standby
     if standby and standby.proc then
-        read_worker_output(job, standby)
+        read_worker_output(job, standby, false)
         local status = standby.proc:poll()
         if status then
             finalize_process_exit(standby, status)
@@ -7171,7 +7304,7 @@ tick_worker = function(job, worker, now)
     end
 
     -- Tick active process.
-    read_worker_output(job, worker)
+    read_worker_output(job, worker, true)
     if worker.proc then
         local status = worker.proc:poll()
         if status then
@@ -7429,7 +7562,7 @@ tick_ladder_encoder = function(job, now)
     -- Tick standby encoder process (during cutover).
     local standby = worker.standby
     if standby and standby.proc then
-        read_worker_output(job, standby)
+        read_worker_output(job, standby, false)
         local status = standby.proc:poll()
         if status then
             finalize_process_exit(standby, status)
@@ -7449,7 +7582,7 @@ tick_ladder_encoder = function(job, now)
     end
 
     -- Tick active encoder process.
-    read_worker_output(job, worker)
+    read_worker_output(job, worker, true)
     if worker.proc then
         local status = worker.proc:poll()
         if status then
@@ -7891,6 +8024,7 @@ function transcode.start(job, opts)
 	        play_input_url = play_input_url,
 	        require_play_input_url = require_loopback,
 	    })
+        transcode._apply_resilient_decode_argv(job, nil, argv)
     if not argv then
         record_alert(job, "TRANSCODE_CONFIG_ERROR", err or "invalid config", nil)
         job.state = "ERROR"

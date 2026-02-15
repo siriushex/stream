@@ -934,7 +934,8 @@ local function apply_config_change(server, client, request, opts)
         end
     end
     local total_ms = (os.clock() - t_start) * 1000
-    if total_ms > 1500 then
+    local slow_threshold_ms = tonumber(opts.slow_threshold_ms) or 1500
+    if total_ms > slow_threshold_ms then
         log.warning(string.format("[api] slow config apply: %.0fms backup=%.0fms apply=%.0fms export=%.0fms snapshot=%.0fms reload=%.0fms lkg=%.0fms after=%.0fms",
             total_ms,
             timing.backup_ms or 0,
@@ -4568,6 +4569,7 @@ local function set_settings(server, client, request)
     body.ai_api_key_set = nil
     apply_config_change(server, client, request, {
         comment = "settings update",
+        slow_threshold_ms = 500,
         -- Keep Save fast and avoid blocking the main event loop on large configs.
         -- Config file + snapshots are exported asynchronously by a helper process.
         defer_export = true,
