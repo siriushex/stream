@@ -17,6 +17,8 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
+#include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -45,12 +47,14 @@ typedef struct
     pthread_t thread;
     int epoll_fd;
     int index;
+    int pinned_cpu;
 } relay_worker_t;
 
 typedef struct
 {
     pthread_mutex_t mu;
     bool started;
+    bool affinity;
     int workers_count;
     relay_worker_t *workers;
 } relay_engine_t;
@@ -301,7 +305,54 @@ static int detect_default_workers(void)
     return (int)n;
 }
 
-static bool engine_ensure_started(int requested_workers)
+static int detect_allowed_cpus(int *out, int out_cap)
+{
+    if(!out || out_cap <= 0)
+        return 0;
+
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    if(sched_getaffinity(0, sizeof(set), &set) != 0)
+        return 0;
+
+    int n = 0;
+    for(int cpu = 0; cpu < CPU_SETSIZE && n < out_cap; ++cpu)
+    {
+        if(CPU_ISSET(cpu, &set))
+            out[n++] = cpu;
+    }
+    return n;
+}
+
+static void maybe_pin_thread(pthread_t thread, int worker_index, bool enable_affinity, int workers_count)
+{
+    if(!enable_affinity)
+        return;
+
+    // Учитываем ограничения контейнера/cpuset: берём список разрешённых CPU.
+    int allowed[CPU_SETSIZE];
+    const int allowed_n = detect_allowed_cpus(allowed, (int)(sizeof(allowed) / sizeof(allowed[0])));
+    if(allowed_n <= 1)
+        return;
+
+    // По умолчанию не трогаем первый CPU из allowed списка, оставляя его под control plane.
+    const int start = (allowed_n > 1) ? 1 : 0;
+    const int cpu = allowed[(start + (worker_index % (allowed_n - start))) % allowed_n];
+
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    CPU_SET(cpu, &mask);
+
+    const int rc = pthread_setaffinity_np(thread, sizeof(mask), &mask);
+    if(rc != 0)
+    {
+        // Не критично: продолжаем работать без affinity.
+        asc_log_warning("%s worker[%d/%d] setaffinity(cpu=%d) failed: %s",
+            RELAY_MSG_PREFIX, worker_index, workers_count, cpu, strerror(rc));
+    }
+}
+
+static bool engine_ensure_started(int requested_workers, bool affinity)
 {
     pthread_mutex_lock(&g_engine.mu);
     if(g_engine.started)
@@ -323,10 +374,12 @@ static bool engine_ensure_started(int requested_workers)
     }
 
     g_engine.workers_count = workers;
+    g_engine.affinity = affinity;
     for(int i = 0; i < workers; ++i)
     {
         relay_worker_t *w = &g_engine.workers[i];
         w->index = i;
+        w->pinned_cpu = -1;
         w->epoll_fd = epoll_create1(0);
         if(w->epoll_fd < 0)
         {
@@ -339,12 +392,17 @@ static bool engine_ensure_started(int requested_workers)
             pthread_mutex_unlock(&g_engine.mu);
             return false;
         }
+
+        // Опционально пиним воркеры, чтобы scheduler не складывал их на одно ядро
+        // (это типичная причина "одно ядро 100% и дергания").
+        maybe_pin_thread(w->thread, i, affinity, workers);
     }
 
     g_engine.started = true;
     pthread_mutex_unlock(&g_engine.mu);
 
-    asc_log_info("%s started: workers=%d", RELAY_MSG_PREFIX, workers);
+    asc_log_info("%s started: workers=%d affinity=%s",
+        RELAY_MSG_PREFIX, workers, affinity ? "on" : "off");
     return true;
 }
 
@@ -765,12 +823,13 @@ static int relay_start(lua_State *L)
     }
 
     const int workers = table_get_int(L, 1, "workers", 0);
+    const bool affinity = table_get_int(L, 1, "affinity", 0) ? true : false;
 
     if(!g_engine.started)
     {
         pthread_mutex_init(&g_engine.mu, NULL);
     }
-    if(!engine_ensure_started(workers))
+    if(!engine_ensure_started(workers, affinity))
     {
         lua_pushnil(L);
         lua_pushstring(L, "failed to start relay engine");
