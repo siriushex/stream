@@ -31,6 +31,35 @@ local function resolve_self_bin()
     return "stream"
 end
 
+local nice_cache = nil
+
+local function can_nice()
+    if nice_cache ~= nil then
+        return nice_cache
+    end
+    if package and package.config and package.config:sub(1, 1) == "\\" then
+        nice_cache = false
+        return false
+    end
+    local ok = os.execute("command -v nice >/dev/null 2>&1")
+    nice_cache = (ok == true or ok == 0)
+    return nice_cache
+end
+
+local function with_nice(argv)
+    if not argv or type(argv) ~= "table" then
+        return argv
+    end
+    if not can_nice() then
+        return argv
+    end
+    local out = { "nice", "-n", "10" }
+    for i = 1, #argv do
+        out[#out + 1] = argv[i]
+    end
+    return out
+end
+
 local function append_tail(prev, chunk, limit)
     if not chunk or chunk == "" then
         return prev or ""
@@ -94,6 +123,7 @@ local function spawn_job(paths, cfg)
         return nil
     end
 
+    argv = with_nice(argv)
     local ok, proc = pcall(process.spawn, argv, {
         stdout = "pipe",
         stderr = "pipe",
@@ -208,4 +238,3 @@ function M.request(paths, cfg)
 end
 
 return M
-
