@@ -566,6 +566,7 @@ end
 
 local function apply_config_change(server, client, request, opts)
     opts = opts or {}
+    local t_start = os.clock()
     local actor = opts.actor
     if not actor then
         local user = get_request_user(request)
@@ -638,9 +639,66 @@ local function apply_config_change(server, client, request, opts)
         apply_result = res
     end
 
+    local export_payload = nil
+    local export_encoded = nil
+    local function ensure_export_payload()
+        if export_payload ~= nil then
+            return export_payload, export_encoded
+        end
+        if not config then
+            return nil, "config missing"
+        end
+        if type(config.export_astra_encoded) == "function" then
+            local safe, payload, encoded = pcall(config.export_astra_encoded)
+            if not safe then
+                return nil, payload
+            end
+            export_payload = payload
+            export_encoded = encoded
+            return export_payload, export_encoded
+        end
+        if type(config.export_astra) ~= "function" then
+            return nil, "config export unavailable"
+        end
+        local safe, payload = pcall(config.export_astra)
+        if not safe then
+            return nil, payload
+        end
+        local encoded
+        if json and type(json.encode_pretty) == "function" then
+            encoded = json.encode_pretty(payload)
+        else
+            encoded = json.encode(payload)
+        end
+        export_payload = payload
+        export_encoded = encoded
+        return export_payload, export_encoded
+    end
+
     if config and config.primary_config_is_json and config.primary_config_is_json()
-        and config.export_primary_config then
-        local ok, err = config.export_primary_config()
+        and config.get_primary_config_path and config.get_primary_config_path()
+        and config.export_astra_file
+    then
+        local payload, encoded_or_err = ensure_export_payload()
+        if not payload then
+            local err = encoded_or_err
+            if revision_id > 0 then
+                config.update_revision(revision_id, {
+                    status = "BAD",
+                    error_text = "config export failed: " .. tostring(err),
+                })
+            end
+            if lkg_path then
+                config.restore_snapshot(lkg_path)
+                rollback_primary_config()
+                reload_runtime(true)
+            end
+            return error_response(server, client, 500, "config export failed: " .. tostring(err))
+        end
+        local ok, err = config.export_astra_file(config.get_primary_config_path(), {
+            payload = payload,
+            encoded = encoded_or_err,
+        })
         if not ok then
             if revision_id > 0 then
                 config.update_revision(revision_id, {
@@ -659,10 +717,28 @@ local function apply_config_change(server, client, request, opts)
     end
 
     local snapshot_path = nil
-    if revision_id > 0 and config and config.build_snapshot_path then
+    if revision_id > 0 and config and config.build_snapshot_path and config.export_astra_file then
         snapshot_path = config.build_snapshot_path(revision_id)
-        local payload, snap_err = config.export_astra_file(snapshot_path)
+        local payload, encoded_or_err = ensure_export_payload()
         if not payload then
+            local snap_err = encoded_or_err
+            config.update_revision(revision_id, {
+                status = "BAD",
+                error_text = "snapshot failed: " .. tostring(snap_err),
+                snapshot_path = snapshot_path,
+            })
+            if lkg_path then
+                config.restore_snapshot(lkg_path)
+                rollback_primary_config()
+                reload_runtime(true)
+            end
+            return error_response(server, client, 500, "snapshot failed: " .. tostring(snap_err))
+        end
+        local payload_ok, snap_err = config.export_astra_file(snapshot_path, {
+            payload = payload,
+            encoded = encoded_or_err,
+        })
+        if not payload_ok then
             config.update_revision(revision_id, {
                 status = "BAD",
                 error_text = "snapshot failed: " .. tostring(snap_err),
@@ -727,8 +803,38 @@ local function apply_config_change(server, client, request, opts)
         })
         config.set_setting("config_active_revision_id", revision_id)
         config.set_setting("config_lkg_revision_id", revision_id)
-        if config.update_lkg_snapshot then
-            config.update_lkg_snapshot()
+        if config and config.export_astra_file then
+            local lkg_target = lkg_path
+            if not lkg_target and config.lkg_snapshot_path then
+                lkg_target = config.lkg_snapshot_path()
+            end
+            if lkg_target and lkg_target ~= "" then
+                local payload = export_payload
+                if not payload then
+                    payload = config.export_astra()
+                end
+                if type(payload) == "table" then
+                    if payload.settings == nil then
+                        payload.settings = {}
+                    end
+                    if type(payload.settings) == "table" then
+                        payload.settings.config_active_revision_id = revision_id
+                        payload.settings.config_lkg_revision_id = revision_id
+                    end
+                    local safe, _, lkg_encoded = pcall(config.export_astra_encoded, { payload = payload })
+                    if safe and lkg_encoded then
+                        local ok_lkg, err_lkg = config.export_astra_file(lkg_target, {
+                            payload = payload,
+                            encoded = lkg_encoded,
+                        })
+                        if not ok_lkg then
+                            log.error("[api] lkg snapshot update failed: " .. tostring(err_lkg))
+                        end
+                    else
+                        log.error("[api] lkg snapshot encode failed")
+                    end
+                end
+            end
         end
         local max_keep = config.get_setting("config_max_revisions")
         config.prune_revisions(max_keep)
@@ -757,10 +863,14 @@ local function apply_config_change(server, client, request, opts)
         body = { status = "ok", revision_id = revision_id }
     end
     if type(opts.after) == "function" then
-        local ok, err = pcall(opts.after, apply_result, revision_id)
+        local ok, err = pcall(opts.after, apply_result, revision_id, { export_payload = export_payload })
         if not ok then
             log.error("[api] after hook failed: " .. tostring(err))
         end
+    end
+    local total_ms = (os.clock() - t_start) * 1000
+    if total_ms > 1500 then
+        log.warning("[api] slow config apply: " .. string.format("%.0f", total_ms) .. "ms")
     end
     json_response(server, client, 200, body)
 end
@@ -1075,8 +1185,12 @@ local function upsert_stream(server, client, id, request)
             return apply_stream_row_sharded_safe(row, true)
         end,
         after = function()
-            if epg and epg.export_all then
-                epg.export_all("stream change")
+            if epg then
+                if epg.request_export then
+                    epg.request_export("stream change")
+                elseif epg.export_all then
+                    epg.export_all("stream change")
+                end
             end
         end,
     })
@@ -1092,8 +1206,12 @@ local function delete_stream(server, client, id, request)
             return apply_stream_row_sharded_safe({ id = id, enabled = 0, config = {} }, true)
         end,
         after = function()
-            if epg and epg.export_all then
-                epg.export_all("stream delete")
+            if epg then
+                if epg.request_export then
+                    epg.request_export("stream delete")
+                elseif epg.export_all then
+                    epg.export_all("stream delete")
+                end
             end
         end,
     })
@@ -1136,8 +1254,12 @@ local function purge_disabled_streams(server, client, request)
             return true
         end,
         after = function()
-            if epg and epg.export_all then
-                epg.export_all("stream purge disabled")
+            if epg then
+                if epg.request_export then
+                    epg.request_export("stream purge disabled")
+                elseif epg.export_all then
+                    epg.export_all("stream purge disabled")
+                end
             end
         end,
         success_builder = function(res, revision_id)

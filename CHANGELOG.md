@@ -17,6 +17,7 @@
   - Installer (CentOS): run transcode verification by default and prefer source tarball download with git clone fallback.
   - Build: fix `contrib/libdvbcsa.sh` download/build on CentOS (use VideoLAN libdvbcsa tarball over HTTP, improve robustness).
   - Build: fix `contrib/libdvbcsa.sh` to accept missing optional args under `set -u` (configure uses 2 args).
+  - API/Config: speed up config apply by reusing a single export payload/encode across primary config + revision snapshots; reduce blocking EPG exports by debouncing stream-triggered exports.
   - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
   - Branding/version: user-facing version is now `STREAM_VERSION` (set to `1.2`), binary name is `stream`.
 - Tests:
@@ -24,6 +25,7 @@
   - `node --check web/app.js`
   - `./stream scripts/tests/transcode_qsv_args_unit.lua`
   - `./stream scripts/tests/process_spawn_env_unit.lua`
+  - `./stream scripts/tests/config_export_reuse_unit.lua`
   - `./stream scripts/tests/cesbo_api_client_unit.lua`
   - `python3 -m py_compile tools/net_autotune.py tools/docs_admin_server.py`
 ### 2026-02-14
