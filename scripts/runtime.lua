@@ -1317,6 +1317,9 @@ local function dataplane_watchdog_tick()
     end
 
     for id, entry in pairs(runtime.streams or {}) do
+        if entry and entry.kind == "dataplane" and entry.dp_verified == true then
+            goto continue
+        end
         if entry and entry.kind == "dataplane" and entry.relay and type(entry.relay.stats) == "function" then
             local ok, st = pcall(function()
                 return entry.relay:stats()
@@ -1330,6 +1333,12 @@ local function dataplane_watchdog_tick()
                 local d_in = tonumber(st.datagrams_in) or 0
                 local b_out = tonumber(st.bytes_out) or 0
                 local bad = tonumber(st.bad_datagrams) or 0
+
+                -- Как только dataplane начал реально писать bytes_out — считаем поток совместимым и не проверяем его дальше.
+                if b_out > 0 then
+                    entry.dp_verified = true
+                    goto continue
+                end
 
                 -- Если идёт вход, но нет выхода и есть bad_datagrams — это почти всегда несовместимый формат.
                 if d_in >= PASSTHROUGH_DP_WATCHDOG_MIN_DATAGRAMS and b_out == 0 and bad > 0 then
@@ -1460,6 +1469,7 @@ local function apply_stream(id, row, force)
                     relay = relay_or_err,
                     channel = shadow_channel,
                     hash = hash,
+                    dp_verified = false,
                     config_snapshot = copy_table(cfg),
                 }
                 return true
