@@ -19,7 +19,7 @@
  */
 
 #include <astra.h>
-#include <sqlite3.h>
+#include "sqlite3.h"
 
 #define SQLITE_DB_MT "sqlite.db"
 

@@ -54,6 +54,19 @@ echo "STREAM_PORT=9061" | sudo tee /etc/stream/prod.env
 sudo systemctl restart stream@prod
 ```
 
+## ffmpeg/ffprobe путь (опционально)
+
+Если `ffmpeg`/`ffprobe` не в `PATH` или вы используете bundled-версию:
+
+```bash
+cat >/etc/stream/prod.env <<'ENV'
+STREAM_PORT=9060
+STREAM_FFMPEG_PATH=/usr/local/bin/stream-ffmpeg
+STREAM_FFPROBE_PATH=/usr/local/bin/stream-ffprobe
+ENV
+sudo systemctl restart stream@prod
+```
+
 ## Несколько инстансов
 
 ```bash

@@ -1,6 +1,6 @@
-# Astral Parity Matrix
+# Stream Parity Matrix
 
-Last updated: 2026-02-10
+Last updated: 2026-02-16
 
 Legend: DONE, PARTIAL, TODO
 

@@ -564,8 +564,12 @@ local function validate_config_payload(payload)
     return errors, warnings
 end
 
+-- Async export helper (separate chunk to avoid Lua's "too many locals" limit in this file).
+pcall(dofile, "scripts/export_async.lua")
+
 local function apply_config_change(server, client, request, opts)
     opts = opts or {}
+    local defer_export = opts.defer_export == true
     local t_start = os.clock()
     local timing = {
         backup_ms = nil,
@@ -702,7 +706,8 @@ local function apply_config_change(server, client, request, opts)
         return export_payload, export_encoded
     end
 
-    if config and config.primary_config_is_json and config.primary_config_is_json()
+    if not defer_export
+        and config and config.primary_config_is_json and config.primary_config_is_json()
         and config.get_primary_config_path and config.get_primary_config_path()
         and config.export_astra_file
     then
@@ -746,9 +751,11 @@ local function apply_config_change(server, client, request, opts)
     end
 
     local snapshot_path = nil
-    if revision_id > 0 and config and config.build_snapshot_path and config.export_astra_file then
-        local t0 = os.clock()
+    if revision_id > 0 and config and config.build_snapshot_path then
         snapshot_path = config.build_snapshot_path(revision_id)
+    end
+    if not defer_export and snapshot_path and config and config.export_astra_file then
+        local t0 = os.clock()
         local payload, encoded_or_err = ensure_export_payload()
         if not payload then
             local snap_err = encoded_or_err
@@ -838,7 +845,7 @@ local function apply_config_change(server, client, request, opts)
         })
         config.set_setting("config_active_revision_id", revision_id)
         config.set_setting("config_lkg_revision_id", revision_id)
-        if config and config.export_astra_file then
+        if not defer_export and config and config.export_astra_file then
             local t0 = os.clock()
             local lkg_target = lkg_path
             if not lkg_target and config.lkg_snapshot_path then
@@ -877,6 +884,25 @@ local function apply_config_change(server, client, request, opts)
         config.prune_revisions(max_keep)
         if config.mark_boot_ok then
             config.mark_boot_ok(revision_id)
+        end
+    end
+    if defer_export then
+        local primary_path = nil
+        if config and config.primary_config_is_json and config.primary_config_is_json()
+            and config.get_primary_config_path
+        then
+            primary_path = config.get_primary_config_path()
+        end
+        local lkg_target = lkg_path
+        if not lkg_target and config and config.lkg_snapshot_path then
+            lkg_target = config.lkg_snapshot_path()
+        end
+        if stream_export_async and type(stream_export_async.request) == "function" then
+            pcall(stream_export_async.request, {
+                primary_path = primary_path,
+                lkg_path = lkg_target,
+                snapshot_path = snapshot_path,
+            })
         end
     end
     if config and config.add_alert then
@@ -4542,6 +4568,9 @@ local function set_settings(server, client, request)
     body.ai_api_key_set = nil
     apply_config_change(server, client, request, {
         comment = "settings update",
+        -- Keep Save fast and avoid blocking the main event loop on large configs.
+        -- Config file + snapshots are exported asynchronously by a helper process.
+        defer_export = true,
         apply = function()
             local reset_detector_defaults = false
             for k, v in pairs(body) do
