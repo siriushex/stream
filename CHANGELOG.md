@@ -17,6 +17,8 @@
   - SQLite: bundle SQLite amalgamation (v3.51.2) into `stream` to guarantee UPSERT support and improve CentOS 7 performance/predictability.
   - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
   - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.
+  - Transcode: add resilient decode defaults for UDP/RTP/SRT (discardcorrupt + ignore_err + thread_queue_size) and restart quickly on FFmpeg output backpressure for per-output and ladder workers.
+  - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
 - Tests:
   - `./configure.sh && make`
   - `bash -n install.sh`
@@ -30,6 +32,8 @@
   - `./stream scripts/tests/config_export_reuse_unit.lua`
   - `./stream scripts/tests/process_spawn_env_unit.lua`
   - `./stream scripts/tests/transcode_qsv_args_unit.lua`
+  - `./stream scripts/tests/transcode_resilient_decode_unit.lua`
+  - `./stream scripts/tests/transcode_recovery_unit.lua`
 ### 2026-02-15
 - Changes:
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
