@@ -1076,16 +1076,10 @@ function config.upsert_stream(id, enabled, cfg)
             "ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, config_json=excluded.config_json;")
         return
     end
-    local exists = db_scalar(config.db, "SELECT 1 FROM streams WHERE id='" ..
-        sql_escape(id) .. "' LIMIT 1;")
-    if exists then
-        db_exec(config.db, "UPDATE streams SET enabled=" .. (enabled and 1 or 0) ..
-            ", config_json='" .. sql_escape(payload) .. "' WHERE id='" .. sql_escape(id) .. "';")
-    else
-        db_exec(config.db, "INSERT INTO streams(id, enabled, config_json) VALUES(" ..
-            "'" .. sql_escape(id) .. "', " .. (enabled and 1 or 0) .. ", '" ..
-            sql_escape(payload) .. "');")
-    end
+    db_exec(config.db,
+        "INSERT OR REPLACE INTO streams(id, enabled, config_json) VALUES(" ..
+        "'" .. sql_escape(id) .. "', " .. (enabled and 1 or 0) .. ", '" ..
+        sql_escape(payload) .. "');")
 end
 
 function config.delete_stream(id)
@@ -1141,16 +1135,10 @@ function config.upsert_adapter(id, enabled, cfg)
             "ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, config_json=excluded.config_json;")
         return
     end
-    local exists = db_scalar(config.db, "SELECT 1 FROM adapters WHERE id='" ..
-        sql_escape(id) .. "' LIMIT 1;")
-    if exists then
-        db_exec(config.db, "UPDATE adapters SET enabled=" .. (enabled and 1 or 0) ..
-            ", config_json='" .. sql_escape(payload) .. "' WHERE id='" .. sql_escape(id) .. "';")
-    else
-        db_exec(config.db, "INSERT INTO adapters(id, enabled, config_json) VALUES(" ..
-            "'" .. sql_escape(id) .. "', " .. (enabled and 1 or 0) .. ", '" ..
-            sql_escape(payload) .. "');")
-    end
+    db_exec(config.db,
+        "INSERT OR REPLACE INTO adapters(id, enabled, config_json) VALUES(" ..
+        "'" .. sql_escape(id) .. "', " .. (enabled and 1 or 0) .. ", '" ..
+        sql_escape(payload) .. "');")
 end
 
 function config.delete_adapter(id)
@@ -1642,15 +1630,11 @@ function config.set_setting(key, value)
             "ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json;")
         return
     end
-    local exists = db_scalar(config.db, "SELECT 1 FROM settings WHERE key='" ..
-        sql_escape(key) .. "' LIMIT 1;")
-    if exists then
-        db_exec(config.db, "UPDATE settings SET value_json='" .. sql_escape(payload) ..
-            "' WHERE key='" .. sql_escape(key) .. "';")
-    else
-        db_exec(config.db, "INSERT INTO settings(key, value_json) VALUES('" ..
-            sql_escape(key) .. "', '" .. sql_escape(payload) .. "');")
-    end
+    -- Compatibility mode for older SQLite without UPSERT:
+    -- use a single statement to avoid SELECT+UPDATE/INSERT overhead.
+    db_exec(config.db,
+        "INSERT OR REPLACE INTO settings(key, value_json) VALUES('" ..
+        sql_escape(key) .. "', '" .. sql_escape(payload) .. "');")
 end
 
 local function normalize_revision_row(row)

@@ -30135,8 +30135,7 @@ function bindEvents() {
         const afterBasePort = Math.floor(Number(payload.stream_sharding_base_port || 0) || 0);
         const afterShards = Math.floor(Number(payload.stream_sharding_shards || 1) || 1);
         const shardingChanged = beforeEnabled !== afterEnabled
-          || beforeBasePort !== afterBasePort
-          || beforeShards !== afterShards;
+          || (afterEnabled && (beforeBasePort !== afterBasePort || beforeShards !== afterShards));
 
         await saveSettings(payload, { silent: true });
 

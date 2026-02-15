@@ -15,18 +15,23 @@
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.
   - Transcode watchdog: rename monitor engine `astra_analyze` -> `stream_analyze` (legacy values still accepted).
   - Installer (CentOS): run transcode verification by default and prefer source tarball download with git clone fallback.
+  - Installer: validate downloaded source tarball (avoid HTML 200) and fall back to git clone when the archive is invalid.
   - Build: fix `contrib/libdvbcsa.sh` download/build on CentOS (use VideoLAN libdvbcsa tarball over HTTP, improve robustness).
   - Build: fix `contrib/libdvbcsa.sh` to accept missing optional args under `set -u` (configure uses 2 args).
   - API/Config: speed up config apply by reusing a single export payload/encode across primary config + revision snapshots; reduce blocking EPG exports by debouncing stream-triggered exports.
   - API/Config: wrap config apply DB writes in a single SQLite transaction (faster on older SQLite without UPSERT) and add slow-apply timing breakdown to logs.
+  - Config: on older SQLite without UPSERT, use `INSERT OR REPLACE` for settings/streams/adapters (faster saves on CentOS).
+  - UI: avoid auto-triggering sharding apply when sharding is disabled (prevents noisy “systemd unit not detected” errors on manual runs).
   - Ops: rebrand systemd templates/tools to `stream` naming; add `STREAM_WEB_DIR` / `STREAM_DATA_ROOT` env support.
   - Branding/version: user-facing version is now `STREAM_VERSION` (set to `1.2`), binary name is `stream`.
 - Tests:
   - `./configure.sh && make`
+  - `bash -n install.sh`
   - `node --check web/app.js`
   - `./stream scripts/tests/transcode_qsv_args_unit.lua`
   - `./stream scripts/tests/process_spawn_env_unit.lua`
   - `./stream scripts/tests/config_export_reuse_unit.lua`
+  - `./stream scripts/tests/sqlite_compat_replace_unit.lua`
   - `./stream scripts/tests/ai_context_api_unit.lua`
   - `./stream scripts/tests/cesbo_api_client_unit.lua`
   - `python3 -m py_compile tools/net_autotune.py tools/docs_admin_server.py`
