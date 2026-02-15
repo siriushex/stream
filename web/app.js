@@ -1153,6 +1153,7 @@ const elements = {
   serverType: $('#server-type'),
   serverHost: $('#server-host'),
   serverPort: $('#server-port'),
+  serverInsecure: $('#server-insecure'),
   serverLogin: $('#server-login'),
   serverPassword: $('#server-password'),
   serverPasswordHint: $('#server-password-hint'),
@@ -5476,6 +5477,8 @@ function normalizeServers(value) {
     const login = entry.login || entry.user || '';
     const password = entry.password || entry.pass || '';
     const type = entry.type || '';
+    const insecure = entry.insecure === true || entry.insecure === 1 || entry.insecure === '1'
+      || entry.tls_insecure === true || entry.tls_insecure === 1 || entry.tls_insecure === '1';
     out.push({
       id,
       name,
@@ -5485,6 +5488,7 @@ function normalizeServers(value) {
       password,
       enabled,
       type,
+      insecure,
       enable: entry.enable,
       user: entry.user,
       pass: entry.pass,
@@ -6538,6 +6542,7 @@ function openServerModal(server) {
   if (elements.serverType) elements.serverType.value = server ? server.type || '' : '';
   if (elements.serverHost) elements.serverHost.value = server ? server.host || '' : '';
   if (elements.serverPort) elements.serverPort.value = server && server.port ? String(server.port) : '';
+  if (elements.serverInsecure) elements.serverInsecure.checked = server ? server.insecure === true : false;
   if (elements.serverLogin) elements.serverLogin.value = server ? (server.login || server.user || '') : '';
   if (elements.serverPassword) elements.serverPassword.value = '';
   if (elements.serverPasswordHint) {
@@ -6662,6 +6667,7 @@ async function saveServer() {
   const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
   const password = elements.serverPassword ? elements.serverPassword.value : '';
   const enabled = elements.serverEnabled ? elements.serverEnabled.checked : true;
+  const insecure = elements.serverInsecure ? elements.serverInsecure.checked : false;
   if (!id) throw new Error('Server id is required');
   if (!name) throw new Error('Server name is required');
   if (!host) throw new Error('Server address is required');
@@ -6688,6 +6694,7 @@ async function saveServer() {
         enabled,
         enable: enabled,
         type: type || existing.type || '',
+        insecure,
       };
     } else {
       servers.push({
@@ -6702,6 +6709,7 @@ async function saveServer() {
         enabled,
         enable: enabled,
         type: type || 'streamer',
+        insecure,
       });
     }
   } else if (!state.serverEditing) {
@@ -6720,6 +6728,7 @@ async function saveServer() {
       enabled,
       enable: enabled,
       type: type || 'streamer',
+      insecure,
     });
   } else {
     const existing = servers[existingIdx];
@@ -6736,6 +6745,7 @@ async function saveServer() {
       enabled,
       enable: enabled,
       type: type || existing.type || '',
+      insecure,
     };
   }
 
@@ -30726,6 +30736,7 @@ function bindEvents() {
         const payload = {
           host: elements.serverHost ? elements.serverHost.value.trim() : '',
           port: toNumber(elements.serverPort && elements.serverPort.value),
+          insecure: elements.serverInsecure ? elements.serverInsecure.checked : false,
           login: elements.serverLogin ? elements.serverLogin.value.trim() : '',
           password: elements.serverPassword ? elements.serverPassword.value : '',
         };
