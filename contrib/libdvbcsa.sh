@@ -15,8 +15,8 @@ fi
 cd build
 
 SYSTEM="$1"
-ARG_GCC="$2"
-ARG_CFLAGS="$3"
+ARG_GCC="${2:-}"
+ARG_CFLAGS="${3:-}"
 
 VER="1.1.0"
 ARC="libdvbcsa-$VER.tar.gz"
