@@ -48,6 +48,7 @@ trap cleanup EXIT
 UDP_BATCHING="false"
 DATAPLANE="off"
 DP_WORKERS="0"
+DP_AFFINITY="${DP_AFFINITY:-false}"
 
 case "${MODE}" in
   legacy)
@@ -77,6 +78,7 @@ python3 "${ROOT_DIR}/tools/perf/generate_passthrough_udp_config.py" \
   --dataplane "${DATAPLANE}" \
   --dp-workers "${DP_WORKERS}" \
   --dp-rx-batch 32 \
+  $( [[ "${DP_AFFINITY}" == "true" || "${DP_AFFINITY}" == "1" ]] && echo "--dp-affinity" ) \
   >/dev/null
 
 "${BIN}" scripts/server.lua -a 127.0.0.1 -p "${HTTP_PORT}" \
@@ -120,4 +122,3 @@ tools/perf/process_snapshot.sh "${STREAM_PID}" | tee "${OUT_DIR}/snapshot_after.
 
 echo "results=${OUT_DIR}"
 echo "log=${LOG}"
-

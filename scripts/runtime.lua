@@ -1234,11 +1234,13 @@ local function build_udp_relay_opts_if_eligible(stream_id, cfg)
     end
     local rx_batch = setting_number("performance_passthrough_rx_batch", PASSTHROUGH_DP_RX_BATCH_DEFAULT)
     rx_batch = clamp_number(rx_batch, PASSTHROUGH_DP_RX_BATCH_MIN, PASSTHROUGH_DP_RX_BATCH_MAX)
+    local affinity = setting_bool("performance_passthrough_affinity", false)
 
     local opts = {
         id = tostring(stream_id),
         workers = workers,
         rx_batch = rx_batch,
+        affinity = affinity and true or false,
         input = {
             addr = input_parsed.addr,
             port = tonumber(input_parsed.port),

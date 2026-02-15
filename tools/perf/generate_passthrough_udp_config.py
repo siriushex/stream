@@ -43,6 +43,7 @@ def main():
     ap.add_argument("--dataplane", default="off", choices=["off", "auto", "force"])
     ap.add_argument("--dp-workers", type=int, default=0)
     ap.add_argument("--dp-rx-batch", type=int, default=32)
+    ap.add_argument("--dp-affinity", action="store_true", help="Pin dataplane workers to separate CPU cores (Linux only)")
 
     args = ap.parse_args()
 
@@ -65,6 +66,8 @@ def main():
     settings["performance_passthrough_dataplane"] = str(args.dataplane)
     settings["performance_passthrough_workers"] = int(args.dp_workers)
     settings["performance_passthrough_rx_batch"] = int(args.dp_rx_batch)
+    if args.dp_affinity:
+        settings["performance_passthrough_affinity"] = True
 
     streams = []
     for i in range(count):
@@ -88,4 +91,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

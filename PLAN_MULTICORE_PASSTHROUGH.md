@@ -74,24 +74,26 @@ Data‑plane включаем только если конфиг стрима �
 
 ## 4) Настройки (только opt‑in)
 
-Добавить в settings (пример):
+Реализовано через settings (только opt‑in, дефолты безопасные):
 ```json
 {
-  "performance": {
-    "passthrough_dataplane": "off|auto|force",
-    "passthrough_workers": 0,
-    "passthrough_affinity": "off|spread",
-    "udp_batching": "off|on",
-    "udp_rx_batch": 32,
-    "udp_tx_batch": 32,
-    "udp_pkt_size": 1316
+  "settings": {
+    "performance_passthrough_dataplane": "off|auto|force",
+    "performance_passthrough_workers": 0,
+    "performance_passthrough_rx_batch": 32,
+    "performance_passthrough_affinity": false,
+
+    "performance_udp_batching": false,
+    "performance_udp_rx_batch": 32,
+    "performance_udp_tx_batch": 32
   }
 }
 ```
 
 Рекомендации по дефолтам:
-- `passthrough_dataplane="off"` (безопасно).
-- `passthrough_workers=0` → авто: `max(1, min(cores-1, 8))`.
+- `performance_passthrough_dataplane="off"` (безопасно).
+- `performance_passthrough_workers=0` → авто: `max(1, min(cores-1, 32))`.
+- `performance_passthrough_affinity=false` (пининг потоков только по явному включению).
 
 ---
 
@@ -230,4 +232,3 @@ Acceptance:
 - Не переписываем весь runtime на multi‑Lua‑states (слишком рискованно).
 - Не включаем dataplane по умолчанию.
 - Не ломаем текущие форматы stream config.
-
