@@ -125,6 +125,16 @@ tools/perf/nic_rss_irq_check.sh <iface>
 - RPS (rps_cpus по RX queues)
 - подсказки по типичным причинам “одно ядро 100%”
 
+## 3.6) Проверка sysctl для UDP/softnet drops
+
+```bash
+tools/perf/linux_udp_sysctl_check.sh
+```
+
+Покажет текущие значения и базовые рекомендации для:
+- backlog (netdev_max_backlog)
+- UDP socket buffers (rmem/wmem)
+
 ## 5) Нагрузка на /play клиентами
 
 ```bash
