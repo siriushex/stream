@@ -174,6 +174,7 @@ MODE=dp DP_WORKER_POLICY=least_loaded COUNT=200 PPS=50 DURATION=30 tools/perf/pa
 Результаты сохраняются в `tools/perf/results/passthrough_<ts>_<mode>/`:
 - `snapshot_before.txt` / `snapshot_after.txt` (CPU/RSS/threads/fds)
 - `capture_incident.sh` артефакты (per-core/per-thread/perf), если утилиты доступны
+- `metrics_before.prom` / `metrics_after.prom` (best-effort, `/api/v1/metrics?format=prometheus`)
 
 Замер “равномерно по ядрам”:
 - `mpstat -P ALL 1` во время теста
