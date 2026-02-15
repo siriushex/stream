@@ -335,9 +335,18 @@ static void maybe_pin_thread(pthread_t thread, int worker_index, bool enable_aff
     if(allowed_n <= 1)
         return;
 
-    // По умолчанию не трогаем первый CPU из allowed списка, оставляя его под control plane.
-    const int start = (allowed_n > 1) ? 1 : 0;
-    const int cpu = allowed[(start + (worker_index % (allowed_n - start))) % allowed_n];
+    // По умолчанию стараемся не трогать первый CPU из allowed списка, оставляя его под control plane.
+    // Но если воркеров >= доступных CPU, то используем весь список (иначе получим коллизию и 100% одного ядра).
+    int start = 0;
+    int target_n = allowed_n;
+    if(allowed_n > 1 && workers_count <= (allowed_n - 1))
+    {
+        start = 1;
+        target_n = allowed_n - 1;
+    }
+    if(target_n <= 0)
+        return;
+    const int cpu = allowed[start + (worker_index % target_n)];
 
     cpu_set_t mask;
     CPU_ZERO(&mask);
