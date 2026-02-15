@@ -567,6 +567,15 @@ end
 local function apply_config_change(server, client, request, opts)
     opts = opts or {}
     local t_start = os.clock()
+    local timing = {
+        backup_ms = nil,
+        apply_ms = nil,
+        export_ms = nil,
+        snapshot_ms = nil,
+        reload_ms = nil,
+        lkg_ms = nil,
+        after_ms = nil,
+    }
     local actor = opts.actor
     if not actor then
         local user = get_request_user(request)
@@ -594,7 +603,9 @@ local function apply_config_change(server, client, request, opts)
 
     local lkg_path = nil
     if config and config.ensure_lkg_snapshot then
+        local t0 = os.clock()
         local ok, err = config.ensure_lkg_snapshot()
+        timing.backup_ms = (os.clock() - t0) * 1000
         if ok then
             lkg_path = ok
         else
@@ -623,12 +634,28 @@ local function apply_config_change(server, client, request, opts)
 
     local apply_result = nil
     if type(opts.apply) == "function" then
-        local ok, res = pcall(opts.apply)
+        local t0 = os.clock()
+        local ok, res, res_err = pcall(function()
+            if opts.transaction == false
+                or not config
+                or type(config.with_transaction) ~= "function"
+            then
+                return opts.apply()
+            end
+            return config.with_transaction(opts.apply)
+        end)
+        timing.apply_ms = (os.clock() - t0) * 1000
         if not ok then
             if revision_id > 0 then
                 config.update_revision(revision_id, { status = "BAD", error_text = tostring(res) })
             end
             return error_response(server, client, 500, "apply failed: " .. tostring(res))
+        end
+        if res == nil and res_err ~= nil then
+            if revision_id > 0 then
+                config.update_revision(revision_id, { status = "BAD", error_text = tostring(res_err) })
+            end
+            return error_response(server, client, 500, "apply failed: " .. tostring(res_err))
         end
         if res == false then
             if revision_id > 0 then
@@ -679,6 +706,7 @@ local function apply_config_change(server, client, request, opts)
         and config.get_primary_config_path and config.get_primary_config_path()
         and config.export_astra_file
     then
+        local t0 = os.clock()
         local payload, encoded_or_err = ensure_export_payload()
         if not payload then
             local err = encoded_or_err
@@ -699,6 +727,7 @@ local function apply_config_change(server, client, request, opts)
             payload = payload,
             encoded = encoded_or_err,
         })
+        timing.export_ms = (os.clock() - t0) * 1000
         if not ok then
             if revision_id > 0 then
                 config.update_revision(revision_id, {
@@ -718,6 +747,7 @@ local function apply_config_change(server, client, request, opts)
 
     local snapshot_path = nil
     if revision_id > 0 and config and config.build_snapshot_path and config.export_astra_file then
+        local t0 = os.clock()
         snapshot_path = config.build_snapshot_path(revision_id)
         local payload, encoded_or_err = ensure_export_payload()
         if not payload then
@@ -738,6 +768,7 @@ local function apply_config_change(server, client, request, opts)
             payload = payload,
             encoded = encoded_or_err,
         })
+        timing.snapshot_ms = (os.clock() - t0) * 1000
         if not payload_ok then
             config.update_revision(revision_id, {
                 status = "BAD",
@@ -756,6 +787,7 @@ local function apply_config_change(server, client, request, opts)
     local ok = true
     local reload_err = nil
     if type(opts.runtime_apply) == "function" then
+        local t0 = os.clock()
         local apply_ok, apply_err
         local safe, res_ok, res_err = pcall(opts.runtime_apply)
         if not safe then
@@ -767,8 +799,11 @@ local function apply_config_change(server, client, request, opts)
         end
         ok = apply_ok
         reload_err = apply_err
+        timing.reload_ms = (os.clock() - t0) * 1000
     else
+        local t0 = os.clock()
         ok, reload_err = reload_runtime(true)
+        timing.reload_ms = (os.clock() - t0) * 1000
     end
     if not ok then
         if revision_id > 0 then
@@ -804,6 +839,7 @@ local function apply_config_change(server, client, request, opts)
         config.set_setting("config_active_revision_id", revision_id)
         config.set_setting("config_lkg_revision_id", revision_id)
         if config and config.export_astra_file then
+            local t0 = os.clock()
             local lkg_target = lkg_path
             if not lkg_target and config.lkg_snapshot_path then
                 lkg_target = config.lkg_snapshot_path()
@@ -835,6 +871,7 @@ local function apply_config_change(server, client, request, opts)
                     end
                 end
             end
+            timing.lkg_ms = (os.clock() - t0) * 1000
         end
         local max_keep = config.get_setting("config_max_revisions")
         config.prune_revisions(max_keep)
@@ -863,14 +900,24 @@ local function apply_config_change(server, client, request, opts)
         body = { status = "ok", revision_id = revision_id }
     end
     if type(opts.after) == "function" then
+        local t0 = os.clock()
         local ok, err = pcall(opts.after, apply_result, revision_id, { export_payload = export_payload })
+        timing.after_ms = (os.clock() - t0) * 1000
         if not ok then
             log.error("[api] after hook failed: " .. tostring(err))
         end
     end
     local total_ms = (os.clock() - t_start) * 1000
     if total_ms > 1500 then
-        log.warning("[api] slow config apply: " .. string.format("%.0f", total_ms) .. "ms")
+        log.warning(string.format("[api] slow config apply: %.0fms backup=%.0fms apply=%.0fms export=%.0fms snapshot=%.0fms reload=%.0fms lkg=%.0fms after=%.0fms",
+            total_ms,
+            timing.backup_ms or 0,
+            timing.apply_ms or 0,
+            timing.export_ms or 0,
+            timing.snapshot_ms or 0,
+            timing.reload_ms or 0,
+            timing.lkg_ms or 0,
+            timing.after_ms or 0))
     end
     json_response(server, client, 200, body)
 end
