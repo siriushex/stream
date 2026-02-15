@@ -254,24 +254,28 @@ install_ffmpeg_bundle() {
   local arch
   arch="$(normalize_ffmpeg_arch)"
   if [ -z "$arch" ]; then
-    die "Unsupported arch for ffmpeg bundle: ${ARCH:-unknown}"
+    warn "Unsupported arch for ffmpeg bundle: ${ARCH:-unknown}"
+    return 1
   fi
 
   local sha_cmd
   sha_cmd="$(resolve_sha256_cmd)"
   if [ -z "$sha_cmd" ]; then
-    die "Missing sha256sum (or shasum) for ffmpeg bundle verification"
+    warn "Missing sha256sum (or shasum) for ffmpeg bundle verification"
+    return 1
   fi
 
   local line
   line="$(ffmpeg_bundle_url_sha "$arch" "$FFMPEG_BUNDLE_PROFILE")"
   if [ -z "$line" ]; then
-    die "No ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    warn "No ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    return 1
   fi
   local url sha
   IFS='|' read -r url sha <<<"$line"
   if [ -z "$url" ] || [ -z "$sha" ]; then
-    die "Invalid ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    warn "Invalid ffmpeg bundle mapping for ${arch}/${FFMPEG_BUNDLE_PROFILE}"
+    return 1
   fi
 
   local work
@@ -281,21 +285,43 @@ install_ffmpeg_bundle() {
   mkdir -p "$extract"
 
   log "Downloading ffmpeg bundle: $url"
-  curl -fsSL "$url" -o "$archive"
+  if ! curl -fsSL "$url" -o "$archive"; then
+    warn "ffmpeg bundle download failed: $url"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
 
-  echo "${sha}  ${archive}" | $sha_cmd -c - >/dev/null
+  if ! echo "${sha}  ${archive}" | $sha_cmd -c - >/dev/null; then
+    warn "ffmpeg bundle checksum mismatch"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
 
-  tar -xJf "$archive" -C "$extract"
+  if ! tar -xJf "$archive" -C "$extract"; then
+    warn "ffmpeg bundle extract failed"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
 
   local ffmpeg_src ffprobe_src
   ffmpeg_src="$(find "$extract" -type f -name ffmpeg -perm -111 | head -n 1 || true)"
   ffprobe_src="$(find "$extract" -type f -name ffprobe -perm -111 | head -n 1 || true)"
   if [ -z "$ffmpeg_src" ] || [ -z "$ffprobe_src" ]; then
-    die "ffmpeg/ffprobe binaries not found in downloaded bundle"
+    warn "ffmpeg/ffprobe binaries not found in downloaded bundle"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
   fi
 
-  run install -m 755 "$ffmpeg_src" "$FFMPEG_BIN_PATH"
-  run install -m 755 "$ffprobe_src" "$FFPROBE_BIN_PATH"
+  if ! run install -m 755 "$ffmpeg_src" "$FFMPEG_BIN_PATH"; then
+    warn "failed to install ffmpeg bundle binary"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! run install -m 755 "$ffprobe_src" "$FFPROBE_BIN_PATH"; then
+    warn "failed to install ffmpeg bundle ffprobe binary"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
 
   FFMPEG_BUNDLE_INSTALLED=1
   rm -rf "$work" >/dev/null 2>&1 || true
@@ -359,7 +385,9 @@ install_deps_debian() {
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
     if [ "$ffmpeg_mode" = "bundle" ]; then
-      install_ffmpeg_bundle
+      if ! install_ffmpeg_bundle; then
+        die "ffmpeg bundle install failed (re-run with --ffmpeg-system)"
+      fi
     else
       run apt-get install -y --no-install-recommends ffmpeg libavcodec-dev libavutil-dev
     fi
@@ -392,7 +420,9 @@ install_runtime_deps_debian() {
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
     if [ "$ffmpeg_mode" = "bundle" ]; then
-      install_ffmpeg_bundle
+      if ! install_ffmpeg_bundle; then
+        die "ffmpeg bundle install failed (re-run with --ffmpeg-system)"
+      fi
     else
       run apt-get install -y --no-install-recommends ffmpeg
     fi
@@ -450,7 +480,19 @@ install_deps_rhel() {
 
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
     if [ "$ffmpeg_mode" = "bundle" ]; then
-      install_ffmpeg_bundle
+      if ! install_ffmpeg_bundle; then
+        if [ "${FFMPEG_MODE:-auto}" = "auto" ]; then
+          warn "ffmpeg bundle install failed; falling back to system packages"
+          if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+            log "ffmpeg already installed; skipping package install"
+          else
+            enable_rpmfusion
+            run "$PKG_MGR" -y install ffmpeg ffmpeg-devel || true
+          fi
+        else
+          die "ffmpeg bundle install failed"
+        fi
+      fi
     else
       if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
         log "ffmpeg already installed; skipping package install"
@@ -471,7 +513,19 @@ install_runtime_deps_rhel() {
   run "$PKG_MGR" -y install libdvbcsa postgresql-libs || true
   if [ "$INSTALL_FFMPEG" -eq 1 ]; then
     if [ "$ffmpeg_mode" = "bundle" ]; then
-      install_ffmpeg_bundle
+      if ! install_ffmpeg_bundle; then
+        if [ "${FFMPEG_MODE:-auto}" = "auto" ]; then
+          warn "ffmpeg bundle install failed; falling back to system packages"
+          if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
+            log "ffmpeg already installed; skipping package install"
+          else
+            enable_rpmfusion
+            run "$PKG_MGR" -y install ffmpeg || true
+          fi
+        else
+          die "ffmpeg bundle install failed"
+        fi
+      fi
     else
       if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
         log "ffmpeg already installed; skipping package install"
