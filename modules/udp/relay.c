@@ -484,21 +484,21 @@ static bool engine_ensure_started(int requested_workers, bool affinity)
         return true;
     }
 
-    int workers = requested_workers;
-    if(workers <= 0)
-        workers = detect_default_workers();
-    workers = clamp_int(workers, 1, 64);
+    int requested = requested_workers;
+    if(requested <= 0)
+        requested = detect_default_workers();
+    requested = clamp_int(requested, 1, 64);
 
-    g_engine.workers = (relay_worker_t *)calloc((size_t)workers, sizeof(relay_worker_t));
+    g_engine.workers = (relay_worker_t *)calloc((size_t)requested, sizeof(relay_worker_t));
     if(!g_engine.workers)
     {
         pthread_mutex_unlock(&g_engine.mu);
         return false;
     }
 
-    g_engine.workers_count = workers;
     g_engine.affinity = affinity;
-    for(int i = 0; i < workers; ++i)
+    int started = 0;
+    for(int i = 0; i < requested; ++i)
     {
         relay_worker_t *w = &g_engine.workers[i];
         w->index = i;
@@ -506,26 +506,48 @@ static bool engine_ensure_started(int requested_workers, bool affinity)
         w->epoll_fd = epoll_create1(0);
         if(w->epoll_fd < 0)
         {
-            pthread_mutex_unlock(&g_engine.mu);
-            return false;
+            asc_log_error("%s failed to create epoll_fd for worker[%d/%d]: %s",
+                RELAY_MSG_PREFIX, i, requested, strerror(errno));
+            break;
         }
         const int rc = pthread_create(&w->thread, NULL, relay_worker_loop, w);
         if(rc != 0)
         {
-            pthread_mutex_unlock(&g_engine.mu);
-            return false;
+            asc_log_error("%s failed to create worker thread[%d/%d]: %s",
+                RELAY_MSG_PREFIX, i, requested, strerror(rc));
+            close(w->epoll_fd);
+            w->epoll_fd = -1;
+            break;
         }
 
         // Опционально пиним воркеры, чтобы scheduler не складывал их на одно ядро
         // (это типичная причина "одно ядро 100% и дергания").
-        maybe_pin_thread(w->thread, i, affinity, workers);
+        maybe_pin_thread(w->thread, i, affinity, requested);
+        started = i + 1;
     }
 
+    if(started <= 0)
+    {
+        free(g_engine.workers);
+        g_engine.workers = NULL;
+        pthread_mutex_unlock(&g_engine.mu);
+        return false;
+    }
+
+    g_engine.workers_count = started;
     g_engine.started = true;
     pthread_mutex_unlock(&g_engine.mu);
 
-    asc_log_info("%s started: workers=%d affinity=%s",
-        RELAY_MSG_PREFIX, workers, affinity ? "on" : "off");
+    if(started != requested)
+    {
+        asc_log_warning("%s started with fewer workers: requested=%d started=%d affinity=%s",
+            RELAY_MSG_PREFIX, requested, started, affinity ? "on" : "off");
+    }
+    else
+    {
+        asc_log_info("%s started: workers=%d affinity=%s",
+            RELAY_MSG_PREFIX, started, affinity ? "on" : "off");
+    }
     return true;
 }
 
