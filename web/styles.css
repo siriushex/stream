@@ -2745,6 +2745,11 @@ details.fold {
   padding: 10px 12px;
 }
 
+/* В модалках fold по умолчанию выглядит слишком "плотно". Чуть больше воздуха. */
+.modal-body-scroll details.fold {
+  background: var(--panel-2);
+}
+
 details.fold > summary {
   list-style: none;
 }

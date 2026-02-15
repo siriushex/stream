@@ -1316,6 +1316,32 @@
                 <div class="panel-title">Auth backends</div>
                 <button class="text-link" type="button" id="auth-backend-new">NEW BACKEND</button>
               </div>
+              <details class="fold">
+                <summary class="fold-summary">Что это и как пользоваться</summary>
+                <div class="fold-body">
+                  <div class="form-hint">
+                    Auth backend — это внешний “портал”, который решает: пускать клиента к потоку или нет.
+                    Stream Hub вызывает URL при открытии <code>/play</code>/<code>HLS</code> и ждёт ответ.
+                  </div>
+                  <div class="form-hint">
+                    Ответы портала: <code>200</code> — разрешить, <code>401/403</code> — запретить,
+                    <code>302</code> — редирект (Location будет отдан клиенту).
+                  </div>
+                  <div class="form-hint">
+                    Несколько URL:
+                    <b>Sequential</b> — пробуем по очереди, пока кто-то не разрешит.
+                    <b>Parallel</b> — запросы одновременно (быстрее, но дороже по сети).
+                  </div>
+                  <div class="form-hint">
+                    “Allow if all backends are down” — fail-open. Если порталы упали/таймаут — всё равно разрешить.
+                    Используйте осторожно.
+                  </div>
+                  <div class="form-hint">
+                    Где включить: <b>Edit stream → Auth</b> → Mode: “Named auth backend” → выбрать backend.
+                    Либо вписать <code>auth://&lt;id&gt;</code> в поле “On-play backend”.
+                  </div>
+                </div>
+              </details>
               <div class="table" id="auth-backend-table">
                 <div class="table-row header">
                   <div>ID</div>
@@ -1326,9 +1352,6 @@
                 </div>
               </div>
               <div class="muted" id="auth-backend-empty">No auth backends yet</div>
-            </div>
-            <div class="muted">
-              Use <code>auth://&lt;id&gt;</code> in stream <code>On-play backend override</code> or global settings.
             </div>
           </div>
 
@@ -4310,98 +4333,117 @@
       </div>
       <form id="auth-backend-form">
         <div class="modal-body-scroll">
+          <details class="fold" id="auth-backend-help">
+            <summary class="fold-summary">Что это</summary>
+            <div class="fold-body">
+              <div class="form-hint">
+                Этот backend вызывается при старте просмотра. Он должен ответить: <code>200</code> (allow) или
+                <code>401/403</code> (deny). Если вернёт <code>302</code> — клиент получит редирект.
+              </div>
+              <div class="form-hint">
+                Дальше: <b>Edit stream → Auth</b> → Mode: “Named auth backend” → выбрать этот ID.
+              </div>
+            </div>
+          </details>
+
           <div class="form-grid">
             <label class="field">
               <span>ID</span>
               <input type="text" id="auth-backend-id" placeholder="main" />
             </label>
-            <label class="checkline">
-              <input type="checkbox" id="auth-backend-allow-default" />
-              <span>Allow if all backends are down</span>
-            </label>
-          </div>
-
-          <label class="field">
-            <span>Backend URLs (one per line)</span>
-            <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
-            <small class="form-hint">You can use multiple URLs. Mode (parallel/sequential) is configured below.</small>
-          </label>
-
-          <div class="form-grid">
             <label class="field">
               <span>Mode</span>
               <select id="auth-backend-mode">
                 <option value="parallel">Parallel</option>
                 <option value="sequential">Sequential</option>
               </select>
+              <small class="form-hint">Sequential — по очереди. Parallel — одновременно.</small>
             </label>
-            <label class="field">
-              <span>Timeout (ms)</span>
-              <input type="number" id="auth-backend-timeout" placeholder="3000" />
-              <small class="form-hint">Per backend request timeout (optional).</small>
-            </label>
-            <label class="field">
-              <span>Total timeout (ms)</span>
-              <input type="number" id="auth-backend-total-timeout" placeholder="2000" />
-              <small class="form-hint">Budget for parallel mode (optional).</small>
-            </label>
-          </div>
-
-          <div class="form-subsection">
-            <div class="form-hint">Rules (optional). Comma separated. CIDR supported for IPs.</div>
-            <div class="form-grid">
-              <label class="field">
-                <span>Allow tokens</span>
-                <input type="text" id="auth-backend-allow-tokens" placeholder="token1, token2" />
-              </label>
-              <label class="field">
-                <span>Deny tokens</span>
-                <input type="text" id="auth-backend-deny-tokens" placeholder="badtoken" />
-              </label>
-              <label class="field">
-                <span>Allow IPs</span>
-                <input type="text" id="auth-backend-allow-ips" placeholder="127.0.0.1, 10.0.0.0/24" />
-              </label>
-              <label class="field">
-                <span>Deny IPs</span>
-                <input type="text" id="auth-backend-deny-ips" placeholder="1.2.3.4, 45.139.0.0/16" />
-              </label>
-              <label class="field">
-                <span>Allow UA contains</span>
-                <input type="text" id="auth-backend-allow-ua" placeholder="stb, vlc" />
-              </label>
-              <label class="field">
-                <span>Deny UA contains</span>
-                <input type="text" id="auth-backend-deny-ua" placeholder="bot" />
-              </label>
-              <label class="field">
-                <span>Allow countries</span>
-                <input type="text" id="auth-backend-allow-country" placeholder="US, RU" />
-                <small class="form-hint">Uses CF-IPCountry / X-Country header when present.</small>
-              </label>
-              <label class="field">
-                <span>Deny countries</span>
-                <input type="text" id="auth-backend-deny-country" placeholder="CN" />
-              </label>
-            </div>
           </div>
 
           <label class="field">
-            <span>Session keys default</span>
-            <input type="text" id="auth-backend-session-keys" placeholder="ip,name,proto,token,header.x-playback-session-id" />
-            <small class="form-hint">Required keys (ip/name/proto) are always included.</small>
+            <span>Backend URLs (one per line)</span>
+            <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
+            <small class="form-hint">Можно несколько URL. 1 строка = 1 URL. Комментарии: строки с <code>#</code> или <code>;</code>.</small>
           </label>
 
           <div class="form-grid">
             <label class="field">
-              <span>Allow cache (sec)</span>
-              <input type="number" id="auth-backend-allow-ttl" placeholder="180" />
+              <span>Timeout (ms)</span>
+              <input type="number" id="auth-backend-timeout" placeholder="3000" />
+              <small class="form-hint">Таймаут одного запроса к порталу (опционально).</small>
             </label>
-            <label class="field">
-              <span>Deny cache (sec)</span>
-              <input type="number" id="auth-backend-deny-ttl" placeholder="180" />
+            <label class="checkline">
+              <input type="checkbox" id="auth-backend-allow-default" />
+              <span>Fail-open: allow if all backends are down</span>
             </label>
           </div>
+
+          <details class="fold" id="auth-backend-advanced">
+            <summary class="fold-summary">Advanced</summary>
+            <div class="fold-body">
+              <div class="form-grid">
+                <label class="field">
+                  <span>Total timeout (ms)</span>
+                  <input type="number" id="auth-backend-total-timeout" placeholder="2000" />
+                  <small class="form-hint">Общий бюджет в Parallel режиме (опционально).</small>
+                </label>
+                <label class="field">
+                  <span>Allow cache (sec)</span>
+                  <input type="number" id="auth-backend-allow-ttl" placeholder="180" />
+                </label>
+                <label class="field">
+                  <span>Deny cache (sec)</span>
+                  <input type="number" id="auth-backend-deny-ttl" placeholder="180" />
+                </label>
+              </div>
+
+              <label class="field">
+                <span>Session keys default</span>
+                <input type="text" id="auth-backend-session-keys" placeholder="ip,name,proto,token,header.x-playback-session-id" />
+                <small class="form-hint">Required keys (ip/name/proto) are always included.</small>
+              </label>
+
+              <div class="form-subsection">
+                <div class="form-hint">Rules (optional). Comma separated. CIDR supported for IPs.</div>
+                <div class="form-grid">
+                  <label class="field">
+                    <span>Allow tokens</span>
+                    <input type="text" id="auth-backend-allow-tokens" placeholder="token1, token2" />
+                  </label>
+                  <label class="field">
+                    <span>Deny tokens</span>
+                    <input type="text" id="auth-backend-deny-tokens" placeholder="badtoken" />
+                  </label>
+                  <label class="field">
+                    <span>Allow IPs</span>
+                    <input type="text" id="auth-backend-allow-ips" placeholder="127.0.0.1, 10.0.0.0/24" />
+                  </label>
+                  <label class="field">
+                    <span>Deny IPs</span>
+                    <input type="text" id="auth-backend-deny-ips" placeholder="1.2.3.4, 45.139.0.0/16" />
+                  </label>
+                  <label class="field">
+                    <span>Allow UA contains</span>
+                    <input type="text" id="auth-backend-allow-ua" placeholder="stb, vlc" />
+                  </label>
+                  <label class="field">
+                    <span>Deny UA contains</span>
+                    <input type="text" id="auth-backend-deny-ua" placeholder="bot" />
+                  </label>
+                  <label class="field">
+                    <span>Allow countries</span>
+                    <input type="text" id="auth-backend-allow-country" placeholder="US, RU" />
+                    <small class="form-hint">Uses CF-IPCountry / X-Country header when present.</small>
+                  </label>
+                  <label class="field">
+                    <span>Deny countries</span>
+                    <input type="text" id="auth-backend-deny-country" placeholder="CN" />
+                  </label>
+                </div>
+              </div>
+            </div>
+          </details>
         </div>
         <div class="modal-footer">
           <div class="footer-actions">

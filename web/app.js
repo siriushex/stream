@@ -5989,6 +5989,26 @@ function openAuthBackendModal(id) {
   if (elements.authBackendError) {
     elements.authBackendError.textContent = '';
   }
+
+  // UX: advanced section collapsed by default, but auto-open when config has advanced fields.
+  const adv = document.getElementById('auth-backend-advanced');
+  if (adv) {
+    const hasRules = (() => {
+      const rules = cfg && cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : null;
+      const allow = rules && rules.allow && typeof rules.allow === 'object' ? rules.allow : {};
+      const deny = rules && rules.deny && typeof rules.deny === 'object' ? rules.deny : {};
+      const count = (v) => parseCommaList(v || []).length;
+      return count(allow.token || allow.tokens) || count(allow.ip || allow.ips) || count(allow.ua)
+        || count(allow.country || allow.countries)
+        || count(deny.token || deny.tokens) || count(deny.ip || deny.ips) || count(deny.ua)
+        || count(deny.country || deny.countries);
+    })();
+    const hasCache = !!(cfg && cfg.cache && typeof cfg.cache === 'object'
+      && (cfg.cache.default_allow_sec !== undefined || cfg.cache.default_deny_sec !== undefined));
+    const hasSessionKeys = !!(cfg && cfg.session_keys_default && parseCommaList(cfg.session_keys_default).length);
+    const hasTotalTimeout = !!(cfg && cfg.total_timeout_ms !== undefined);
+    adv.open = !!(hasRules || hasCache || hasSessionKeys || hasTotalTimeout);
+  }
   setOverlay(elements.authBackendOverlay, true);
 }
 
