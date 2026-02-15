@@ -40,6 +40,7 @@
 #include <astra.h>
 #include <errno.h>
 #ifdef __linux__
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #endif
