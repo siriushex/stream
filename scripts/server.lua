@@ -808,20 +808,22 @@ local function ensure_http_auth(server, client, request)
 end
 
 local function auth_reject(server, client)
-    server:send(client, {
-        code = 403,
-        headers = {
-            "Content-Type: text/plain",
-            "Connection: close",
-        },
-        content = "forbidden",
-    })
+    -- Важно: /play и другие точки работают через http_upstream.
+    -- Для отказов нужно использовать server:abort(), иначе upstream-модуль может вернуть 500 поверх ответа.
+    server:abort(client, 403, "forbidden")
 end
 
 local function auth_redirect(server, client, location)
     if not location or location == "" then
         return auth_reject(server, client)
     end
+    -- Redirect также должен обходить http_upstream-ошибки, поэтому используем встроенный :redirect().
+    if server.redirect then
+        server:redirect(client, tostring(location))
+        return
+    end
+    -- Fallback (на случай кастомной сборки http_server без :redirect()).
+    -- В таком режиме возможен 500 от upstream-модуля, но сохранить Location важнее, чем "красивый" текст.
     server:send(client, {
         code = 302,
         headers = {

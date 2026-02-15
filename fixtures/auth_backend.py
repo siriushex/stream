@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
+import argparse
 import json
+import os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
 HOST = "127.0.0.1"
 PORT = 9100
+
+STATS = {
+    "total": 0,
+    "on_play": 0,
+    "on_publish": 0,
+}
 
 
 class AuthHandler(BaseHTTPRequestHandler):
@@ -37,10 +45,19 @@ class AuthHandler(BaseHTTPRequestHandler):
         self._send(403, b"denied", {"Content-Type": "text/plain"})
 
     def do_GET(self):
+        STATS["total"] += 1
         parsed = urlparse(self.path)
+
+        if parsed.path == "/stats":
+            body = json.dumps(STATS, sort_keys=True).encode("utf-8")
+            self._send(200, body, {"Content-Type": "application/json"})
+            return
+
         if parsed.path != "/on_play":
             self._send(404, b"not found", {"Content-Type": "text/plain"})
             return
+
+        STATS["on_play"] += 1
 
         query = parse_qs(parsed.query)
         if query.get("fail", ["0"])[0] == "1":
@@ -48,6 +65,9 @@ class AuthHandler(BaseHTTPRequestHandler):
             return
 
         token = query.get("token", [""])[0]
+        if token == "redirect":
+            self._send(302, b"", {"Location": "http://example.test/redirected"})
+            return
         if token.startswith("token"):
             extra = {}
             max_sessions = query.get("max_sessions", [""])[0]
@@ -63,10 +83,13 @@ class AuthHandler(BaseHTTPRequestHandler):
             self._deny()
 
     def do_POST(self):
+        STATS["total"] += 1
         parsed = urlparse(self.path)
         if parsed.path != "/on_publish":
             self._send(404, b"not found", {"Content-Type": "text/plain"})
             return
+
+        STATS["on_publish"] += 1
 
         length = int(self.headers.get("Content-Length", "0") or 0)
         raw = self.rfile.read(length) if length > 0 else b""
@@ -88,7 +111,12 @@ class AuthHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer((HOST, PORT), AuthHandler)
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument("--host", default=os.environ.get("AUTH_BACKEND_HOST") or HOST)
+    parser.add_argument("--port", type=int, default=int(os.environ.get("AUTH_BACKEND_PORT") or PORT))
+    args = parser.parse_args()
+
+    server = HTTPServer((args.host, args.port), AuthHandler)
     server.serve_forever()
 
 
