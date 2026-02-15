@@ -1152,6 +1152,112 @@ local DP_DISALLOWED_OUTPUT_KEYS = {
     "rtp",
 }
 
+local function dp_normalize_backup_type(value, has_multiple)
+    if value == nil or value == "" then
+        if has_multiple then
+            -- Как и в legacy stream pipeline: если входов несколько, по умолчанию Active Backup.
+            return "active"
+        end
+        return "disabled"
+    end
+    if type(value) == "string" then
+        value = value:lower()
+    end
+    if value == "disable" then
+        return "disabled"
+    end
+    if value == "passive" or value == "active" then
+        return value
+    end
+    if value == "active_stop_if_all_inactive" or value == "active_stop" or value == "active_stop_if_all" then
+        return "active_stop_if_all_inactive"
+    end
+    if value == "disabled" or value == "none" or value == "off" then
+        return "disabled"
+    end
+    if has_multiple then
+        return "active"
+    end
+    return "disabled"
+end
+
+local function dp_read_number_opt(obj, key1, key2)
+    if type(obj) ~= "table" then
+        return nil
+    end
+    local v = obj[key1]
+    if v == nil and key2 ~= nil then
+        v = obj[key2]
+    end
+    local n = tonumber(v)
+    return n
+end
+
+local function dp_backup_conf_from_stream_cfg(cfg, inputs_count)
+    if not inputs_count or inputs_count < 2 then
+        return nil
+    end
+    local backup_type = dp_normalize_backup_type(cfg and cfg.backup_type, inputs_count > 1)
+    if backup_type == "disabled" then
+        return nil
+    end
+
+    -- Для dataplane сейчас поддерживаем только UDP inputs, поэтому initial_delay фиксируем как для UDP.
+    local initial_delay = dp_read_number_opt(cfg, "backup_initial_delay_sec", "backup_initial_delay")
+    if initial_delay == nil then
+        initial_delay = 5
+    end
+    local start_delay = dp_read_number_opt(cfg, "backup_start_delay_sec", "backup_start_delay")
+    if start_delay == nil then
+        start_delay = 5
+    end
+    local return_delay = dp_read_number_opt(cfg, "backup_return_delay_sec", "backup_return_delay")
+    if return_delay == nil then
+        return_delay = 10
+    end
+    local stable_ok = dp_read_number_opt(cfg, "stable_ok_sec")
+    if stable_ok == nil then
+        stable_ok = 5
+    end
+    local probe_interval = dp_read_number_opt(cfg, "probe_interval_sec")
+    if probe_interval == nil then
+        probe_interval = 3
+    end
+    local no_data_timeout = dp_read_number_opt(cfg, "no_data_timeout_sec")
+    if no_data_timeout == nil then
+        no_data_timeout = 3
+    end
+    local stall_switch_cooldown = dp_read_number_opt(cfg, "backup_stall_switch_cooldown_sec")
+    if stall_switch_cooldown == nil then
+        stall_switch_cooldown = 0
+    end
+    local stop_if_all_inactive = dp_read_number_opt(cfg, "stop_if_all_inactive_sec", "backup_stop_if_all_inactive_sec")
+    if stop_if_all_inactive == nil then
+        stop_if_all_inactive = 10
+    end
+
+    if initial_delay < 0 then initial_delay = 0 end
+    if start_delay < 0 then start_delay = 0 end
+    if return_delay < 0 then return_delay = 0 end
+    if stable_ok < 0 then stable_ok = 0 end
+    if probe_interval < 0 then probe_interval = 0 end
+    if no_data_timeout < 1 then no_data_timeout = 1 end
+    if stall_switch_cooldown < 0 then stall_switch_cooldown = 0 end
+    if stop_if_all_inactive < 5 then stop_if_all_inactive = 5 end
+
+    return {
+        type = backup_type,
+        initial_delay_sec = initial_delay,
+        start_delay_sec = start_delay,
+        return_delay_sec = return_delay,
+        stable_ok_sec = stable_ok,
+        probe_interval_sec = probe_interval,
+        no_data_timeout_sec = no_data_timeout,
+        stall_switch_cooldown_sec = stall_switch_cooldown,
+        stop_if_all_inactive_sec = stop_if_all_inactive,
+    }
+end
+
 local function build_udp_relay_opts_if_eligible(stream_id, cfg, cfg_hash)
     if type(cfg) ~= "table" then
         return nil, "config required"
@@ -1195,27 +1301,47 @@ local function build_udp_relay_opts_if_eligible(stream_id, cfg, cfg_hash)
         return nil, "table passthrough flags not supported"
     end
 
-    -- Backup/failover на первом этапе не поддерживаем (экономим CPU и упрощаем гарантию порядка).
-    local backup_type = tostring(cfg.backup_type or ""):lower()
-    if backup_type ~= "" and backup_type ~= "disabled" and backup_type ~= "disable" and backup_type ~= "off" and backup_type ~= "none" then
-        return nil, "backup not supported"
-    end
-
     -- Audio-fix и любые внешние процессы не поддерживаем в dataplane.
     if type(cfg.audio_fix) == "table" and cfg.audio_fix.enabled == true then
         return nil, "audio_fix not supported"
     end
 
     local inputs = normalize_io_list(cfg.input)
-    if type(inputs) ~= "table" or #inputs ~= 1 then
+    if type(inputs) ~= "table" or #inputs < 1 then
+        return nil, "at least one udp input required"
+    end
+
+    local backup = dp_backup_conf_from_stream_cfg(cfg, #inputs)
+    if backup and tostring(backup.type or ""):lower() == "active_stop_if_all_inactive" then
+        return nil, "backup stop_if_all_inactive not supported"
+    end
+
+    -- Без backup: только один input.
+    if not backup and #inputs ~= 1 then
         return nil, "single udp input required"
     end
-    local input_parsed = parse_udp_url_entry(inputs[1])
-    if not input_parsed then
-        return nil, "udp input required"
+
+    local input_list = {}
+    for _, entry in ipairs(inputs) do
+        local input_parsed = parse_udp_url_entry(entry)
+        if not input_parsed then
+            return nil, "udp input required"
+        end
+        if has_any_key(input_parsed, DP_DISALLOWED_INPUT_KEYS) then
+            return nil, "input options require legacy pipeline"
+        end
+        table.insert(input_list, {
+            addr = input_parsed.addr,
+            port = tonumber(input_parsed.port),
+            localaddr = input_parsed.localaddr,
+            socket_size = tonumber(input_parsed.socket_size) or 0,
+            source_url = tostring(input_parsed.source_url or ""),
+        })
     end
-    if has_any_key(input_parsed, DP_DISALLOWED_INPUT_KEYS) then
-        return nil, "input options require legacy pipeline"
+
+    local active_input = input_list[1]
+    if not active_input or not active_input.addr or not active_input.port then
+        return nil, "udp input required"
     end
 
     local outputs = normalize_io_list(cfg.output)
@@ -1270,16 +1396,19 @@ local function build_udp_relay_opts_if_eligible(stream_id, cfg, cfg_hash)
         affinity = affinity and true or false,
         worker_policy = worker_policy,
         input = {
-            addr = input_parsed.addr,
-            port = tonumber(input_parsed.port),
-            localaddr = input_parsed.localaddr,
-            socket_size = tonumber(input_parsed.socket_size) or 0,
-            source_url = tostring(input_parsed.source_url or ""),
+            addr = active_input.addr,
+            port = tonumber(active_input.port),
+            localaddr = active_input.localaddr,
+            socket_size = tonumber(active_input.socket_size) or 0,
+            source_url = tostring(active_input.source_url or ""),
         },
         outputs = out_list,
     }
 
-    return opts, nil
+    return opts, nil, {
+        inputs = input_list,
+        backup = backup,
+    }
 end
 
 local function close_existing_stream(id, existing)
@@ -1294,6 +1423,10 @@ local function close_existing_stream(id, existing)
         -- Убираем из списка "pending" для watchdog, чтобы не делать лишнюю работу.
         if runtime.dp_watchdog_pending then
             runtime.dp_watchdog_pending[tostring(id)] = nil
+        end
+        if existing.dp_probe and existing.dp_probe.relay and type(existing.dp_probe.relay.close) == "function" then
+            pcall(function() existing.dp_probe.relay:close() end)
+            existing.dp_probe = nil
         end
         if existing.channel then
             kill_channel(existing.channel)
@@ -1402,6 +1535,266 @@ local function dataplane_watchdog_tick()
     end
 end
 
+local function dataplane_backup_tick_stream(id, entry)
+    if not entry or entry.kind ~= "dataplane" then
+        return false
+    end
+    if not entry.relay or type(entry.relay.stats) ~= "function" then
+        return false
+    end
+    local inputs = entry.dp_inputs
+    local backup = entry.dp_backup
+    if type(inputs) ~= "table" or #inputs < 2 or type(backup) ~= "table" then
+        return false
+    end
+
+    local now = os.time()
+    entry.dp_started_at = tonumber(entry.dp_started_at) or now
+    entry.dp_active_input_index = tonumber(entry.dp_active_input_index) or 1
+
+    local ok, st = pcall(function()
+        return entry.relay:stats()
+    end)
+    if not ok or type(st) ~= "table" then
+        return true
+    end
+
+    local ok_dg = tonumber(st.ok_datagrams) or 0
+    local last_ok_age_ms = tonumber(st.last_ok_age_ms)
+    if ok_dg > (tonumber(entry.dp_last_ok_datagrams) or 0) then
+        entry.dp_last_ok_datagrams = ok_dg
+        entry.dp_last_ok_ts = now
+    end
+
+    local is_ok = false
+    if last_ok_age_ms ~= nil and last_ok_age_ms >= 0 then
+        is_ok = last_ok_age_ms <= ((tonumber(backup.no_data_timeout_sec) or 3) * 1000)
+    else
+        -- Ни одного OK датаграмма ещё не видели.
+        is_ok = false
+    end
+
+    if is_ok then
+        entry.dp_fail_since = nil
+    else
+        entry.dp_fail_since = tonumber(entry.dp_fail_since) or now
+    end
+
+    local active_idx = tonumber(entry.dp_active_input_index) or 1
+    if active_idx < 1 then active_idx = 1 end
+    if active_idx > #inputs then active_idx = #inputs end
+
+    local initial_delay = tonumber(backup.initial_delay_sec) or 5
+    if initial_delay < 0 then initial_delay = 0 end
+    local initial_ready = now >= ((tonumber(entry.dp_started_at) or now) + initial_delay)
+    local allow_switch = initial_ready or active_idx ~= 1
+
+    local fail_for = 0
+    if not is_ok and entry.dp_fail_since then
+        fail_for = now - (tonumber(entry.dp_fail_since) or now)
+    end
+
+    local start_delay = tonumber(backup.start_delay_sec) or 5
+    if start_delay < 0 then start_delay = 0 end
+    local cooldown = tonumber(backup.stall_switch_cooldown_sec) or 0
+    if cooldown < 0 then cooldown = 0 end
+    local last_switch_ts = tonumber(entry.dp_last_switch_ts) or 0
+
+    -- FAILOVER: переключаемся на следующий вход только если активный реально не ОК.
+    if not is_ok and allow_switch and fail_for >= start_delay and (cooldown == 0 or now >= (last_switch_ts + cooldown)) then
+        local mode = tostring(backup.type or "active"):lower()
+        local next_idx = active_idx + 1
+        if next_idx > #inputs then
+            next_idx = 1
+        end
+
+        local next_input = inputs[next_idx]
+        if type(next_input) == "table" and type(entry.relay.switch_input) == "function" then
+            local ok2, res2, err2 = pcall(function()
+                return entry.relay:switch_input(next_input)
+            end)
+            if ok2 and res2 then
+                log.info("[runtime] dataplane failover: " .. tostring(id)
+                    .. " input #" .. tostring(active_idx) .. " -> #" .. tostring(next_idx)
+                    .. " (mode=" .. mode .. ")")
+                entry.dp_active_input_index = next_idx
+                entry.dp_last_switch_ts = now
+                entry.dp_fail_since = nil
+                entry.dp_last_ok_ts = nil
+                -- Сбрасываем probing/return state: активный вход изменился.
+                if entry.dp_probe and entry.dp_probe.relay and type(entry.dp_probe.relay.close) == "function" then
+                    pcall(function() entry.dp_probe.relay:close() end)
+                end
+                entry.dp_probe = nil
+                entry.dp_return_pending = nil
+            else
+                log.warning("[runtime] dataplane failover switch_input failed: " .. tostring(id)
+                    .. " (" .. tostring(err2 or res2 or "unknown error") .. ")")
+                entry.dp_last_switch_ts = now
+            end
+        end
+        return true
+    end
+
+    -- RETURN (active backup only): пробуем вернуться на предыдущий вход по цепочке, когда он стабильно OK.
+    local mode = tostring(backup.type or "active"):lower()
+    local active_mode = (mode == "active" or mode == "active_stop_if_all_inactive")
+    if active_mode and active_idx > 1 then
+        local stable_ok = tonumber(backup.stable_ok_sec) or 5
+        if stable_ok < 0 then stable_ok = 0 end
+        local probe_interval = tonumber(backup.probe_interval_sec) or 3
+        if probe_interval < 0 then probe_interval = 0 end
+        local return_delay = tonumber(backup.return_delay_sec) or 10
+        if return_delay < 0 then return_delay = 0 end
+        local no_data_timeout = tonumber(backup.no_data_timeout_sec) or 3
+        if no_data_timeout < 1 then no_data_timeout = 1 end
+
+        local target_idx = active_idx - 1
+        local target_input = inputs[target_idx]
+
+        -- Tick existing probe (if any)
+        local probe = entry.dp_probe
+        if probe and probe.relay and type(probe.relay.stats) == "function" then
+            local okp, pst = pcall(function()
+                return probe.relay:stats()
+            end)
+            if okp and type(pst) == "table" then
+                local p_ok_dg = tonumber(pst.ok_datagrams) or 0
+                local p_age_ms = tonumber(pst.last_ok_age_ms)
+                local p_is_ok = (p_age_ms ~= nil and p_age_ms >= 0 and p_age_ms <= (no_data_timeout * 1000) and p_ok_dg > 0)
+                if p_is_ok and stable_ok > 0 and (now - (tonumber(probe.started_at) or now)) >= stable_ok then
+                    if not entry.dp_return_pending or entry.dp_return_pending.target ~= target_idx then
+                        entry.dp_return_pending = {
+                            target = target_idx,
+                            ready_at = now + return_delay,
+                        }
+                    end
+                end
+                if entry.dp_return_pending and entry.dp_return_pending.target == target_idx then
+                    if not p_is_ok then
+                        -- Цель перестала быть OK -> отменяем возврат.
+                        entry.dp_return_pending = nil
+                    elseif now >= (tonumber(entry.dp_return_pending.ready_at) or 0) then
+                        local okr, resr, errr = pcall(function()
+                            return entry.relay:switch_input(target_input)
+                        end)
+                        if okr and resr then
+                            log.info("[runtime] dataplane return: " .. tostring(id)
+                                .. " input #" .. tostring(active_idx) .. " -> #" .. tostring(target_idx))
+                            entry.dp_active_input_index = target_idx
+                            entry.dp_last_switch_ts = now
+                            entry.dp_fail_since = nil
+                            entry.dp_last_ok_ts = nil
+                        else
+                            log.warning("[runtime] dataplane return switch_input failed: " .. tostring(id)
+                                .. " (" .. tostring(errr or resr or "unknown error") .. ")")
+                        end
+                        -- В любом случае закрываем probe и сбрасываем state.
+                        pcall(function() probe.relay:close() end)
+                        entry.dp_probe = nil
+                        entry.dp_return_pending = nil
+                    end
+                end
+
+                local deadline = tonumber(probe.deadline_ts) or 0
+                if deadline > 0 and now >= deadline and not entry.dp_return_pending then
+                    pcall(function() probe.relay:close() end)
+                    entry.dp_probe = nil
+                end
+            else
+                pcall(function() probe.relay:close() end)
+                entry.dp_probe = nil
+                entry.dp_return_pending = nil
+            end
+        else
+            entry.dp_probe = nil
+        end
+
+        -- Start new probe if needed
+        if not entry.dp_probe and not entry.dp_return_pending and probe_interval > 0 then
+            local next_probe_ts = tonumber(entry.dp_next_probe_ts) or 0
+            if now >= next_probe_ts and type(target_input) == "table" and dataplane_available() then
+                local rx_batch = setting_number("performance_passthrough_rx_batch", PASSTHROUGH_DP_RX_BATCH_DEFAULT)
+                rx_batch = clamp_number(rx_batch, PASSTHROUGH_DP_RX_BATCH_MIN, PASSTHROUGH_DP_RX_BATCH_MAX)
+                local affinity = setting_bool("performance_passthrough_affinity", false)
+                local worker_policy = setting_string("performance_passthrough_worker_policy", "hash")
+                worker_policy = tostring(worker_policy or "hash"):lower()
+                if worker_policy ~= "least_loaded" then
+                    worker_policy = "hash"
+                end
+
+                local probe_opts = {
+                    id = tostring(id) .. "/probe",
+                    workers = 0,
+                    rx_batch = rx_batch,
+                    affinity = affinity and true or false,
+                    worker_policy = worker_policy,
+                    probe_only = true,
+                    input = target_input,
+                }
+                local ok3, res3, err3 = pcall(function()
+                    return udp_relay.start(probe_opts)
+                end)
+                if ok3 and res3 then
+                    entry.dp_probe = {
+                        relay = res3,
+                        started_at = now,
+                        deadline_ts = now + math.max(no_data_timeout, stable_ok),
+                    }
+                else
+                    log.warning("[runtime] dataplane probe start failed: " .. tostring(id)
+                        .. " (" .. tostring(err3 or res3 or "unknown error") .. ")")
+                end
+                entry.dp_next_probe_ts = now + probe_interval
+            end
+        end
+    else
+        entry.dp_return_pending = nil
+        if entry.dp_probe and entry.dp_probe.relay and type(entry.dp_probe.relay.close) == "function" then
+            pcall(function() entry.dp_probe.relay:close() end)
+        end
+        entry.dp_probe = nil
+    end
+
+    return true
+end
+
+local function dataplane_backup_tick()
+    if not dataplane_available() then
+        return
+    end
+    local any = false
+    for id, entry in pairs(runtime.streams or {}) do
+        if entry and entry.kind == "dataplane" and entry.dp_backup then
+            any = true
+            dataplane_backup_tick_stream(id, entry)
+        end
+    end
+    if not any and runtime.dp_backup_timer then
+        runtime.dp_backup_timer:close()
+        runtime.dp_backup_timer = nil
+    end
+end
+
+local function dataplane_backup_ensure_timer()
+    if runtime.dp_backup_timer or timer == nil then
+        return
+    end
+    local ok, t = pcall(function()
+        return timer({
+            interval = 1,
+            callback = function()
+                dataplane_backup_tick()
+            end,
+        })
+    end)
+    if ok and t then
+        runtime.dp_backup_timer = t
+    else
+        log.warning("[runtime] failed to create dataplane backup timer: " .. tostring(t or "unknown error"))
+    end
+end
+
 local function apply_stream(id, row, force)
     local existing = runtime.streams[id]
     local enabled = (tonumber(row.enabled) or 0) ~= 0
@@ -1439,10 +1832,11 @@ local function apply_stream(id, row, force)
     -- нужно пересоздать поток даже при одинаковом config hash.
     local dp_mode = dp_mode_normalized()
     local dp_opts, dp_err = nil, nil
+    local dp_meta = nil
     local want_dp = (dp_mode ~= PASSTHROUGH_DP_MODE_OFF)
     local dp_desired_kind = "stream"
     if want_dp and dataplane_available() then
-        dp_opts, dp_err = build_udp_relay_opts_if_eligible(id, cfg, hash)
+        dp_opts, dp_err, dp_meta = build_udp_relay_opts_if_eligible(id, cfg, hash)
         if dp_opts then
             dp_desired_kind = "dataplane"
         elseif dp_mode == PASSTHROUGH_DP_MODE_FORCE then
@@ -1500,9 +1894,18 @@ local function apply_stream(id, row, force)
                     channel = shadow_channel,
                     hash = hash,
                     dp_verified = false,
+                    dp_inputs = dp_meta and dp_meta.inputs or nil,
+                    dp_backup = dp_meta and dp_meta.backup or nil,
+                    dp_active_input_index = 1,
+                    dp_started_at = os.time(),
+                    dp_last_ok_datagrams = 0,
+                    dp_last_ok_ts = nil,
                     config_snapshot = copy_table(cfg),
                 }
                 dataplane_watchdog_pending_add(id)
+                if runtime.streams[id].dp_backup then
+                    dataplane_backup_ensure_timer()
+                end
                 return true
             end
             local err = ok and "failed to start dataplane relay" or tostring(relay_or_err)
