@@ -61,6 +61,27 @@ http_request = function(req)
     return
   end
 
+  if req.path and req.path:find("/api/v1/health/process", 1, true) then
+    req.callback(req, {
+      code = 200,
+      headers = {},
+      content = json.encode({ status = "ok", version = "1.2.0" }),
+    })
+    return
+  end
+
+  if mode == "switch_404"
+    and req.path and req.path:find("/api/v1/streams/", 1, true)
+    and req.path:find("/switch-input", 1, true)
+  then
+    req.callback(req, {
+      code = 404,
+      headers = {},
+      content = json.encode({ error = "not found" }),
+    })
+    return
+  end
+
   if req.path and (req.path:find("/api/v1/streams", 1, true) or req.path:find("/api/streams", 1, true)) then
     req.callback(req, {
       code = 404,
@@ -103,7 +124,10 @@ api.handle_request(server, client, make_request("/api/v1/servers/test", {
 assert_true(sent ~= nil and tonumber(sent.code) == 403, "expected 403 on login forbidden")
 local ok1, payload1 = pcall(json.decode, sent.content or "")
 assert_true(ok1 and type(payload1) == "table", "expected json payload for login forbidden")
-assert_true(tostring(payload1.error or ""):find("forbidden", 1, true) ~= nil, "expected forbidden message")
+assert_true(
+  tostring(payload1.error or ""):find("login/password incorrect", 1, true) ~= nil,
+  "expected login/password incorrect message"
+)
 
 mode = "streams_404"
 sent = nil
@@ -114,6 +138,22 @@ assert_true(sent ~= nil and tonumber(sent.code) == 404, "expected 404 on missing
 local ok2, payload2 = pcall(json.decode, sent.content or "")
 assert_true(ok2 and type(payload2) == "table", "expected json payload for streams 404")
 assert_true(tostring(payload2.error or ""):find("http 404", 1, true) ~= nil, "expected http 404 in message")
+
+mode = "switch_404"
+sent = nil
+api.handle_request(server, client, make_request("/api/v1/servers/streams/action", {
+  id = "remote-1",
+  stream_id = "ch1",
+  action = "switch_input",
+  input_index = 0,
+}))
+assert_true(sent ~= nil and tonumber(sent.code) == 400, "expected 400 on missing switch-input endpoint")
+local ok3, payload3 = pcall(json.decode, sent.content or "")
+assert_true(ok3 and type(payload3) == "table", "expected json payload for switch 404")
+assert_true(
+  tostring(payload3.error or ""):find("switch_input unsupported for stream_v1", 1, true) ~= nil,
+  "expected unsupported switch_input message"
+)
 
 log.info("[unit] servers_remote_error_unit ok")
 astra.exit()

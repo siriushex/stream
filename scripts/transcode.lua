@@ -1225,6 +1225,7 @@ local function normalize_watchdog_defaults(tc)
     local raw_restart_cooldown = tonumber(wd.restart_cooldown_sec)
     local base_cooldown = num("restart_cooldown_sec", 1200)
     local critical_cooldown_fallback = raw_restart_cooldown ~= nil and base_cooldown or 30
+    local error_rearm_default = num("error_rearm_sec", 120)
     return {
         restart_delay_sec = num("restart_delay_sec", 4),
         restart_jitter_sec = num("restart_jitter_sec", 2),
@@ -1263,7 +1264,8 @@ local function normalize_watchdog_defaults(tc)
         restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", critical_cooldown_fallback),
         restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", base_cooldown),
         restart_force_after_sec = num("restart_force_after_sec", 0),
-        error_rearm_sec = num("error_rearm_sec", 0),
+        -- Auto-rearm after restart-limit ERROR to recover automatically when source returns.
+        error_rearm_sec = error_rearm_default,
         stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
@@ -1289,6 +1291,47 @@ local function normalize_output_watchdog(wd, base)
         end
         return v
     end
+    local function num_direct(value, fallback)
+        local v = tonumber(value)
+        if v == nil then
+            v = fallback
+        end
+        if v < 0 then
+            v = 0
+        end
+        return v
+    end
+    local raw_restart_cooldown = tonumber(pick("restart_cooldown_sec"))
+    local base_cooldown = num("restart_cooldown_sec", 1200)
+    local has_output_cooldown = type(wd) == "table" and wd.restart_cooldown_sec ~= nil
+    local has_output_critical = type(wd) == "table" and wd.restart_cooldown_critical_sec ~= nil
+    local has_output_quality = type(wd) == "table" and wd.restart_cooldown_quality_sec ~= nil
+    local critical_cooldown = nil
+    if has_output_critical then
+        critical_cooldown = num_direct(wd.restart_cooldown_critical_sec, 30)
+    elseif type(base) == "table" and base.restart_cooldown_critical_sec ~= nil then
+        -- Prefer global critical lane defaults for reliability: critical restarts
+        -- (NO_PROGRESS/EXIT/etc) should not inherit large quality cooldowns.
+        critical_cooldown = num_direct(base.restart_cooldown_critical_sec, 30)
+    elseif has_output_cooldown then
+        -- Backward compatibility when base critical lane is unavailable.
+        critical_cooldown = base_cooldown
+    elseif raw_restart_cooldown ~= nil then
+        critical_cooldown = base_cooldown
+    else
+        critical_cooldown = 30
+    end
+    local quality_cooldown = nil
+    if has_output_quality then
+        quality_cooldown = num_direct(wd.restart_cooldown_quality_sec, base_cooldown)
+    elseif has_output_cooldown then
+        quality_cooldown = base_cooldown
+    elseif type(base) == "table" and base.restart_cooldown_quality_sec ~= nil then
+        quality_cooldown = num_direct(base.restart_cooldown_quality_sec, base_cooldown)
+    else
+        quality_cooldown = base_cooldown
+    end
+    local error_rearm_default = num("error_rearm_sec", 120)
     return {
         restart_delay_sec = num("restart_delay_sec", 4),
         restart_jitter_sec = num("restart_jitter_sec", 2),
@@ -1323,11 +1366,12 @@ local function normalize_output_watchdog(wd, base)
         low_bitrate_enabled = normalize_bool(pick("low_bitrate_enabled"), true),
         low_bitrate_min_kbps = num("low_bitrate_min_kbps", 400),
         low_bitrate_hold_sec = num("low_bitrate_hold_sec", 60),
-        restart_cooldown_sec = num("restart_cooldown_sec", 1200),
-        restart_cooldown_critical_sec = num("restart_cooldown_critical_sec", num("restart_cooldown_sec", 1200)),
-        restart_cooldown_quality_sec = num("restart_cooldown_quality_sec", num("restart_cooldown_sec", 1200)),
+        restart_cooldown_sec = base_cooldown,
+        restart_cooldown_critical_sec = critical_cooldown,
+        restart_cooldown_quality_sec = quality_cooldown,
         restart_force_after_sec = num("restart_force_after_sec", 0),
-        error_rearm_sec = num("error_rearm_sec", 0),
+        -- Keep output watchdog behavior consistent with job-level defaults.
+        error_rearm_sec = error_rearm_default,
         stop_timeout_sec = num("stop_timeout_sec", 5),
     }
 end
@@ -2677,12 +2721,37 @@ local function pick_next_input(inputs, active_id, prefer_ok, prefer_compat)
     return nil
 end
 
+function transcode._resolve_failover_probe_interval(fo)
+    if type(fo) ~= "table" then
+        return 0
+    end
+    local interval = tonumber(fo.probe_interval) or 0
+    if interval > 0 then
+        return interval
+    end
+    if fo.mode == "active_stop_if_all_inactive"
+        and fo.global_state == "INACTIVE"
+    then
+        -- Safety net for "stop if all inactive": keep low-frequency probes so
+        -- job can auto-recover when source comes back even with probe_interval=0.
+        local rescue = tonumber(fo.no_data_timeout) or 3
+        if rescue < 1 then
+            rescue = 1
+        elseif rescue > 10 then
+            rescue = 10
+        end
+        return rescue
+    end
+    return 0
+end
+
 local function schedule_failover_probe(job, now, keep_connected)
     local fo = job.failover
     if not fo or not is_active_backup_mode(fo.mode) then
         return
     end
-    if fo.probe_interval <= 0 then
+    local probe_interval = transcode._resolve_failover_probe_interval and transcode._resolve_failover_probe_interval(fo) or 0
+    if probe_interval <= 0 then
         return
     end
     if fo.next_probe_ts and now < fo.next_probe_ts then
@@ -2702,7 +2771,7 @@ local function schedule_failover_probe(job, now, keep_connected)
         end
     end
     if #candidates == 0 then
-        fo.next_probe_ts = now + fo.probe_interval
+        fo.next_probe_ts = now + probe_interval
         return
     end
 
@@ -2720,7 +2789,7 @@ local function schedule_failover_probe(job, now, keep_connected)
         keep_connected[probe_id] = true
     end
 
-    fo.next_probe_ts = now + fo.probe_interval
+    fo.next_probe_ts = now + probe_interval
 end
 
 local function update_failover_connections(job, now)
@@ -3029,6 +3098,36 @@ local function activate_failover_input(job, input_id, reason)
         reason = reason,
     }
     return schedule_failover_restart(job, reason, meta)
+end
+
+function transcode.switch_input(job, input_index, reason)
+    if type(job) ~= "table" then
+        return false, "transcode job not found"
+    end
+    local idx = tonumber(input_index)
+    if idx == nil then
+        return false, "input_index is required"
+    end
+    idx = math.floor(idx)
+    if idx < 0 then
+        return false, "input_index must be >= 0"
+    end
+    local fo = job.failover
+    if not fo or fo.enabled ~= true or type(fo.inputs) ~= "table" then
+        return false, "failover inputs are not configured"
+    end
+    local input_id = idx + 1
+    if input_id < 1 or input_id > #fo.inputs then
+        return false, "input_index out of range"
+    end
+    if job.active_input_id == input_id then
+        return true
+    end
+    local ok = activate_failover_input(job, input_id, reason or "api switch_input")
+    if not ok then
+        return false, "switch input failed"
+    end
+    return true
 end
 
 local function activate_next_available_input(job, active_id, reason)

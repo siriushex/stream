@@ -19,16 +19,141 @@ M._state = M._state or {
     proc_started_ts = nil,
     stdout_tail = "",
     stderr_tail = "",
+    worker_unavailable_logged = false,
+    worker_disabled = false,
 }
 
+local function detect_script_dir()
+    local dbg = _G and _G.debug or nil
+    if type(dbg) ~= "table" or type(dbg.getinfo) ~= "function" then
+        return nil
+    end
+    local info = dbg.getinfo(1, "S")
+    if not info or not info.source then
+        return nil
+    end
+    local src = tostring(info.source or "")
+    if src:sub(1, 1) == "@" then
+        src = src:sub(2)
+    end
+    local dir = src:match("^(.*[/\\])")
+    if not dir or dir == "" then
+        return nil
+    end
+    if dir:sub(-1) == "/" or dir:sub(-1) == "\\" then
+        dir = dir:sub(1, -2)
+    end
+    return (dir ~= "" and dir) or nil
+end
+
+local EXPORT_ASYNC_DIR = detect_script_dir()
+
+local function path_join(base, leaf)
+    local b = tostring(base or "")
+    local l = tostring(leaf or "")
+    if b == "" then
+        return l
+    end
+    if l == "" then
+        return b
+    end
+    local tail = b:sub(-1)
+    if tail == "/" or tail == "\\" then
+        return b .. l
+    end
+    return b .. "/" .. l
+end
+
 local function resolve_self_bin()
+    local function trim(value)
+        local text = tostring(value or "")
+        text = text:gsub("^%s+", ""):gsub("%s+$", "")
+        if text == "" then
+            return nil
+        end
+        return text
+    end
+
+    local function shell_escape(value)
+        return "'" .. tostring(value or ""):gsub("'", "'\\''") .. "'"
+    end
+
+    local function is_exec_ok(result)
+        return result == true or result == 0
+    end
+
+    local function is_executable(path)
+        path = trim(path)
+        if not path then
+            return false
+        end
+        local ok, res = pcall(os.execute, "test -x " .. shell_escape(path) .. " >/dev/null 2>&1")
+        if not ok then
+            return false
+        end
+        return is_exec_ok(res)
+    end
+
+    local function command_output(cmd)
+        if not io or type(io.popen) ~= "function" then
+            return nil
+        end
+        local ok, handle = pcall(io.popen, cmd)
+        if not ok then
+            return nil
+        end
+        if not handle then
+            return nil
+        end
+        local out = handle:read("*a")
+        handle:close()
+        return trim(out)
+    end
+
+    local candidate = nil
     if _G.argv and _G.argv[0] then
-        return _G.argv[0]
+        candidate = trim(_G.argv[0])
+    elseif arg and arg[0] then
+        candidate = trim(arg[0])
     end
-    if arg and arg[0] then
-        return arg[0]
+
+    -- Absolute invocation path is the most reliable option for child workers.
+    if candidate and candidate:sub(1, 1) == "/" and is_executable(candidate) then
+        return candidate
     end
-    return "stream"
+
+    -- Some deployments launch stream via PATH ("stream"), while helper workers
+    -- may run with a minimal PATH. Prefer common install paths explicitly.
+    local known_bins = {
+        "/usr/local/bin/stream",
+        "/usr/bin/stream",
+    }
+    for _, known in ipairs(known_bins) do
+        if is_executable(known) then
+            return known
+        end
+    end
+
+    -- Linux fast path: current executable.
+    local proc_exe = command_output("readlink -f /proc/self/exe 2>/dev/null")
+    if proc_exe and is_executable(proc_exe) then
+        return proc_exe
+    end
+
+    -- Resolve argv basename via PATH if available.
+    if candidate then
+        local resolved = command_output("command -v " .. shell_escape(candidate) .. " 2>/dev/null")
+        if resolved and is_executable(resolved) then
+            return resolved
+        end
+    end
+
+    local fallback = command_output("command -v stream 2>/dev/null")
+    if fallback and is_executable(fallback) then
+        return fallback
+    end
+
+    return nil
 end
 
 local nice_cache = nil
@@ -124,6 +249,94 @@ local function merge_export_paths(dst, src)
     return dst
 end
 
+local function is_readable_file(path)
+    local p = tostring(path or "")
+    if p == "" then
+        return false
+    end
+    if not io or type(io.open) ~= "function" then
+        return nil
+    end
+    local ok, handle = pcall(io.open, p, "rb")
+    if not ok then
+        return false
+    end
+    if not handle then
+        return false
+    end
+    handle:close()
+    return true
+end
+
+local function materialize_embedded_export_worker(cfg)
+    if not cfg or not cfg.data_dir then
+        return nil
+    end
+    if not utils or type(utils.embedded_read) ~= "function" then
+        return nil
+    end
+    if not io or type(io.open) ~= "function" then
+        return nil
+    end
+    local embedded = utils.embedded_read("scripts/export_write.lua")
+    if type(embedded) ~= "string" or embedded == "" then
+        return nil
+    end
+    local target = path_join(cfg.data_dir, ".stream-export-write.lua")
+    local ok, handle = pcall(io.open, target, "wb")
+    if not ok or not handle then
+        return nil
+    end
+    local write_ok = pcall(function()
+        handle:write(embedded)
+        handle:close()
+    end)
+    if not write_ok then
+        return nil
+    end
+    local readable = is_readable_file(target)
+    if readable == false then
+        return nil
+    end
+    return target
+end
+
+local function resolve_export_worker_script(cfg)
+    local embedded_fallback = "scripts/export_write.lua"
+    local candidates = {
+        "/usr/local/share/stream/scripts/export_write.lua",
+        "/usr/share/stream/scripts/export_write.lua",
+    }
+    if EXPORT_ASYNC_DIR and EXPORT_ASYNC_DIR ~= "" then
+        table.insert(candidates, 1, path_join(EXPORT_ASYNC_DIR, "export_write.lua"))
+    end
+    table.insert(candidates, 1, embedded_fallback)
+    local self_bin = resolve_self_bin()
+    local bin_dir = tostring(self_bin or ""):match("^(.*)/[^/]+$")
+    if bin_dir and bin_dir ~= "" then
+        candidates[#candidates + 1] = bin_dir .. "/../share/stream/scripts/export_write.lua"
+    end
+    for _, path in ipairs(candidates) do
+        local readable = is_readable_file(path)
+        if readable == true then
+            return path
+        end
+        if readable == nil then
+            -- Cannot verify in this environment (for example, unit tests that stub io).
+            return path
+        end
+    end
+    local extracted = materialize_embedded_export_worker(cfg)
+    if extracted and extracted ~= "" then
+        return extracted
+    end
+    -- Embedded assets mode: helper script may be available inside the binary
+    -- without a real file on disk. Keep this fallback so worker mode still works.
+    return embedded_fallback
+end
+
+local run_pending_job = nil
+
 local function spawn_job(paths, cfg)
     if not paths or type(paths) ~= "table" then
         return nil
@@ -136,9 +349,19 @@ local function spawn_job(paths, cfg)
         return nil
     end
 
+    local helper_script = resolve_export_worker_script(cfg)
+    if not helper_script or helper_script == "" then
+        return nil, "export helper script is unavailable"
+    end
+
+    local self_bin = resolve_self_bin()
+    if not self_bin or self_bin == "" then
+        return nil, "stream binary is unavailable"
+    end
+
     local argv = {
-        resolve_self_bin(),
-        "scripts/export_write.lua",
+        self_bin,
+        helper_script,
         "--data-dir", tostring(cfg.data_dir),
         "--db", tostring(cfg.db_path),
     }
@@ -159,15 +382,16 @@ local function spawn_job(paths, cfg)
     end
 
     argv = with_low_priority(argv)
-    local ok, proc = pcall(process.spawn, argv, {
+    local ok, proc_or_err = pcall(process.spawn, argv, {
         stdout = "pipe",
         stderr = "pipe",
         cwd = tostring(cfg.data_dir),
     })
-    if not ok or not proc then
-        log.error("[export_async] spawn failed")
-        return nil
+    if not ok or not proc_or_err then
+        local detail = ok and "process.spawn returned nil" or tostring(proc_or_err)
+        return nil, "spawn failed: " .. tostring(detail)
     end
+    local proc = proc_or_err
 
     local s = M._state
     s.proc = proc
@@ -211,9 +435,25 @@ local function spawn_job(paths, cfg)
                 state.proc = nil
                 state.proc_started_ts = nil
 
+                local stderr_tail = tostring(state.stderr_tail or "")
+                local stderr_lower = stderr_tail:lower()
+                local missing_file = stderr_lower:find("no such file", 1, true) ~= nil
+                    or stderr_lower:find("not found", 1, true) ~= nil
+                local missing_helper = missing_file
+                    and stderr_lower:find("export_write.lua", 1, true) ~= nil
+                local missing_worker_bin = (exit_code == 126 or exit_code == 127) and missing_file
+                if missing_helper or missing_worker_bin then
+                    state.worker_disabled = true
+                    if not state.worker_unavailable_logged then
+                        log.warning("[export_async] worker disabled after worker exit=" .. tostring(exit_code) ..
+                            "; using in-process fallback")
+                        state.worker_unavailable_logged = true
+                    end
+                end
+
                 if exit_code ~= 0 or signal ~= 0 then
                     log.error(string.format("[export_async] failed: exit=%d signal=%d stderr_tail=%s",
-                        exit_code, signal, tostring(state.stderr_tail or "")))
+                        exit_code, signal, stderr_tail))
                 end
 
                 self:close()
@@ -222,12 +462,115 @@ local function spawn_job(paths, cfg)
                 local next_paths = state.pending
                 state.pending = nil
                 if next_paths then
-                    spawn_job(next_paths, cfg)
+                    run_pending_job(next_paths, cfg)
                 end
             end,
         })
     end
 
+    return true
+end
+
+local function run_export_inprocess(paths, cfg)
+    if not paths or type(paths) ~= "table" then
+        return true
+    end
+    if not cfg then
+        return nil, "config is unavailable"
+    end
+    if type(cfg.export_astra_file) ~= "function" then
+        return nil, "config export writer is unavailable"
+    end
+
+    local payload = nil
+    local encoded = nil
+    if type(cfg.export_astra_encoded) == "function" then
+        local ok, p, e = pcall(cfg.export_astra_encoded)
+        if not ok then
+            return nil, tostring(p)
+        end
+        payload = p
+        encoded = e
+    elseif type(cfg.export_astra) == "function" then
+        local ok, p = pcall(cfg.export_astra)
+        if not ok then
+            return nil, tostring(p)
+        end
+        payload = p
+        if json and type(json.encode_pretty) == "function" then
+            encoded = json.encode_pretty(payload)
+        else
+            encoded = json.encode(payload)
+        end
+    else
+        return nil, "config export encoder is unavailable"
+    end
+
+    local function write_target(path)
+        if not path or path == "" then
+            return true
+        end
+        local ok, err = cfg.export_astra_file(path, {
+            payload = payload,
+            encoded = encoded,
+        })
+        if not ok then
+            return nil, err or ("write failed: " .. tostring(path))
+        end
+        return true
+    end
+
+    local ok, err = write_target(paths.primary_path)
+    if not ok then return nil, err end
+    ok, err = write_target(paths.snapshot_path)
+    if not ok then return nil, err end
+    ok, err = write_target(paths.lkg_path)
+    if not ok then return nil, err end
+
+    return true
+end
+
+run_pending_job = function(paths, cfg)
+    if not paths then
+        return true
+    end
+
+    local state = M._state
+    if not state.worker_disabled then
+        local ok, err = spawn_job(paths, cfg)
+        if ok then
+            return true
+        end
+        local text = tostring(err or "spawn failed")
+        if text:find("unavailable", 1, true) ~= nil
+            or text:find("No such file", 1, true) ~= nil
+            or text:find("not found", 1, true) ~= nil
+        then
+            state.worker_disabled = true
+        end
+        if not state.worker_unavailable_logged then
+            log.warning("[export_async] worker unavailable; using in-process fallback: " .. text)
+            state.worker_unavailable_logged = true
+        end
+    else
+        -- Worker path was already deemed unavailable for this process lifecycle.
+        -- Keep config apply fast by using in-process export directly.
+        if not state.worker_unavailable_logged then
+            log.warning("[export_async] worker disabled; using in-process fallback")
+            state.worker_unavailable_logged = true
+        end
+    end
+
+    local done, fallback_err = run_export_inprocess(paths, cfg)
+    if not done then
+        log.error("[export_async] in-process fallback failed: " .. tostring(fallback_err))
+    end
+
+    local next_paths = state.pending
+    state.pending = nil
+    if next_paths then
+        return run_pending_job(next_paths, cfg)
+    end
     return true
 end
 
@@ -250,7 +593,7 @@ function M.request(paths, cfg)
     if not timer then
         local next_paths = s.pending
         s.pending = nil
-        return spawn_job(next_paths, cfg)
+        return run_pending_job(next_paths, cfg)
     end
 
     s.timer = timer({
@@ -265,7 +608,7 @@ function M.request(paths, cfg)
             local next_paths = state.pending
             state.pending = nil
             if next_paths then
-                spawn_job(next_paths, cfg)
+                run_pending_job(next_paths, cfg)
             end
         end,
     })

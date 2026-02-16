@@ -40,3 +40,19 @@ udp://239.0.0.1:1234?pkt_size=1316
 ```
 
 Если и `?`, и `#` присутствуют — `#` всегда в конце.
+
+## DASH (MPD) адрес
+
+Канонический формат для DASH input:
+
+```text
+https://host/path/manifest.mpd#input_type=dash
+```
+
+Важные параметры DASH:
+
+```text
+https://host/path/manifest.mpd#input_type=dash&dash_strategy=auto_max&dash_representation_id=<video_id>&dash_audio_id=<audio_id>&dash_max_height=720&dash_rw_timeout_ms=15000&dash_startup_grace_sec=60&dash_max_no_data_sec=90
+```
+
+Для кастомных заголовков используйте `dash_headers` (разделитель строк `\r\n`).

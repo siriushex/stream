@@ -16,6 +16,7 @@
 - **UDP / RTP** — multicast/unicast в локальной сети.
 - **HTTP‑TS** — поток по HTTP.
 - **HLS** — плейлист и сегменты.
+- **DASH (MPD)** — ingest MPEG-DASH через ffmpeg bridge (`copy/remux` в MPEG-TS).
 - **DVB** — приём с DVB‑адаптеров (если они есть на сервере).
 
 ## Примеры адресов
@@ -25,6 +26,7 @@ udp://239.0.0.1:1234
 udp://enp5s0f1@239.0.0.1:1234
 http://example.com:8000/live/channel
 hls://example.com/live/index.m3u8
+https://example.com/live/manifest.mpd#input_type=dash
 dvb://...
 ```
 
@@ -67,6 +69,28 @@ http://host/stream.ts#net_profile=bad
 ```
 
 Не включайте “тяжёлые” режимы без необходимости — это увеличивает буферы и задержку.
+
+## DASH (MPD)
+
+Для DASH используйте MPD URL и `#input_type=dash`:
+
+```text
+https://cdn.example.com/live/manifest.mpd#input_type=dash
+```
+
+Поддерживаются стратегии выбора representation:
+
+- `dash_strategy=auto_max` (по умолчанию),
+- `dash_strategy=auto_min`,
+- `dash_strategy=fixed_id&dash_representation_id=<id>`,
+- `dash_strategy=res_limit&dash_max_height=720`.
+
+Дополнительные опции: `dash_user_agent`, `dash_headers`, `dash_cookies`, `dash_referer`,
+`dash_rw_timeout_ms`, `dash_reconnect_delay_max`, `dash_enable_cenc`, `dash_cenc_key`,
+`dash_startup_grace_sec`, `dash_max_no_data_sec`.
+
+Self-heal по умолчанию включён: если bridge-процесс жив, но данные не приходят дольше лимита,
+Stream перезапускает DASH bridge с backoff (1/2/5/10/30s).
 
 ## Quality detectors
 

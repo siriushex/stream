@@ -27,15 +27,23 @@ curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --
 ## CentOS / RHEL / Rocky / Alma (сборка из исходников)
 
 ```bash
-curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
+curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode
 ```
 
-!!! note "Проверка транскода"
-    По умолчанию `install-centos.sh` делает проверку, что установлена **FULL**‑сборка и доступен `ffmpeg`.
-    Если нужно пропустить проверку:
+!!! tip "Скорость и стабильность сборки"
+    Установщик автоматически ограничивает `make -j` до разумного значения.
+    При необходимости задайте вручную:
 
     ```bash
-    curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --no-verify-transcode
+    curl -fsSL http://stream.centv.ru/install-centos.sh | sudo STREAM_MAKE_JOBS=4 bash -s -- --mode source --ffmpeg-system --verify-transcode
+    ```
+
+!!! note "Проверка транскода"
+    Флаг `--verify-transcode` проверяет, что установлена **FULL**‑сборка и доступен `ffmpeg`.
+    Если нужно пропустить проверку, используйте:
+
+    ```bash
+    curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --no-verify-transcode
     ```
 
 !!! note "Если HTTPS не работает"
@@ -44,6 +52,12 @@ curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
 
     ```bash
     curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash
+    ```
+
+    Если CA актуальны, можно использовать HTTPS:
+
+    ```bash
+    curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode
     ```
 
 ## macOS (для тестов/демо)

@@ -90,6 +90,11 @@ systemctl status stream@prod
 ss -lntp | grep 9060
 ```
 
+Если видите `status=78` и в `ExecStart` фигурирует `${STREAM_PORT:-8816}`:
+- это старый шаблон systemd;
+- запустите `sudo /usr/local/bin/stream --init` ещё раз (новая версия автоматически чинит шаблон),
+- затем `sudo systemctl daemon-reload && sudo systemctl restart stream@prod`.
+
 ## Удаление шаблона
 
 ```bash

@@ -174,6 +174,118 @@ local function parse_headers(raw)
     return headers
 end
 
+local function has_url_scheme(url)
+    local u = tostring(url or "")
+    return u:match("^[%a][%w%+%-%.]*://") ~= nil
+end
+
+local function looks_like_host_url(url)
+    local u = tostring(url or "")
+    if u == "" then
+        return false
+    end
+    if u:match("^//") then
+        return true
+    end
+    if u:match("^localhost[:/]") then
+        return true
+    end
+    if u:match("^%d+%.%d+%.%d+%.%d+[:/]") then
+        return true
+    end
+    if u:match("^[%w%-%._]+:%d+[/%?]") then
+        return true
+    end
+    if u:match("^[%w%-%._]+/") and u:find("%.", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function normalize_audio_url(value)
+    local u = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if u == "" then
+        return ""
+    end
+    if has_url_scheme(u) then
+        return u
+    end
+    if u:match("^//") then
+        return "http:" .. u
+    end
+    if looks_like_host_url(u) then
+        return "http://" .. u
+    end
+    return u
+end
+
+local function is_http_url(url)
+    local u = tostring(url or ""):lower()
+    return u:find("^https?://") ~= nil
+end
+
+local function is_hls_url(url)
+    local u = tostring(url or ""):lower()
+    if u == "" then
+        return false
+    end
+    if u:find("%.m3u8", 1) then
+        return true
+    end
+    if u:find("application/vnd.apple.mpegurl", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function is_mpegts_like_url(url)
+    local u = tostring(url or ""):lower()
+    if u == "" then
+        return false
+    end
+    if u:find("%.ts", 1) or u:find("%.m2ts", 1) then
+        return true
+    end
+    if u:find("mpegts", 1, true) or u:find("video/mp2t", 1, true) then
+        return true
+    end
+    return false
+end
+
+local function normalize_audio_format(value)
+    local fmt = tostring(value or "mp3"):lower():gsub("^%s+", ""):gsub("%s+$", "")
+    if fmt == "" then
+        return "mp3"
+    end
+    if fmt == "mp3" or fmt == "mpeg" or fmt == "audio/mpeg" then
+        return "mp3"
+    end
+    if fmt == "aac" or fmt == "adts" or fmt == "audio/aac" then
+        return "aac"
+    end
+    if fmt == "mpegts" or fmt == "ts" or fmt == "m2ts" or fmt == "video/mp2t" then
+        return "mpegts"
+    end
+    if fmt == "auto" then
+        return "auto"
+    end
+    return "auto"
+end
+
+local function force_direct_input_reason(settings)
+    if not settings or settings.use_curl == false then
+        return nil
+    end
+    local audio_url = tostring(settings.audio_url or "")
+    if is_hls_url(audio_url) then
+        return "hls_url"
+    end
+    if is_mpegts_like_url(audio_url) then
+        return "mpegts_url"
+    end
+    return nil
+end
+
 local function spawn_process(args)
     if not process or type(process.spawn) ~= "function" then
         return nil, "process module is not available"
@@ -243,21 +355,42 @@ local function logs_to_text(job)
     return table.concat(job.logs, "\n")
 end
 
+local function safe_terminate_process(proc)
+    if not proc or not proc.terminate then
+        return
+    end
+    pcall(function() proc:terminate() end)
+end
+
+local function safe_kill_process(proc)
+    if not proc or not proc.kill then
+        return
+    end
+    pcall(function() proc:kill() end)
+end
+
+local function safe_close_process(proc)
+    if not proc or not proc.close then
+        return
+    end
+    pcall(function() proc:close() end)
+end
+
 local function stop_process(proc, kill_delay)
     if not proc then return end
-    if proc.terminate then proc:terminate() end
+    safe_terminate_process(proc)
     if kill_delay and kill_delay > 0 then
         timer({
             interval = kill_delay,
             callback = function(self)
                 self:close()
-                if proc.kill then proc:kill() end
-                if proc.close then proc:close() end
+                safe_kill_process(proc)
+                safe_close_process(proc)
             end,
         })
     else
-        if proc.kill then proc:kill() end
-        if proc.close then proc:close() end
+        safe_kill_process(proc)
+        safe_close_process(proc)
     end
 end
 
@@ -294,13 +427,38 @@ local function build_ffmpeg_args(settings, fifo_path)
     table.insert(args, tostring(settings.png_path or ""))
 
     if settings.use_curl then
-        table.insert(args, "-f")
-        table.insert(args, tostring(settings.audio_format or "mp3"))
+        local fmt = tostring(settings.audio_format or "mp3")
+        if fmt ~= "auto" then
+            table.insert(args, "-f")
+            table.insert(args, fmt)
+        end
         table.insert(args, "-i")
         table.insert(args, fifo_path)
     else
+        local input_url = tostring(settings.audio_url or "")
+        if is_http_url(input_url) then
+            if settings.user_agent and settings.user_agent ~= "" then
+                table.insert(args, "-user_agent")
+                table.insert(args, tostring(settings.user_agent))
+            end
+            local headers = parse_headers(settings.extra_headers)
+            if #headers > 0 then
+                table.insert(args, "-headers")
+                table.insert(args, table.concat(headers, "\r\n") .. "\r\n")
+            end
+            table.insert(args, "-reconnect")
+            table.insert(args, "1")
+            table.insert(args, "-reconnect_streamed")
+            table.insert(args, "1")
+            table.insert(args, "-reconnect_delay_max")
+            table.insert(args, "2")
+        end
+        if settings.audio_format == "mpegts" then
+            table.insert(args, "-f")
+            table.insert(args, "mpegts")
+        end
         table.insert(args, "-i")
-        table.insert(args, tostring(settings.audio_url or ""))
+        table.insert(args, input_url)
     end
 
     local vf = string.format("fps=%s,scale=%s:%s:flags=lanczos", settings.fps, settings.width, settings.height)
@@ -377,17 +535,13 @@ end
 
 local function normalize_settings(raw)
     local out = {}
-    out.audio_url = tostring(raw.audio_url or "")
+    out.audio_url = normalize_audio_url(raw.audio_url)
     out.png_path = tostring(raw.png_path or "")
     out.autostart = normalize_bool(raw.autostart, false)
     out.use_curl = normalize_bool(raw.use_curl, true)
     out.extra_headers = tostring(raw.extra_headers or "")
     out.user_agent = tostring(raw.user_agent or "")
-    local fmt = tostring(raw.audio_format or "mp3"):lower()
-    if fmt ~= "mp3" and fmt ~= "aac" then
-        fmt = "mp3"
-    end
-    out.audio_format = fmt
+    out.audio_format = normalize_audio_format(raw.audio_format)
     out.fps = clamp_number(raw.fps, 1, 120, 25)
     out.width = clamp_int(raw.width, 16, 8192, 270)
     out.height = clamp_int(raw.height, 16, 8192, 270)
@@ -510,7 +664,7 @@ local function ensure_poller(job)
                     job.last_exit = status
                     job.last_error = "curl exited"
                     append_log(job, "[curl]", "exit=" .. tostring(status))
-                    stop_process(job.curl, 0)
+                    safe_close_process(job.curl)
                     job.curl = nil
                     if job.ffmpeg then
                         stop_process(job.ffmpeg, 1)
@@ -528,10 +682,10 @@ local function ensure_poller(job)
                     job.last_exit = status
                     job.last_error = "ffmpeg exited"
                     append_log(job, "[ffmpeg]", "exit=" .. tostring(status))
-                    stop_process(job.ffmpeg, 0)
+                    safe_close_process(job.ffmpeg)
                     job.ffmpeg = nil
                     if job.curl then
-                        stop_process(job.curl, 0)
+                        safe_close_process(job.curl)
                         job.curl = nil
                     end
                     schedule_restart(job)
@@ -619,6 +773,16 @@ function radio.start(stream_id, raw_settings)
     job.start_ts = now_ts()
     job.last_progress_ts = job.start_ts
     job.last_stall_log_ts = 0
+
+    local direct_reason = force_direct_input_reason(settings)
+    if direct_reason and settings.use_curl then
+        settings.use_curl = false
+        if direct_reason == "hls_url" then
+            append_log(job, "[radio]", "detected HLS URL, forcing direct ffmpeg input (curl pipe disabled)")
+        elseif direct_reason == "mpegts_url" then
+            append_log(job, "[radio]", "detected MPEG-TS URL, forcing direct ffmpeg input (curl pipe disabled)")
+        end
+    end
 
     local fifo_path = nil
     if settings.use_curl then
@@ -750,4 +914,5 @@ radio._test = {
     build_udp_url = build_udp_url,
     build_curl_args = build_curl_args,
     build_ffmpeg_args = build_ffmpeg_args,
+    force_direct_input_reason = force_direct_input_reason,
 }

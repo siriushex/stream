@@ -638,9 +638,18 @@ const state = {
   serverIdAuto: false,
   serverStatus: {},
   serverStatusTimer: null,
+  serverStatusInFlight: false,
   serverStreamsServerId: '',
   serverStreamsItems: [],
   serverStreamsFilter: '',
+  serverStreamsCapabilities: {},
+  serverStreamsApiType: '',
+  serverStreamsVersion: '',
+  serverStreamsAuthMode: '',
+  serverStreamsPollTimer: null,
+  serverStreamsPollErrors: 0,
+  serverStreamsSelectedId: '',
+  serverStreamsFastUntilTs: 0,
   softcams: [],
   softcamEditing: null,
   softcamIdAuto: false,
@@ -658,16 +667,25 @@ const state = {
   showDisabledStreams: loadShowDisabledState(),
   dashboardNoticeTimer: null,
   streamIndex: {},
+  streamTileNodes: {},
   streamTableRows: {},
   streamCompactRows: {},
   streamUptimeTimer: null,
+  statusFastUntilTs: 0,
+  visibleTileIds: new Set(),
 };
 
-const POLL_STATUS_DEFAULT_MS = 4000;
+const POLL_STATUS_DEFAULT_MS = 1000;
 const STREAM_UPTIME_TICK_MS = 1000;
 const POLL_STATUS_WARMUP_MS = 2000;
 const POLL_STATUS_WARMUP_WINDOW_MS = 30000;
 const POLL_STATUS_RAMP_WINDOW_MS = 20000;
+const POLL_STATUS_FAST_MS = 1000;
+const POLL_STATUS_FAST_WINDOW_MS = 15000;
+const TILE_VISIBILITY_UPDATE_THRESHOLD = 40;
+const STATUS_POLL_IDS_MAX = 120;
+const STATUS_POLL_IDS_FALLBACK_MAX = 24;
+const POLL_STATUS_HIDDEN_MIN_MS = 10000;
 const POLL_ADAPTER_MS = 5000;
 const POLL_SESSION_MS = 10000;
 const POLL_ACCESS_MS = 8000;
@@ -675,6 +693,9 @@ const POLL_LOG_MS = 8000;
 const POLL_SPLITTER_MS = 10000;
 const POLL_BUFFER_MS = 10000;
 const POLL_SERVER_STATUS_MS = 60000;
+const POLL_SERVER_STREAMS_ACTIVE_MS = 5000;
+const POLL_SERVER_STREAMS_FOCUSED_MS = 1000;
+const POLL_SERVER_STREAMS_BACKGROUND_MS = 120000;
 const POLL_OBSERVABILITY_MS = 60000;
 const NET_RESILIENCE_DEFAULTS = {
   connect_timeout_ms: 3000,
@@ -1170,8 +1191,7 @@ const elements = {
   serverStreamsClose: $('#server-streams-close'),
   serverStreamsCancel: $('#server-streams-cancel'),
   serverStreamsRefresh: $('#server-streams-refresh'),
-  serverStreamsPull: $('#server-streams-pull'),
-  serverStreamsImport: $('#server-streams-import'),
+  serverStreamsNew: $('#server-streams-new'),
   serverStreamsFilter: $('#server-streams-filter'),
   serverStreamsTable: $('#server-streams-table'),
   serverStreamsEmpty: $('#server-streams-empty'),
@@ -1831,6 +1851,23 @@ const elements = {
   inputHlsMaxGap: $('#input-hls-max-gap'),
   inputHlsSegRetries: $('#input-hls-seg-retries'),
   inputHlsMaxParallel: $('#input-hls-max-parallel'),
+  inputDashFold: $('#input-dash-fold'),
+  inputDashScheme: $('#input-dash-scheme'),
+  inputDashStrategy: $('#input-dash-strategy'),
+  inputDashRepresentationId: $('#input-dash-representation-id'),
+  inputDashAudioId: $('#input-dash-audio-id'),
+  inputDashMaxHeight: $('#input-dash-max-height'),
+  inputDashBridgePort: $('#input-dash-bridge-port'),
+  inputDashRwTimeoutMs: $('#input-dash-rw-timeout-ms'),
+  inputDashReconnectDelayMax: $('#input-dash-reconnect-delay-max'),
+  inputDashStartupGraceSec: $('#input-dash-startup-grace-sec'),
+  inputDashMaxNoDataSec: $('#input-dash-max-no-data-sec'),
+  inputDashUserAgent: $('#input-dash-user-agent'),
+  inputDashReferer: $('#input-dash-referer'),
+  inputDashCookies: $('#input-dash-cookies'),
+  inputDashHeaders: $('#input-dash-headers'),
+  inputDashEnableCenc: $('#input-dash-enable-cenc'),
+  inputDashCencKey: $('#input-dash-cenc-key'),
   inputBridgeUrl: $('#input-bridge-url'),
   inputBridgePort: $('#input-bridge-port'),
   inputFileName: $('#input-file-name'),
@@ -2201,9 +2238,9 @@ const SETTINGS_GENERAL_SECTIONS = [
             options: [
               { value: '0.2', label: '0.2 (ultra fast)' },
               { value: '0.5', label: '0.5 (very fast)' },
-              { value: '1', label: '1 (fast)' },
+              { value: '1', label: '1 (default)' },
               { value: '2', label: '2 (fast)' },
-              { value: '4', label: '4 (default)' },
+              { value: '4', label: '4' },
               { value: '6', label: '6' },
               { value: '8', label: '8' },
               { value: '10', label: '10 (low CPU)' },
@@ -5252,6 +5289,7 @@ function setView(name) {
   if (name !== 'settings') {
     closeSettingsMenu();
     stopServerStatusPolling();
+    stopServerStreamsPollTimer();
   }
   if (name === 'adapters') {
     loadDvbAdapters().catch(() => {});
@@ -5316,8 +5354,10 @@ function setSettingsSection(section) {
   }
   if (section === 'servers') {
     startServerStatusPolling();
+    startServerStreamsPollTimer();
   } else {
     stopServerStatusPolling();
+    stopServerStreamsPollTimer();
   }
 }
 
@@ -5468,6 +5508,14 @@ function slugifyServerId(name) {
   return slug;
 }
 
+function normalizeServerApiType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === 'auto') return 'auto';
+  if (raw === 'stream_v1' || raw === 'stream-v1' || raw === 'stream' || raw === 'streamer') return 'stream_v1';
+  if (raw === 'astra_legacy' || raw === 'astra-legacy' || raw === 'astra' || raw === 'legacy') return 'astra_legacy';
+  return 'auto';
+}
+
 function normalizeServers(value) {
   if (!Array.isArray(value)) return [];
   const out = [];
@@ -5477,7 +5525,7 @@ function normalizeServers(value) {
       const host = entry.trim();
       if (!host) return;
       const id = slugifyServerId(host);
-      out.push({ id, name: host, host, enabled: true, type: 'streamer' });
+      out.push({ id, name: host, host, enabled: true, api_type: 'auto', type: 'auto' });
       return;
     }
     const idRaw = String(entry.id || '').trim();
@@ -5490,7 +5538,7 @@ function normalizeServers(value) {
     const enabled = entry.enabled !== undefined ? entry.enabled !== false : entry.enable !== false;
     const login = entry.login || entry.user || '';
     const password = entry.password || entry.pass || '';
-    const type = entry.type || '';
+    const apiType = normalizeServerApiType(entry.api_type || entry.type);
     const insecure = entry.insecure === true || entry.insecure === 1 || entry.insecure === '1'
       || entry.tls_insecure === true || entry.tls_insecure === 1 || entry.tls_insecure === '1';
     out.push({
@@ -5501,7 +5549,8 @@ function normalizeServers(value) {
       login,
       password,
       enabled,
-      type,
+      api_type: apiType,
+      type: apiType,
       insecure,
       enable: entry.enable,
       user: entry.user,
@@ -6457,10 +6506,18 @@ function formatServerActionError(err, fallback) {
   if (!/^HTTP\s+\d+:/i.test(raw) && status > 0) {
     message = `HTTP ${status}: ${raw}`;
   }
-  if ((status === 401 || status === 403) && /login failed/i.test(message)) {
+  if ((status === 401 || status === 403)
+      && (/login failed/i.test(message) || /login\/password incorrect/i.test(message))) {
     message = `${message}. Check remote admin credentials or auth policy.`;
   }
   return message;
+}
+
+function formatServerApiType(value) {
+  const v = normalizeServerApiType(value);
+  if (v === 'stream_v1') return 'Stream API v1';
+  if (v === 'astra_legacy') return 'Astra legacy';
+  return 'Auto';
 }
 
 function renderServers() {
@@ -6492,15 +6549,15 @@ function renderServers() {
   }
   elements.serverEmpty.hidden = true;
 
-  servers.forEach((server) => {
-    const row = document.createElement('div');
-    row.className = 'table-row';
-	    const idCell = createEl('div', '', server.id || '');
-	    const nameCell = createEl('div', '', server.name || '');
-	    const typeCell = createEl('div', '', server.type || '-');
-	    const address = formatServerAddress(server);
-	    const hostCell = createEl('div', '', address || '-');
-	    const loginCell = createEl('div', '', server.login || '-');
+	  servers.forEach((server) => {
+	    const row = document.createElement('div');
+	    row.className = 'table-row';
+		    const idCell = createEl('div', '', server.id || '');
+		    const nameCell = createEl('div', '', server.name || '');
+		    const typeCell = createEl('div', '', formatServerApiType(server.api_type || server.type));
+		    const address = formatServerAddress(server);
+		    const hostCell = createEl('div', '', address || '-');
+		    const loginCell = createEl('div', '', server.login || '-');
 	    const statusCell = document.createElement('div');
 	    const statusInfo = getServerStatusInfo(server);
 	    const statusBadge = document.createElement('div');
@@ -6530,31 +6587,19 @@ function renderServers() {
 
 	    const streamsBtn = createEl('button', 'btn ghost', 'Streams');
 	    streamsBtn.type = 'button';
-	    streamsBtn.dataset.action = 'server-streams';
-	    streamsBtn.dataset.id = server.id || '';
+		    streamsBtn.dataset.action = 'server-streams';
+		    streamsBtn.dataset.id = server.id || '';
 
-	    const pullBtn = createEl('button', 'btn ghost', 'Pull streams');
-	    pullBtn.type = 'button';
-	    pullBtn.dataset.action = 'server-pull';
-	    pullBtn.dataset.id = server.id || '';
-
-    const importBtn = createEl('button', 'btn ghost', 'Import config');
-    importBtn.type = 'button';
-    importBtn.dataset.action = 'server-import';
-    importBtn.dataset.id = server.id || '';
-
-    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
-    deleteBtn.type = 'button';
-    deleteBtn.dataset.action = 'server-delete';
-    deleteBtn.dataset.id = server.id || '';
+	    const deleteBtn = createEl('button', 'btn ghost', 'Delete');
+	    deleteBtn.type = 'button';
+	    deleteBtn.dataset.action = 'server-delete';
+	    deleteBtn.dataset.id = server.id || '';
 
 	    actionCell.appendChild(editBtn);
-	    actionCell.appendChild(openBtn);
-	    actionCell.appendChild(testBtn);
-	    actionCell.appendChild(streamsBtn);
-	    actionCell.appendChild(pullBtn);
-	    actionCell.appendChild(importBtn);
-	    actionCell.appendChild(deleteBtn);
+		    actionCell.appendChild(openBtn);
+		    actionCell.appendChild(testBtn);
+		    actionCell.appendChild(streamsBtn);
+		    actionCell.appendChild(deleteBtn);
 
     row.appendChild(idCell);
     row.appendChild(nameCell);
@@ -6603,6 +6648,103 @@ function clearServerStreamsTable() {
   elements.serverStreamsTable.querySelectorAll('.table-row:not(.header)').forEach((el) => el.remove());
 }
 
+function formatRemoteUptime(value) {
+  const sec = Number(value);
+  if (!Number.isFinite(sec) || sec <= 0) return '-';
+  return formatShortDuration(sec);
+}
+
+function formatRemoteBitrate(value) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate < 0) return '-';
+  return `${Math.round(rate)}Kbit/s`;
+}
+
+function getRemoteCapabilities(item) {
+  const base = (state.serverStreamsCapabilities && typeof state.serverStreamsCapabilities === 'object')
+    ? state.serverStreamsCapabilities
+    : {};
+  const row = (item && item.capabilities && typeof item.capabilities === 'object')
+    ? item.capabilities
+    : {};
+  return { ...base, ...row };
+}
+
+function capabilityBadge(label, enabled) {
+  const span = document.createElement('span');
+  span.className = `server-cap-badge ${enabled ? 'ok' : 'no'}`;
+  span.textContent = `${label}:${enabled ? 'on' : 'off'}`;
+  return span;
+}
+
+function renderServerCapabilities(item) {
+  const caps = getRemoteCapabilities(item);
+  const wrap = document.createElement('div');
+  wrap.className = 'server-cap-list';
+  wrap.appendChild(capabilityBadge('CRUD', !!(caps.streams_get && caps.streams_upsert && caps.streams_delete)));
+  wrap.appendChild(capabilityBadge('Restart', !!caps.action_restart));
+  wrap.appendChild(capabilityBadge('Switch', !!caps.action_switch_input));
+  return wrap;
+}
+
+function startServerStreamsPollTimer() {
+  if (state.serverStreamsPollTimer) {
+    clearTimeout(state.serverStreamsPollTimer);
+    state.serverStreamsPollTimer = null;
+  }
+  const inServersSection = state.currentView === 'settings' && state.settingsSection === 'servers';
+  if (!inServersSection) return;
+  if (!state.serverStreamsServerId) return;
+
+  const modalActive = !!(elements.serverStreamsOverlay && elements.serverStreamsOverlay.classList.contains('active'));
+  let delay = 0;
+  if (modalActive) {
+    const selectedId = state.serverStreamsSelectedId;
+    const selected = selectedId
+      ? (Array.isArray(state.serverStreamsItems)
+        ? state.serverStreamsItems.find((it) => it && it.id === selectedId)
+        : null)
+      : null;
+    const nowMs = Date.now();
+    const forceFast = Number(state.serverStreamsFastUntilTs || 0) > nowMs;
+    const selectedHasIssue = !!(selected && (
+      selected.on_air === false
+      || (selected.last_error && String(selected.last_error).trim() !== '')
+      || (Number.isFinite(Number(selected.bitrate_kbps)) && Number(selected.bitrate_kbps) <= 0)
+    ));
+    delay = (forceFast || selectedHasIssue)
+      ? POLL_SERVER_STREAMS_FOCUSED_MS
+      : POLL_SERVER_STREAMS_ACTIVE_MS;
+    if (state.serverStreamsPollErrors > 0) {
+      const activeBackoff = [10000, 20000, 40000, 60000];
+      delay = activeBackoff[Math.min(state.serverStreamsPollErrors - 1, activeBackoff.length - 1)];
+    }
+  } else {
+    delay = POLL_SERVER_STREAMS_BACKGROUND_MS;
+    if (state.serverStreamsPollErrors > 0) {
+      const bgBackoff = [240000, 480000];
+      delay = bgBackoff[Math.min(state.serverStreamsPollErrors - 1, bgBackoff.length - 1)];
+    }
+  }
+
+  state.serverStreamsPollTimer = setTimeout(async () => {
+    try {
+      await loadServerStreams(state.serverStreamsServerId, { silent: true });
+    } catch (_err) {
+      state.serverStreamsPollErrors += 1;
+    } finally {
+      startServerStreamsPollTimer();
+    }
+  }, Math.max(1000, delay));
+}
+
+function stopServerStreamsPollTimer() {
+  if (state.serverStreamsPollTimer) {
+    clearTimeout(state.serverStreamsPollTimer);
+    state.serverStreamsPollTimer = null;
+  }
+}
+
 function renderServerStreams() {
   if (!elements.serverStreamsTable || !elements.serverStreamsEmpty) return;
   clearServerStreamsTable();
@@ -6631,37 +6773,119 @@ function renderServerStreams() {
   filtered.forEach((item) => {
     const row = document.createElement('div');
     row.className = 'table-row';
+    if (item && item.id && item.id === state.serverStreamsSelectedId) {
+      row.classList.add('active');
+    }
     row.appendChild(createEl('div', '', item.id || ''));
     row.appendChild(createEl('div', '', item.name || item.id || ''));
     row.appendChild(createEl('div', '', item.type || '-'));
     row.appendChild(createEl('div', '', item.enabled === false ? 'No' : 'Yes'));
+    const onAir = document.createElement('div');
+    const onAirValue = item && item.on_air;
+    const onAirText = onAirValue === true ? 'Yes' : onAirValue === false ? 'No' : '-';
+    onAir.className = `server-stream-onair ${onAirValue === true ? 'yes' : onAirValue === false ? 'no' : ''}`;
+    onAir.textContent = onAirText;
+    row.appendChild(onAir);
+    row.appendChild(createEl('div', '', formatRemoteBitrate(item && item.bitrate_kbps)));
+    row.appendChild(createEl('div', '', formatRemoteUptime(item && item.uptime_sec)));
+    row.appendChild(createEl('div', '', (item && item.active_input !== undefined && item.active_input !== null)
+      ? String(item.active_input)
+      : '-'));
+    row.appendChild(createEl('div', '', (item && item.last_error) ? String(item.last_error) : '-'));
+    const capCell = document.createElement('div');
+    capCell.appendChild(renderServerCapabilities(item));
+    row.appendChild(capCell);
+
+    const caps = getRemoteCapabilities(item);
     const actionCell = document.createElement('div');
+    actionCell.className = 'server-stream-actions';
     const openBtn = createEl('button', 'btn ghost', 'Open');
     openBtn.type = 'button';
     openBtn.dataset.action = 'server-stream-open';
     openBtn.dataset.serverId = serverId;
     openBtn.dataset.streamId = item.id || '';
     actionCell.appendChild(openBtn);
+    const editBtn = createEl('button', 'btn ghost', 'Edit');
+    editBtn.type = 'button';
+    editBtn.dataset.action = 'server-stream-edit';
+    editBtn.dataset.serverId = serverId;
+    editBtn.dataset.streamId = item.id || '';
+    editBtn.disabled = !(caps.streams_get && caps.streams_upsert);
+    actionCell.appendChild(editBtn);
+    if (caps.action_enable || caps.action_disable) {
+      const toggleBtn = createEl('button', 'btn ghost', item.enabled === false ? 'Enable' : 'Disable');
+      toggleBtn.type = 'button';
+      toggleBtn.dataset.action = item.enabled === false ? 'server-stream-enable' : 'server-stream-disable';
+      toggleBtn.dataset.serverId = serverId;
+      toggleBtn.dataset.streamId = item.id || '';
+      toggleBtn.disabled = item.enabled === false ? !caps.action_enable : !caps.action_disable;
+      actionCell.appendChild(toggleBtn);
+    }
+    const restartBtn = createEl('button', 'btn ghost', 'Restart');
+    restartBtn.type = 'button';
+    restartBtn.dataset.action = 'server-stream-restart';
+    restartBtn.dataset.serverId = serverId;
+    restartBtn.dataset.streamId = item.id || '';
+    restartBtn.disabled = !caps.action_restart;
+    actionCell.appendChild(restartBtn);
+    const switchBtn = createEl('button', 'btn ghost', 'Switch input');
+    switchBtn.type = 'button';
+    switchBtn.dataset.action = 'server-stream-switch';
+    switchBtn.dataset.serverId = serverId;
+    switchBtn.dataset.streamId = item.id || '';
+    switchBtn.disabled = !caps.action_switch_input;
+    actionCell.appendChild(switchBtn);
     row.appendChild(actionCell);
     elements.serverStreamsTable.appendChild(row);
   });
 }
 
-async function loadServerStreams(id) {
+async function loadServerStreams(id, opts = {}) {
   if (!id) return;
-  if (elements.serverStreamsError) elements.serverStreamsError.textContent = '';
-  if (elements.serverStreamsEmpty) {
+  const silent = opts && opts.silent === true;
+  if (elements.serverStreamsError && !silent) elements.serverStreamsError.textContent = '';
+  if (elements.serverStreamsEmpty && !silent) {
     elements.serverStreamsEmpty.hidden = false;
     elements.serverStreamsEmpty.textContent = 'Loading...';
   }
-  clearServerStreamsTable();
-  const payload = await apiJson('/api/v1/servers/streams', {
+  if (!silent) {
+    clearServerStreamsTable();
+  }
+  const payload = await apiJson('/api/v1/servers/streams/list', {
     method: 'POST',
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, include_status: true }),
   });
   const items = Array.isArray(payload && payload.items) ? payload.items : [];
   state.serverStreamsItems = items;
+  state.serverStreamsCapabilities = (payload && payload.capabilities && typeof payload.capabilities === 'object')
+    ? payload.capabilities
+    : {};
+  state.serverStreamsApiType = (payload && payload.api_type_effective) ? String(payload.api_type_effective) : '';
+  state.serverStreamsVersion = (payload && payload.remote_version) ? String(payload.remote_version) : '';
+  state.serverStreamsAuthMode = (payload && payload.auth_mode) ? String(payload.auth_mode) : '';
+  state.serverStreamsPollErrors = 0;
+  if (state.serverStreamsSelectedId) {
+    const exists = items.some((it) => it && it.id === state.serverStreamsSelectedId);
+    if (!exists) state.serverStreamsSelectedId = '';
+  }
+  if (elements.serverStreamsTitle) {
+    const server = (state.servers || []).find((s) => s && s.id === id);
+    const name = server ? (server.name || server.id || id) : id;
+    const parts = [`Remote streams: ${name}`];
+    if (state.serverStreamsApiType) parts.push(formatServerApiType(state.serverStreamsApiType));
+    if (state.serverStreamsVersion) parts.push(`v${state.serverStreamsVersion}`);
+    elements.serverStreamsTitle.textContent = parts.join(' · ');
+  }
+  if (elements.serverStreamsNew) {
+    const caps = (state.serverStreamsCapabilities && typeof state.serverStreamsCapabilities === 'object')
+      ? state.serverStreamsCapabilities
+      : {};
+    elements.serverStreamsNew.disabled = !caps.streams_upsert;
+  }
   renderServerStreams();
+  if (!silent) {
+    setStatus('Remote streams loaded');
+  }
 }
 
 function openServerStreamsModal(id) {
@@ -6676,23 +6900,80 @@ function openServerStreamsModal(id) {
     elements.serverStreamsTitle.textContent = `Remote streams: ${name}`;
   }
   if (elements.serverStreamsError) elements.serverStreamsError.textContent = '';
+  if (elements.serverStreamsNew) elements.serverStreamsNew.disabled = true;
+  state.serverStreamsPollErrors = 0;
+  state.serverStreamsSelectedId = '';
+  state.serverStreamsFastUntilTs = Date.now() + 15000;
   setOverlay(elements.serverStreamsOverlay, true);
   loadServerStreams(id).catch((err) => {
+    state.serverStreamsPollErrors += 1;
     const message = formatServerActionError(err, 'Failed to load remote streams');
     if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
     if (elements.serverStreamsEmpty) {
       elements.serverStreamsEmpty.hidden = false;
       elements.serverStreamsEmpty.textContent = 'Failed to load';
     }
+  }).finally(() => {
+    startServerStreamsPollTimer();
   });
 }
 
 function closeServerStreamsModal() {
-  state.serverStreamsServerId = '';
-  state.serverStreamsItems = [];
-  state.serverStreamsFilter = '';
-  if (elements.serverStreamsFilter) elements.serverStreamsFilter.value = '';
   setOverlay(elements.serverStreamsOverlay, false);
+  startServerStreamsPollTimer();
+}
+
+async function remoteStreamAction(serverId, streamId, action, inputIndex) {
+  const body = {
+    id: serverId,
+    stream_id: streamId,
+    action,
+  };
+  if (inputIndex !== undefined) body.input_index = inputIndex;
+  return apiJson('/api/v1/servers/streams/action', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+async function openRemoteStreamEditor(serverId, streamId) {
+  const payload = await apiJson('/api/v1/servers/streams/get', {
+    method: 'POST',
+    body: JSON.stringify({ id: serverId, stream_id: streamId }),
+  });
+  const stream = {
+    id: payload && payload.id ? payload.id : streamId,
+    enabled: !(payload && payload.enabled === false),
+    config: (payload && payload.config && typeof payload.config === 'object') ? payload.config : {},
+  };
+  const server = (state.servers || []).find((s) => s && s.id === serverId);
+  openEditor(stream, false, {
+    remote: {
+      serverId,
+      serverName: server ? (server.name || server.id || serverId) : serverId,
+      capabilities: (payload && payload.capabilities) || state.serverStreamsCapabilities || {},
+    },
+  });
+}
+
+function openNewRemoteStreamEditor(serverId) {
+  const server = (state.servers || []).find((s) => s && s.id === serverId);
+  const stream = {
+    id: '',
+    enabled: true,
+    config: {
+      name: '',
+      input: [''],
+      output: [],
+    },
+  };
+  openEditor(stream, true, {
+    remote: {
+      serverId,
+      serverName: server ? (server.name || server.id || serverId) : serverId,
+      capabilities: state.serverStreamsCapabilities || {},
+    },
+  });
 }
 
 function openRemoteStream(serverId, streamId) {
@@ -6725,7 +7006,9 @@ function openServerModal(server) {
   if (elements.serverEnabled) elements.serverEnabled.checked = server ? server.enabled !== false : true;
   if (elements.serverId) elements.serverId.value = server ? server.id || '' : '';
   if (elements.serverName) elements.serverName.value = server ? server.name || '' : '';
-  if (elements.serverType) elements.serverType.value = server ? server.type || '' : '';
+  if (elements.serverType) {
+    elements.serverType.value = normalizeServerApiType(server ? (server.api_type || server.type || 'auto') : 'auto');
+  }
   if (elements.serverHost) elements.serverHost.value = server ? server.host || '' : '';
   if (elements.serverPort) elements.serverPort.value = server && server.port ? String(server.port) : '';
   if (elements.serverInsecure) elements.serverInsecure.checked = server ? server.insecure === true : false;
@@ -6761,6 +7044,8 @@ function getServerStatusInfo(server) {
 }
 
 async function loadServerStatus() {
+  if (state.serverStatusInFlight) return;
+  state.serverStatusInFlight = true;
   try {
     const data = await apiJson('/api/v1/servers/status');
     const items = Array.isArray(data) ? data : (data.items || []);
@@ -6773,6 +7058,8 @@ async function loadServerStatus() {
     state.serverStatus = next;
     renderServers();
   } catch (err) {
+  } finally {
+    state.serverStatusInFlight = false;
   }
 }
 
@@ -6789,34 +7076,6 @@ function stopServerStatusPolling() {
     clearInterval(state.serverStatusTimer);
     state.serverStatusTimer = null;
   }
-}
-
-async function pullServerStreams(id) {
-  if (!id) return;
-  const confirmed = window.confirm('Pull streams from this server? Streams will be merged by ID.');
-  if (!confirmed) return;
-  setStatus('Pulling streams...', 'sticky');
-  await apiJson('/api/v1/servers/pull-streams', {
-    method: 'POST',
-    body: JSON.stringify({ id }),
-  });
-  setStatus('Streams pulled');
-  await refreshAll();
-  setView('dashboard');
-}
-
-async function importServerConfig(id) {
-  if (!id) return;
-  const confirmed = window.confirm('Import configuration from this server? This will merge streams/adapters/softcam (users/settings are skipped).');
-  if (!confirmed) return;
-  setStatus('Importing config...', 'sticky');
-  await apiJson('/api/v1/servers/import', {
-    method: 'POST',
-    body: JSON.stringify({ id, mode: 'merge' }),
-  });
-  setStatus('Config imported');
-  await refreshAll();
-  setView('dashboard');
 }
 
 function syncServerIdFromName() {
@@ -6847,7 +7106,7 @@ function handleServerNameInput() {
 async function saveServer() {
   const id = elements.serverId ? elements.serverId.value.trim() : '';
   const name = elements.serverName ? elements.serverName.value.trim() : '';
-  const type = elements.serverType ? elements.serverType.value.trim() : '';
+  const apiType = normalizeServerApiType(elements.serverType ? elements.serverType.value.trim() : 'auto');
   const host = elements.serverHost ? elements.serverHost.value.trim() : '';
   const port = toNumber(elements.serverPort && elements.serverPort.value);
   const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
@@ -6879,7 +7138,8 @@ async function saveServer() {
         pass: password || existing.pass || existing.password || '',
         enabled,
         enable: enabled,
-        type: type || existing.type || '',
+        api_type: apiType,
+        type: apiType,
         insecure,
       };
     } else {
@@ -6894,7 +7154,8 @@ async function saveServer() {
         pass: password,
         enabled,
         enable: enabled,
-        type: type || 'streamer',
+        api_type: apiType,
+        type: apiType,
         insecure,
       });
     }
@@ -6913,7 +7174,8 @@ async function saveServer() {
       pass: password,
       enabled,
       enable: enabled,
-      type: type || 'streamer',
+      api_type: apiType,
+      type: apiType,
       insecure,
     });
   } else {
@@ -6930,7 +7192,8 @@ async function saveServer() {
       pass: password || (existing && (existing.pass || existing.password)) || '',
       enabled,
       enable: enabled,
-      type: type || existing.type || '',
+      api_type: apiType,
+      type: apiType,
       insecure,
     };
   }
@@ -7153,11 +7416,14 @@ async function testSoftcam() {
 
 async function testServer(id, payload) {
   const body = id ? { id } : payload;
-  await apiJson('/api/v1/servers/test', {
+  const result = await apiJson('/api/v1/servers/test', {
     method: 'POST',
     body: JSON.stringify(body || {}),
   });
-  setStatus('Server test: OK');
+  const apiType = formatServerApiType(result && result.api_type_effective);
+  const version = result && result.remote_version ? String(result.remote_version) : '-';
+  const authMode = result && result.auth_mode ? String(result.auth_mode) : '-';
+  setStatus(`Server test: OK (${apiType}, v${version}, auth=${authMode})`);
 }
 
 function openServerUrl(id) {
@@ -7448,9 +7714,39 @@ const autoFitObserver = typeof ResizeObserver === 'function'
   })
   : null;
 
+const tileVisibilityObserver = typeof IntersectionObserver === 'function'
+  ? new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      const id = entry && entry.target && entry.target.dataset ? entry.target.dataset.id : '';
+      if (!id) return;
+      if (entry.isIntersecting) {
+        state.visibleTileIds.add(id);
+      } else {
+        state.visibleTileIds.delete(id);
+      }
+    });
+  }, {
+    root: null,
+    rootMargin: '200px 0px 200px 0px',
+    threshold: 0,
+  })
+  : null;
+
 function registerAutoFit(el) {
   if (!autoFitObserver || !el) return;
   autoFitObserver.observe(el);
+}
+
+function resetTileVisibilityTracking() {
+  state.visibleTileIds.clear();
+  if (tileVisibilityObserver) {
+    tileVisibilityObserver.disconnect();
+  }
+}
+
+function registerTileVisibility(tile) {
+  if (!tileVisibilityObserver || !tile) return;
+  tileVisibilityObserver.observe(tile);
 }
 
 window.addEventListener('resize', () => scheduleAutoFit());
@@ -7953,7 +8249,11 @@ function rebuildStreamIndex(list) {
 }
 
 function findTileById(id) {
-  return $$('.tile').find((tile) => tile.dataset.id === id) || null;
+  const key = String(id || '');
+  if (!key) return null;
+  const cached = state.streamTileNodes && state.streamTileNodes[key];
+  if (cached && cached.isConnected) return cached;
+  return $$('.tile').find((tile) => tile.dataset.id === key) || null;
 }
 
 function ensureDashboardEmptyState() {
@@ -8031,6 +8331,7 @@ function buildStreamTile(stream) {
   tile.querySelectorAll(AUTO_FIT_SELECTOR).forEach(registerAutoFit);
   scheduleAutoFit(tile);
   applyTileUiState(tile);
+  registerTileVisibility(tile);
   return tile;
 }
 
@@ -8039,17 +8340,24 @@ function updateStreamTile(stream) {
   const visible = isStreamVisible(stream);
   const existing = findTileById(stream.id);
   if (!visible) {
-    if (existing) existing.remove();
+    if (existing) {
+      if (tileVisibilityObserver) tileVisibilityObserver.unobserve(existing);
+      existing.remove();
+    }
+    delete state.streamTileNodes[stream.id];
+    state.visibleTileIds.delete(stream.id);
     delete state.streamIndex[stream.id];
     ensureDashboardEmptyState();
     return;
   }
   const tile = buildStreamTile(stream);
   if (existing) {
+    if (tileVisibilityObserver) tileVisibilityObserver.unobserve(existing);
     existing.replaceWith(tile);
   } else {
     elements.dashboardStreams.appendChild(tile);
   }
+  state.streamTileNodes[stream.id] = tile;
   state.streamIndex[stream.id] = stream;
   ensureDashboardEmptyState();
   scheduleAutoFit(elements.dashboardStreams);
@@ -8058,6 +8366,8 @@ function updateStreamTile(stream) {
 function removeStreamFromState(streamId) {
   const id = String(streamId);
   state.streams = state.streams.filter((stream) => stream && stream.id !== id);
+  delete state.streamTileNodes[id];
+  state.visibleTileIds.delete(id);
   delete state.streamIndex[id];
   if (state.stats) {
     delete state.stats[id];
@@ -8092,7 +8402,12 @@ function applyStreamUpdate(stream) {
 function applyStreamRemoval(streamId) {
   if (state.viewMode === 'cards') {
     const tile = findTileById(streamId);
-    if (tile) tile.remove();
+    if (tile) {
+      if (tileVisibilityObserver) tileVisibilityObserver.unobserve(tile);
+      tile.remove();
+    }
+    delete state.streamTileNodes[streamId];
+    state.visibleTileIds.delete(streamId);
     delete state.streamIndex[streamId];
     ensureDashboardEmptyState();
     scheduleAutoFit(elements.dashboardStreams);
@@ -9214,6 +9529,10 @@ const TRANSCODE_WATCHDOG_DEFAULTS = {
   low_bitrate_min_kbps: 400,
   low_bitrate_hold_sec: 60,
   restart_cooldown_sec: 1200,
+  restart_cooldown_critical_sec: 30,
+  restart_cooldown_quality_sec: 1200,
+  restart_force_after_sec: 0,
+  error_rearm_sec: 120,
 };
 
 function buildPresetProfile(profile) {
@@ -9390,6 +9709,26 @@ function normalizeOutputWatchdog(watchdog, defaults) {
     low_bitrate_min_kbps: num(wd.low_bitrate_min_kbps, base.low_bitrate_min_kbps),
     low_bitrate_hold_sec: num(wd.low_bitrate_hold_sec, base.low_bitrate_hold_sec),
     restart_cooldown_sec: num(wd.restart_cooldown_sec, base.restart_cooldown_sec),
+    restart_cooldown_critical_sec: num(
+      wd.restart_cooldown_critical_sec,
+      base.restart_cooldown_critical_sec !== undefined
+        ? base.restart_cooldown_critical_sec
+        : 30,
+    ),
+    restart_cooldown_quality_sec: num(
+      wd.restart_cooldown_quality_sec,
+      base.restart_cooldown_quality_sec !== undefined
+        ? base.restart_cooldown_quality_sec
+        : num(wd.restart_cooldown_sec, base.restart_cooldown_sec),
+    ),
+    restart_force_after_sec: num(
+      wd.restart_force_after_sec,
+      base.restart_force_after_sec !== undefined ? base.restart_force_after_sec : 0,
+    ),
+    error_rearm_sec: num(
+      wd.error_rearm_sec,
+      base.error_rearm_sec !== undefined ? base.error_rearm_sec : 120,
+    ),
   };
 }
 
@@ -9573,6 +9912,18 @@ const INPUT_PRESETS = {
     timeout: 10,
     buffer_size: 1024,
   },
+  dash_mpd: {
+    type: 'dash',
+    host: 'example.com',
+    port: 443,
+    path: '/live/manifest.mpd',
+    dash_scheme: 'https',
+    dash_strategy: 'auto_max',
+    dash_rw_timeout_ms: 15000,
+    dash_reconnect_delay_max: 2,
+    dash_startup_grace_sec: 60,
+    dash_max_no_data_sec: 90,
+  },
   srt_caller: {
     type: 'srt',
     url: 'srt://host:port?mode=caller',
@@ -9599,7 +9950,7 @@ function applyInputPreset(key) {
   const format = preset.type || 'udp';
   elements.inputType.value = format;
   const group = (format === 'rtp') ? 'udp'
-    : (format === 'hls' ? 'http'
+    : ((format === 'hls' || format === 'dash') ? 'http'
       : (format === 'srt' || format === 'rtsp' ? 'bridge' : format));
   setInputGroup(group);
   setInputAdvancedFoldVisibility(format);
@@ -9609,13 +9960,37 @@ function applyInputPreset(key) {
     elements.inputUdpAddr.value = preset.addr || '239.1.1.1';
     elements.inputUdpPort.value = preset.port || 1234;
     elements.inputUdpSocket.value = preset.socket_size || 0;
-  } else if (format === 'http' || format === 'hls') {
+  } else if (format === 'http' || format === 'hls' || format === 'dash') {
     elements.inputHttpHost.value = preset.host || '';
-    elements.inputHttpPort.value = preset.port || 80;
+    elements.inputHttpPort.value = preset.port || ((format === 'dash' && preset.dash_scheme === 'https') ? 443 : 80);
     elements.inputHttpPath.value = preset.path || '/stream';
     elements.inputHttpUa.value = preset.ua || '';
     elements.inputHttpTimeout.value = preset.timeout || 10;
     elements.inputHttpBuffer.value = preset.buffer_size || 1024;
+    if (format === 'dash') {
+      if (elements.inputDashScheme) elements.inputDashScheme.value = preset.dash_scheme || 'https';
+      if (elements.inputDashStrategy) elements.inputDashStrategy.value = preset.dash_strategy || 'auto_max';
+      if (elements.inputDashRwTimeoutMs) elements.inputDashRwTimeoutMs.value = preset.dash_rw_timeout_ms || 15000;
+      if (elements.inputDashReconnectDelayMax) {
+        elements.inputDashReconnectDelayMax.value = preset.dash_reconnect_delay_max || 2;
+      }
+      if (elements.inputDashStartupGraceSec) {
+        elements.inputDashStartupGraceSec.value = preset.dash_startup_grace_sec || 60;
+      }
+      if (elements.inputDashMaxNoDataSec) {
+        elements.inputDashMaxNoDataSec.value = preset.dash_max_no_data_sec || 90;
+      }
+      if (elements.inputDashBridgePort) elements.inputDashBridgePort.value = preset.bridge_port || '';
+      if (elements.inputDashUserAgent) elements.inputDashUserAgent.value = preset.dash_user_agent || '';
+      if (elements.inputDashHeaders) elements.inputDashHeaders.value = '';
+      if (elements.inputDashCookies) elements.inputDashCookies.value = '';
+      if (elements.inputDashReferer) elements.inputDashReferer.value = '';
+      if (elements.inputDashRepresentationId) elements.inputDashRepresentationId.value = '';
+      if (elements.inputDashAudioId) elements.inputDashAudioId.value = '';
+      if (elements.inputDashMaxHeight) elements.inputDashMaxHeight.value = '';
+      if (elements.inputDashEnableCenc) elements.inputDashEnableCenc.checked = false;
+      if (elements.inputDashCencKey) elements.inputDashCencKey.value = '';
+    }
   } else if (format === 'srt' || format === 'rtsp') {
     elements.inputBridgeUrl.value = preset.url || '';
     elements.inputBridgePort.value = preset.bridge_port || 14000;
@@ -10503,9 +10878,34 @@ function applyUdpOutputOptions(target, options) {
   });
 }
 
+function pathLooksLikeMpd(path) {
+  const raw = String(path || '').trim();
+  if (!raw) return false;
+  const clean = raw.split('?')[0].toLowerCase();
+  return clean.endsWith('.mpd');
+}
+
+function decodeDashHeadersValue(value) {
+  const raw = String(value || '');
+  if (!raw) return '';
+  return raw
+    .replace(/%0D%0A/gi, '\n')
+    .replace(/%0A/gi, '\n')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n');
+}
+
+function encodeDashHeadersValue(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/\r?\n/g, '\\r\\n');
+}
+
 function parseInputUrl(url) {
   const out = {
     format: '',
+    transport_format: '',
+    dash_transport: '',
     options: {},
     dvbId: '',
     iface: '',
@@ -10554,7 +10954,8 @@ function parseInputUrl(url) {
     return out;
   }
 
-  if (out.format === 'http' || out.format === 'https' || out.format === 'hls') {
+  if (out.format === 'http' || out.format === 'https' || out.format === 'hls' || out.format === 'dash') {
+    const baseTransport = out.format;
     let hostPart = rest;
     const slashIdx = rest.indexOf('/');
     if (slashIdx >= 0) {
@@ -10581,6 +10982,16 @@ function parseInputUrl(url) {
       out.port = hostPart.slice(colonIdx + 1);
     } else {
       out.host = hostPart;
+    }
+    out.transport_format = baseTransport;
+    const inputType = String((out.options && out.options.input_type) || '').toLowerCase();
+    const explicitInputType = inputType && inputType !== 'auto' ? inputType : '';
+    const dashDetected = (baseTransport === 'dash')
+      || (explicitInputType ? (explicitInputType === 'dash') : pathLooksLikeMpd(out.path));
+    if (dashDetected) {
+      const transport = (baseTransport === 'dash') ? 'https' : baseTransport;
+      out.format = 'dash';
+      out.dash_transport = transport;
     }
     return out;
   }
@@ -10627,12 +11038,19 @@ function buildInputUrl(data) {
     const addr = data.addr || '';
     const port = data.port ? `:${data.port}` : '';
     base = `${format}://${iface}${addr}${port}`;
-  } else if (format === 'http' || format === 'https' || format === 'hls') {
+  } else if (format === 'http' || format === 'https' || format === 'hls' || format === 'dash') {
+    let scheme = format;
+    if (format === 'dash') {
+      const requested = String(
+        data.dash_transport || data.transport_format || data.dash_scheme || 'https',
+      ).toLowerCase();
+      scheme = (requested === 'http' || requested === 'https' || requested === 'hls') ? requested : 'https';
+    }
     const auth = data.login ? `${data.login}${data.password ? `:${data.password}` : ''}@` : '';
     const host = data.host || '';
     const port = data.port ? `:${data.port}` : '';
     const path = data.path || '/';
-    base = `${format}://${auth}${host}${port}${path}`;
+    base = `${scheme}://${auth}${host}${port}${path}`;
   } else if (format === 'srt' || format === 'rtsp') {
     base = data.url || '';
     if (!base) return '';
@@ -10655,6 +11073,9 @@ function buildInputUrl(data) {
   };
 
   const o = data.options || data;
+  if (format === 'dash' && o.input_type === undefined) {
+    addOpt('input_type', 'dash');
+  }
   addOpt('pnr', o.pnr);
   addOpt('set_pnr', o.set_pnr);
   addOpt('set_tsid', o.set_tsid);
@@ -10703,10 +11124,25 @@ function buildInputUrl(data) {
   addOpt('keepalive', o.keepalive);
   addOpt('jitter_buffer_ms', o.jitter_buffer_ms);
   addOpt('jitter_max_buffer_mb', o.jitter_max_buffer_mb);
+  addOpt('input_type', o.input_type);
   addOpt('hls_max_segments', o.hls_max_segments);
   addOpt('hls_max_gap_segments', o.hls_max_gap_segments);
   addOpt('hls_segment_retries', o.hls_segment_retries);
   addOpt('hls_max_parallel', o.hls_max_parallel);
+  addOpt('dash_strategy', o.dash_strategy);
+  addOpt('dash_representation_id', o.dash_representation_id);
+  addOpt('dash_audio_id', o.dash_audio_id);
+  addOpt('dash_max_height', o.dash_max_height);
+  addOpt('dash_headers', o.dash_headers);
+  addOpt('dash_cookies', o.dash_cookies);
+  addOpt('dash_referer', o.dash_referer);
+  addOpt('dash_user_agent', o.dash_user_agent);
+  addOpt('dash_enable_cenc', o.dash_enable_cenc);
+  addOpt('dash_cenc_key', o.dash_cenc_key);
+  addOpt('dash_rw_timeout_ms', o.dash_rw_timeout_ms);
+  addOpt('dash_reconnect_delay_max', o.dash_reconnect_delay_max);
+  addOpt('dash_startup_grace_sec', o.dash_startup_grace_sec);
+  addOpt('dash_max_no_data_sec', o.dash_max_no_data_sec);
   addOpt('socket_size', o.socket_size);
   addOpt('loop', o.loop);
   addOpt('bridge_port', o.bridge_port);
@@ -10764,10 +11200,25 @@ function buildInputUrl(data) {
       'keepalive',
       'jitter_buffer_ms',
       'jitter_max_buffer_mb',
+      'input_type',
       'hls_max_segments',
       'hls_max_gap_segments',
       'hls_segment_retries',
       'hls_max_parallel',
+      'dash_strategy',
+      'dash_representation_id',
+      'dash_audio_id',
+      'dash_max_height',
+      'dash_headers',
+      'dash_cookies',
+      'dash_referer',
+      'dash_user_agent',
+      'dash_enable_cenc',
+      'dash_cenc_key',
+      'dash_rw_timeout_ms',
+      'dash_reconnect_delay_max',
+      'dash_startup_grace_sec',
+      'dash_max_no_data_sec',
       'socket_size',
       'loop',
       'bridge_port',
@@ -13621,7 +14072,8 @@ function updateRadioUiFromState() {
 
 function readRadioForm() {
   const radio = normalizeRadioState();
-  radio.audioUrl = elements.radioAudioUrl ? elements.radioAudioUrl.value.trim() : '';
+  radio.audioUrl = normalizeRadioAudioUrl(elements.radioAudioUrl ? elements.radioAudioUrl.value.trim() : '');
+  if (elements.radioAudioUrl) elements.radioAudioUrl.value = radio.audioUrl;
   radio.pngPath = elements.radioPngPath ? elements.radioPngPath.value.trim() : '';
   radio.useCurl = elements.radioUseCurl ? elements.radioUseCurl.checked : true;
   radio.userAgent = elements.radioUserAgent ? elements.radioUserAgent.value.trim() : '';
@@ -13649,6 +14101,18 @@ function readRadioForm() {
   radio.muxdelay = elements.radioMuxdelay ? elements.radioMuxdelay.value.trim() : '0.7';
   updateRadioUiFromState();
   return radio;
+}
+
+function normalizeRadioAudioUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return raw;
+  if (raw.startsWith('//')) return `http:${raw}`;
+  if (/^localhost[:/]/i.test(raw)) return `http://${raw}`;
+  if (/^\d{1,3}(?:\.\d{1,3}){3}[:/]/.test(raw)) return `http://${raw}`;
+  if (/^[a-z0-9._-]+:\d+[/?]/i.test(raw)) return `http://${raw}`;
+  if (/^[a-z0-9._-]+\//i.test(raw) && raw.includes('.')) return `http://${raw}`;
+  return raw;
 }
 
 function radioSettingsPayload() {
@@ -13682,6 +14146,28 @@ function radioSettingsPayload() {
     max_interleave_delta: radio.maxInterleave,
     muxdelay: radio.muxdelay,
   };
+}
+
+function radioDirectInputReason(audioUrl) {
+  const url = normalizeRadioAudioUrl(audioUrl).toLowerCase();
+  if (!url) return '';
+  if (url.includes('.m3u8') || url.includes('application/vnd.apple.mpegurl')) return 'hls';
+  if (url.includes('.ts') || url.includes('.m2ts') || url.includes('mpegts') || url.includes('video/mp2t')) return 'mpegts';
+  return '';
+}
+
+function applyRadioInputCompatibility(payload) {
+  if (!payload || payload.use_curl !== true) return '';
+  const reason = radioDirectInputReason(payload.audio_url);
+  if (!reason) return '';
+  payload.use_curl = false;
+  const radio = normalizeRadioState();
+  radio.useCurl = false;
+  if (elements.radioUseCurl) elements.radioUseCurl.checked = false;
+  if (reason === 'hls') {
+    return 'Detected HLS URL: switched to direct ffmpeg input (CURL pipe disabled).';
+  }
+  return 'Detected MPEG-TS URL: switched to direct ffmpeg input (CURL pipe disabled).';
 }
 
 async function refreshRadioStatus() {
@@ -13760,6 +14246,7 @@ async function refreshRadioStatus() {
 async function startRadio() {
   if (!state.editing || !state.editing.stream) return;
   const payload = radioSettingsPayload();
+  const compatMessage = applyRadioInputCompatibility(payload);
   if (!payload.audio_url) {
     setRadioStatus('Audio URL is required', true);
     return;
@@ -13772,7 +14259,7 @@ async function startRadio() {
     setRadioStatus('Output UDP URL is required', true);
     return;
   }
-  setRadioStatus('Starting...');
+  setRadioStatus(compatMessage || 'Starting...');
   setRadioLogs('');
   try {
     const res = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/start`, {
@@ -13818,10 +14305,11 @@ async function stopRadio() {
 
 async function restartRadio() {
   if (!state.editing || !state.editing.stream) return;
-  setRadioStatus('Restarting...');
-  setRadioLogs('');
   try {
     const payload = radioSettingsPayload();
+    const compatMessage = applyRadioInputCompatibility(payload);
+    setRadioStatus(compatMessage || 'Restarting...');
+    setRadioLogs('');
     const res = await apiJson(`/api/v1/streams/${state.editing.stream.id}/radio/restart`, {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -15195,7 +15683,7 @@ function setInputRadioVisibility(format) {
 
 function isInputHttpLikeType(type) {
   const value = String(type || '').toLowerCase();
-  return value === 'http' || value === 'https' || value === 'hls';
+  return value === 'http' || value === 'https' || value === 'hls' || value === 'dash';
 }
 
 function isInputBufferingType(type) {
@@ -15203,6 +15691,7 @@ function isInputBufferingType(type) {
   return value === 'http'
     || value === 'https'
     || value === 'hls'
+    || value === 'dash'
     || value === 'udp'
     || value === 'rtp'
     || value === 'radio'
@@ -15266,8 +15755,21 @@ function setInputAdvancedFoldVisibility(format) {
   if (elements.inputNetFold && !isHttpLike) elements.inputNetFold.open = false;
   if (elements.inputHlsFold) elements.inputHlsFold.hidden = type !== 'hls';
   if (elements.inputHlsFold && type !== 'hls') elements.inputHlsFold.open = false;
+  if (elements.inputDashFold) elements.inputDashFold.hidden = type !== 'dash';
+  if (elements.inputDashFold && type !== 'dash') elements.inputDashFold.open = false;
   if (elements.inputPlayoutFold) elements.inputPlayoutFold.hidden = !isHttpLike;
   if (elements.inputPlayoutFold && !isHttpLike) elements.inputPlayoutFold.open = false;
+}
+
+function syncDashPortDefault(force) {
+  if (!elements.inputType || !elements.inputDashScheme || !elements.inputHttpPort) return;
+  if (String(elements.inputType.value || '').toLowerCase() !== 'dash') return;
+  const scheme = String(elements.inputDashScheme.value || 'https').toLowerCase();
+  const desired = scheme === 'https' ? '443' : '80';
+  const current = String(elements.inputHttpPort.value || '').trim();
+  if (force || current === '' || current === '80' || current === '443') {
+    elements.inputHttpPort.value = desired;
+  }
 }
 
 function getInputResiliencePrefill(profile) {
@@ -15433,7 +15935,7 @@ function fillInputFormFromParsed(parsed, index) {
   const effectiveFormat = isInputRadioType(format) ? 'udp' : format;
   const group = isInputRadioType(format) ? 'radio'
     : (effectiveFormat === 'rtp') ? 'udp'
-      : ((effectiveFormat === 'http' || effectiveFormat === 'https' || effectiveFormat === 'hls') ? 'http'
+      : ((effectiveFormat === 'http' || effectiveFormat === 'https' || effectiveFormat === 'hls' || effectiveFormat === 'dash') ? 'http'
         : (effectiveFormat === 'srt' || effectiveFormat === 'rtsp' ? 'bridge' : effectiveFormat));
   setInputGroup(group);
   setInputAdvancedFoldVisibility(effectiveFormat);
@@ -15488,6 +15990,7 @@ function fillInputFormFromParsed(parsed, index) {
     'jitter_buffer_ms',
     'jitter_max_buffer_mb',
     'jitter_ms',
+    'input_type',
     'playout',
     'playout_mode',
     'playout_target_kbps',
@@ -15501,6 +16004,20 @@ function fillInputFormFromParsed(parsed, index) {
     'hls_max_gap_segments',
     'hls_segment_retries',
     'hls_max_parallel',
+    'dash_strategy',
+    'dash_representation_id',
+    'dash_audio_id',
+    'dash_max_height',
+    'dash_headers',
+    'dash_cookies',
+    'dash_referer',
+    'dash_user_agent',
+    'dash_enable_cenc',
+    'dash_cenc_key',
+    'dash_rw_timeout_ms',
+    'dash_reconnect_delay_max',
+    'dash_startup_grace_sec',
+    'dash_max_no_data_sec',
     'no_audio_on',
     'stop_video',
     'stop_video_timeout_sec',
@@ -15524,6 +16041,9 @@ function fillInputFormFromParsed(parsed, index) {
       extras[key] = opts[key];
     }
   });
+  if (opts.input_type !== undefined && format !== 'dash') {
+    extras.input_type = opts.input_type;
+  }
   const extrasIndex = (index !== null && index !== undefined) ? index : state.inputEditingIndex;
   if (extrasIndex !== null && extrasIndex !== undefined) {
     state.inputExtras[extrasIndex] = extras;
@@ -15542,7 +16062,7 @@ function fillInputFormFromParsed(parsed, index) {
   elements.inputHttpHost.value = parsed.host || '';
   elements.inputHttpPort.value = parsed.port || '';
   elements.inputHttpPath.value = parsed.path || '/';
-  elements.inputHttpUa.value = opts.ua || '';
+  elements.inputHttpUa.value = opts.ua || opts.dash_user_agent || '';
   elements.inputHttpTimeout.value = opts.timeout || '';
   elements.inputHttpBuffer.value = opts.buffer_size || '';
   if (elements.inputNetProfile) {
@@ -15591,6 +16111,36 @@ function fillInputFormFromParsed(parsed, index) {
   if (elements.inputHlsMaxGap) elements.inputHlsMaxGap.value = opts.hls_max_gap_segments || '';
   if (elements.inputHlsSegRetries) elements.inputHlsSegRetries.value = opts.hls_segment_retries || '';
   if (elements.inputHlsMaxParallel) elements.inputHlsMaxParallel.value = opts.hls_max_parallel || '';
+  if (elements.inputDashScheme) {
+    const transport = parsed.dash_transport || parsed.transport_format || parsed.format || 'https';
+    const normalized = String(transport || '').toLowerCase();
+    elements.inputDashScheme.value = (normalized === 'http' || normalized === 'https' || normalized === 'hls')
+      ? normalized
+      : 'https';
+  }
+  if (elements.inputDashStrategy) {
+    elements.inputDashStrategy.value = String(opts.dash_strategy || 'auto_max');
+  }
+  if (elements.inputDashRepresentationId) elements.inputDashRepresentationId.value = opts.dash_representation_id || '';
+  if (elements.inputDashAudioId) elements.inputDashAudioId.value = opts.dash_audio_id || '';
+  if (elements.inputDashMaxHeight) elements.inputDashMaxHeight.value = opts.dash_max_height || '';
+  if (elements.inputDashRwTimeoutMs) elements.inputDashRwTimeoutMs.value = opts.dash_rw_timeout_ms || '';
+  if (elements.inputDashReconnectDelayMax) {
+    elements.inputDashReconnectDelayMax.value = opts.dash_reconnect_delay_max || '';
+  }
+  if (elements.inputDashStartupGraceSec) {
+    elements.inputDashStartupGraceSec.value = opts.dash_startup_grace_sec || '';
+  }
+  if (elements.inputDashMaxNoDataSec) {
+    elements.inputDashMaxNoDataSec.value = opts.dash_max_no_data_sec || '';
+  }
+  if (elements.inputDashUserAgent) elements.inputDashUserAgent.value = opts.dash_user_agent || '';
+  if (elements.inputDashReferer) elements.inputDashReferer.value = opts.dash_referer || '';
+  if (elements.inputDashCookies) elements.inputDashCookies.value = opts.dash_cookies || '';
+  if (elements.inputDashHeaders) elements.inputDashHeaders.value = decodeDashHeadersValue(opts.dash_headers || '');
+  if (elements.inputDashEnableCenc) elements.inputDashEnableCenc.checked = asBool(opts.dash_enable_cenc);
+  if (elements.inputDashCencKey) elements.inputDashCencKey.value = opts.dash_cenc_key || '';
+  if (elements.inputDashBridgePort) elements.inputDashBridgePort.value = opts.bridge_port || '';
 
   if (elements.inputNetProfile) {
     applyInputResiliencePrefill(elements.inputNetProfile.value);
@@ -16260,6 +16810,50 @@ function readInputForm(opts = {}) {
       options.hls_max_parallel = Math.max(1, Math.min(2, Math.floor(parallel)));
     }
   }
+  if (format === 'dash') {
+    options.input_type = 'dash';
+    addString('dash_strategy', elements.inputDashStrategy && elements.inputDashStrategy.value);
+    addString('dash_representation_id', elements.inputDashRepresentationId && elements.inputDashRepresentationId.value);
+    addString('dash_audio_id', elements.inputDashAudioId && elements.inputDashAudioId.value);
+    addNumber('dash_max_height', elements.inputDashMaxHeight && elements.inputDashMaxHeight.value);
+    addNumber('dash_rw_timeout_ms', elements.inputDashRwTimeoutMs && elements.inputDashRwTimeoutMs.value);
+    addNumber('dash_reconnect_delay_max', elements.inputDashReconnectDelayMax && elements.inputDashReconnectDelayMax.value);
+    addNumber('dash_startup_grace_sec', elements.inputDashStartupGraceSec && elements.inputDashStartupGraceSec.value);
+    addNumber('dash_max_no_data_sec', elements.inputDashMaxNoDataSec && elements.inputDashMaxNoDataSec.value);
+    addString('dash_user_agent', elements.inputDashUserAgent && elements.inputDashUserAgent.value);
+    addString('dash_referer', elements.inputDashReferer && elements.inputDashReferer.value);
+    addString('dash_cookies', elements.inputDashCookies && elements.inputDashCookies.value);
+    const encodedHeaders = encodeDashHeadersValue(elements.inputDashHeaders && elements.inputDashHeaders.value);
+    if (encodedHeaders) {
+      options.dash_headers = encodedHeaders;
+    }
+    if (elements.inputDashEnableCenc && elements.inputDashEnableCenc.checked) {
+      options.dash_enable_cenc = 1;
+      const rawKey = String(elements.inputDashCencKey && elements.inputDashCencKey.value || '').trim().replace(/\s+/g, '');
+      const normalized = rawKey.replace(/^0x/i, '');
+      if (!allowPartial && (!normalized || !/^[0-9a-fA-F]{32}$/.test(normalized))) {
+        throw new Error('CENC key must be 32 hex chars');
+      }
+      if (normalized) {
+        options.dash_cenc_key = normalized;
+      }
+    }
+    const strategy = String(options.dash_strategy || 'auto_max').toLowerCase();
+    if (strategy === 'fixed_id') {
+      const fixedId = String(options.dash_representation_id || '').trim();
+      if (!allowPartial && !fixedId) {
+        throw new Error('Fixed representation id is required for strategy fixed_id');
+      }
+    }
+    const startupGrace = toNumber(options.dash_startup_grace_sec);
+    if (!allowPartial && startupGrace !== undefined && (startupGrace < 5 || startupGrace > 600)) {
+      throw new Error('DASH startup grace must be between 5 and 600 seconds');
+    }
+    const maxNoData = toNumber(options.dash_max_no_data_sec);
+    if (!allowPartial && maxNoData !== undefined && (maxNoData < 10 || maxNoData > 3600)) {
+      throw new Error('DASH max no-data must be between 10 and 3600 seconds');
+    }
+  }
 
   if (elements.inputCam.checked) {
     const camId = elements.inputCamId.value.trim();
@@ -16289,7 +16883,7 @@ function readInputForm(opts = {}) {
     data.port = elements.inputUdpPort.value.trim();
     addNumber('socket_size', elements.inputUdpSocket.value);
     if (!data.addr && !allowPartial) throw new Error('UDP address is required');
-  } else if (format === 'http' || format === 'https' || format === 'hls') {
+  } else if (format === 'http' || format === 'https' || format === 'hls' || format === 'dash') {
     data.login = elements.inputHttpLogin.value.trim();
     data.password = elements.inputHttpPass.value;
     data.host = elements.inputHttpHost.value.trim();
@@ -16298,6 +16892,15 @@ function readInputForm(opts = {}) {
     addString('ua', elements.inputHttpUa.value);
     addNumber('timeout', elements.inputHttpTimeout.value);
     addNumber('buffer_size', elements.inputHttpBuffer.value);
+    if (format === 'dash') {
+      const transport = String(elements.inputDashScheme && elements.inputDashScheme.value || 'https').toLowerCase();
+      data.format = (transport === 'http' || transport === 'https' || transport === 'hls') ? transport : 'https';
+      data.dash_transport = data.format;
+      const bridgePort = toNumber(elements.inputDashBridgePort && elements.inputDashBridgePort.value);
+      if (bridgePort !== undefined) {
+        options.bridge_port = bridgePort;
+      }
+    }
     if (!data.host && !allowPartial) throw new Error('HTTP host is required');
   } else if (format === 'srt' || format === 'rtsp') {
     data.url = elements.inputBridgeUrl.value.trim();
@@ -19602,7 +20205,8 @@ function updateStreamAuthFormFromConfig(config) {
   updateStreamAuthModeUi();
 }
 
-function openEditor(stream, isNew) {
+function openEditor(stream, isNew, opts) {
+  const remote = opts && opts.remote ? { ...opts.remote } : null;
   const config = stream.config || {};
 
   elements.editorError.textContent = '';
@@ -20007,9 +20611,17 @@ function openEditor(stream, isNew) {
   renderTranscodeOutputList();
   updateEditorTranscodeOutputStatus();
 
-  elements.editorTitle.textContent = isNew ? 'New stream' : 'Edit stream';
+  const titleBase = isNew ? 'New stream' : 'Edit stream';
+  if (remote && (remote.serverName || remote.serverId)) {
+    elements.editorTitle.textContent = `${titleBase} · Remote: ${remote.serverName || remote.serverId}`;
+  } else {
+    elements.editorTitle.textContent = titleBase;
+  }
   elements.btnDelete.style.visibility = isNew ? 'hidden' : 'visible';
-  state.editing = { stream, isNew };
+  if (elements.btnAnalyze) {
+    elements.btnAnalyze.disabled = !!remote;
+  }
+  state.editing = { stream, isNew, remote };
   setTab('general', 'stream-editor');
   setOverlay(elements.editorOverlay, true);
   updateEditorTranscodeStatus();
@@ -21052,7 +21664,38 @@ function updateTiles() {
     updateStreamCompactRows();
     return;
   }
-  $$('.tile').forEach((tile) => {
+  const allTiles = $$('.tile');
+  const restrictToVisible = Boolean(
+    tileVisibilityObserver
+    && allTiles.length >= TILE_VISIBILITY_UPDATE_THRESHOLD
+    && state.visibleTileIds
+    && state.visibleTileIds.size > 0
+  );
+  let tiles = allTiles;
+  if (restrictToVisible) {
+    const ids = new Set();
+    state.visibleTileIds.forEach((id) => {
+      const value = String(id || '').trim();
+      if (value) ids.add(value);
+    });
+    $$('.tile.is-expanded').forEach((tile) => {
+      const value = String(tile && tile.dataset && tile.dataset.id || '').trim();
+      if (value) ids.add(value);
+    });
+    if (ids.size > 0) {
+      const selected = [];
+      ids.forEach((id) => {
+        const tile = state.streamTileNodes[id];
+        if (tile && tile.isConnected) {
+          selected.push(tile);
+        }
+      });
+      if (selected.length > 0) {
+        tiles = selected;
+      }
+    }
+  }
+  tiles.forEach((tile) => {
     const id = tile.dataset.id;
     const refs = getTileRefs(tile);
     const stream = state.streamIndex[id];
@@ -21771,6 +22414,85 @@ function updateEditorMptsStatus() {
   if (elements.mptsRuntimeNote) elements.mptsRuntimeNote.textContent = 'Stats update on status polling.';
 }
 
+function addStatusPollId(ids, id) {
+  const value = String(id || '').trim();
+  if (!value) return;
+  if (ids.has(value)) return;
+  ids.add(value);
+}
+
+function collectStatusPollIds() {
+  if (state.currentView !== 'dashboard' || state.viewMode !== 'cards') return null;
+  const total = Array.isArray(state.streams) ? state.streams.length : 0;
+  if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
+
+  const ids = new Set();
+  if (state.visibleTileIds && state.visibleTileIds.size > 0) {
+    state.visibleTileIds.forEach((id) => addStatusPollId(ids, id));
+  }
+  $$('.tile.is-expanded').forEach((tile) => addStatusPollId(ids, tile && tile.dataset && tile.dataset.id));
+  addStatusPollId(ids, state.playerStreamId);
+  addStatusPollId(ids, state.analyzeStreamId);
+  if (state.editing && state.editing.stream) {
+    addStatusPollId(ids, state.editing.stream.id);
+  }
+
+  if (ids.size === 0) {
+    const fallback = Object.keys(state.streamIndex || {});
+    for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+      addStatusPollId(ids, fallback[i]);
+    }
+  }
+
+  if (ids.size === 0) return null;
+  const out = Array.from(ids);
+  if (out.length > STATUS_POLL_IDS_MAX) {
+    return out.slice(0, STATUS_POLL_IDS_MAX);
+  }
+  return out;
+}
+
+function statusEntrySignature(entry) {
+  if (!entry || typeof entry !== 'object') return '';
+  const tc = (entry.transcode && typeof entry.transcode === 'object') ? entry.transcode : null;
+  return [
+    entry.on_air === true ? 1 : 0,
+    Number(entry.bitrate || 0),
+    Number(entry.updated_at || 0),
+    String(entry.transcode_state || ''),
+    tc ? Number(tc.updated_at || 0) : 0,
+    tc ? Number(tc.input_bitrate_kbps || 0) : 0,
+    tc ? Number(tc.output_bitrate_kbps || 0) : 0,
+    Number(entry.active_input_index || 0),
+    Number(entry.clients_count || entry.clients || 0),
+  ].join('|');
+}
+
+function mergePartialStreamStatus(ids, patch) {
+  const next = { ...(state.stats || {}) };
+  const data = (patch && typeof patch === 'object') ? patch : {};
+  let changed = false;
+  Object.keys(data).forEach((id) => {
+    if (statusEntrySignature(next[id]) !== statusEntrySignature(data[id])) {
+      changed = true;
+    }
+    next[id] = data[id];
+  });
+  ids.forEach((id) => {
+    const key = String(id || '').trim();
+    if (!key) return;
+    if (!Object.prototype.hasOwnProperty.call(data, key)) {
+      if (Object.prototype.hasOwnProperty.call(next, key)) {
+        changed = true;
+      }
+      delete next[key];
+    }
+  });
+  if (!changed) return false;
+  state.stats = next;
+  return true;
+}
+
 async function loadStreamStatus() {
   try {
     const needsFullStatus = Boolean(
@@ -21780,12 +22502,25 @@ async function loadStreamStatus() {
       || state.analyzeJobId
       || state.analyzeJob
     );
-    const liteEnabled = getSettingBool('ui_status_lite_enabled', false);
-    const endpoint = (liteEnabled && !needsFullStatus)
-      ? '/api/v1/stream-status?lite=1'
+    const statusIds = collectStatusPollIds();
+    const liteEnabled = getSettingBool('ui_status_lite_enabled', true);
+    const params = [];
+    if (liteEnabled && !needsFullStatus) {
+      params.push('lite=1');
+    }
+    if (statusIds && statusIds.length > 0) {
+      params.push(`ids=${statusIds.join(',')}`);
+    }
+    const endpoint = params.length > 0
+      ? `/api/v1/stream-status?${params.join('&')}`
       : '/api/v1/stream-status';
     const data = await apiJson(endpoint);
-    state.stats = data || {};
+    if (statusIds && statusIds.length > 0) {
+      const changed = mergePartialStreamStatus(statusIds, data);
+      if (!changed) return;
+    } else {
+      state.stats = data || {};
+    }
     updateTiles();
     updatePlayerMeta();
     updateEditorTranscodeStatus();
@@ -21804,21 +22539,57 @@ function getUiPollingIntervalSec() {
   return Math.round(POLL_STATUS_DEFAULT_MS / 1000);
 }
 
+function getStatusPollSafetyFloorMs() {
+  const count = Array.isArray(state.streams) ? state.streams.length : 0;
+  if (state.viewMode === 'cards') {
+    if (count >= 240) return 5000;
+    if (count >= 120) return 3000;
+    if (count >= 60) return 2000;
+  }
+  if (count >= 320) return 5000;
+  if (count >= 180) return 3000;
+  if (count >= 100) return 2000;
+  return 0;
+}
+
+function getStatusPollVisibilityFloorMs() {
+  if (typeof document !== 'undefined' && document.hidden) {
+    return POLL_STATUS_HIDDEN_MIN_MS;
+  }
+  return 0;
+}
+
 function computeStatusPollDelayMs() {
   const baseMs = Math.max(200, getUiPollingIntervalSec() * 1000);
   const fastMs = Math.min(baseMs, POLL_STATUS_WARMUP_MS);
+  const floorMs = Math.max(getStatusPollSafetyFloorMs(), getStatusPollVisibilityFloorMs());
   const started = Number(state.statusPollStartMs) || 0;
   const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   const elapsed = started ? Math.max(0, now - started) : POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS;
 
   if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS) {
-    return fastMs;
+    let delay = fastMs;
+    const fastUntilTs = Number(state.statusFastUntilTs || 0);
+    if (Date.now() < fastUntilTs) {
+      delay = Math.min(delay, Math.min(baseMs, POLL_STATUS_FAST_MS));
+    }
+    return Math.max(delay, floorMs);
   }
   if (elapsed < POLL_STATUS_WARMUP_WINDOW_MS + POLL_STATUS_RAMP_WINDOW_MS) {
     const p = (elapsed - POLL_STATUS_WARMUP_WINDOW_MS) / POLL_STATUS_RAMP_WINDOW_MS;
-    return Math.round(fastMs + (baseMs - fastMs) * p);
+    let delay = Math.round(fastMs + (baseMs - fastMs) * p);
+    const fastUntilTs = Number(state.statusFastUntilTs || 0);
+    if (Date.now() < fastUntilTs) {
+      delay = Math.min(delay, Math.min(baseMs, POLL_STATUS_FAST_MS));
+    }
+    return Math.max(delay, floorMs);
   }
-  return baseMs;
+  let delay = baseMs;
+  const fastUntilTs = Number(state.statusFastUntilTs || 0);
+  if (Date.now() < fastUntilTs) {
+    delay = Math.min(delay, Math.min(baseMs, POLL_STATUS_FAST_MS));
+  }
+  return Math.max(delay, floorMs);
 }
 
 function scheduleNextStatusPoll(delayMs) {
@@ -21861,6 +22632,14 @@ function stopStatusPolling() {
   stopStreamUptimeTicker();
   state.statusPollStartMs = 0;
   state.statusPollInFlight = false;
+}
+
+function boostStatusPolling(windowMs = POLL_STATUS_FAST_WINDOW_MS) {
+  const duration = Math.max(1000, Number(windowMs) || POLL_STATUS_FAST_WINDOW_MS);
+  state.statusFastUntilTs = Date.now() + duration;
+  if (state.currentView === 'dashboard' && state.statusTimer) {
+    scheduleNextStatusPoll(100);
+  }
 }
 
 function formatStreamUptime(seconds) {
@@ -22382,6 +23161,8 @@ function renderStreams() {
   if (autoFitObserver) {
     autoFitObserver.disconnect();
   }
+  resetTileVisibilityTracking();
+  state.streamTileNodes = {};
   const filtered = state.streams.filter(isStreamVisible);
 
   rebuildStreamIndex(filtered);
@@ -22409,6 +23190,7 @@ function renderStreams() {
   filtered.forEach((stream) => {
     const tile = buildStreamTile(stream);
     elements.dashboardStreams.appendChild(tile);
+    state.streamTileNodes[stream.id] = tile;
   });
 
   updateTiles();
@@ -25213,10 +25995,10 @@ function applySettingsToUI() {
     elements.settingsEpgInterval.value = getSettingNumber('epg_export_interval_sec', 0);
   }
   if (elements.settingsUiPollingInterval) {
-    setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 4), 4);
+    setSelectValue(elements.settingsUiPollingInterval, getSettingNumber('ui_polling_interval_sec', 1), 1);
   }
   if (elements.settingsUiStatusLiteEnabled) {
-    elements.settingsUiStatusLiteEnabled.checked = getSettingBool('ui_status_lite_enabled', false);
+    elements.settingsUiStatusLiteEnabled.checked = getSettingBool('ui_status_lite_enabled', true);
   }
   if (elements.settingsPerformanceAggregateStreamTimers) {
     elements.settingsPerformanceAggregateStreamTimers.checked = getSettingBool('performance_aggregate_stream_timers', false);
@@ -26585,7 +27367,7 @@ function collectGeneralSettings() {
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
     ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
     epg_export_interval_sec: epgInterval || 0,
-    ui_polling_interval_sec: uiPolling || 4,
+    ui_polling_interval_sec: uiPolling || 1,
     ui_status_lite_enabled: uiStatusLiteEnabled,
     performance_aggregate_stream_timers: aggregateStreamTimers,
     performance_aggregate_transcode_timers: aggregateTranscodeTimers,
@@ -27346,6 +28128,50 @@ async function saveStream(event) {
     const payload = readStreamForm();
     const isNew = state.editing && state.editing.isNew;
     const originalId = state.editing && state.editing.stream && state.editing.stream.id;
+    const remote = state.editing && state.editing.remote;
+    if (remote && remote.serverId) {
+      const remoteId = remote.serverId;
+      if (!isNew && originalId && payload.id !== originalId) {
+        const confirmed = window.confirm(`Rename remote stream ${originalId} to ${payload.id}?`);
+        if (!confirmed) return;
+        await apiJson('/api/v1/servers/streams/upsert', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: remoteId,
+            mode: 'create',
+            stream: payload,
+          }),
+        });
+        await apiJson('/api/v1/servers/streams/delete', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: remoteId,
+            stream_id: originalId,
+          }),
+        });
+      } else {
+        await apiJson('/api/v1/servers/streams/upsert', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: remoteId,
+            mode: isNew ? 'create' : 'update',
+            stream: payload,
+          }),
+        });
+      }
+      setStatus('Remote stream saved');
+      closeEditor();
+      if (state.serverStreamsServerId === remoteId) {
+        try {
+          await loadServerStreams(remoteId, { silent: true });
+        } catch (_err) {
+          // keep editor result; list will refresh via polling/backoff
+        } finally {
+          startServerStreamsPollTimer();
+        }
+      }
+      return;
+    }
     if (!isNew && originalId && payload.id !== originalId) {
       const confirmed = window.confirm(`Rename stream ${originalId} to ${payload.id}?`);
       if (!confirmed) return;
@@ -27355,8 +28181,17 @@ async function saveStream(event) {
       });
       await apiJson(`/api/v1/streams/${originalId}`, { method: 'DELETE' });
       setStatus('Stream renamed');
+      boostStatusPolling();
       closeEditor();
-      await loadStreams();
+      const renamed = {
+        id: payload.id,
+        enabled: payload.enabled,
+        config: payload.config || {},
+      };
+      removeStreamFromState(originalId);
+      upsertStreamInState(renamed);
+      renderStreams();
+      scheduleStreamSync();
       return;
     }
     if (isNew) {
@@ -27372,16 +28207,17 @@ async function saveStream(event) {
     }
 
     setStatus('Stream saved');
+    boostStatusPolling();
     closeEditor();
     if (isNew) {
-      try {
-        await loadStreams();
-      } catch (err) {
-        const message = err && err.network
-          ? 'Stream saved, but the server is unreachable. Refresh later.'
-          : (err && err.message ? err.message : 'Stream saved, but refresh failed');
-        setStatus(message);
-      }
+      const created = {
+        id: payload.id,
+        enabled: payload.enabled,
+        config: payload.config || {},
+      };
+      upsertStreamInState(created);
+      applyStreamUpdate(created);
+      scheduleStreamSync();
       return;
     }
     const updated = {
@@ -27421,6 +28257,7 @@ async function toggleStream(stream) {
   };
   upsertStreamInState(updated);
   applyStreamUpdate(updated);
+  boostStatusPolling();
   scheduleStreamSync();
 }
 
@@ -27431,6 +28268,7 @@ async function deleteStream(stream) {
   setStatus('Stream deleted');
   removeStreamFromState(stream.id);
   applyStreamRemoval(stream.id);
+  boostStatusPolling();
   scheduleStreamSync();
 }
 
@@ -28037,6 +28875,23 @@ async function closePlayer() {
   updatePlayerActions();
 }
 
+function sanitizeSensitiveText(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  return text
+    .replace(/([?&](?:token|access_token|auth|apikey|api_key|signature|sig|key|pass|password)=)[^&\s]+/ig, '$1***')
+    .replace(/((?:token|access_token|auth|apikey|api_key|signature|sig|key|pass|password)\s*[=:]\s*)[^\s,;]+/ig, '$1***');
+}
+
+function formatDashVariantBitrate(value) {
+  const rate = Number(value);
+  if (!Number.isFinite(rate) || rate <= 0) return 'n/a';
+  if (rate >= 20000) {
+    return formatBitrate(rate / 1000);
+  }
+  return formatBitrate(rate);
+}
+
 function buildInputStatusRow(input, index, activeIndex) {
   const row = document.createElement('div');
   row.className = 'input-status-row';
@@ -28215,6 +29070,51 @@ function buildInputStatusRow(input, index, activeIndex) {
     const hlsErrs = Number(hls.segment_errors_total) || 0;
     const hlsGap = Number(hls.gap_count) || 0;
     addLine(`HLS: ${hlsState} | Seq: ${hlsSeq} | Errors: ${hlsErrs} | Gap: ${hlsGap}`);
+  }
+  if (input.dash && typeof input.dash === 'object') {
+    const dash = input.dash;
+    const strategy = dash.strategy ? String(dash.strategy) : 'auto_max';
+    const restartDelay = Number.isFinite(Number(dash.restart_delay_sec))
+      ? `${Math.max(0, Math.round(Number(dash.restart_delay_sec)))}s`
+      : null;
+    const noDataAgeSec = Number(dash.no_data_age_sec);
+    const noDataAge = Number.isFinite(noDataAgeSec) && noDataAgeSec >= 0
+      ? formatShortDuration(Math.round(noDataAgeSec))
+      : 'n/a';
+    const maxNoDataSec = Number(dash.max_no_data_sec);
+    const maxNoData = Number.isFinite(maxNoDataSec) && maxNoDataSec > 0
+      ? formatShortDuration(Math.round(maxNoDataSec))
+      : 'n/a';
+    const running = dash.running === true
+      ? 'running'
+      : (restartDelay ? `restart in ${restartDelay}` : 'stopped');
+    const probe = dash.probe_ok === true ? 'ok' : (dash.probe_error ? 'error' : 'n/a');
+    addLine(`DASH: ${running} | Strategy: ${strategy} | Probe: ${probe} | No data: ${noDataAge}/${maxNoData}`);
+
+    const videoId = dash.selected_video_id != null && dash.selected_video_id !== ''
+      ? String(dash.selected_video_id)
+      : 'auto';
+    const audioId = dash.selected_audio_id != null && dash.selected_audio_id !== ''
+      ? String(dash.selected_audio_id)
+      : 'auto';
+    const videoBitrate = formatDashVariantBitrate(dash.selected_video_bitrate);
+    const audioBitrate = formatDashVariantBitrate(dash.selected_audio_bitrate);
+    const restarts = Number(dash.bridge_restarts) || 0;
+    addLine(`DASH map: video ${videoId} (${videoBitrate}) | audio ${audioId} (${audioBitrate}) | Restarts: ${restarts}`);
+
+    if (dash.last_bridge_exit && typeof dash.last_bridge_exit === 'object') {
+      const last = dash.last_bridge_exit;
+      const exitCode = Number.isFinite(Number(last.exit_code)) ? Math.round(Number(last.exit_code)) : 0;
+      const signal = Number.isFinite(Number(last.signal)) ? Math.round(Number(last.signal)) : 0;
+      const reasonRaw = last.reason ? sanitizeSensitiveText(String(last.reason)) : '';
+      const reason = reasonRaw ? truncateText(reasonRaw, 180) : '';
+      addLine(`DASH last exit: code ${exitCode}, signal ${signal}${reason ? ` | ${reason}` : ''}`);
+    }
+
+    const dashErrorRaw = dash.last_error || dash.probe_error;
+    if (dashErrorRaw) {
+      addLine(`DASH error: ${truncateText(sanitizeSensitiveText(String(dashErrorRaw)), 180)}`);
+    }
   }
 
   if (input.health) {
@@ -30905,18 +31805,16 @@ function bindEvents() {
     elements.serverTest.addEventListener('click', async () => {
       try {
         if (elements.serverError) elements.serverError.textContent = '';
-        if (state.serverEditing && state.serverEditing.id) {
-          await testServer(state.serverEditing.id);
-          return;
-        }
         const payload = {
+          id: state.serverEditing && state.serverEditing.id ? state.serverEditing.id : undefined,
+          api_type: normalizeServerApiType(elements.serverType ? elements.serverType.value.trim() : 'auto'),
           host: elements.serverHost ? elements.serverHost.value.trim() : '',
           port: toNumber(elements.serverPort && elements.serverPort.value),
           insecure: elements.serverInsecure ? elements.serverInsecure.checked : false,
           login: elements.serverLogin ? elements.serverLogin.value.trim() : '',
           password: elements.serverPassword ? elements.serverPassword.value : '',
         };
-        await testServer(null, payload);
+        await testServer(undefined, payload);
       } catch (err) {
         const message = formatServerActionError(err, 'Server test failed');
         setStatus(message);
@@ -30943,12 +31841,6 @@ function bindEvents() {
       if (action === 'server-streams') {
         openServerStreamsModal(id);
       }
-      if (action === 'server-pull') {
-        pullServerStreams(id).catch((err) => setStatus(formatServerActionError(err, 'Pull streams failed')));
-      }
-      if (action === 'server-import') {
-        importServerConfig(id).catch((err) => setStatus(formatServerActionError(err, 'Import failed')));
-      }
       if (action === 'server-delete') {
         const confirmed = window.confirm(`Delete server ${id}?`);
         if (!confirmed) return;
@@ -30966,35 +31858,19 @@ function bindEvents() {
   if (elements.serverStreamsRefresh) {
     elements.serverStreamsRefresh.addEventListener('click', () => {
       loadServerStreams(state.serverStreamsServerId).catch((err) => {
+        state.serverStreamsPollErrors += 1;
         const message = formatServerActionError(err, 'Failed to load remote streams');
         if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+      }).finally(() => {
+        startServerStreamsPollTimer();
       });
     });
   }
-  if (elements.serverStreamsPull) {
-    elements.serverStreamsPull.addEventListener('click', async () => {
-      const id = state.serverStreamsServerId;
-      if (!id) return;
-      try {
-        await pullServerStreams(id);
-        closeServerStreamsModal();
-      } catch (err) {
-        const message = formatServerActionError(err, 'Pull streams failed');
-        if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
-      }
-    });
-  }
-  if (elements.serverStreamsImport) {
-    elements.serverStreamsImport.addEventListener('click', async () => {
-      const id = state.serverStreamsServerId;
-      if (!id) return;
-      try {
-        await importServerConfig(id);
-        closeServerStreamsModal();
-      } catch (err) {
-        const message = formatServerActionError(err, 'Import failed');
-        if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
-      }
+  if (elements.serverStreamsNew) {
+    elements.serverStreamsNew.addEventListener('click', () => {
+      const serverId = state.serverStreamsServerId;
+      if (!serverId) return;
+      openNewRemoteStreamEditor(serverId);
     });
   }
   if (elements.serverStreamsFilter) {
@@ -31008,10 +31884,60 @@ function bindEvents() {
       const target = event.target.closest('[data-action]');
       if (!target) return;
       const action = target.dataset.action;
-      if (action !== 'server-stream-open') return;
       const serverId = target.dataset.serverId;
       const streamId = target.dataset.streamId;
-      openRemoteStream(serverId, streamId);
+      if (!serverId || !streamId) return;
+      state.serverStreamsSelectedId = streamId;
+      state.serverStreamsFastUntilTs = Date.now() + 15000;
+      startServerStreamsPollTimer();
+      if (action === 'server-stream-open') {
+        openRemoteStream(serverId, streamId);
+        return;
+      }
+      if (action === 'server-stream-edit') {
+        openRemoteStreamEditor(serverId, streamId).catch((err) => {
+          const message = formatServerActionError(err, 'Failed to load remote stream');
+          if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+        });
+        return;
+      }
+      if (action === 'server-stream-enable' || action === 'server-stream-disable' || action === 'server-stream-restart') {
+        const remoteAction = action === 'server-stream-enable'
+          ? 'enable'
+          : action === 'server-stream-disable'
+          ? 'disable'
+          : 'restart';
+        remoteStreamAction(serverId, streamId, remoteAction).then(() => {
+          setStatus(`Remote action ${remoteAction}: OK`);
+          state.serverStreamsFastUntilTs = Date.now() + 15000;
+          return loadServerStreams(serverId, { silent: true });
+        }).catch((err) => {
+          const message = formatServerActionError(err, `Remote action ${remoteAction} failed`);
+          if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+        }).finally(() => {
+          startServerStreamsPollTimer();
+        });
+        return;
+      }
+      if (action === 'server-stream-switch') {
+        const raw = window.prompt('Input index', '0');
+        if (raw === null) return;
+        const inputIndex = Number(raw);
+        if (!Number.isFinite(inputIndex) || inputIndex < 0) {
+          if (elements.serverStreamsError) elements.serverStreamsError.textContent = 'Invalid input index';
+          return;
+        }
+        remoteStreamAction(serverId, streamId, 'switch_input', Math.floor(inputIndex)).then(() => {
+          setStatus('Remote action switch_input: OK');
+          state.serverStreamsFastUntilTs = Date.now() + 15000;
+          return loadServerStreams(serverId, { silent: true });
+        }).catch((err) => {
+          const message = formatServerActionError(err, 'Remote action switch_input failed');
+          if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+        }).finally(() => {
+          startServerStreamsPollTimer();
+        });
+      }
     });
   }
 
@@ -32188,7 +33114,31 @@ function bindEvents() {
     if (!state.editing || state.editing.isNew) return;
     setStreamEditorBusy(true, 'Deleting...');
     try {
-      await deleteStream(state.editing.stream);
+      const remote = state.editing && state.editing.remote;
+      if (remote && remote.serverId) {
+        const streamId = state.editing.stream && state.editing.stream.id;
+        const confirmed = window.confirm(`Delete remote stream ${streamId}?`);
+        if (!confirmed) return;
+        await apiJson('/api/v1/servers/streams/delete', {
+          method: 'POST',
+          body: JSON.stringify({
+            id: remote.serverId,
+            stream_id: streamId,
+          }),
+        });
+        setStatus('Remote stream deleted');
+        if (state.serverStreamsServerId === remote.serverId) {
+          try {
+            await loadServerStreams(remote.serverId, { silent: true });
+          } catch (_err) {
+            // ignore refresh errors, polling will retry
+          } finally {
+            startServerStreamsPollTimer();
+          }
+        }
+      } else {
+        await deleteStream(state.editing.stream);
+      }
       closeEditor();
     } catch (err) {
       setStatus(err.message);
@@ -32206,7 +33156,8 @@ function bindEvents() {
       clone.config.id = newId;
       clone.config.name = `${clone.config.name || newId} Copy`;
     }
-    openEditor(clone, true);
+    const remote = state.editing && state.editing.remote ? { ...state.editing.remote } : null;
+    openEditor(clone, true, remote ? { remote } : undefined);
   });
 
   elements.btnAnalyze.addEventListener('click', () => {
@@ -32610,11 +33561,14 @@ function bindEvents() {
       const effectiveType = isInputRadioType(type) ? 'udp' : type;
       const group = isInputRadioType(type) ? 'radio'
         : (effectiveType === 'rtp') ? 'udp'
-          : ((effectiveType === 'http' || effectiveType === 'https' || effectiveType === 'hls') ? 'http'
+          : ((effectiveType === 'http' || effectiveType === 'https' || effectiveType === 'hls' || effectiveType === 'dash') ? 'http'
             : (effectiveType === 'srt' || effectiveType === 'rtsp' ? 'bridge' : effectiveType));
       setInputGroup(group);
       setInputAdvancedFoldVisibility(effectiveType);
       setInputRadioVisibility(type);
+      if (effectiveType === 'dash') {
+        syncDashPortDefault(false);
+      }
       if (isInputRadioType(type)) {
         if (elements.inputRaw && !buildRadioOutputUrl()) {
           setInputRawValue('');
@@ -32700,6 +33654,12 @@ function bindEvents() {
   if (elements.inputNetProfile) {
     elements.inputNetProfile.addEventListener('change', () => {
       applyInputResiliencePrefill(elements.inputNetProfile.value);
+    });
+  }
+  if (elements.inputDashScheme) {
+    elements.inputDashScheme.addEventListener('change', () => {
+      syncDashPortDefault(false);
+      scheduleInputRawSync();
     });
   }
   if (elements.inputNetProfileApply && elements.inputNetProfile) {
@@ -33246,6 +34206,7 @@ function bindEvents() {
       pauseAllPolling();
     } else {
       resumeAllPolling();
+      boostStatusPolling(5000);
     }
   });
 

@@ -475,6 +475,12 @@ parse_url_format.hls = function(url, data)
     return r
 end
 
+parse_url_format.dash = function(url, data)
+    local r = parse_url_format._http(url, data)
+    if data.port == nil then data.port = 80 end
+    return r
+end
+
 parse_url_format.rtsp = function(url, data)
     local r = parse_url_format._http(url, data)
     if data.port == nil then data.port = 554 end
@@ -631,6 +637,79 @@ function parse_url(url)
     end
 
     return data
+end
+
+local function normalize_input_type(value)
+    if value == nil then
+        return nil
+    end
+    local text = tostring(value or ""):lower()
+    if text == "" or text == "auto" then
+        return nil
+    end
+    if text == "udp_ts" then
+        return "udp"
+    end
+    if text == "http_ts" then
+        return "http"
+    end
+    if text == "dash" or text == "udp" or text == "http" or text == "https" or text == "hls"
+        or text == "rtp" or text == "rtsp" or text == "srt" or text == "dvb" or text == "file"
+        or text == "stream" or text == "np"
+    then
+        return text
+    end
+    return nil
+end
+
+local function is_dash_mpd_path(path)
+    if not path or path == "" then
+        return false
+    end
+    local raw = tostring(path)
+    local clean = raw:match("^[^%?]+") or raw
+    clean = clean:lower()
+    return clean:match("%.mpd$") ~= nil
+end
+
+function resolve_effective_input_format(conf)
+    if type(conf) ~= "table" then
+        return nil
+    end
+
+    local forced = normalize_input_type(conf.input_type)
+    if forced then
+        return forced
+    end
+
+    local format = tostring(conf.format or ""):lower()
+    if format == "" then
+        return nil
+    end
+
+    if format == "http" or format == "https" or format == "hls" or format == "dash" then
+        local path = conf.path
+        if (not path or path == "") and conf.source_url and conf.source_url ~= "" then
+            local stripped = tostring(conf.source_url)
+            local hash = stripped:find("#", 1, true)
+            if hash then
+                stripped = stripped:sub(1, hash - 1)
+            end
+            local slash = stripped:find("://", 1, true)
+            if slash then
+                stripped = stripped:sub(slash + 3)
+            end
+            local p = stripped:find("/", 1, true)
+            if p then
+                path = stripped:sub(p)
+            end
+        end
+        if is_dash_mpd_path(path) then
+            return "dash"
+        end
+    end
+
+    return format
 end
 
 local NET_RESILIENCE_DEFAULTS = {
@@ -1702,11 +1781,14 @@ function init_input(conf)
         astra.abort()
     end
 
-    if not init_input_module[conf.format] then
+    local module_format = resolve_effective_input_format(conf) or conf.format
+    if not init_input_module[module_format] then
         log.error("[" .. conf.name .. "] unknown input format")
         astra.abort()
     end
-    instance.input = init_input_module[conf.format](conf)
+    instance.__input_module_format = module_format
+    conf.__input_module_format = module_format
+    instance.input = init_input_module[module_format](conf)
     if not instance.input then
         log.error("[" .. conf.name .. "] input init failed")
         return nil
@@ -2165,7 +2247,15 @@ function kill_input(instance)
 
     instance.tail = nil
 
-    kill_input_module[instance.config.format](instance.input, instance.config)
+    local module_format = instance.__input_module_format
+        or (instance.config and instance.config.__input_module_format)
+        or (instance.config and resolve_effective_input_format(instance.config))
+        or (instance.config and instance.config.format)
+    if module_format and kill_input_module[module_format] then
+        kill_input_module[module_format](instance.input, instance.config)
+    elseif instance.config and instance.config.name then
+        log.warning("[" .. tostring(instance.config.name) .. "] input kill skipped: unknown module format")
+    end
     instance.input = nil
     instance.config = nil
 
@@ -2436,19 +2526,54 @@ end
 	    return nil
 	end
 
-	local function is_local_http_host(host)
-	    if host == nil then
-	        return false
-	    end
-	    local h = tostring(host):lower()
-	    if h == "localhost" or h == "::1" or h == "127.0.0.1" then
-	        return true
-	    end
-	    if h:match("^127%.") then
-	        return true
-	    end
-	    return false
-	end
+local function build_local_http_addr_map()
+    local map = {
+        ["127.0.0.1"] = true,
+    }
+    if type(ifaddr_list) ~= "table" then
+        return map
+    end
+    for _, iface in pairs(ifaddr_list) do
+        if type(iface) == "table" and type(iface.ipv4) == "table" then
+            for _, ip in ipairs(iface.ipv4) do
+                local text = tostring(ip or "")
+                if parse_ipv4(text) then
+                    map[text] = true
+                end
+            end
+        end
+    end
+    return map
+end
+
+local local_http_addr_map = build_local_http_addr_map()
+
+local function is_local_http_host(host)
+    if host == nil then
+        return false
+    end
+    local h = tostring(host):lower()
+    if h == "localhost" or h == "::1" or h == "127.0.0.1" then
+        return true
+    end
+    if h:match("^127%.") then
+        return true
+    end
+    if parse_ipv4(h) and local_http_addr_map[h] then
+        return true
+    end
+    return false
+end
+
+local function is_local_http_source_path(path)
+    if type(path) ~= "string" then
+        return false
+    end
+    return path:match("^/play/")
+        or path:match("^/stream/")
+        or path:match("^/live/")
+        or path:match("^/input/")
+end
 
 init_input_module.http = function(conf)
     local instance_id = conf.host .. ":" .. conf.port .. conf.path
@@ -2456,6 +2581,7 @@ init_input_module.http = function(conf)
 
     if not instance then
         local res = resolve_input_resilience(conf)
+        local is_local_http_source = is_local_http_host(conf.host) and is_local_http_source_path(conf.path)
         instance = {
             clients = 0,
             running = true,
@@ -2521,10 +2647,9 @@ init_input_module.http = function(conf)
 		            -- защитный предел, чтобы случайное большое значение не раздувало память
 		            if sync > 256 then sync = 256 end
 		        end
-		        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
-		            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
-	            -- /play and /stream are served via http_upstream (burst delivery); enabling http_request sync
-	            -- makes consumption stable for downstream pipelines.
+	        if sync == nil and is_local_http_source then
+	            -- /play, /stream, /live and /input are local HTTP sources.
+	            -- A small sync buffer smooths bursty local delivery.
 	            sync = 1
 	        end
 		        -- Важно: НЕ включаем `sync` (PCR-based pacing в http_request) автоматически для внешних HTTP-TS/HLS
@@ -2533,10 +2658,8 @@ init_input_module.http = function(conf)
 		        -- профили. Если пользователю всё же нужен sync, он может включить его явно в URL: `#sync` или
 		        -- `#sync=<MB>`.
 	        local timeout = conf.timeout
-	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string"
-	            and (conf.path:match("^/play/") or conf.path:match("^/stream/")) then
-	            -- /play and /stream can be bursty on low-bitrate streams; keep a higher receive timeout by default
-	            -- so we don't reconnect on normal gaps.
+	        if timeout == nil and is_local_http_source then
+	            -- Local HTTP sources can be bursty on low-bitrate streams; keep a higher timeout.
 	            timeout = 60
 	        end
 
@@ -2616,9 +2739,19 @@ init_input_module.http = function(conf)
             connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
             read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
             stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
-            low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
+	            low_speed_limit_bytes_sec = instance.net_cfg and instance.net_cfg.low_speed_limit_bytes_sec or nil,
 	            low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
 	        }
+
+	        local function apply_local_http_source_overrides()
+	            if not is_local_http_source or not instance.http_conf then
+	                return
+	            end
+	            -- For local pull chains low-speed detector creates false positives and reconnect storms.
+	            instance.http_conf.low_speed_limit_bytes_sec = nil
+	            instance.http_conf.low_speed_time_sec = nil
+	        end
+	        apply_local_http_source_overrides()
 
 	        local function maybe_reset_to_origin(code)
 	            if not instance.origin or not instance.http_conf then
@@ -2653,7 +2786,8 @@ init_input_module.http = function(conf)
             instance.http_conf.read_timeout_ms = instance.net_cfg.read_timeout_ms
             instance.http_conf.stall_timeout_ms = instance.net_cfg.stall_timeout_ms
             instance.http_conf.low_speed_limit_bytes_sec = instance.net_cfg.low_speed_limit_bytes_sec
-            instance.http_conf.low_speed_time_sec = instance.net_cfg.low_speed_time_sec
+	            instance.http_conf.low_speed_time_sec = instance.net_cfg.low_speed_time_sec
+	            apply_local_http_source_overrides()
         end
         if instance.net_auto then
             net_auto_apply(instance)
@@ -2808,6 +2942,7 @@ end
         end
 
 	        local res = resolve_input_resilience(conf)
+	        local is_local_http_source = is_local_http_host(conf.host) and is_local_http_source_path(conf.path)
 	        local sync = conf.sync
 	        if sync == true and res and res.enabled == true then
 	            local p = res.profile_effective
@@ -2825,12 +2960,12 @@ end
 	                end
 	            end
 	        end
-	        if sync == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
+	        if sync == nil and is_local_http_source then
 	            sync = 1
 	        end
 	        -- Не включаем sync автоматически для profile-mode (см. комментарий в http input выше).
 	        local timeout = conf.timeout
-	        if timeout == nil and is_local_http_host(conf.host) and type(conf.path) == "string" and conf.path:match("^/play/") then
+	        if timeout == nil and is_local_http_source then
 	            timeout = 60
 	        end
 
@@ -2911,6 +3046,14 @@ end
             low_speed_time_sec = instance.net_cfg and instance.net_cfg.low_speed_time_sec or nil,
             instance_id = instance_id,
         }
+        local function apply_local_http_source_overrides()
+            if not is_local_http_source or not instance.http_conf then
+                return
+            end
+            instance.http_conf.low_speed_limit_bytes_sec = nil
+            instance.http_conf.low_speed_time_sec = nil
+        end
+        apply_local_http_source_overrides()
         instance.apply_net_cfg = function()
             if not instance.net_cfg or not instance.http_conf then
                 return
@@ -2920,6 +3063,7 @@ end
             instance.http_conf.stall_timeout_ms = instance.net_cfg.stall_timeout_ms
             instance.http_conf.low_speed_limit_bytes_sec = instance.net_cfg.low_speed_limit_bytes_sec
             instance.http_conf.low_speed_time_sec = instance.net_cfg.low_speed_time_sec
+            apply_local_http_source_overrides()
         end
         if instance.net_auto then
             net_auto_apply(instance)
@@ -3901,6 +4045,910 @@ kill_input_module.rtsp = function(module, conf)
         kill_input_module.udp(module, conf.__bridge_udp_conf)
         conf.__bridge_udp_conf = nil
     end
+    conf.__bridge_args = nil
+end
+
+local dash_bridge_port_map = {}
+local dash_cenc_support_cache = {}
+local DASH_BACKOFF_STEPS = { 1, 2, 5, 10, 30 }
+local DASH_STDERR_TAIL_MAX = 80
+
+local function dash_instance_key(conf)
+    local key = https_instance_key(conf)
+    return "dash|" .. tostring(key or "")
+end
+
+local function ensure_dash_bridge_port(conf)
+    local port = tonumber(conf.bridge_port)
+    if port then
+        return port
+    end
+    local key = dash_instance_key(conf)
+    if key == "" then
+        return nil
+    end
+    local cached = dash_bridge_port_map[key]
+    if cached then
+        conf.bridge_port = cached
+        return cached
+    end
+    local base_port = 30000
+    local range = 20000
+    local start = base_port + (hash_string(key) % range)
+    local bind_host = conf.bridge_addr or "127.0.0.1"
+    for i = 0, range - 1 do
+        local candidate = base_port + ((start - base_port + i) % range)
+        local ok = true
+        if utils and utils.can_bind then
+            ok = utils.can_bind(bind_host, candidate)
+        end
+        if ok then
+            dash_bridge_port_map[key] = candidate
+            conf.bridge_port = candidate
+            return candidate
+        end
+    end
+    return nil
+end
+
+local function dash_shell_escape(value)
+    local text = tostring(value or "")
+    return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+local function dash_has_timeout()
+    local ok = os.execute("command -v timeout >/dev/null 2>&1")
+    return ok == true or ok == 0
+end
+
+local function dash_exec_capture(argv, timeout_sec, stderr_to_stdout)
+    if type(argv) ~= "table" or #argv == 0 then
+        return nil
+    end
+    local cmd_parts = {}
+    for _, item in ipairs(argv) do
+        cmd_parts[#cmd_parts + 1] = dash_shell_escape(item)
+    end
+    local cmd = table.concat(cmd_parts, " ")
+    if timeout_sec and timeout_sec > 0 and dash_has_timeout() then
+        cmd = "timeout " .. tostring(math.floor(timeout_sec)) .. " " .. cmd
+    end
+    if stderr_to_stdout then
+        cmd = cmd .. " 2>&1"
+    else
+        cmd = cmd .. " 2>/dev/null"
+    end
+    local ok, handle = pcall(io.popen, cmd)
+    if not ok or not handle then
+        return nil
+    end
+    local out = handle:read("*a") or ""
+    handle:close()
+    return out
+end
+
+local function dash_stream_id(stream)
+    if type(stream) ~= "table" then
+        return nil
+    end
+    if stream.id ~= nil and tostring(stream.id) ~= "" then
+        return tostring(stream.id)
+    end
+    local tags = stream.tags
+    if type(tags) == "table" then
+        if tags.id ~= nil and tostring(tags.id) ~= "" then
+            return tostring(tags.id)
+        end
+        if tags.representation_id ~= nil and tostring(tags.representation_id) ~= "" then
+            return tostring(tags.representation_id)
+        end
+    end
+    return nil
+end
+
+local function dash_stream_bitrate(stream)
+    if type(stream) ~= "table" then
+        return 0
+    end
+    local function to_num(value)
+        local n = tonumber(value)
+        if n and n > 0 then
+            return n
+        end
+        return nil
+    end
+    local tags = stream.tags
+    if type(tags) == "table" then
+        local v = to_num(tags.variant_bitrate) or to_num(tags.BANDWIDTH) or to_num(tags.bandwidth)
+        if v then
+            return v
+        end
+    end
+    local direct = to_num(stream.variant_bitrate) or to_num(stream.bit_rate)
+    if direct then
+        return direct
+    end
+    return 0
+end
+
+local function dash_stream_height(stream)
+    if type(stream) ~= "table" then
+        return 0
+    end
+    return tonumber(stream.height) or 0
+end
+
+local function dash_resolve_source_url(conf)
+    local source_url = build_bridge_source_url(conf or {})
+    if not source_url or source_url == "" then
+        return nil
+    end
+    if source_url:match("^hls://") then
+        source_url = "http://" .. source_url:sub(7)
+    end
+    if source_url:match("^dash://") then
+        local scheme = tostring((conf and (conf.dash_transport or conf.transport_format or conf.dash_scheme)) or ""):lower()
+        if scheme == "hls" then
+            scheme = "http"
+        end
+        if scheme ~= "http" and scheme ~= "https" then
+            if tonumber(conf and conf.port) == 443 then
+                scheme = "https"
+            else
+                scheme = "http"
+            end
+        end
+        source_url = scheme .. "://" .. source_url:sub(8)
+    end
+    return source_url
+end
+
+function dash_select_streams(streams, conf)
+    conf = conf or {}
+    local strategy = tostring(conf.dash_strategy or "auto_max"):lower()
+    if strategy ~= "auto_max" and strategy ~= "auto_min" and strategy ~= "fixed_id" and strategy ~= "res_limit" then
+        strategy = "auto_max"
+    end
+    local fixed_video_id = tostring(conf.dash_representation_id or conf.dash_video_id or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local fixed_audio_id = tostring(conf.dash_audio_id or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    local max_height = tonumber(conf.dash_max_height)
+    if max_height and max_height <= 0 then
+        max_height = nil
+    end
+
+    local video = {}
+    local audio = {}
+    for _, item in ipairs(streams or {}) do
+        if type(item) == "table" then
+            local t = tostring(item.codec_type or ""):lower()
+            if t == "video" then
+                table.insert(video, item)
+            elseif t == "audio" then
+                table.insert(audio, item)
+            end
+        end
+    end
+
+    local function sort_by_bitrate_desc(list)
+        table.sort(list, function(a, b)
+            local ab = dash_stream_bitrate(a)
+            local bb = dash_stream_bitrate(b)
+            if ab == bb then
+                return (tonumber(a.index) or 0) < (tonumber(b.index) or 0)
+            end
+            return ab > bb
+        end)
+    end
+
+    local function sort_by_bitrate_asc(list)
+        table.sort(list, function(a, b)
+            local ab = dash_stream_bitrate(a)
+            local bb = dash_stream_bitrate(b)
+            if ab == bb then
+                return (tonumber(a.index) or 0) < (tonumber(b.index) or 0)
+            end
+            return ab < bb
+        end)
+    end
+
+    local selected_video = nil
+    local selected_audio = nil
+
+    if strategy == "fixed_id" then
+        if fixed_video_id == "" then
+            return nil, "dash fixed_id requires dash_representation_id"
+        end
+        for _, item in ipairs(video) do
+            if dash_stream_id(item) == fixed_video_id then
+                selected_video = item
+                break
+            end
+        end
+        if not selected_video then
+            return nil, "dash fixed_id video not found: " .. fixed_video_id
+        end
+        if fixed_audio_id ~= "" then
+            for _, item in ipairs(audio) do
+                if dash_stream_id(item) == fixed_audio_id then
+                    selected_audio = item
+                    break
+                end
+            end
+        end
+        if not selected_audio and #audio > 0 then
+            sort_by_bitrate_desc(audio)
+            selected_audio = audio[1]
+        end
+    elseif strategy == "auto_min" then
+        if #video > 0 then
+            sort_by_bitrate_asc(video)
+            selected_video = video[1]
+        end
+        if #audio > 0 then
+            sort_by_bitrate_asc(audio)
+            selected_audio = audio[1]
+        end
+    elseif strategy == "res_limit" then
+        local pool = {}
+        if #video > 0 then
+            if max_height then
+                for _, item in ipairs(video) do
+                    local h = dash_stream_height(item)
+                    if h > 0 and h <= max_height then
+                        table.insert(pool, item)
+                    end
+                end
+            end
+            if #pool == 0 then
+                pool = video
+            end
+            sort_by_bitrate_desc(pool)
+            selected_video = pool[1]
+        end
+        if #audio > 0 then
+            sort_by_bitrate_desc(audio)
+            selected_audio = audio[1]
+        end
+    else
+        if #video > 0 then
+            sort_by_bitrate_desc(video)
+            selected_video = video[1]
+        end
+        if #audio > 0 then
+            sort_by_bitrate_desc(audio)
+            selected_audio = audio[1]
+        end
+    end
+
+    if not selected_video and not selected_audio then
+        return nil, "dash probe: no audio/video streams"
+    end
+
+    local out = {
+        strategy = strategy,
+    }
+    if selected_video then
+        out.video = selected_video
+        out.selected_video_index = tonumber(selected_video.index)
+        out.selected_video_id = dash_stream_id(selected_video)
+        out.selected_video_bitrate = dash_stream_bitrate(selected_video)
+    end
+    if selected_audio then
+        out.audio = selected_audio
+        out.selected_audio_index = tonumber(selected_audio.index)
+        out.selected_audio_id = dash_stream_id(selected_audio)
+        out.selected_audio_bitrate = dash_stream_bitrate(selected_audio)
+    end
+    return out
+end
+
+function dash_probe_streams(conf)
+    local source_url = dash_resolve_source_url(conf or {})
+    if not source_url or source_url == "" then
+        return nil, "dash source url is required"
+    end
+
+    local ffprobe_bin = resolve_tool_path("ffprobe", {
+        setting_key = "ffprobe_path",
+        env_key = "ASTRA_FFPROBE_PATH",
+        prefer = conf and conf.ffprobe_bin or nil,
+    })
+    local timeout_sec = tonumber(conf and conf.dash_probe_timeout_sec) or 5
+    if timeout_sec < 1 then
+        timeout_sec = 1
+    elseif timeout_sec > 20 then
+        timeout_sec = 20
+    end
+
+    local args = {
+        ffprobe_bin,
+        "-v", "error",
+        "-print_format", "json",
+        "-show_streams",
+        "-show_format",
+        "-show_entries",
+        "stream=index,codec_type,codec_name,bit_rate,width,height,id:stream_tags=id,variant_bitrate,BANDWIDTH,bandwidth,representation_id:format=format_name",
+        source_url,
+    }
+    local raw = dash_exec_capture(args, timeout_sec, false)
+    if not raw or raw == "" then
+        local err = dash_exec_capture(args, timeout_sec, true)
+        return nil, "ffprobe empty output" .. (err and (": " .. tostring(err):gsub("%s+", " "):sub(1, 200)) or "")
+    end
+    local ok, parsed = pcall(json.decode, raw)
+    if not ok or type(parsed) ~= "table" then
+        local err = dash_exec_capture(args, timeout_sec, true)
+        return nil, "ffprobe parse failed" .. (err and (": " .. tostring(err):gsub("%s+", " "):sub(1, 200)) or "")
+    end
+    local streams = parsed.streams
+    if type(streams) ~= "table" or #streams == 0 then
+        return nil, "ffprobe streams are empty"
+    end
+    return parsed, nil
+end
+
+local function dash_decode_headers(value)
+    local text = tostring(value or "")
+    if text == "" then
+        return nil
+    end
+    text = text:gsub("\\r\\n", "\r\n")
+    text = text:gsub("\\n", "\r\n")
+    text = text:gsub("%%0[Dd]%%0[Aa]", "\r\n")
+    text = text:gsub("%%0[Aa]", "\r\n")
+    return text
+end
+
+local function dash_tail_push(state, line)
+    if not state then
+        return
+    end
+    state.stderr_tail = state.stderr_tail or {}
+    if line and line ~= "" then
+        table.insert(state.stderr_tail, tostring(line))
+        while #state.stderr_tail > DASH_STDERR_TAIL_MAX do
+            table.remove(state.stderr_tail, 1)
+        end
+    end
+end
+
+local function dash_ffmpeg_supports_option(bin, option)
+    local key = tostring(bin or "ffmpeg") .. "|" .. tostring(option or "")
+    if dash_cenc_support_cache[key] ~= nil then
+        return dash_cenc_support_cache[key]
+    end
+    local args = {
+        bin,
+        "-hide_banner",
+        "-h",
+        "demuxer=dash",
+    }
+    local out = dash_exec_capture(args, 5, true) or ""
+    local supported = out:find(tostring(option), 1, true) ~= nil
+    dash_cenc_support_cache[key] = supported
+    return supported
+end
+
+function build_dash_bridge_args(conf, selection)
+    local bridge_port = ensure_dash_bridge_port(conf)
+    if not bridge_port then
+        return nil, "dash bridge_port is required or no free port found"
+    end
+    local bridge_addr = conf.bridge_addr or "127.0.0.1"
+    local source_url = dash_resolve_source_url(conf)
+    if not source_url then
+        return nil, "dash source url is required"
+    end
+    local udp_url = build_bridge_udp_url(conf, bridge_addr, bridge_port)
+    local bin = resolve_tool_path("ffmpeg", {
+        setting_key = "ffmpeg_path",
+        env_key = "ASTRA_FFMPEG_PATH",
+        prefer = conf.bridge_bin,
+    })
+    local args = {
+        bin,
+        "-hide_banner",
+        "-nostdin",
+        "-loglevel",
+        conf.bridge_log_level or "warning",
+        "-fflags",
+        "+discardcorrupt+genpts",
+        "-reconnect",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_at_eof",
+        "1",
+        "-reconnect_delay_max",
+        tostring(tonumber(conf.dash_reconnect_delay_max) or 2),
+    }
+    local rw_timeout_ms = tonumber(conf.dash_rw_timeout_ms)
+        or tonumber(conf.read_timeout_ms)
+        or tonumber(conf.timeout and (tonumber(conf.timeout) * 1000) or nil)
+        or 15000
+    local rw_timeout_us = math.floor(math.max(1, rw_timeout_ms) * 1000)
+    args[#args + 1] = "-rw_timeout"
+    args[#args + 1] = tostring(rw_timeout_us)
+
+    local ua = conf.dash_user_agent or conf.user_agent or conf.ua
+    if ua and tostring(ua) ~= "" then
+        args[#args + 1] = "-user_agent"
+        args[#args + 1] = tostring(ua)
+    end
+    local referer = conf.dash_referer
+    if referer and tostring(referer) ~= "" then
+        args[#args + 1] = "-referer"
+        args[#args + 1] = tostring(referer)
+    end
+    local cookies = conf.dash_cookies
+    if cookies and tostring(cookies) ~= "" then
+        args[#args + 1] = "-cookies"
+        args[#args + 1] = tostring(cookies)
+    end
+    local headers = dash_decode_headers(conf.dash_headers)
+    if headers and headers ~= "" then
+        args[#args + 1] = "-headers"
+        args[#args + 1] = headers
+    end
+
+    if truthy(conf.dash_enable_cenc) and conf.dash_cenc_key and tostring(conf.dash_cenc_key) ~= "" then
+        local key = tostring(conf.dash_cenc_key):gsub("%s+", "")
+        if key:sub(1, 2):lower() == "0x" then
+            key = key:sub(3)
+        end
+        if not key:match("^[0-9a-fA-F]+$") or #key ~= 32 then
+            return nil, "dash cenc key must be 32 hex chars"
+        end
+        if not dash_ffmpeg_supports_option(bin, "cenc_decryption_key") then
+            return nil, "ffmpeg dash demuxer has no cenc_decryption_key support"
+        end
+        args[#args + 1] = "-cenc_decryption_key"
+        args[#args + 1] = key
+    end
+
+    append_bridge_args(args, conf.bridge_input_args)
+    args[#args + 1] = "-f"
+    args[#args + 1] = "dash"
+    args[#args + 1] = "-i"
+    args[#args + 1] = source_url
+
+    local mapped = false
+    if selection and selection.selected_video_index ~= nil then
+        args[#args + 1] = "-map"
+        args[#args + 1] = "0:" .. tostring(selection.selected_video_index)
+        mapped = true
+    end
+    if selection and selection.selected_audio_index ~= nil then
+        args[#args + 1] = "-map"
+        args[#args + 1] = "0:" .. tostring(selection.selected_audio_index)
+        mapped = true
+    end
+    if not mapped then
+        args[#args + 1] = "-map"
+        args[#args + 1] = "0:v:0?"
+        args[#args + 1] = "-map"
+        args[#args + 1] = "0:a:0?"
+    end
+
+    args[#args + 1] = "-c"
+    args[#args + 1] = "copy"
+    args[#args + 1] = "-mpegts_flags"
+    args[#args + 1] = "+resend_headers"
+    args[#args + 1] = "-muxdelay"
+    args[#args + 1] = "0"
+    args[#args + 1] = "-muxpreload"
+    args[#args + 1] = "0"
+    args[#args + 1] = "-f"
+    args[#args + 1] = "mpegts"
+    append_bridge_args(args, conf.bridge_output_args)
+    args[#args + 1] = udp_url
+    return args, nil
+end
+
+local function dash_extract_reason_from_tail(tail_lines)
+    if type(tail_lines) ~= "table" or #tail_lines == 0 then
+        return "dash_bridge_exit"
+    end
+    local text = table.concat(tail_lines, "\n"):lower()
+    if text:find("could not find tag for codec", 1, true)
+        or text:find("incompatible with output codec id", 1, true)
+        or text:find("unsupported codec", 1, true)
+        or text:find("tag mp4a", 1, true)
+    then
+        local full = astra and astra.features and astra.features.transcode == true
+        if full then
+            return "dash_copy_incompatible"
+        end
+        return "dash_copy_incompatible requires stream-full transcode"
+    end
+    local last = tostring(tail_lines[#tail_lines] or "")
+    if last ~= "" then
+        return "dash_bridge_exit: " .. sanitize_reason_suffix(last)
+    end
+    return "dash_bridge_exit"
+end
+
+local function dash_stop_bridge_proc(state)
+    if state and state.proc then
+        pcall(function() state.proc:terminate() end)
+        pcall(function() state.proc:kill() end)
+        pcall(function() state.proc:close() end)
+        state.proc = nil
+    end
+end
+
+local function dash_update_status(state, patch)
+    if not state or type(state.status) ~= "table" then
+        return
+    end
+    if type(patch) == "table" then
+        for k, v in pairs(patch) do
+            state.status[k] = v
+        end
+    end
+end
+
+local function dash_emit_net(state, reason)
+    if not state or not state.net then
+        return
+    end
+    if reason and reason ~= "" then
+        net_mark_error(state.net, reason)
+    end
+    net_emit(state.conf, state.net)
+end
+
+local function dash_schedule_restart(state, reason)
+    if not state or state.stopping then
+        return
+    end
+    local low_reason = tostring(reason or ""):lower()
+    local fatal = false
+    if low_reason ~= "" then
+        if low_reason:find("dash fixed_id requires", 1, true)
+            or low_reason:find("dash fixed_id video not found", 1, true)
+            or low_reason:find("dash cenc key must be", 1, true)
+            or low_reason:find("no cenc_decryption_key support", 1, true)
+            or low_reason:find("dash source url is required", 1, true)
+            or low_reason:find("dash bridge_port is required", 1, true)
+        then
+            fatal = true
+        end
+    end
+    if fatal then
+        state.restart_due_ts = nil
+        dash_update_status(state, {
+            running = false,
+            restart_delay_sec = nil,
+            probe_error = reason,
+            last_error = reason,
+        })
+        state.net.state = "offline"
+        state.net.state_ts = os.time()
+        dash_emit_net(state, reason)
+        state.stopping = true
+        log.error("[" .. state.conf.name .. "] dash bridge stopped (fatal): " .. tostring(reason or "unknown"))
+        return
+    end
+    local idx = state.backoff_step or 1
+    if idx < 1 then idx = 1 end
+    if idx > #DASH_BACKOFF_STEPS then idx = #DASH_BACKOFF_STEPS end
+    local delay = DASH_BACKOFF_STEPS[idx] or 5
+    state.backoff_step = math.min(idx + 1, #DASH_BACKOFF_STEPS)
+    state.restart_due_ts = os.time() + delay
+    state.bridge_restarts = (tonumber(state.bridge_restarts) or 0) + 1
+    dash_update_status(state, {
+        bridge_restarts = state.bridge_restarts,
+        restart_delay_sec = delay,
+        probe_error = nil,
+        last_error = reason,
+    })
+    state.net.state = "degraded"
+    state.net.state_ts = os.time()
+    state.net.reconnects_total = (state.net.reconnects_total or 0) + 1
+    dash_emit_net(state, reason)
+    log.warning("[" .. state.conf.name .. "] dash bridge restart in " .. tostring(delay) .. "s: " .. tostring(reason or "unknown"))
+end
+
+local function dash_start_bridge_proc(state)
+    local conf = state.conf
+    local selected = nil
+    local strategy = tostring(conf.dash_strategy or "auto_max"):lower()
+    local probe_data, probe_err = dash_probe_streams(conf)
+    if probe_data and type(probe_data.streams) == "table" then
+        local choice, choose_err = dash_select_streams(probe_data.streams, conf)
+        if choice then
+            selected = choice
+            dash_update_status(state, {
+                probe_ok = true,
+                probe_error = nil,
+                strategy = choice.strategy,
+                selected_video_index = choice.selected_video_index,
+                selected_audio_index = choice.selected_audio_index,
+                selected_video_id = choice.selected_video_id,
+                selected_audio_id = choice.selected_audio_id,
+                selected_video_bitrate = choice.selected_video_bitrate,
+                selected_audio_bitrate = choice.selected_audio_bitrate,
+            })
+        else
+            probe_err = choose_err or "dash stream selection failed"
+            if strategy == "fixed_id" then
+                dash_update_status(state, {
+                    probe_ok = false,
+                    probe_error = tostring(probe_err),
+                    strategy = "fixed_id",
+                })
+                return nil, tostring(probe_err)
+            end
+        end
+    end
+    if probe_err then
+        dash_update_status(state, {
+            probe_ok = false,
+            probe_error = tostring(probe_err),
+            strategy = strategy,
+        })
+        if strategy == "fixed_id" then
+            return nil, "dash probe failed for fixed_id: " .. tostring(probe_err)
+        end
+        log.warning("[" .. conf.name .. "] dash probe failed, fallback maps will be used: " .. tostring(probe_err))
+    end
+
+    local args, err = build_dash_bridge_args(conf, selected)
+    if not args then
+        dash_update_status(state, {
+            probe_ok = (probe_err == nil),
+            probe_error = err,
+            last_error = err,
+        })
+        return nil, err
+    end
+
+    local ok, proc = pcall(process.spawn, args)
+    if not ok or not proc then
+        local reason = "dash bridge spawn failed"
+        dash_update_status(state, {
+            last_error = reason,
+        })
+        return nil, reason
+    end
+
+    state.proc = proc
+    state.backoff_step = 1
+    state.restart_due_ts = nil
+    state.stderr_tail = {}
+    state.last_started_ts = os.time()
+    conf.__bridge_proc = proc
+    conf.__bridge_args = args
+    dash_update_status(state, {
+        last_error = nil,
+        running = true,
+    })
+    state.net.state = "running"
+    state.net.state_ts = os.time()
+    net_mark_ok(state.net)
+    net_emit(conf, state.net)
+    log.info("[" .. conf.name .. "] dash bridge started: strategy=" .. tostring(state.status.strategy or "auto_max")
+        .. " video_idx=" .. tostring(state.status.selected_video_index or "auto")
+        .. " video_id=" .. tostring(state.status.selected_video_id or "n/a")
+        .. " video_bitrate=" .. tostring(state.status.selected_video_bitrate or "n/a")
+        .. " audio_idx=" .. tostring(state.status.selected_audio_index or "auto")
+        .. " audio_id=" .. tostring(state.status.selected_audio_id or "n/a")
+        .. " audio_bitrate=" .. tostring(state.status.selected_audio_bitrate or "n/a")
+        .. " udp=" .. tostring(conf.__bridge_udp_url or ""))
+    return true
+end
+
+local function dash_resolve_stall_limits(conf)
+    local startup_grace_sec = tonumber(conf and conf.dash_startup_grace_sec) or 60
+    if startup_grace_sec < 5 then
+        startup_grace_sec = 5
+    elseif startup_grace_sec > 600 then
+        startup_grace_sec = 600
+    end
+
+    local max_no_data_sec = tonumber(conf and conf.dash_max_no_data_sec)
+    if not max_no_data_sec then
+        local stall_timeout_ms = tonumber(conf and conf.stall_timeout_ms)
+        if stall_timeout_ms and stall_timeout_ms > 0 then
+            max_no_data_sec = math.floor(stall_timeout_ms / 1000)
+        end
+    end
+    if not max_no_data_sec then
+        max_no_data_sec = 90
+    end
+    if max_no_data_sec < 10 then
+        max_no_data_sec = 10
+    elseif max_no_data_sec > 3600 then
+        max_no_data_sec = 3600
+    end
+    return startup_grace_sec, max_no_data_sec
+end
+
+local function dash_poll_bridge(state)
+    if not state or state.stopping then
+        return
+    end
+    if state.proc then
+        local chunk = state.proc:read_stderr()
+        if chunk and chunk ~= "" then
+            for line in tostring(chunk):gmatch("[^\r\n]+") do
+                dash_tail_push(state, line)
+            end
+        end
+        local status = state.proc:poll()
+        if status then
+            local exit_code = tonumber(type(status) == "table" and status.exit_code or status) or 0
+            local signal = tonumber(type(status) == "table" and status.signal or 0) or 0
+            dash_tail_push(state, "exit_code=" .. tostring(exit_code) .. " signal=" .. tostring(signal))
+            dash_stop_bridge_proc(state)
+            local reason = dash_extract_reason_from_tail(state.stderr_tail)
+            dash_update_status(state, {
+                running = false,
+                last_bridge_exit = {
+                    exit_code = exit_code,
+                    signal = signal,
+                    reason = reason,
+                },
+                last_error = reason,
+            })
+            state.net.state = "degraded"
+            state.net.state_ts = os.time()
+            dash_emit_net(state, reason)
+            if reason:find("dash_copy_incompatible", 1, true) then
+                state.stopping = true
+                state.net.state = "offline"
+                state.net.state_ts = os.time()
+                net_emit(state.conf, state.net)
+                return
+            end
+            dash_schedule_restart(state, reason)
+            return
+        end
+        local now = os.time()
+        local startup_grace_sec, max_no_data_sec = dash_resolve_stall_limits(state.conf)
+        local started_ts = tonumber(state.last_started_ts) or now
+        local run_age_sec = math.max(0, now - started_ts)
+        local last_recv_ts = tonumber(state.net and state.net.last_recv_ts) or 0
+        local no_data_age = last_recv_ts > 0 and math.max(0, now - last_recv_ts) or -1
+        dash_update_status(state, {
+            startup_grace_sec = startup_grace_sec,
+            max_no_data_sec = max_no_data_sec,
+            run_age_sec = run_age_sec,
+            no_data_age_sec = no_data_age,
+        })
+        if run_age_sec >= startup_grace_sec then
+            if no_data_age < 0 then
+                local reason = "dash_no_data_startup_timeout_" .. tostring(run_age_sec) .. "s"
+                dash_tail_push(state, reason)
+                dash_stop_bridge_proc(state)
+                dash_schedule_restart(state, reason)
+                return
+            end
+            if no_data_age >= max_no_data_sec then
+                local reason = "dash_no_data_timeout_" .. tostring(no_data_age) .. "s"
+                dash_tail_push(state, reason)
+                dash_stop_bridge_proc(state)
+                dash_schedule_restart(state, reason)
+                return
+            end
+        end
+        return
+    end
+    if state.restart_due_ts and os.time() >= state.restart_due_ts then
+        local ok, err = dash_start_bridge_proc(state)
+        if not ok then
+            dash_schedule_restart(state, err or "dash bridge restart failed")
+        end
+    end
+end
+
+init_input_module.dash = function(conf)
+    if not process or type(process.spawn) ~= "function" then
+        log.error("[" .. conf.name .. "] dash input requires process module")
+        return nil
+    end
+
+    local bridge_port = ensure_dash_bridge_port(conf)
+    if not bridge_port then
+        log.error("[" .. conf.name .. "] dash bridge_port is required or no free port found")
+        return nil
+    end
+
+    local bridge_addr = conf.bridge_addr or "127.0.0.1"
+    conf.__bridge_udp_url = build_bridge_udp_url(conf, bridge_addr, bridge_port)
+    conf.__bridge_udp_conf = {
+        addr = bridge_addr,
+        port = bridge_port,
+        localaddr = conf.bridge_localaddr or conf.localaddr,
+        socket_size = tonumber(conf.bridge_socket_size) or conf.socket_size,
+        renew = conf.renew,
+    }
+
+    local upstream = init_input_module.udp(conf.__bridge_udp_conf)
+    if not upstream then
+        log.error("[" .. conf.name .. "] dash udp bridge input init failed")
+        conf.__bridge_udp_conf = nil
+        return nil
+    end
+
+    local state = {
+        conf = conf,
+        proc = nil,
+        timer = nil,
+        backoff_step = 1,
+        restart_due_ts = nil,
+        bridge_restarts = 0,
+        stderr_tail = {},
+        stopping = false,
+        net = net_make_state(build_net_resilience(conf, resolve_input_resilience(conf))),
+        status = {
+            strategy = tostring(conf.dash_strategy or "auto_max"),
+            selected_video_index = nil,
+            selected_audio_index = nil,
+            selected_video_id = nil,
+            selected_audio_id = nil,
+            selected_video_bitrate = nil,
+            selected_audio_bitrate = nil,
+            probe_ok = nil,
+            probe_error = nil,
+            bridge_restarts = 0,
+            last_bridge_exit = nil,
+            last_error = nil,
+            running = false,
+            startup_grace_sec = nil,
+            max_no_data_sec = nil,
+            run_age_sec = nil,
+            no_data_age_sec = nil,
+        },
+    }
+    conf.__dash_status = state.status
+    conf.__dash_bridge_state = state
+    conf.__bridge_proc = nil
+    conf.__bridge_args = nil
+
+    local ok, err = dash_start_bridge_proc(state)
+    if not ok then
+        dash_schedule_restart(state, err or "dash bridge start failed")
+    end
+
+    state.timer = timer({
+        interval = 1,
+        callback = function(self)
+            if state.stopping then
+                self:close()
+                state.timer = nil
+                return
+            end
+            dash_poll_bridge(state)
+        end,
+    })
+
+    return upstream
+end
+
+kill_input_module.dash = function(module, conf)
+    local state = conf.__dash_bridge_state
+    if state then
+        state.stopping = true
+        if state.timer then
+            state.timer:close()
+            state.timer = nil
+        end
+        dash_stop_bridge_proc(state)
+        if state.net then
+            state.net.state = "offline"
+            state.net.state_ts = os.time()
+            net_emit(conf, state.net)
+        end
+    end
+    if conf.__bridge_udp_conf then
+        kill_input_module.udp(module, conf.__bridge_udp_conf)
+        conf.__bridge_udp_conf = nil
+    end
+    conf.__dash_status = nil
+    conf.__dash_bridge_state = nil
+    conf.__bridge_proc = nil
     conf.__bridge_args = nil
 end
 

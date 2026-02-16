@@ -1297,6 +1297,26 @@ function main()
         return exec_ok("mkdir -p " .. path)
     end
 
+    local function read_file(path)
+        local f = io.open(path, "rb")
+        if not f then
+            return nil
+        end
+        local data = f:read("*a")
+        f:close()
+        return data
+    end
+
+    local function write_file(path, content)
+        local f = io.open(path, "wb")
+        if not f then
+            return false
+        end
+        f:write(content or "")
+        f:close()
+        return true
+    end
+
     local function systemd_init_unit()
         if not exec_ok("command -v systemctl >/dev/null 2>&1") then
             log.error("[server] systemctl not found (systemd required for --init)")
@@ -1337,6 +1357,45 @@ function main()
         local st = utils.stat(path)
         if st and not st.error and st.type == "file" then
             log.info("[server] systemd unit already exists: " .. path)
+            local unit = read_file(path)
+            if unit and unit ~= "" then
+                local patched = unit
+                local changed = false
+
+                if patched:find("${STREAM_PORT:-8816}", 1, true) then
+                    patched = patched:gsub("%${STREAM_PORT:%-8816}", "$STREAM_PORT")
+                    changed = true
+                end
+
+                if patched:find("/usr/local/bin/astra", 1, true)
+                    or patched:find("/usr/bin/astra", 1, true)
+                then
+                    patched = patched:gsub("/usr/local/bin/astra", "/usr/local/bin/stream")
+                    patched = patched:gsub("/usr/bin/astra", "/usr/bin/stream")
+                    changed = true
+                end
+
+                local has_stream_port = patched:find("\nEnvironment=STREAM_PORT=", 1, true) ~= nil
+                    or patched:find("^Environment=STREAM_PORT=") ~= nil
+                if not has_stream_port then
+                    patched = patched:gsub("(%[Service%]%s*\n)", "%1Environment=STREAM_PORT=8816\n", 1)
+                    changed = true
+                end
+                local has_env_file = patched:find("\nEnvironmentFile=-/etc/stream/%%i.env", 1, true) ~= nil
+                    or patched:find("^EnvironmentFile=-/etc/stream/%%i%.env") ~= nil
+                if not has_env_file then
+                    patched = patched:gsub("(%[Service%]%s*\n)", "%1EnvironmentFile=-/etc/stream/%%i.env\n", 1)
+                    changed = true
+                end
+
+                if changed then
+                    if write_file(path, patched) then
+                        log.info("[server] patched existing systemd unit template: " .. path)
+                    else
+                        log.warning("[server] failed to patch existing systemd unit: " .. path)
+                    end
+                end
+            end
             exec_ok("systemctl daemon-reload >/dev/null 2>&1")
         else
             local f = io.open(path, "w")
@@ -1630,6 +1689,16 @@ WantedBy=multi-user.target
         end
     end
 
+    local auth_enabled = setting_bool("http_auth_enabled", true)
+    local bind_addr = tostring(opt.addr or "")
+    local is_loopback_bind = (bind_addr == "127.0.0.1")
+        or (bind_addr == "::1")
+        or bind_addr:match("^127%.")
+    if not auth_enabled and not is_loopback_bind then
+        log.warning("[security] web auth disabled on non-loopback bind " .. bind_addr .. ":" .. tostring(opt.port)
+            .. " (API is publicly accessible)")
+    end
+
     -- Per-process runtime overrides (do not rely on DB when multiple processes share a config).
     -- This keeps internal loopback URLs (ffmpeg /input, /live) stable even with stream sharding.
     if config and config.set_runtime_override then
@@ -1900,6 +1969,15 @@ WantedBy=multi-user.target
             headers = { "Cache-Control: no-cache" },
         })
     else
+        local function is_versioned_web_request(raw_path, request)
+            if type(raw_path) == "string" and raw_path:find("?v=", 1, true) then
+                return true
+            end
+            local q = request and request.query or nil
+            local v = q and q.v
+            return v ~= nil and tostring(v) ~= ""
+        end
+
         web_static = function(server, client, request)
             if not request then
                 return nil
@@ -1908,7 +1986,8 @@ WantedBy=multi-user.target
                 server:abort(client, 405)
                 return nil
             end
-            local path = request.path or "/"
+            local raw_path = request.path or "/"
+            local path = raw_path
             path = path:match("^([^?]+)") or path
             if path == "/" or path == "" then
                 path = "/index.html"
@@ -1932,14 +2011,31 @@ WantedBy=multi-user.target
             end
 
             local ext = rel:match("%.([%w]+)$") or "html"
+            local cache_control = "Cache-Control: no-cache"
+            local extra_headers = nil
+            local is_html = (ext == "html")
+            if is_html then
+                cache_control = "Cache-Control: no-cache, no-store, must-revalidate"
+                extra_headers = {
+                    "Pragma: no-cache",
+                    "Expires: 0",
+                }
+            elseif is_versioned_web_request(raw_path, request) then
+                cache_control = "Cache-Control: public, max-age=31536000, immutable"
+            end
             local response = {
                 code = 200,
                 headers = {
-                    "Cache-Control: no-cache",
+                    cache_control,
                     "Connection: close",
                 },
                 content = request.method == "HEAD" and "" or body,
             }
+            if extra_headers then
+                for _, h in ipairs(extra_headers) do
+                    table.insert(response.headers, h)
+                end
+            end
             server:send(client, response, mime[ext] or "application/octet-stream")
             return nil
         end

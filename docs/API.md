@@ -50,6 +50,7 @@ Response:
 - `GET /streams/{id}`
 - `PUT /streams/{id}`
 - `DELETE /streams/{id}`
+- `POST /streams/{id}/switch-input`
 - `POST /streams/{id}/preview/start`
 - `POST /streams/{id}/preview/stop`
 - `POST /streams/analyze`
@@ -61,6 +62,7 @@ Response:
 - Legacy формат: тело запроса может быть самим stream config (поля на верхнем уровне), `id` берётся из URL или body.
 - `enabled-only patch`: `PUT /streams/{id}` с телом `{ "enabled": false }` (или `{ "enabled": true }`) не требует `config` и не затирает существующий config.
 - Для update: если `enabled` не передан, текущее значение `enabled` сохраняется (защита от случайного re-enable).
+- `switch-input`: `POST /streams/{id}/switch-input` с телом `{ "input_index": 0..N }` (0-based индекс входа).
 
 ## Adapters
 - `GET /adapters`
@@ -216,32 +218,58 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
 ## Remote Servers (admin)
 - `GET /api/v1/servers/status`
 - `POST /api/v1/servers/test`
-- `POST /api/v1/servers/streams`
-- `POST /api/v1/servers/pull-streams`
-- `POST /api/v1/servers/import`
+- `POST /api/v1/servers/streams/list`
+- `POST /api/v1/servers/streams/get`
+- `POST /api/v1/servers/streams/upsert`
+- `POST /api/v1/servers/streams/delete`
+- `POST /api/v1/servers/streams/action`
+- `POST /api/v1/servers/streams` (alias to `/streams/list`)
+- `POST /api/v1/servers/pull-streams` (legacy, disabled by default)
+- `POST /api/v1/servers/import` (legacy, disabled by default)
 
 Все endpoints требуют admin-доступ (Bearer token / web session).
+Legacy import endpoints возвращают `410 Gone`, если `settings.servers_import_enabled != true`.
+Для `servers/test` и `servers/streams/*` допустимы как сохранённые серверы (`{id}`), так и unsaved payload формы:
+`{host, port, api_type, login, password, insecure}`.
 
 ### Пример: Test server
 ```bash
 curl -s "http://127.0.0.1:8000/api/v1/servers/test" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"host":"http://127.0.0.1/base","port":8000,"login":"admin","password":"admin"}'
+  -d '{"host":"http://127.0.0.1/base","port":8000,"api_type":"auto","login":"admin","password":"admin"}'
 ```
+Ответ:
+`{ "status":"ok", "api_type_effective":"stream_v1|astra_legacy", "remote_version":"...", "auth_mode":"none|bearer|cookie|basic", "capabilities":{...}, "latency_ms":123, "message":"ok" }`
 
 ### Пример: List remote streams
 ```bash
-curl -s "http://127.0.0.1:8000/api/v1/servers/streams" \
+curl -s "http://127.0.0.1:8000/api/v1/servers/streams/list" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"id":"remote-1"}'
+  -d '{"id":"remote-1","include_status":true}'
 ```
 
-### Пример: Pull streams
+### Пример: Get remote stream config
 ```bash
-curl -s "http://127.0.0.1:8000/api/v1/servers/pull-streams" \
+curl -s "http://127.0.0.1:8000/api/v1/servers/streams/get" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"id":"remote-1"}'
+  -d '{"id":"remote-1","stream_id":"channel_1"}'
+```
+
+### Пример: Upsert remote stream
+```bash
+curl -s "http://127.0.0.1:8000/api/v1/servers/streams/upsert" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"remote-1","mode":"update","stream":{"id":"channel_1","enabled":true,"config":{"id":"channel_1","name":"Channel 1"}}}'
+```
+
+### Пример: Remote runtime action
+```bash
+curl -s "http://127.0.0.1:8000/api/v1/servers/streams/action" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"remote-1","stream_id":"channel_1","action":"restart"}'
 ```

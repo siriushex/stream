@@ -9,7 +9,8 @@ Create radio делает "радио-канал": берет аудио URL, д
 
 ## Коротко
 
-- Указываете **Audio URL** (Icecast/ICY MP3 или другой поток).
+- Указываете **Audio URL** (Icecast/ICY MP3, AAC, HTTP MPEG-TS, HLS `.m3u8` и т.д.).
+  Если схема не указана (например `host:port/path`), будет автоматически добавлен `http://`.
 - Указываете PNG: путь на сервере или загрузка (Upload PNG).
 - Указываете **Output UDP URL**.
 - Нажимаете **Start**.
@@ -38,12 +39,12 @@ Create radio делает "радио-канал": берет аудио URL, д
 ## Важные параметры
 
 - **Use CURL pipe**  
-  Рекомендуется для ICY/MP3 потоков.  
-  Стабильнее, чем прямой вход ffmpeg.
+  Рекомендуется для ICY/MP3/AAC потоков.  
+  Для HLS/MPEG-TS URL Stream Hub автоматически переключает вход на прямой `ffmpeg` (без CURL pipe).
 
-- **Audio format (pipe)**  
-  Формат данных, которые приходят по пайпу (обычно `mp3`).
-  Если аудио у вас AAC, переключите на `aac`.
+- **Input format (for CURL pipe)**  
+  Формат данных для режима CURL pipe (`auto`, `mp3`, `aac`, `mpegts`).  
+  Для HLS `.m3u8` обычно используйте direct input (CURL pipe выключен).
 
 - **Video settings**  
   Обычно достаточно дефолтов:  
