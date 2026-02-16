@@ -812,7 +812,7 @@ local function default_initial_delay(format)
     if f == "udp" or f == "rtp" or f == "srt" then
         return 5
     end
-    if f == "hls" or f == "http" or f == "https" or f == "rtsp" then
+    if f == "hls" or f == "http" or f == "https" or f == "dash" or f == "rtsp" then
         return 10
     end
     if f == "dvb" then
@@ -848,7 +848,7 @@ local function format_input_url(conf)
         return format .. "://" .. iface .. addr .. port
     end
 
-    if format == "http" or format == "https" or format == "hls" or format == "np" then
+    if format == "http" or format == "https" or format == "hls" or format == "dash" or format == "np" then
         local auth = ""
         if conf.login and conf.login ~= "" then
             auth = conf.login
@@ -1907,13 +1907,38 @@ function on_analyze_spts(channel_data, input_id, data)
         end
 
     elseif data.analyze then
+        local effective_on_air = data.on_air
+        if data.on_air == true then
+            input_data.__no_data_streak = 0
+        elseif data.on_air == false then
+            local cfg = input_data.config or {}
+            local format = (type(resolve_effective_input_format) == "function"
+                and resolve_effective_input_format(cfg))
+                or cfg.format
+            local hold_sec = tonumber(cfg.no_data_timeout_sec)
+                or tonumber(channel_data
+                    and channel_data.failover
+                    and channel_data.failover.no_data_timeout)
+                or 3
+            -- DASH live часто приходит сегментами с короткими "дырами";
+            -- минимальный hold предотвращает ложные DOWN/ACTIVE флапы.
+            if format == "dash" and hold_sec < 10 then
+                hold_sec = 10
+            end
+            hold_sec = math.floor(math.max(1, math.min(hold_sec, 120)))
+            input_data.__no_data_streak = (tonumber(input_data.__no_data_streak) or 0) + 1
+            if input_data.on_air == true and input_data.__no_data_streak < hold_sec then
+                effective_on_air = true
+            end
+        end
+
         local total = data.total or {}
         input_data.stats = {
             bitrate = total.bitrate,
             cc_errors = total.cc_errors,
             pes_errors = total.pes_errors,
             scrambled = total.scrambled,
-            on_air = data.on_air,
+            on_air = effective_on_air,
             updated_at = os.time(),
         }
         input_data.last_seen_ts = now
@@ -1929,7 +1954,7 @@ function on_analyze_spts(channel_data, input_id, data)
                 bitrate_kbps = total.bitrate,
                 cc_errors = total.cc_errors,
                 pes_errors = total.pes_errors,
-                on_air = data.on_air == true,
+                on_air = effective_on_air == true,
             })
         end
 
@@ -1943,10 +1968,10 @@ function on_analyze_spts(channel_data, input_id, data)
             end
         end
 
-        if data.on_air ~= input_data.on_air then
+        if effective_on_air ~= input_data.on_air then
             local analyze_message = "[" .. input_data.config.name .. "] Bitrate:" .. data.total.bitrate .. "Kbit/s"
 
-            if data.on_air == false then
+            if effective_on_air == false then
                 local m = nil
                 if data.total.scrambled then
                     m = " Scrambled"
@@ -1958,10 +1983,10 @@ function on_analyze_spts(channel_data, input_id, data)
                 log.info(analyze_message)
             end
 
-            input_data.on_air = data.on_air
+            input_data.on_air = effective_on_air
         end
 
-        if data.on_air == true then
+        if effective_on_air == true then
             input_data.last_ok_ts = now
             input_data.ok_since = input_data.ok_since or now
             input_data.fail_since = nil
@@ -2305,11 +2330,14 @@ local function channel_prepare_input(channel_data, input_id, opts)
     end
 
     if auth and auth.check_publish and not opts.probing and not opts.warm then
-        local format = input_data.config.format or ""
+        local format = (type(resolve_effective_input_format) == "function"
+            and resolve_effective_input_format(input_data.config))
+            or input_data.config.format or ""
         local allowed = {
             http = true,
             https = true,
             hls = true,
+            dash = true,
             rtsp = true,
             srt = true,
         }
@@ -2391,6 +2419,32 @@ local function channel_activate_input(channel_data, input_id, reason)
     input_data.warm = nil
     input_data.probe_until = nil
     stop_silence_probe(input_data)
+    return true
+end
+
+function stream_switch_input(channel_data, input_index, reason)
+    if not channel_data or type(channel_data.input) ~= "table" then
+        return false, "stream inputs not initialized"
+    end
+    local idx = tonumber(input_index)
+    if idx == nil then
+        return false, "input_index is required"
+    end
+    idx = math.floor(idx)
+    if idx < 0 then
+        return false, "input_index must be >= 0"
+    end
+    local input_id = idx + 1
+    if not channel_data.input[input_id] then
+        return false, "input_index out of range"
+    end
+    if channel_data.active_input_id == input_id then
+        return true
+    end
+    local ok = channel_activate_input(channel_data, input_id, reason or "manual")
+    if not ok then
+        return false, "switch input failed"
+    end
     return true
 end
 
@@ -2505,7 +2559,7 @@ local function activate_next_available(channel_data, active_id, reason)
         for offset = 1, total do
             local idx = ((active_id - 1 + offset) % total) + 1
             local input_data = channel_data.input[idx]
-            if input_data and (not prefer_ok or input_data.is_ok) then
+            if idx ~= active_id and input_data and (not prefer_ok or input_data.is_ok) then
                 if channel_activate_input(channel_data, idx, reason) then
                     return true
                 end
@@ -2513,6 +2567,47 @@ local function activate_next_available(channel_data, active_id, reason)
         end
     end
 
+    return false
+end
+
+local function restart_input_in_place(channel_data, input_id, reason, now)
+    if not channel_data or not channel_data.input or input_id <= 0 then
+        return false
+    end
+    local input_data = channel_data.input[input_id]
+    if not input_data then
+        return false
+    end
+
+    local ts = tonumber(now) or os.time()
+    local next_retry_ts = tonumber(input_data.recover_retry_next_ts) or 0
+    if next_retry_ts > 0 and ts < next_retry_ts then
+        return false
+    end
+
+    local backoff = tonumber(input_data.recover_backoff_sec) or 1
+    if backoff < 1 then
+        backoff = 1
+    elseif backoff > 30 then
+        backoff = 30
+    end
+
+    log.warning("[stream " .. get_stream_label(channel_data) .. "] restarting input " ..
+        tostring(input_id - 1) .. " in-place, reason=" .. tostring(reason or "recover"))
+    channel_kill_input(channel_data, input_id)
+
+    local ok = channel_activate_input(channel_data, input_id, reason or "recover")
+    if ok then
+        input_data.recover_backoff_sec = 1
+        input_data.recover_retry_next_ts = nil
+        return true
+    end
+
+    local next_backoff = math.min(backoff * 2, 30)
+    input_data.recover_backoff_sec = next_backoff
+    input_data.recover_retry_next_ts = ts + backoff
+    log.warning("[stream " .. get_stream_label(channel_data) .. "] input restart failed, retry in " ..
+        tostring(backoff) .. "s")
     return false
 end
 
@@ -2530,7 +2625,21 @@ local function schedule_probe(channel_data, now, keep_connected)
             return
         end
     end
-    if fo.probe_interval <= 0 then
+    local probe_interval = tonumber(fo.probe_interval) or 0
+    if probe_interval <= 0
+        and fo.mode == "active_stop_if_all_inactive"
+        and fo.global_state == "INACTIVE"
+    then
+        -- Safety net: in INACTIVE state we still need periodic probes to recover
+        -- automatically when upstream signal returns.
+        probe_interval = tonumber(fo.no_data_timeout) or 3
+        if probe_interval < 1 then
+            probe_interval = 1
+        elseif probe_interval > 10 then
+            probe_interval = 10
+        end
+    end
+    if probe_interval <= 0 then
         return
     end
     if fo.next_probe_ts and now < fo.next_probe_ts then
@@ -2550,7 +2659,7 @@ local function schedule_probe(channel_data, now, keep_connected)
         end
     end
     if #candidates == 0 then
-        fo.next_probe_ts = now + fo.probe_interval
+        fo.next_probe_ts = now + probe_interval
         return
     end
 
@@ -2568,7 +2677,7 @@ local function schedule_probe(channel_data, now, keep_connected)
         keep_connected[probe_id] = true
     end
 
-    fo.next_probe_ts = now + fo.probe_interval
+    fo.next_probe_ts = now + probe_interval
 end
 
 local function update_connections(channel_data, now)
@@ -2765,7 +2874,7 @@ local function channel_failover_tick(channel_data)
                     local prev_id = active_id
                     local switched = activate_next_available(channel_data, active_id, "no_data_timeout")
                     local new_id = channel_data.active_input_id or 0
-                    if switched then
+                    if switched and new_id ~= prev_id then
                         if not fo.passive_cycle_start_id then
                             fo.passive_cycle_start_id = (prev_id > 0) and prev_id or new_id
                         end
@@ -2775,8 +2884,11 @@ local function channel_failover_tick(channel_data)
                             end
                             fo.passive_cycle_start_id = nil
                         end
-                    elseif fo.probe_interval > 0 then
-                        fo.next_probe_ts = now + fo.probe_interval
+                    else
+                        local restarted = restart_input_in_place(channel_data, prev_id, "no_data_timeout_restart", now)
+                        if not restarted and fo.probe_interval > 0 then
+                            fo.next_probe_ts = now + fo.probe_interval
+                        end
                     end
                 end
             end
@@ -2801,7 +2913,12 @@ local function channel_failover_tick(channel_data)
         if not active_ok and allow_switch then
             local delay = fo.start_delay
             if down_for >= delay then
-                activate_next_available(channel_data, active_id, "no_data_timeout")
+                local prev_id = active_id
+                local switched = activate_next_available(channel_data, active_id, "no_data_timeout")
+                local new_id = channel_data.active_input_id or prev_id
+                if not switched or new_id == prev_id then
+                    restart_input_in_place(channel_data, prev_id, "no_data_timeout_restart", now)
+                end
             end
         end
     end
@@ -3682,6 +3799,99 @@ local function validate_input_detectors(parsed, idx)
     return true
 end
 
+local function validate_dash_input_options(parsed, idx, effective_format)
+    if type(parsed) ~= "table" then
+        return true
+    end
+    local explicit = tostring(parsed.input_type or ""):lower()
+    local format = tostring(effective_format or parsed.format or ""):lower()
+    if explicit ~= "dash" and format ~= "dash" then
+        return true
+    end
+
+    local function fail(msg)
+        return nil, "input #" .. tostring(idx) .. " " .. msg
+    end
+
+    local strategy = tostring(parsed.dash_strategy or "auto_max"):lower()
+    if strategy ~= "auto_max" and strategy ~= "auto_min" and strategy ~= "fixed_id" and strategy ~= "res_limit" then
+        return fail("dash_strategy must be auto_max|auto_min|fixed_id|res_limit")
+    end
+
+    local fixed_video_id = tostring(parsed.dash_representation_id or parsed.dash_video_id or "")
+        :gsub("^%s+", "")
+        :gsub("%s+$", "")
+    if strategy == "fixed_id" and fixed_video_id == "" then
+        return fail("dash fixed_id requires dash_representation_id")
+    end
+
+    if parsed.dash_max_height ~= nil then
+        local max_height = tonumber(parsed.dash_max_height)
+        if not max_height or max_height < 1 then
+            return fail("dash_max_height must be >= 1")
+        end
+    end
+
+    if parsed.dash_rw_timeout_ms ~= nil then
+        local rw_timeout = tonumber(parsed.dash_rw_timeout_ms)
+        if not rw_timeout or rw_timeout < 1 then
+            return fail("dash_rw_timeout_ms must be >= 1")
+        end
+    end
+
+    if parsed.dash_reconnect_delay_max ~= nil then
+        local reconnect_delay = tonumber(parsed.dash_reconnect_delay_max)
+        if not reconnect_delay or reconnect_delay < 0 then
+            return fail("dash_reconnect_delay_max must be >= 0")
+        end
+    end
+
+    if parsed.dash_startup_grace_sec ~= nil then
+        local startup_grace = tonumber(parsed.dash_startup_grace_sec)
+        if not startup_grace or startup_grace < 5 or startup_grace > 600 then
+            return fail("dash_startup_grace_sec must be between 5 and 600")
+        end
+    end
+
+    if parsed.dash_max_no_data_sec ~= nil then
+        local max_no_data = tonumber(parsed.dash_max_no_data_sec)
+        if not max_no_data or max_no_data < 10 or max_no_data > 3600 then
+            return fail("dash_max_no_data_sec must be between 10 and 3600")
+        end
+    end
+
+    if parsed.dash_enable_cenc ~= nil then
+        local truth = truthy_input_option(parsed.dash_enable_cenc)
+        if truth == nil then
+            return fail("dash_enable_cenc must be on/off")
+        end
+        if truth == true then
+            local key = tostring(parsed.dash_cenc_key or ""):gsub("%s+", "")
+            if key:sub(1, 2):lower() == "0x" then
+                key = key:sub(3)
+            end
+            if key == "" or #key ~= 32 or not key:match("^[0-9a-fA-F]+$") then
+                return fail("dash_cenc_key must be 32 hex chars when dash_enable_cenc=1")
+            end
+        end
+    end
+
+    local headers = parsed.dash_headers
+    if headers ~= nil then
+        local raw = tostring(headers or "")
+        if #raw > 8192 then
+            return fail("dash_headers is too long (max 8192 chars)")
+        end
+    end
+
+    local transport = tostring(parsed.format or ""):lower()
+    if transport ~= "http" and transport ~= "https" and transport ~= "hls" and transport ~= "dash" then
+        return fail("dash input requires http/https/hls mpd url")
+    end
+
+    return true
+end
+
 function validate_stream_config(cfg, opts)
     if type(cfg) ~= "table" then
         return nil, "stream config is required"
@@ -3765,19 +3975,33 @@ function validate_stream_config(cfg, opts)
             if not resolved or not resolved.format then
                 return nil, "invalid MPTS service #" .. idx .. " input format"
             end
+            local effective_format = (type(resolve_effective_input_format) == "function"
+                and resolve_effective_input_format(resolved)) or resolved.format
+            if effective_format == "dash" then
+                local transport = tostring(resolved.format or ""):lower()
+                if transport ~= "http" and transport ~= "https" and transport ~= "hls" and transport ~= "dash" then
+                    return nil, "MPTS service #" .. idx .. " dash input requires http/https/hls mpd url"
+                end
+            end
+            local ok_dash, dash_err = validate_dash_input_options(resolved, idx, effective_format)
+            if not ok_dash then
+                return nil, dash_err
+            end
             local ok_det, det_err = validate_input_detectors(resolved, idx)
             if not ok_det then
                 return nil, det_err
             end
-            if resolved.format == "stream" then
+            if effective_format == "stream" then
                 local stream_id = resolved.stream_id or resolved.addr or resolved.id
                 if not stream_id or stream_id == "" then
                     return nil, "MPTS service #" .. idx .. " requires stream://<id>"
                 end
-            elseif not init_input_module[resolved.format] then
+            elseif not init_input_module[effective_format] then
                 return nil, "invalid MPTS service #" .. idx .. " input format"
             end
-            if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
+            if resolved.format == "https" and effective_format ~= "dash"
+                and not (https_native_supported() or https_bridge_enabled(resolved))
+            then
                 return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
             end
         end
@@ -3790,11 +4014,23 @@ function validate_stream_config(cfg, opts)
             if not resolved or not resolved.format then
                 return nil, "invalid input #" .. idx .. " format"
             end
+            local effective_format = (type(resolve_effective_input_format) == "function"
+                and resolve_effective_input_format(resolved)) or resolved.format
+            if effective_format == "dash" then
+                local transport = tostring(resolved.format or ""):lower()
+                if transport ~= "http" and transport ~= "https" and transport ~= "hls" and transport ~= "dash" then
+                    return nil, "input #" .. idx .. " dash input requires http/https/hls mpd url"
+                end
+            end
+            local ok_dash, dash_err = validate_dash_input_options(resolved, idx, effective_format)
+            if not ok_dash then
+                return nil, dash_err
+            end
             local ok_det, det_err = validate_input_detectors(resolved, idx)
             if not ok_det then
                 return nil, det_err
             end
-            if resolved.format == "stream" then
+            if effective_format == "stream" then
                 if not is_transcode then
                     return nil, "stream:// inputs are supported only in MPTS mode"
                 end
@@ -3802,10 +4038,12 @@ function validate_stream_config(cfg, opts)
                 if not stream_id or stream_id == "" then
                     return nil, "transcode input #" .. idx .. " requires stream://<id>"
                 end
-            elseif not init_input_module[resolved.format] then
+            elseif not init_input_module[effective_format] then
                 return nil, "invalid input #" .. idx .. " format"
             end
-            if resolved.format == "https" and not (https_native_supported() or https_bridge_enabled(resolved)) then
+            if resolved.format == "https" and effective_format ~= "dash"
+                and not (https_native_supported() or https_bridge_enabled(resolved))
+            then
                 return nil, "https input requires native TLS (OpenSSL) or ffmpeg bridge (enable https_bridge_enabled or add #https_bridge=1)"
             end
         end
@@ -6650,7 +6888,11 @@ function make_channel(channel_config)
         local function check_module(config)
             if not config then return false end
             if not config.format then return false end
-            if not module_list[config.format] then return false end
+            local format = config.format
+            if is_input and type(resolve_effective_input_format) == "function" then
+                format = resolve_effective_input_format(config) or format
+            end
+            if not module_list[format] then return false end
             return true
         end
         for n, url in ipairs(url_list) do
@@ -6690,7 +6932,10 @@ function make_channel(channel_config)
     local no_data_timeout = read_number_opt(channel_config, "no_data_timeout_sec") or 3
     local probe_interval = read_number_opt(channel_config, "probe_interval_sec") or 3
     local stable_ok = read_number_opt(channel_config, "stable_ok_sec") or 5
-    local primary_format = channel_data.input[1] and channel_data.input[1].config and channel_data.input[1].config.format
+    local primary_conf = channel_data.input[1] and channel_data.input[1].config or nil
+    local primary_format = (type(resolve_effective_input_format) == "function" and primary_conf
+        and resolve_effective_input_format(primary_conf))
+        or (primary_conf and primary_conf.format)
     local initial_delay = read_number_opt(channel_config, "backup_initial_delay_sec", "backup_initial_delay")
     if initial_delay == nil then
         initial_delay = default_initial_delay(primary_format)

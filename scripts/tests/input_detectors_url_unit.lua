@@ -125,5 +125,18 @@ do
   assert_true(ok == nil and tostring(err):find("cam_backup_mode"), "invalid cam_backup_mode must fail validation")
 end
 
+-- DASH input options parsing.
+do
+  local p = parse_url(
+    "https://example.com/live/manifest.mpd"
+      .. "#input_type=dash"
+      .. "#dash_strategy=fixed_id"
+      .. "#dash_representation_id=v1080")
+  assert_true(p and p.format == "https", "expected https format for dash url")
+  assert_true(tostring(p.input_type) == "dash", "input_type should be dash")
+  assert_true(tostring(p.dash_strategy) == "fixed_id", "dash_strategy should be fixed_id")
+  assert_true(tostring(p.dash_representation_id) == "v1080", "dash_representation_id should be parsed")
+end
+
 print("input_detectors_url_unit: ok")
 astra.exit()

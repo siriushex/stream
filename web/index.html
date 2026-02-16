@@ -3380,6 +3380,7 @@
                 <option value="http">HTTP</option>
                 <option value="https">HTTPS</option>
                 <option value="hls">HLS</option>
+                <option value="dash">DASH (MPD)</option>
                 <option value="stream">Stream</option>
                 <option value="file">MPEG-TS File</option>
               </select>
@@ -3419,7 +3420,7 @@
             <div class="form-grid">
               <label class="field span-6">
                 <span>Audio URL</span>
-                <input type="text" id="radio-audio-url" placeholder="http://example.com/stream.mp3" />
+                <input type="text" id="radio-audio-url" placeholder="http://example.com/live.m3u8 or .../stream.ts or .../stream.mp3" />
               </label>
               <label class="field span-6">
                 <span>PNG file path</span>
@@ -3432,17 +3433,19 @@
                 <input type="file" id="radio-png-file" accept=".png" />
               </label>
               <label class="field span-6">
-                <span>Audio format (pipe)</span>
+                <span>Input format (for CURL pipe)</span>
                 <select id="radio-audio-format">
+                  <option value="auto">Auto</option>
                   <option value="mp3">MP3</option>
                   <option value="aac">AAC</option>
+                  <option value="mpegts">MPEG-TS</option>
                 </select>
               </label>
             </div>
             <div class="form-grid">
               <label class="checkline">
                 <input type="checkbox" id="radio-use-curl" checked />
-                <span>Use CURL pipe (recommended for ICY/MP3)</span>
+                <span>Use CURL pipe (recommended for ICY/MP3/AAC; HLS/TS uses direct ffmpeg input)</span>
               </label>
               <label class="field">
                 <span>User-Agent (optional)</span>
@@ -3577,6 +3580,7 @@
                       <option value="rtp_multicast">RTP Multicast</option>
                       <option value="http_ts">HTTP MPEG-TS</option>
                       <option value="hls_m3u8">HLS (m3u8)</option>
+                      <option value="dash_mpd">DASH (MPD)</option>
                       <option value="srt_caller">SRT Caller</option>
                       <option value="rtsp_tcp">RTSP (TCP)</option>
                       <option value="file_loop">MPEG-TS File (loop)</option>
@@ -3629,10 +3633,10 @@
                   <span>Path</span>
                   <input type="text" id="input-http-path" placeholder="/stream" />
                 </label>
-	                <label class="field">
-	                  <span>User-Agent</span>
-	                  <input type="text" id="input-http-ua" placeholder="Stream" />
-	                </label>
+                <label class="field">
+                  <span>User-Agent</span>
+                  <input type="text" id="input-http-ua" placeholder="Stream" />
+                </label>
               </div>
 
               <div class="input-group" data-group="bridge">
@@ -3809,6 +3813,86 @@
                   </label>
                 </div>
                 <div class="form-hint">Applies only to HLS inputs. Blank fields use defaults.</div>
+              </details>
+
+              <details class="fold" id="input-dash-fold" hidden>
+                <summary class="fold-summary">DASH ingest (advanced)</summary>
+                <div class="fold-body form-grid">
+                  <label class="field">
+                    <span>Transport scheme</span>
+                    <select id="input-dash-scheme">
+                      <option value="https">HTTPS</option>
+                      <option value="http">HTTP</option>
+                      <option value="hls">HLS</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Representation strategy</span>
+                    <select id="input-dash-strategy">
+                      <option value="auto_max">Auto (max bitrate)</option>
+                      <option value="auto_min">Auto (min bitrate)</option>
+                      <option value="fixed_id">Fixed representation id</option>
+                      <option value="res_limit">Resolution limit</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Fixed video id</span>
+                    <input type="text" id="input-dash-representation-id" placeholder="video_rep_id" />
+                  </label>
+                  <label class="field">
+                    <span>Fixed audio id</span>
+                    <input type="text" id="input-dash-audio-id" placeholder="audio_rep_id" />
+                  </label>
+                  <label class="field">
+                    <span>Max height (res limit)</span>
+                    <input type="number" id="input-dash-max-height" placeholder="720" />
+                  </label>
+                  <label class="field">
+                    <span>Bridge port (UDP)</span>
+                    <input type="number" id="input-dash-bridge-port" placeholder="30000" />
+                  </label>
+                  <label class="field">
+                    <span>Read timeout (ms)</span>
+                    <input type="number" id="input-dash-rw-timeout-ms" placeholder="15000" />
+                  </label>
+                  <label class="field">
+                    <span>Reconnect delay max (sec)</span>
+                    <input type="number" id="input-dash-reconnect-delay-max" placeholder="2" />
+                  </label>
+                  <label class="field">
+                    <span>Startup grace (sec)</span>
+                    <input type="number" id="input-dash-startup-grace-sec" placeholder="60" />
+                  </label>
+                  <label class="field">
+                    <span>Max no-data (sec)</span>
+                    <input type="number" id="input-dash-max-no-data-sec" placeholder="90" />
+                  </label>
+                  <label class="field">
+                    <span>DASH User-Agent</span>
+                    <input type="text" id="input-dash-user-agent" placeholder="Mozilla/5.0" />
+                  </label>
+                  <label class="field">
+                    <span>Referer</span>
+                    <input type="text" id="input-dash-referer" placeholder="https://example.com/" />
+                  </label>
+                  <label class="field">
+                    <span>Cookies</span>
+                    <input type="text" id="input-dash-cookies" placeholder="k=v; session=..." />
+                  </label>
+                  <label class="field span-2">
+                    <span>Extra headers (one per line)</span>
+                    <textarea id="input-dash-headers" class="textarea-grow" rows="2" placeholder="Header-Name: value"></textarea>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="input-dash-enable-cenc" />
+                    <span>Enable CENC decryption key</span>
+                  </label>
+                  <label class="field">
+                    <span>CENC key (32 hex)</span>
+                    <input type="text" id="input-dash-cenc-key" placeholder="00112233445566778899aabbccddeeff" />
+                  </label>
+                </div>
+                <div class="form-hint">Stored as <code>http(s)://...mpd#input_type=dash&amp;dash_*</code>. Use Stream FULL for transcode fallback when copy is incompatible.</div>
               </details>
 
               <details class="fold" id="input-playout-fold" hidden>
@@ -4282,7 +4366,7 @@
   </div>
 
 	  <div class="overlay" id="server-overlay" aria-hidden="true">
-	    <div class="modal">
+	    <div class="modal wide">
       <div class="modal-head">
         <div class="modal-title" id="server-title">New server</div>
         <button class="icon-btn" id="server-close" aria-label="Close">
@@ -4302,10 +4386,14 @@
           <span>Name</span>
           <input type="text" id="server-name" placeholder="Main server" />
         </label>
-        <label class="field">
-          <span>Type</span>
-          <input type="text" id="server-type" placeholder="streamer" />
-        </label>
+	        <label class="field">
+	          <span>Type</span>
+	          <select id="server-type">
+	            <option value="auto" selected>Auto</option>
+	            <option value="stream_v1">Stream API v1</option>
+	            <option value="astra_legacy">Astra legacy</option>
+	          </select>
+	        </label>
         <label class="field">
           <span>Address</span>
           <input type="text" id="server-host" placeholder="http://127.0.0.1" />
@@ -4358,6 +4446,12 @@
 	            <div>Name</div>
 	            <div>Type</div>
 	            <div>Enabled</div>
+	            <div>On Air</div>
+	            <div>Bitrate</div>
+	            <div>Uptime</div>
+	            <div>Input</div>
+	            <div>Last error</div>
+	            <div>Capabilities</div>
 	            <div></div>
 	          </div>
 	        </div>
@@ -4366,8 +4460,7 @@
 	      <div class="modal-footer">
 	        <div class="footer-actions">
 	          <button class="btn ghost" type="button" id="server-streams-refresh">Refresh</button>
-	          <button class="btn ghost" type="button" id="server-streams-pull">Pull streams</button>
-	          <button class="btn ghost" type="button" id="server-streams-import">Import config</button>
+	          <button class="btn ghost" type="button" id="server-streams-new">New remote stream</button>
 	          <button class="btn" type="button" id="server-streams-cancel">Close</button>
 	          <div class="form-note" id="server-streams-error"></div>
 	        </div>

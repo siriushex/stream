@@ -39,9 +39,12 @@ local function assert_true(v, msg)
 end
 
 -- Stub http_request to validate base_path normalization and stream list parsing.
-local last_req = nil
+local requests = {}
 http_request = function(req)
-  last_req = req
+  requests[#requests + 1] = {
+    path = req and req.path or "",
+    method = req and req.method or "",
+  }
   local content = "{}"
   if req and req.path and req.path:find("/api/v1/streams", 1, true) then
     content = json.encode({
@@ -79,8 +82,15 @@ api.handle_request(server, client, make_request("/api/v1/servers/streams", {
   id = "remote-1",
 }))
 
-assert_true(last_req ~= nil, "expected http_request call")
-assert_true(last_req.path == "/base/api/v1/streams", "expected base_path applied to streams path")
+assert_true(#requests > 0, "expected http_request call")
+local has_streams = false
+for _, req in ipairs(requests) do
+  if req.path == "/base/api/v1/streams" and req.method == "GET" then
+    has_streams = true
+    break
+  end
+end
+assert_true(has_streams, "expected base_path applied to streams path")
 assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 list streams response")
 
 local ok, payload = pcall(json.decode, sent.content or "")
@@ -93,4 +103,3 @@ assert_true(payload.items[2].id == "t1" and payload.items[2].enabled == false, "
 
 log.info("[unit] servers_streams_list_unit ok")
 astra.exit()
-

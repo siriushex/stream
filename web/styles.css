@@ -1102,6 +1102,65 @@ select {
   grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr auto;
 }
 
+#server-streams-table .table-row {
+  grid-template-columns:
+    minmax(120px, 1fr)
+    minmax(160px, 1.3fr)
+    minmax(90px, 0.7fr)
+    minmax(70px, 0.6fr)
+    minmax(70px, 0.6fr)
+    minmax(90px, 0.7fr)
+    minmax(90px, 0.8fr)
+    minmax(70px, 0.6fr)
+    minmax(180px, 1.4fr)
+    minmax(180px, 1.4fr)
+    auto;
+}
+
+.server-stream-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.server-cap-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.server-cap-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+.server-cap-badge.ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--border));
+}
+
+.server-cap-badge.no {
+  color: var(--warning);
+}
+
+.server-stream-onair {
+  font-weight: 600;
+}
+
+.server-stream-onair.yes {
+  color: var(--ok);
+}
+
+.server-stream-onair.no {
+  color: var(--warning);
+}
+
 .access-table .table-row {
   grid-template-columns: 1fr 1.4fr 0.7fr 0.9fr 0.8fr 2fr;
 }

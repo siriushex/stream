@@ -104,6 +104,99 @@ run() {
   "$@"
 }
 
+curl_download() {
+  local url="$1"
+  local out="$2"
+  # Keep downloads predictable on unstable links: short connect timeout +
+  # retries. Works on legacy CentOS curl as well.
+  run curl -fL -sS --retry 3 --retry-delay 1 --connect-timeout 10 --max-time 600 -o "$out" "$url"
+}
+
+detect_make_jobs() {
+  if [ -n "${STREAM_MAKE_JOBS:-}" ]; then
+    printf '%s' "$STREAM_MAKE_JOBS"
+    return 0
+  fi
+  local jobs
+  jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+  if ! echo "$jobs" | grep -Eq '^[0-9]+$'; then
+    jobs=2
+  fi
+  if [ "$jobs" -lt 1 ]; then
+    jobs=1
+  fi
+  # Avoid aggressive oversubscription on older CentOS hosts with limited RAM.
+  if [ "$jobs" -gt 8 ]; then
+    jobs=8
+  fi
+  printf '%s' "$jobs"
+}
+
+ensure_stream_path_compat() {
+  # Some CentOS/RHEL environments run helper subprocesses with a minimal PATH
+  # that does not include /usr/local/bin. Keep a compatibility symlink in /usr/bin
+  # when it is safe to do so.
+  local compat_link="/usr/bin/stream"
+  if [ "$BIN_PATH" = "$compat_link" ]; then
+    return 0
+  fi
+  if [ ! -d /usr/bin ]; then
+    return 0
+  fi
+
+  if [ -L "$compat_link" ]; then
+    local current=""
+    current="$(readlink "$compat_link" 2>/dev/null || true)"
+    if [ "$current" != "$BIN_PATH" ]; then
+      run ln -sfn "$BIN_PATH" "$compat_link"
+    fi
+    return 0
+  fi
+
+  if [ -e "$compat_link" ]; then
+    if [ -f "$compat_link" ] && [ -f "$BIN_PATH" ] && [ "$compat_link" -ef "$BIN_PATH" ]; then
+      return 0
+    fi
+    warn "$compat_link exists and is not a symlink; leaving it unchanged"
+    return 0
+  fi
+
+  run ln -s "$BIN_PATH" "$compat_link"
+}
+
+resolve_stream_share_scripts_dir() {
+  local bin_dir
+  local prefix
+  bin_dir="$(dirname "$BIN_PATH")"
+  prefix="$(cd "$bin_dir/.." 2>/dev/null && pwd -P || true)"
+  if [ -z "$prefix" ] || [ "$prefix" = "/" ]; then
+    prefix="/usr/local"
+  fi
+  printf '%s' "${prefix}/share/stream/scripts"
+}
+
+install_runtime_scripts_from_source() {
+  local src_root="$1"
+  [ -n "$src_root" ] || return 0
+  [ -d "$src_root/scripts" ] || return 0
+
+  local dst
+  dst="$(resolve_stream_share_scripts_dir)"
+  run mkdir -p "$dst"
+
+  local helper_scripts=(
+    export_write.lua
+    base.lua
+    config.lua
+  )
+  local name=""
+  for name in "${helper_scripts[@]}"; do
+    if [ -f "$src_root/scripts/$name" ]; then
+      run install -m 644 "$src_root/scripts/$name" "$dst/$name"
+    fi
+  done
+}
+
 while [ "${#:-0}" -gt 0 ]; do
   case "${1:-}" in
     --mode)
@@ -241,9 +334,14 @@ FFPROBE_BIN_PATH="/usr/local/bin/stream-ffprobe"
 
 install_ffmpeg_bundle() {
   if [ -x "$FFMPEG_BIN_PATH" ] && [ -x "$FFPROBE_BIN_PATH" ]; then
-    log "ffmpeg bundle already installed; skipping download"
-    FFMPEG_BUNDLE_INSTALLED=1
-    return 0
+    if "$FFMPEG_BIN_PATH" -hide_banner -version >/dev/null 2>&1 \
+      && "$FFPROBE_BIN_PATH" -hide_banner -version >/dev/null 2>&1; then
+      log "ffmpeg bundle already installed; skipping download"
+      FFMPEG_BUNDLE_INSTALLED=1
+      return 0
+    fi
+    warn "existing ffmpeg bundle is not runnable; reinstalling"
+    rm -f "$FFMPEG_BIN_PATH" "$FFPROBE_BIN_PATH" >/dev/null 2>&1 || true
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
     log "[dry-run] install ffmpeg bundle -> ${FFMPEG_BIN_PATH}, ${FFPROBE_BIN_PATH}"
@@ -285,7 +383,7 @@ install_ffmpeg_bundle() {
   mkdir -p "$extract"
 
   log "Downloading ffmpeg bundle: $url"
-  if ! curl -fsSL "$url" -o "$archive"; then
+  if ! curl_download "$url" "$archive"; then
     warn "ffmpeg bundle download failed: $url"
     rm -rf "$work" >/dev/null 2>&1 || true
     return 1
@@ -319,6 +417,21 @@ install_ffmpeg_bundle() {
   fi
   if ! run install -m 755 "$ffprobe_src" "$FFPROBE_BIN_PATH"; then
     warn "failed to install ffmpeg bundle ffprobe binary"
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  # На старых дистрибутивах бинарник из bundle может не запуститься
+  # (glibc/libstdc++ mismatch). Проверяем сразу и даём install_deps_* сделать fallback.
+  if ! "$FFMPEG_BIN_PATH" -hide_banner -version >/dev/null 2>&1; then
+    warn "ffmpeg bundle installed but not runnable on this system; falling back to system ffmpeg"
+    rm -f "$FFMPEG_BIN_PATH" "$FFPROBE_BIN_PATH" >/dev/null 2>&1 || true
+    rm -rf "$work" >/dev/null 2>&1 || true
+    return 1
+  fi
+  if ! "$FFPROBE_BIN_PATH" -hide_banner -version >/dev/null 2>&1; then
+    warn "ffprobe bundle installed but not runnable on this system; falling back to system ffmpeg"
+    rm -f "$FFMPEG_BIN_PATH" "$FFPROBE_BIN_PATH" >/dev/null 2>&1 || true
     rm -rf "$work" >/dev/null 2>&1 || true
     return 1
   fi
@@ -604,14 +717,14 @@ binary_url_candidates() {
 fetch_artifact() {
   local url="$1"
   local out="$2"
-  if run curl -fsSL -o "$out" "$url"; then
+  if curl_download "$url" "$out"; then
     return 0
   fi
   # На старых системах часто нет актуальных CA. Для stream.centv.ru попробуем HTTP.
   if echo "$url" | grep -q "^https://stream.centv.ru/"; then
     local url_http="${url/https:\/\//http://}"
     warn "HTTPS download failed; trying HTTP: $url_http"
-    run curl -fsSL -o "$out" "$url_http"
+    curl_download "$url_http" "$out"
     return $?
   fi
   return 1
@@ -675,13 +788,16 @@ build_from_source() {
   log "Building from: $src_root"
   # Стараемся собирать максимально полный функционал (softcam/descramble),
   # даже если в системе нет libdvbcsa-dev.
-  (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)")
+  local make_jobs
+  make_jobs="$(detect_make_jobs)"
+  (cd "$src_root" && ./configure.sh --with-libdvbcsa && make -j"$make_jobs")
 
   if [ ! -x "$src_root/stream" ]; then
     die "Build succeeded but binary 'stream' not found."
   fi
 
   run install -m 755 "$src_root/stream" "$BIN_PATH"
+  install_runtime_scripts_from_source "$src_root"
 
   if [ "$INSTALL_WEB" -eq 1 ]; then
     run mkdir -p /usr/local/share/stream/web
@@ -820,22 +936,30 @@ verify_transcode() {
 
   local ffmpeg_bin=""
   local ffprobe_bin=""
-  if [ -x "$FFMPEG_BIN_PATH" ] && [ -x "$FFPROBE_BIN_PATH" ]; then
-    ffmpeg_bin="$FFMPEG_BIN_PATH"
-    ffprobe_bin="$FFPROBE_BIN_PATH"
-  elif command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
-    ffmpeg_bin="ffmpeg"
-    ffprobe_bin="ffprobe"
-  fi
+  local ffmpeg_candidates=()
+  local ffprobe_candidates=()
+  local c=""
 
-  if [ -z "$ffmpeg_bin" ]; then
-    die "ffmpeg not found. Re-run installer without --no-ffmpeg, or install ffmpeg manually."
-  fi
-  if ! "$ffmpeg_bin" -hide_banner -version >/dev/null 2>&1; then
-    die "ffmpeg is installed but not runnable. Check missing shared libraries or reinstall ffmpeg."
-  fi
-  if [ -n "$ffprobe_bin" ] && ! "$ffprobe_bin" -hide_banner -version >/dev/null 2>&1; then
-    die "ffprobe is installed but not runnable. Check missing shared libraries or reinstall ffprobe."
+  [ -x "$FFMPEG_BIN_PATH" ] && ffmpeg_candidates+=("$FFMPEG_BIN_PATH")
+  command -v ffmpeg >/dev/null 2>&1 && ffmpeg_candidates+=("ffmpeg")
+  for c in "${ffmpeg_candidates[@]}"; do
+    if "$c" -hide_banner -version >/dev/null 2>&1; then
+      ffmpeg_bin="$c"
+      break
+    fi
+  done
+
+  [ -x "$FFPROBE_BIN_PATH" ] && ffprobe_candidates+=("$FFPROBE_BIN_PATH")
+  command -v ffprobe >/dev/null 2>&1 && ffprobe_candidates+=("ffprobe")
+  for c in "${ffprobe_candidates[@]}"; do
+    if "$c" -hide_banner -version >/dev/null 2>&1; then
+      ffprobe_bin="$c"
+      break
+    fi
+  done
+
+  if [ -z "$ffmpeg_bin" ] || [ -z "$ffprobe_bin" ]; then
+    die "ffmpeg/ffprobe not runnable. Re-run installer with --ffmpeg-system or --no-verify-transcode."
   fi
 
   log "Transcode verification: OK"
@@ -857,15 +981,26 @@ After=network.target
 
 [Service]
 Type=simple
+Environment=STREAM_PORT=8816
 EnvironmentFile=-${DATA_DIR}/%i.env
 WorkingDirectory=${DATA_DIR}
-ExecStart=${BIN_PATH} -c ${DATA_DIR}/%i.json -p \${STREAM_PORT:-8816}
+ExecStart=${BIN_PATH} -c ${DATA_DIR}/%i.json -p \$STREAM_PORT
 Restart=always
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 UNIT
+  else
+    # Migration for older installer templates that used shell parameter expansion
+    # in ExecStart (${STREAM_PORT:-8816}) which systemd does not evaluate.
+    if grep -q '\${STREAM_PORT:-8816}' "$unit_path"; then
+      run sed -i 's#\${STREAM_PORT:-8816}#$STREAM_PORT#g' "$unit_path"
+      if ! grep -q '^Environment=STREAM_PORT=' "$unit_path"; then
+        run sed -i '/^\[Service\]/a Environment=STREAM_PORT=8816' "$unit_path"
+      fi
+      log "Updated incompatible systemd template: $unit_path"
+    fi
   fi
   run systemctl daemon-reload
 }
@@ -947,6 +1082,8 @@ main() {
     install_binary
     check_runtime_libs
   fi
+
+  ensure_stream_path_compat
 
   if [ "$INSTALL_WEB" -eq 0 ]; then
     log "Web assets not installed. UI will be served from embedded bundle."

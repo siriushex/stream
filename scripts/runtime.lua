@@ -723,8 +723,17 @@ local function collect_input_stats(channel)
         }
 
         if input_data and input_data.config then
-            entry.name = input_data.config.name
-            entry.format = input_data.config.format
+            local conf = input_data.config
+            entry.name = conf.name
+            local effective_format = (type(resolve_effective_input_format) == "function"
+                and resolve_effective_input_format(conf)) or conf.format
+            entry.format = effective_format or conf.format
+            if conf.format and conf.format ~= entry.format then
+                entry.transport_format = conf.format
+            end
+            if entry.format == "dash" and type(conf.__dash_status) == "table" then
+                entry.dash = copy_table(conf.__dash_status)
+            end
         end
         if input_data and input_data.source_url then
             entry.url = input_data.source_url
@@ -777,7 +786,7 @@ local function collect_input_stats(channel)
         -- Это нужно для UI Analyze, чтобы оператор понимал, почему вход "degraded/offline".
         if input_data and input_data.config and entry.format then
             local fmt = tostring(entry.format or ""):lower()
-            if fmt == "http" or fmt == "https" or fmt == "hls" then
+            if fmt == "http" or fmt == "https" or fmt == "hls" or fmt == "dash" then
                 local prof = resolve_input_profile_status(input_data.config, resilience_global)
                 entry.net_profile_configured = prof.configured
                 entry.net_profile_effective = prof.effective
@@ -2526,12 +2535,65 @@ local function list_status_common(lite)
     return status
 end
 
+local function normalize_status_ids(ids)
+    if type(ids) ~= "table" then
+        return nil
+    end
+    local out = {}
+    local seen = {}
+    for _, value in ipairs(ids) do
+        local id = tostring(value or "")
+        if id ~= "" and not seen[id] then
+            out[#out + 1] = id
+            seen[id] = true
+        end
+    end
+    return out
+end
+
+local function list_status_ids_common(ids, lite)
+    local normalized = normalize_status_ids(ids)
+    if not normalized or #normalized == 0 then
+        return {}
+    end
+
+    local start_ms = clock_ms()
+    local status = {}
+    local clients_index = get_stream_clients_index()
+    for _, id in ipairs(normalized) do
+        local stream = runtime.streams[id]
+        if stream then
+            local clients_count = tonumber(clients_index[id]) or 0
+            local entry = build_stream_status_entry(id, stream, clients_count, lite)
+            if entry then
+                status[id] = entry
+            end
+        end
+    end
+
+    runtime.perf.last_status_ids_ms = math.floor((clock_ms() - start_ms) + 0.5)
+    runtime.perf.last_status_ids_ts = os.time()
+    if lite then
+        runtime.perf.last_status_ids_lite_ms = runtime.perf.last_status_ids_ms
+        runtime.perf.last_status_ids_lite_ts = runtime.perf.last_status_ids_ts
+    end
+    return status
+end
+
 function runtime.list_status()
     return list_status_common(false)
 end
 
 function runtime.list_status_lite()
     return list_status_common(true)
+end
+
+function runtime.list_status_ids(ids)
+    return list_status_ids_common(ids, false)
+end
+
+function runtime.list_status_lite_ids(ids)
+    return list_status_ids_common(ids, true)
 end
 
 local function get_stream_status_common(id, lite)
@@ -2589,6 +2651,66 @@ function runtime.restart_transcode(id)
         return transcode.restart(job, "api")
     end
     return false
+end
+
+function runtime.switch_stream_input(id, input_index)
+    local stream = runtime.streams and runtime.streams[id] or nil
+    if not stream then
+        return false, "stream not found"
+    end
+
+    if stream.kind == "transcode" then
+        if not (transcode and transcode.switch_input and stream.job) then
+            return false, "switch input unsupported"
+        end
+        return transcode.switch_input(stream.job, input_index, "api")
+    end
+
+    if stream.kind == "dataplane" then
+        local relay = stream.relay
+        local inputs = stream.dp_inputs
+        local idx = tonumber(input_index)
+        if idx == nil then
+            return false, "input_index is required"
+        end
+        idx = math.floor(idx)
+        if idx < 0 then
+            return false, "input_index must be >= 0"
+        end
+        if type(inputs) ~= "table" or #inputs == 0 then
+            return false, "switch input unsupported"
+        end
+        local input_id = idx + 1
+        local target = inputs[input_id]
+        if type(target) ~= "table" then
+            return false, "input_index out of range"
+        end
+        if type(relay) ~= "table" or type(relay.switch_input) ~= "function" then
+            return false, "switch input unsupported"
+        end
+        local ok, switched = pcall(function()
+            return relay:switch_input(target)
+        end)
+        if not ok or switched == false then
+            return false, "switch input failed"
+        end
+        local prev_id = tonumber(stream.dp_active_input_index or 1) or 1
+        stream.dp_active_input_index = input_id
+        if prev_id ~= input_id then
+            log.info("[runtime] dataplane switch input " .. tostring(id)
+                .. " " .. tostring(prev_id - 1) .. " -> " .. tostring(idx) .. ", reason=api")
+        end
+        return true
+    end
+
+    if stream.kind == "stream" then
+        if type(stream_switch_input) ~= "function" then
+            return false, "switch input unsupported"
+        end
+        return stream_switch_input(stream.channel, input_index, "api")
+    end
+
+    return false, "switch input unsupported"
 end
 
 function runtime.list_sessions()

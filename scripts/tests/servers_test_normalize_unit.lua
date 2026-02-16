@@ -8,6 +8,17 @@ dofile("scripts/api.lua")
 config = config or {}
 config.get_setting = function(key)
   if key == "http_auth_enabled" then return false end
+  if key == "servers" then
+    return {
+      {
+        id = "remote-1",
+        name = "Remote",
+        host = "127.0.0.1/wrong",
+        port = 8000,
+        enabled = true,
+      },
+    }
+  end
   return nil
 end
 config.get_user_by_username = function(username)
@@ -33,7 +44,11 @@ http_request = function(req)
   last_req = req
   -- Simulate success response (health endpoint).
   if req and req.callback then
-    req.callback(req, { code = 200, headers = {}, content = "{}" })
+    local payload = {}
+    if req.path and req.path:find("/api/v1/health/process", 1, true) then
+      payload = { status = "ok", version = "1.2.2" }
+    end
+    req.callback(req, { code = 200, headers = {}, content = json.encode(payload) })
   end
 end
 
@@ -57,6 +72,7 @@ local function make_request(path, body)
 end
 
 api.handle_request(server, client, make_request("/api/v1/servers/test", {
+  id = "remote-1",
   host = "127.0.0.1/base",
   port = 8000,
 }))
@@ -64,6 +80,10 @@ api.handle_request(server, client, make_request("/api/v1/servers/test", {
 assert_true(last_req ~= nil, "expected http_request call")
 assert_true(last_req.path == "/base/api/v1/health/process", "expected base_path applied to health path")
 assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 server_test response")
+local ok, payload = pcall(json.decode, sent.content or "")
+assert_true(ok and type(payload) == "table", "expected json payload")
+assert_true(payload.api_type_effective == "stream_v1", "expected stream_v1 detection")
+assert_true(payload.remote_version == "1.2.2", "expected remote version")
 
 log.info("[unit] servers_test_normalize_unit ok")
 astra.exit()

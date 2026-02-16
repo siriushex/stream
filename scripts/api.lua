@@ -124,6 +124,19 @@ local function setting_string(key, fallback)
     return tostring(value)
 end
 
+local remote_servers = nil
+do
+    local ok, mod = pcall(require, "remote_servers")
+    if (not ok) or type(mod) ~= "table" then
+        ok, mod = pcall(dofile, "scripts/remote_servers.lua")
+    end
+    if ok and type(mod) == "table" then
+        remote_servers = mod
+    else
+        log.warning("[servers] remote adapters unavailable: " .. tostring(mod))
+    end
+end
+
 local function is_state_change(method)
     return method == "POST" or method == "PUT" or method == "DELETE" or method == "PATCH"
 end
@@ -193,6 +206,7 @@ end
 
 local rate_limits = {
     login = {},
+    remote_actions = {},
     counter = 0,
 }
 
@@ -407,12 +421,15 @@ local function is_internal_loopback(request)
 end
 
 local function audit_event(action, request, opts)
-    if not config.add_audit_event then
+    if not config.add_audit_event or not config.db then
         return
     end
     opts = opts or {}
     opts.ip = opts.ip or (request and request.addr) or ""
-    config.add_audit_event(action, opts)
+    local ok, err = pcall(config.add_audit_event, action, opts)
+    if not ok then
+        log.warning("[api] audit skipped: " .. tostring(err))
+    end
 end
 
 local function get_request_user(request)
@@ -1407,6 +1424,7 @@ local function build_default_transcode_ladder(base_id, base_name)
             probe_interval_sec = 0,
             max_restarts_per_10min = 10,
             restart_cooldown_sec = 0,
+            error_rearm_sec = 120,
         },
     }
     if engine == "nvidia" then
@@ -3235,14 +3253,92 @@ local function query_truthy(value)
     return s == "1" or s == "true" or s == "yes" or s == "on"
 end
 
+local function parse_stream_status_ids(raw)
+    if raw == nil then
+        return nil
+    end
+    local text = tostring(raw or "")
+    if text == "" then
+        return nil
+    end
+    local ids = {}
+    local seen = {}
+    for token in string.gmatch(text, "[^,]+") do
+        local id = tostring(token or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if id ~= "" and not seen[id] then
+            ids[#ids + 1] = id
+            seen[id] = true
+            if #ids >= 256 then
+                break
+            end
+        end
+    end
+    if #ids == 0 then
+        return nil
+    end
+    return ids
+end
+
+local function build_stream_status_path(lite, ids)
+    local params = {}
+    if lite then
+        params[#params + 1] = "lite=1"
+    end
+    if type(ids) == "table" and #ids > 0 then
+        params[#params + 1] = "ids=" .. table.concat(ids, ",")
+    end
+    if #params == 0 then
+        return "/api/v1/stream-status"
+    end
+    return "/api/v1/stream-status?" .. table.concat(params, "&")
+end
+
+local function collect_runtime_stream_status(lite, ids)
+    if type(ids) == "table" and #ids > 0 then
+        if lite and runtime.list_status_lite_ids then
+            return runtime.list_status_lite_ids(ids) or {}
+        end
+        if (not lite) and runtime.list_status_ids then
+            return runtime.list_status_ids(ids) or {}
+        end
+
+        local status = {}
+        for _, sid in ipairs(ids) do
+            local id = tostring(sid or "")
+            if id ~= "" then
+                local entry = nil
+                if lite and runtime.get_stream_status_lite then
+                    entry = runtime.get_stream_status_lite(id)
+                elseif runtime.get_stream_status then
+                    entry = runtime.get_stream_status(id)
+                end
+                if entry then
+                    status[id] = entry
+                end
+            end
+        end
+        return status
+    end
+
+    if lite and runtime.list_status_lite then
+        return runtime.list_status_lite() or {}
+    end
+    if runtime.list_status then
+        return runtime.list_status() or {}
+    end
+    return {}
+end
+
 local function list_stream_status(server, client, request)
     local now = os.time()
     local query = request and request.query or {}
     local lite = query_truthy(query and query.lite)
+    local ids = parse_stream_status_ids(query and query.ids)
+    local ids_requested = type(ids) == "table" and #ids > 0
     local cache_key = lite and "lite" or "full"
     local cache = stream_status_cache[cache_key] or { ts = 0, payload = nil }
 
-    if cache.payload and (now - (cache.ts or 0)) <= 1 then
+    if (not ids_requested) and cache.payload and (now - (cache.ts or 0)) <= 1 then
         return json_response(server, client, 200, cache.payload)
     end
 
@@ -3253,13 +3349,32 @@ local function list_stream_status(server, client, request)
         local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
         local base_port = sharding.get_base_port and sharding.get_base_port() or nil
 
-        -- Local shard data (avoid self-http recursion).
-        local local_status = {}
-        if lite and runtime.list_status_lite then
-            local_status = runtime.list_status_lite() or {}
-        elseif runtime.list_status then
-            local_status = runtime.list_status() or {}
+        local shard_ids = nil
+        local local_ids = nil
+        if ids_requested then
+            shard_ids = {}
+            local_ids = {}
+            for _, sid in ipairs(ids) do
+                local stream_id = tostring(sid or "")
+                if stream_id ~= "" then
+                    local port = sharding_port_for_stream_id(stream_id) or local_port
+                    if port == local_port then
+                        local_ids[#local_ids + 1] = stream_id
+                    else
+                        if not shard_ids[port] then
+                            shard_ids[port] = {}
+                        end
+                        shard_ids[port][#shard_ids[port] + 1] = stream_id
+                    end
+                end
+            end
+            if #local_ids == 0 then
+                local_ids = nil
+            end
         end
+
+        -- Local shard data (avoid self-http recursion).
+        local local_status = collect_runtime_stream_status(lite, local_ids)
         for id, entry in pairs(local_status) do
             if type(entry) == "table" then
                 entry.shard_port = local_port
@@ -3276,7 +3391,9 @@ local function list_stream_status(server, client, request)
                 return
             end
             done = true
-            stream_status_cache[cache_key] = { ts = now, payload = merged }
+            if not ids_requested then
+                stream_status_cache[cache_key] = { ts = now, payload = merged }
+            end
             json_response(server, client, 200, merged)
         end
 
@@ -3300,39 +3417,47 @@ local function list_stream_status(server, client, request)
             end
         end
 
-        for _, port in ipairs(ports) do
-            if port ~= local_port then
-                pending = pending + 1
-                local path = "/api/v1/stream-status"
-                if lite then
-                    path = path .. "?lite=1"
-                end
-                local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
-                    "Host: 127.0.0.1:" .. tostring(port),
-                    "Connection: close",
-                }
-                local ok, _req = pcall(http_request, {
-                    host = "127.0.0.1",
-                    port = port,
-                    path = path,
-                    method = "GET",
-                    headers = headers,
-                    connect_timeout_ms = 200,
-                    read_timeout_ms = 800,
-                    callback = function(self, response)
-                        if not response or tonumber(response.code) ~= 200 then
-                            return on_shard_response(port, nil)
-                        end
-                        local ok, decoded = pcall(json.decode, response.content or "")
-                        if not ok then
-                            return on_shard_response(port, nil)
-                        end
-                        on_shard_response(port, decoded)
-                    end,
-                })
-                if not ok then
-                    on_shard_response(port, nil)
-                end
+        local function request_port(port, ids_for_port)
+            if port == local_port then
+                return
+            end
+            pending = pending + 1
+            local path = build_stream_status_path(lite, ids_for_port)
+            local headers = sharding.forward_auth_headers and sharding.forward_auth_headers(request, port) or {
+                "Host: 127.0.0.1:" .. tostring(port),
+                "Connection: close",
+            }
+            local ok, _req = pcall(http_request, {
+                host = "127.0.0.1",
+                port = port,
+                path = path,
+                method = "GET",
+                headers = headers,
+                connect_timeout_ms = 200,
+                read_timeout_ms = 800,
+                callback = function(self, response)
+                    if not response or tonumber(response.code) ~= 200 then
+                        return on_shard_response(port, nil)
+                    end
+                    local ok_decode, decoded = pcall(json.decode, response.content or "")
+                    if not ok_decode then
+                        return on_shard_response(port, nil)
+                    end
+                    on_shard_response(port, decoded)
+                end,
+            })
+            if not ok then
+                on_shard_response(port, nil)
+            end
+        end
+
+        if ids_requested then
+            for port, ids_for_port in pairs(shard_ids or {}) do
+                request_port(port, ids_for_port)
+            end
+        else
+            for _, port in ipairs(ports) do
+                request_port(port, nil)
             end
         end
 
@@ -3342,13 +3467,10 @@ local function list_stream_status(server, client, request)
         return nil
     end
 
-    local status = {}
-    if lite and runtime.list_status_lite then
-        status = runtime.list_status_lite() or {}
-    elseif runtime.list_status then
-        status = runtime.list_status() or {}
+    local status = collect_runtime_stream_status(lite, ids)
+    if not ids_requested then
+        stream_status_cache[cache_key] = { ts = now, payload = status }
     end
-    stream_status_cache[cache_key] = { ts = now, payload = status }
     json_response(server, client, 200, status)
 end
 
@@ -3367,7 +3489,7 @@ local function get_stream_status(server, client, request, id)
             local port = sharding_port_for_stream_id(tostring(id))
             local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
             if port and port ~= local_port then
-                local path = "/api/v1/stream-status"
+                local path = "/api/v1/stream-status/" .. tostring(id)
                 if lite then
                     path = path .. "?lite=1"
                 end
@@ -3387,13 +3509,9 @@ local function get_stream_status(server, client, request, id)
                         if not response or tonumber(response.code) ~= 200 then
                             return error_response(server, client, 404, "stream not found")
                         end
-                        local ok2, payload = pcall(json.decode, response.content or "")
-                        if not ok2 or type(payload) ~= "table" then
+                        local ok2, entry = pcall(json.decode, response.content or "")
+                        if not ok2 or type(entry) ~= "table" then
                             return error_response(server, client, 503, "shard decode failed")
-                        end
-                        local entry = payload[tostring(id)]
-                        if not entry then
-                            return error_response(server, client, 404, "stream not found")
                         end
                         if type(entry) == "table" then
                             entry.shard_port = port
@@ -4315,6 +4433,47 @@ local function restart_transcode(server, client, request, id)
     json_response(server, client, 200, { status = "restarting" })
 end
 
+local function switch_stream_input(server, client, request, id)
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local raw_index = body.input_index
+    local input_index = tonumber(raw_index)
+    if input_index == nil then
+        return error_response(server, client, 400, "input_index is required")
+    end
+    input_index = math.floor(input_index)
+    if input_index < 0 then
+        return error_response(server, client, 400, "input_index must be >= 0")
+    end
+
+    local ok, err = nil, nil
+    if runtime and runtime.switch_stream_input then
+        ok, err = runtime.switch_stream_input(id, input_index)
+    else
+        ok, err = false, "switch input unsupported"
+    end
+    if not ok then
+        if sharding_master_enabled() then
+            local port = sharding_port_for_stream_id(tostring(id))
+            local local_port = tonumber(config and config.get_setting and config.get_setting("http_port") or 0) or 0
+            if port and port ~= local_port then
+                return proxy_api_request(server, client, request, port,
+                    "/api/v1/streams/" .. tostring(id) .. "/switch-input")
+            end
+        end
+        local message = tostring(err or "switch input failed")
+        local code = (message == "stream not found") and 404 or 400
+        return error_response(server, client, code, message)
+    end
+    json_response(server, client, 200, {
+        status = "ok",
+        action = "switch_input",
+        input_index = input_index,
+    })
+end
+
 local function kill_ffmpeg_processes()
     if package and package.config and package.config:sub(1, 1) == "\\" then
         return
@@ -4566,6 +4725,29 @@ local function apply_log_settings_patch(body)
     end
 end
 
+local function settings_patch_skip_runtime_reload(body)
+    if type(body) ~= "table" then
+        return false
+    end
+    local fast_keys = {
+        servers = true,
+        groups = true,
+        auth_backends = true,
+        users = true,
+        softcam = true,
+    }
+    local has_keys = false
+    for k, _ in pairs(body) do
+        if type(k) == "string" then
+            has_keys = true
+            if not fast_keys[k] then
+                return false
+            end
+        end
+    end
+    return has_keys
+end
+
 local function set_settings(server, client, request)
     local body = parse_json_body(request)
     if not body then
@@ -4595,6 +4777,7 @@ local function set_settings(server, client, request)
     body.telegram_bot_token_set = nil
     body.ai_api_key_masked = nil
     body.ai_api_key_set = nil
+    local skip_runtime_reload = settings_patch_skip_runtime_reload(body)
     apply_config_change(server, client, request, {
         comment = "settings update",
         slow_threshold_ms = 500,
@@ -4695,8 +4878,13 @@ local function set_settings(server, client, request)
         -- Для настроек используем мягкий refresh без force:
         -- stream/adapters с тем же hash не пересобираются, uptime не сбрасывается.
         runtime_apply = function()
+            if skip_runtime_reload then
+                return true
+            end
             return reload_runtime(false)
         end,
+        -- Для metadata-only патчей reload не нужен, поэтому не рассылаем broadcast.
+        broadcast_reload = not skip_runtime_reload,
         -- В шардах также нужен мягкий refresh, чтобы не дергать все стримы.
         broadcast_force = false,
     })
@@ -5199,7 +5387,18 @@ local function resolve_server_entry(body)
         if type(list) == "table" then
             for _, item in ipairs(list) do
                 if type(item) == "table" and tostring(item.id or "") == tostring(body.id or "") then
-                    return item
+                    local merged = {}
+                    for k, v in pairs(item) do
+                        merged[k] = v
+                    end
+                    -- Allow unsaved form test payload to override saved fields,
+                    -- including explicit empty values (for auth-none checks).
+                    for k, v in pairs(body) do
+                        if k ~= "id" then
+                            merged[k] = v
+                        end
+                    end
+                    return merged
                 end
             end
         end
@@ -5208,7 +5407,7 @@ local function resolve_server_entry(body)
     return body
 end
 
-local function normalize_server_host(entry)
+function normalize_server_host(entry)
     if type(entry) ~= "table" then
         return nil, "invalid server"
     end
@@ -5273,7 +5472,7 @@ local function normalize_server_host(entry)
     }
 end
 
-local function slugify_server_id(value)
+function slugify_server_id(value)
     local text = tostring(value or ""):lower()
     text = text:gsub("[^%w_-]+", "_")
     text = text:gsub("_+", "_")
@@ -5281,7 +5480,7 @@ local function slugify_server_id(value)
     return text
 end
 
-local function get_server_id(entry)
+function get_server_id(entry)
     if type(entry) ~= "table" then
         return nil
     end
@@ -5297,7 +5496,7 @@ local function get_server_id(entry)
     return slug
 end
 
-local function build_server_path(cfg, path)
+function build_server_path(cfg, path)
     local base = cfg.base_path or ""
     if base == "" then
         return path
@@ -5305,7 +5504,7 @@ local function build_server_path(cfg, path)
     return base .. path
 end
 
-local function decode_json_safe(text)
+function decode_json_safe(text)
     if not text or text == "" then
         return nil
     end
@@ -5373,7 +5572,7 @@ function api._servers_classify_error_status(message, fallback_code)
     return 400
 end
 
-local function parse_cookie_from_headers(headers)
+function parse_cookie_from_headers(headers)
     if not headers then
         return nil
     end
@@ -5392,7 +5591,7 @@ local function parse_cookie_from_headers(headers)
     return nil
 end
 
-local function ensure_curl_available()
+function ensure_curl_available()
     if not process or type(process.spawn) ~= "function" then
         return false
     end
@@ -5406,7 +5605,7 @@ local function ensure_curl_available()
     return true
 end
 
-local function run_curl(args, callback)
+function run_curl(args, callback)
     if not ensure_curl_available() then
         callback(nil, nil, "curl unavailable")
         return
@@ -5441,7 +5640,7 @@ local function run_curl(args, callback)
     })
 end
 
-local function parse_curl_body_code(output)
+function parse_curl_body_code(output)
     if not output then
         return nil, nil
     end
@@ -5453,7 +5652,7 @@ local function parse_curl_body_code(output)
     return nil, output
 end
 
-local function split_headers_body(text)
+function split_headers_body(text)
     if not text then
         return "", ""
     end
@@ -5467,7 +5666,7 @@ local function split_headers_body(text)
     return head, body
 end
 
-local function parse_status_from_headers(text)
+function parse_status_from_headers(text)
     if not text then
         return nil
     end
@@ -5478,7 +5677,7 @@ local function parse_status_from_headers(text)
     return nil
 end
 
-local function parse_cookie_from_header_text(text)
+function parse_cookie_from_header_text(text)
     if not text then
         return nil
     end
@@ -5497,7 +5696,7 @@ local function parse_cookie_from_header_text(text)
     return nil
 end
 
-local function remote_http_login(cfg, callback)
+function remote_http_login(cfg, callback)
     if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
         callback(true, nil, nil, nil)
         return
@@ -5552,7 +5751,7 @@ local function remote_http_login(cfg, callback)
     attempt()
 end
 
-local function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
+function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
     local headers = {
         "Host: " .. tostring(cfg.host) .. ":" .. tostring(cfg.port),
         "Connection: close",
@@ -5590,7 +5789,7 @@ local function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
     })
 end
 
-local function remote_https_login(cfg, callback)
+function remote_https_login(cfg, callback)
     if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
         callback(true, nil, nil, nil)
         return
@@ -5655,7 +5854,7 @@ local function remote_https_login(cfg, callback)
     attempt()
 end
 
-local function remote_https_fetch_json(cfg, path, cookie, method, body, callback)
+function remote_https_fetch_json(cfg, path, cookie, method, body, callback)
     local url = string.format("https://%s:%d%s", cfg.host, cfg.port, build_server_path(cfg, path))
     local args = { "curl", "-sS", "-w", "\nASTRA_HTTP_CODE:%{http_code}\n" }
     if cfg.insecure == true then
@@ -5699,21 +5898,21 @@ local function remote_https_fetch_json(cfg, path, cookie, method, body, callback
     end)
 end
 
-local function remote_login(cfg, callback)
+function remote_login(cfg, callback)
     if cfg.scheme == "https" then
         return remote_https_login(cfg, callback)
     end
     return remote_http_login(cfg, callback)
 end
 
-local function remote_fetch_json(cfg, path, cookie, method, body, callback)
+function remote_fetch_json(cfg, path, cookie, method, body, callback)
     if cfg.scheme == "https" then
         return remote_https_fetch_json(cfg, path, cookie, method, body, callback)
     end
     return remote_http_fetch_json(cfg, path, cookie, method, body, callback)
 end
 
-local function remote_health_check(cfg, callback)
+function remote_health_check(cfg, callback)
     local function do_health(cookie, path)
         remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok, data, err, code)
             if ok then
@@ -5831,6 +6030,9 @@ local function server_test(server, client, request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
     end
+    if not (remote_servers and type(remote_servers.probe) == "function") then
+        return error_response(server, client, 500, "remote servers api is unavailable")
+    end
     local body = parse_json_body(request)
     if not body then
         return error_response(server, client, 400, "invalid json")
@@ -5839,16 +6041,14 @@ local function server_test(server, client, request)
     if not entry then
         return error_response(server, client, 404, err or "server not found")
     end
-    local cfg, cfg_err = normalize_server_host(entry)
-    if not cfg then
-        return error_response(server, client, 400, cfg_err or "invalid server")
-    end
-    remote_health_check(cfg, function(ok, msg, remote_code)
+    remote_servers.probe(entry, function(ok, payload, probe_err, remote_code)
         if ok then
-            return json_response(server, client, 200, { status = "ok", message = msg or "ok" })
+            return json_response(server, client, 200, payload or { status = "ok", message = "ok" })
         end
-        local text = tostring(msg or "failed")
-        local code = api._servers_classify_error_status(text, remote_code)
+        local text = tostring(probe_err or "failed")
+        local code = remote_servers.classify_error_status
+            and remote_servers.classify_error_status(text, remote_code)
+            or api._servers_classify_error_status(text, remote_code)
         return error_response(server, client, code, text)
     end)
 end
@@ -6027,10 +6227,46 @@ local function list_server_entries(filter_id)
     return out
 end
 
+local function servers_import_enabled()
+    local value = config and config.get_setting and config.get_setting("servers_import_enabled") or nil
+    return value == true or value == 1 or value == "1" or tostring(value or ""):lower() == "true"
+end
+
+local function ensure_remote_servers_available(server, client)
+    if remote_servers and type(remote_servers.probe) == "function" then
+        return true
+    end
+    error_response(server, client, 500, "remote servers api is unavailable")
+    return false
+end
+
+local function check_remote_action_rate_limit(server, client, request, action, server_id)
+    local ip = (request and request.addr) or "unknown"
+    local limit = setting_number("rate_limit_remote_actions_per_min", 60)
+    local window = setting_number("rate_limit_remote_actions_window_sec", 60)
+    local key = tostring(ip) .. "|" .. tostring(action or "") .. "|" .. tostring(server_id or "")
+    local ok, entry = rate_limit_check(rate_limits.remote_actions, key, limit, window)
+    rate_limits.counter = (rate_limits.counter or 0) + 1
+    if (rate_limits.counter % 200) == 0 then
+        prune_rate_limits(rate_limits.remote_actions, window)
+    end
+    if ok then
+        return true
+    end
+    local retry_after = (entry and entry.window_start)
+        and math.max(1, (entry.window_start + window) - os.time())
+        or window
+    rate_limit_response(server, client, retry_after, "rate limited")
+    return false
+end
+
 local function server_status_list(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
     end
     local filter_id = request and request.query and request.query.id or nil
     local list = list_server_entries(filter_id)
@@ -6045,41 +6281,71 @@ local function server_status_list(server, client, request)
         responded = true
         json_response(server, client, 200, { items = results })
     end
-    local function done(entry, ok, message)
+    local function done(entry, ok, message, extra)
         local id = get_server_id(entry)
         if id then
-            table.insert(results, {
+            local row = {
                 id = id,
                 ok = ok and true or false,
                 message = message or "",
                 ts = os.time(),
-            })
+            }
+            if type(extra) == "table" then
+                if extra.api_type_effective then
+                    row.api_type_effective = extra.api_type_effective
+                end
+                if extra.remote_version then
+                    row.remote_version = extra.remote_version
+                end
+            end
+            table.insert(results, row)
         end
         pending = pending - 1
         if pending <= 0 then
             finish()
         end
     end
-    for _, entry in ipairs(list) do
-        if entry.enable == false or entry.enabled == false then
-            done(entry, false, "disabled")
-        else
-            local cfg, cfg_err = normalize_server_host(entry)
-            if not cfg then
-                done(entry, false, cfg_err or "invalid server")
+    local max_parallel = 4
+    local active = 0
+    local index = 1
+
+    local function launch_next()
+        while active < max_parallel and index <= #list do
+            local entry = list[index]
+            index = index + 1
+            if entry.enable == false or entry.enabled == false then
+                done(entry, false, "disabled")
             else
-                remote_health_check(cfg, function(ok, msg)
-                    done(entry, ok, msg or (ok and "ok" or "error"))
+                active = active + 1
+                remote_servers.probe(entry, function(ok, payload, err, code)
+                    active = math.max(0, active - 1)
+                    if ok then
+                        done(entry, true, "ok", payload)
+                    else
+                        local text = tostring(err or "error")
+                        local status = remote_servers.classify_error_status
+                            and remote_servers.classify_error_status(text, code)
+                            or api._servers_classify_error_status(text, code)
+                        done(entry, false, "http " .. tostring(status) .. ": " .. text)
+                    end
+                    if pending > 0 then
+                        launch_next()
+                    end
                 end)
             end
         end
     end
+
+    launch_next()
 end
 
 function api._servers_pull_streams(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
+    end
+    if not servers_import_enabled() then
+        return error_response(server, client, 410, "legacy servers pull is disabled (set settings.servers_import_enabled=true)")
     end
     local body = parse_json_body(request)
     if not body then
@@ -6153,6 +6419,9 @@ function api._servers_list_streams(server, client, request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
     end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
     local body = parse_json_body(request)
     if not body then
         return error_response(server, client, 400, "invalid json")
@@ -6161,30 +6430,201 @@ function api._servers_list_streams(server, client, request)
     if not entry then
         return error_response(server, client, 404, err or "server not found")
     end
-    local cfg, cfg_err = normalize_server_host(entry)
-    if not cfg then
-        return error_response(server, client, 400, cfg_err or "invalid server")
-    end
+    local include_status = body.include_status ~= false
 
-    remote_login(cfg, function(ok, cookie, login_err, login_code)
+    remote_servers.list_streams(entry, {
+        include_status = include_status,
+    }, function(ok, payload, list_err, list_code)
         if not ok then
-            local text = tostring(login_err or "login failed")
-            local code = api._servers_classify_error_status(text, login_code)
+            local text = tostring(list_err or "fetch failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, list_code)
+                or api._servers_classify_error_status(text, list_code)
             return error_response(server, client, code, text)
         end
-        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err, fetch_code)
-            if not ok2 then
-                local text = tostring(fetch_err or "fetch failed")
-                local code = api._servers_classify_error_status(text, fetch_code)
-                return error_response(server, client, code, text)
-            end
-            local items = api._servers_extract_stream_summaries(data)
-            json_response(server, client, 200, {
-                status = "ok",
-                items = items,
-                count = #items,
-            })
-        end)
+        local items = (type(payload) == "table" and type(payload.items) == "table") and payload.items or {}
+        json_response(server, client, 200, {
+            status = "ok",
+            items = items,
+            count = #items,
+            capabilities = payload and payload.capabilities or {},
+            api_type_effective = payload and payload.api_type_effective or "",
+            remote_version = payload and payload.remote_version or "",
+            auth_mode = payload and payload.auth_mode or "",
+        })
+    end)
+end
+
+function api._servers_get_stream(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local stream_id = tostring(body.stream_id or "")
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+
+    remote_servers.get_stream(entry, stream_id, function(ok, payload, fetch_err, fetch_code)
+        if not ok then
+            local text = tostring(fetch_err or "fetch failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, fetch_code)
+                or api._servers_classify_error_status(text, fetch_code)
+            return error_response(server, client, code, text)
+        end
+        json_response(server, client, 200, payload or {
+            id = stream_id,
+            enabled = false,
+            config = {},
+        })
+    end)
+end
+
+function api._servers_upsert_stream(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local stream = body.stream
+    if type(stream) ~= "table" then
+        return error_response(server, client, 400, "stream payload required")
+    end
+    local mode = tostring(body.mode or "upsert")
+    if not check_remote_action_rate_limit(server, client, request, "upsert", tostring(entry.id or body.id or "")) then
+        return
+    end
+
+    remote_servers.upsert_stream(entry, stream, mode, function(ok, payload, upsert_err, upsert_code)
+        if not ok then
+            local text = tostring(upsert_err or "upsert failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, upsert_code)
+                or api._servers_classify_error_status(text, upsert_code)
+            return error_response(server, client, code, text)
+        end
+        audit_event("remote_stream_upsert", request, {
+            actor_user_id = admin.id,
+            actor_username = admin.username,
+            ok = true,
+            target = tostring(stream.id or ""),
+            message = tostring(entry.id or body.id or ""),
+        })
+        json_response(server, client, 200, payload or { status = "ok" })
+    end)
+end
+
+function api._servers_delete_stream(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local stream_id = tostring(body.stream_id or "")
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    if not check_remote_action_rate_limit(server, client, request, "delete", tostring(entry.id or body.id or "")) then
+        return
+    end
+
+    remote_servers.delete_stream(entry, stream_id, function(ok, payload, delete_err, delete_code)
+        if not ok then
+            local text = tostring(delete_err or "delete failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, delete_code)
+                or api._servers_classify_error_status(text, delete_code)
+            return error_response(server, client, code, text)
+        end
+        audit_event("remote_stream_delete", request, {
+            actor_user_id = admin.id,
+            actor_username = admin.username,
+            ok = true,
+            target = stream_id,
+            message = tostring(entry.id or body.id or ""),
+        })
+        json_response(server, client, 200, payload or { status = "ok" })
+    end)
+end
+
+function api._servers_action_stream(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local stream_id = tostring(body.stream_id or "")
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local action = tostring(body.action or "")
+    if action == "" then
+        return error_response(server, client, 400, "action is required")
+    end
+    if not check_remote_action_rate_limit(server, client, request, action, tostring(entry.id or body.id or "")) then
+        return
+    end
+
+    remote_servers.action(entry, stream_id, action, {
+        input_index = body.input_index,
+    }, function(ok, payload, action_err, action_code)
+        if not ok then
+            local text = tostring(action_err or "action failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, action_code)
+                or api._servers_classify_error_status(text, action_code)
+            return error_response(server, client, code, text)
+        end
+        audit_event("remote_stream_action", request, {
+            actor_user_id = admin.id,
+            actor_username = admin.username,
+            ok = true,
+            target = stream_id,
+            message = tostring(entry.id or body.id or "") .. ":" .. tostring(action),
+        })
+        json_response(server, client, 200, payload or { status = "ok", action = action })
     end)
 end
 
@@ -6192,6 +6632,9 @@ local function import_server_config(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
+    end
+    if not servers_import_enabled() then
+        return error_response(server, client, 410, "legacy servers import is disabled (set settings.servers_import_enabled=true)")
     end
     local body = parse_json_body(request)
     if not body then
@@ -6793,6 +7236,11 @@ function api.handle_request(server, client, request)
         return delete_stream(server, client, stream_id, request)
     end
 
+    local stream_switch_input_id = path:match("^/api/v1/streams/([%w%-%_]+)/switch%-input$")
+    if stream_switch_input_id and method == "POST" then
+        return switch_stream_input(server, client, request, stream_switch_input_id)
+    end
+
     local stream_cam_stats = path:match("^/api/v1/streams/([%w%-%_]+)/cam%-stats$")
     if stream_cam_stats and method == "GET" then
         return get_stream_cam_stats(server, client, request, stream_cam_stats)
@@ -7260,7 +7708,23 @@ function api.handle_request(server, client, request)
     if path == "/api/v1/servers/status" and method == "GET" then
         return server_status_list(server, client, request)
     end
+    if path == "/api/v1/servers/streams/list" and method == "POST" then
+        return api._servers_list_streams(server, client, request)
+    end
+    if path == "/api/v1/servers/streams/get" and method == "POST" then
+        return api._servers_get_stream(server, client, request)
+    end
+    if path == "/api/v1/servers/streams/upsert" and method == "POST" then
+        return api._servers_upsert_stream(server, client, request)
+    end
+    if path == "/api/v1/servers/streams/delete" and method == "POST" then
+        return api._servers_delete_stream(server, client, request)
+    end
+    if path == "/api/v1/servers/streams/action" and method == "POST" then
+        return api._servers_action_stream(server, client, request)
+    end
     if path == "/api/v1/servers/streams" and method == "POST" then
+        -- Backward-compatible alias.
         return api._servers_list_streams(server, client, request)
     end
     if path == "/api/v1/servers/pull-streams" and method == "POST" then
