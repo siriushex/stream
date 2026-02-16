@@ -5471,7 +5471,7 @@ local function remote_http_login(cfg, callback)
                     return callback(false, nil, "login failed (no response)")
                 end
                 local code = response.code or 0
-                if code == 404 and idx < #paths then
+                if (code == 404 or code == 403) and idx < #paths then
                     idx = idx + 1
                     return attempt()
                 end
@@ -5568,7 +5568,7 @@ local function remote_https_login(cfg, callback)
             end
             local head, _ = split_headers_body(stdout or "")
             local code = parse_status_from_headers(head) or 0
-            if code == 404 and idx < #paths then
+            if (code == 404 or code == 403) and idx < #paths then
                 idx = idx + 1
                 return attempt()
             end
@@ -5663,6 +5663,96 @@ local function remote_health_check(cfg, callback)
         end
         do_health(cookie, "/api/v1/health/process")
     end)
+end
+
+function api._servers_boolish(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" then
+        return false
+    end
+    if type(value) == "string" then
+        local v = value:lower()
+        if v == "true" or v == "yes" or v == "on" then
+            return true
+        end
+        if v == "false" or v == "no" or v == "off" then
+            return false
+        end
+    end
+    return fallback
+end
+
+function api._servers_fetch_streams(cfg, cookie, callback)
+    local paths = { "/api/v1/streams", "/api/streams" }
+    local idx = 1
+    local function fetch_next()
+        local path = paths[idx]
+        remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok, data, fetch_err, code)
+            if not ok then
+                if code == 404 and idx < #paths then
+                    idx = idx + 1
+                    return fetch_next()
+                end
+                return callback(false, nil, fetch_err or "fetch failed", code)
+            end
+            callback(true, data, nil, code)
+        end)
+    end
+    fetch_next()
+end
+
+function api._servers_extract_stream_summaries(data)
+    local out = {}
+
+    local function push_cfg(cfg, enabled_hint)
+        if type(cfg) ~= "table" then
+            return
+        end
+        local id = tostring(cfg.id or "")
+        if id == "" then
+            return
+        end
+        local name = tostring(cfg.name or cfg.id or "")
+        local stype = tostring(cfg.type or "")
+        local enabled = enabled_hint
+        if enabled == nil then
+            enabled = api._servers_boolish(cfg.enabled, api._servers_boolish(cfg.enable, true))
+        end
+        table.insert(out, {
+            id = id,
+            name = name,
+            type = stype,
+            enabled = enabled == true,
+        })
+    end
+
+    if type(data) == "table" and type(data.make_stream) == "table" then
+        for _, cfg in ipairs(data.make_stream) do
+            push_cfg(cfg, nil)
+        end
+    elseif type(data) == "table" then
+        local list = data
+        if type(data.items) == "table" then
+            list = data.items
+        end
+        if type(list) == "table" then
+            for _, row in ipairs(list) do
+                if type(row) == "table" and type(row.config) == "table" then
+                    push_cfg(row.config, api._servers_boolish(row.enabled, nil))
+                end
+            end
+        end
+    end
+
+    table.sort(out, function(a, b)
+        return tostring(a.id or "") < tostring(b.id or "")
+    end)
+    return out
 end
 
 local function server_test(server, client, request)
@@ -5923,7 +6013,7 @@ local function server_status_list(server, client, request)
     end
 end
 
-local function pull_server_streams(server, client, request)
+function api._servers_pull_streams(server, client, request)
     local admin = require_admin(request)
     if not admin then
         return error_response(server, client, 403, "forbidden")
@@ -5952,46 +6042,78 @@ local function pull_server_streams(server, client, request)
         if not ok then
             return error_response(server, client, 400, login_err or "login failed")
         end
-        local paths = { "/api/v1/streams", "/api/streams" }
-        local idx = 1
-        local function fetch_next()
-            local path = paths[idx]
-            remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok2, data, fetch_err, code)
-                if not ok2 then
-                    if code == 404 and idx < #paths then
-                        idx = idx + 1
-                        return fetch_next()
-                    end
-                    return error_response(server, client, 400, fetch_err or "fetch failed")
+        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err)
+            if not ok2 then
+                return error_response(server, client, 400, fetch_err or "fetch failed")
+            end
+
+            local payload = { make_stream = {} }
+            if type(data) == "table" and type(data.make_stream) == "table" then
+                payload.make_stream = data.make_stream
+            elseif type(data) == "table" then
+                local list = data
+                if type(data.items) == "table" then
+                    list = data.items
                 end
-                local payload = { make_stream = {} }
-                if type(data) == "table" and data.make_stream then
-                    payload.make_stream = data.make_stream
-                elseif type(data) == "table" then
-                    for _, row in ipairs(data) do
-                        if type(row) == "table" and type(row.config) == "table" then
-                            local cfgRow = row.config
-                            cfgRow.enable = row.enabled
-                            table.insert(payload.make_stream, cfgRow)
-                        end
+                for _, row in ipairs(list or {}) do
+                    if type(row) == "table" and type(row.config) == "table" then
+                        local cfgRow = row.config
+                        cfgRow.enable = row.enabled
+                        table.insert(payload.make_stream, cfgRow)
                     end
                 end
-                if #payload.make_stream == 0 then
-                    return error_response(server, client, 400, "no streams received")
-                end
-                apply_config_change(server, client, request, {
-                    comment = "pull streams",
-                    defer_export = true,
-                    apply = function()
-                        return config.import_astra(payload, { mode = "merge", transaction = true })
-                    end,
-                    success_builder = function(summary, revision_id)
-                        return { status = "ok", revision_id = revision_id, summary = summary }
-                    end,
-                })
-            end)
+            end
+
+            if #payload.make_stream == 0 then
+                return error_response(server, client, 400, "no streams received")
+            end
+            apply_config_change(server, client, request, {
+                comment = "pull streams",
+                defer_export = true,
+                apply = function()
+                    return config.import_astra(payload, { mode = "merge", transaction = true })
+                end,
+                success_builder = function(summary, revision_id)
+                    return { status = "ok", revision_id = revision_id, summary = summary }
+                end,
+            })
+        end)
+    end)
+end
+
+function api._servers_list_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 404, err or "server not found")
+    end
+    local cfg, cfg_err = normalize_server_host(entry)
+    if not cfg then
+        return error_response(server, client, 400, cfg_err or "invalid server")
+    end
+
+    remote_login(cfg, function(ok, cookie, login_err)
+        if not ok then
+            return error_response(server, client, 400, login_err or "login failed")
         end
-        fetch_next()
+        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err)
+            if not ok2 then
+                return error_response(server, client, 400, fetch_err or "fetch failed")
+            end
+            local items = api._servers_extract_stream_summaries(data)
+            json_response(server, client, 200, {
+                status = "ok",
+                items = items,
+                count = #items,
+            })
+        end)
     end)
 end
 
@@ -7063,8 +7185,11 @@ function api.handle_request(server, client, request)
     if path == "/api/v1/servers/status" and method == "GET" then
         return server_status_list(server, client, request)
     end
+    if path == "/api/v1/servers/streams" and method == "POST" then
+        return api._servers_list_streams(server, client, request)
+    end
     if path == "/api/v1/servers/pull-streams" and method == "POST" then
-        return pull_server_streams(server, client, request)
+        return api._servers_pull_streams(server, client, request)
     end
     if path == "/api/v1/servers/import" and method == "POST" then
         return import_server_config(server, client, request)

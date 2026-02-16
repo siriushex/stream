@@ -505,7 +505,7 @@ function runtime.configure_influx()
     if instance == "" then
         instance = os.getenv("HOSTNAME") or ""
     end
-    local measurement = setting_string("influx_measurement", "astra_metrics")
+    local measurement = setting_string("influx_measurement", "stream_metrics")
 
     influx.config = {
         enabled = true,
