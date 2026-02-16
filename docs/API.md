@@ -216,6 +216,7 @@ curl -s "http://127.0.0.1:8000/api/v1/ai/plan" \
 ## Remote Servers (admin)
 - `GET /api/v1/servers/status`
 - `POST /api/v1/servers/test`
+- `POST /api/v1/servers/streams`
 - `POST /api/v1/servers/pull-streams`
 - `POST /api/v1/servers/import`
 
@@ -227,6 +228,14 @@ curl -s "http://127.0.0.1:8000/api/v1/servers/test" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"host":"http://127.0.0.1/base","port":8000,"login":"admin","password":"admin"}'
+```
+
+### Пример: List remote streams
+```bash
+curl -s "http://127.0.0.1:8000/api/v1/servers/streams" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"remote-1"}'
 ```
 
 ### Пример: Pull streams
