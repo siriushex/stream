@@ -26,6 +26,9 @@
   - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
   - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
   - Servers: add `/api/v1/servers/streams` + UI `Streams` to list remote streams (channels) without importing; fix address rendering for `HOST:PORT/base_path`.
+  - Servers/API: propagate remote HTTP error details and status codes for Test/Streams/Pull/Import (`401/403/404/502` classification instead of generic `400`).
+  - UI/Servers: show precise backend error payloads with HTTP code and actionable auth hint for remote login failures.
+  - UI/Settings: remove extra full `/api/v1/settings` reload after frequent save actions (auth backends, HLS/CAS/HTTP/Auth/Buffer/password policy, allow/block IP) to reduce Save latency on large configs.
   - Influx: default measurement name is now `stream_metrics` (instead of legacy `astra_metrics`).
 - Tests:
   - `./configure.sh && make`
@@ -38,6 +41,7 @@
   - `./stream scripts/tests/sharding_apply_preflight_unit.lua`
   - `./stream scripts/tests/servers_test_normalize_unit.lua`
   - `./stream scripts/tests/servers_streams_list_unit.lua`
+  - `./astra-macos-arm64 scripts/tests/servers_remote_error_unit.lua`
   - `./stream scripts/tests/sqlite_compat_replace_unit.lua`
   - `./stream scripts/tests/config_export_reuse_unit.lua`
   - `./stream scripts/tests/process_spawn_env_unit.lua`
