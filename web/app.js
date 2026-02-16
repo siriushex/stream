@@ -638,6 +638,9 @@ const state = {
   serverIdAuto: false,
   serverStatus: {},
   serverStatusTimer: null,
+  serverStreamsServerId: '',
+  serverStreamsItems: [],
+  serverStreamsFilter: '',
   softcams: [],
   softcamEditing: null,
   softcamIdAuto: false,
@@ -1162,6 +1165,17 @@ const elements = {
   serverClose: $('#server-close'),
   serverTest: $('#server-test'),
   serverError: $('#server-error'),
+  serverStreamsOverlay: $('#server-streams-overlay'),
+  serverStreamsTitle: $('#server-streams-title'),
+  serverStreamsClose: $('#server-streams-close'),
+  serverStreamsCancel: $('#server-streams-cancel'),
+  serverStreamsRefresh: $('#server-streams-refresh'),
+  serverStreamsPull: $('#server-streams-pull'),
+  serverStreamsImport: $('#server-streams-import'),
+  serverStreamsFilter: $('#server-streams-filter'),
+  serverStreamsTable: $('#server-streams-table'),
+  serverStreamsEmpty: $('#server-streams-empty'),
+  serverStreamsError: $('#server-streams-error'),
   settingsEpgInterval: $('#settings-epg-interval'),
   settingsEventRequest: $('#settings-event-request'),
   settingsMonitorAnalyzeMax: $('#settings-monitor-analyze-max'),
@@ -6464,15 +6478,15 @@ function renderServers() {
   servers.forEach((server) => {
     const row = document.createElement('div');
     row.className = 'table-row';
-    const idCell = createEl('div', '', server.id || '');
-    const nameCell = createEl('div', '', server.name || '');
-    const typeCell = createEl('div', '', server.type || '-');
-    const address = server.host ? `${server.host}${server.port ? `:${server.port}` : ''}` : '';
-    const hostCell = createEl('div', '', address || '-');
-    const loginCell = createEl('div', '', server.login || '-');
-    const statusCell = document.createElement('div');
-    const statusInfo = getServerStatusInfo(server);
-    const statusBadge = document.createElement('div');
+	    const idCell = createEl('div', '', server.id || '');
+	    const nameCell = createEl('div', '', server.name || '');
+	    const typeCell = createEl('div', '', server.type || '-');
+	    const address = formatServerAddress(server);
+	    const hostCell = createEl('div', '', address || '-');
+	    const loginCell = createEl('div', '', server.login || '-');
+	    const statusCell = document.createElement('div');
+	    const statusInfo = getServerStatusInfo(server);
+	    const statusBadge = document.createElement('div');
     statusBadge.className = `stream-status-badge ${statusInfo.className}`;
     statusBadge.title = statusInfo.title || '';
     const statusDot = createEl('span', 'stream-status-dot');
@@ -6493,14 +6507,19 @@ function renderServers() {
     openBtn.dataset.id = server.id || '';
 
     const testBtn = createEl('button', 'btn ghost', 'Test');
-    testBtn.type = 'button';
-    testBtn.dataset.action = 'server-test';
-    testBtn.dataset.id = server.id || '';
+	    testBtn.type = 'button';
+	    testBtn.dataset.action = 'server-test';
+	    testBtn.dataset.id = server.id || '';
 
-    const pullBtn = createEl('button', 'btn ghost', 'Pull streams');
-    pullBtn.type = 'button';
-    pullBtn.dataset.action = 'server-pull';
-    pullBtn.dataset.id = server.id || '';
+	    const streamsBtn = createEl('button', 'btn ghost', 'Streams');
+	    streamsBtn.type = 'button';
+	    streamsBtn.dataset.action = 'server-streams';
+	    streamsBtn.dataset.id = server.id || '';
+
+	    const pullBtn = createEl('button', 'btn ghost', 'Pull streams');
+	    pullBtn.type = 'button';
+	    pullBtn.dataset.action = 'server-pull';
+	    pullBtn.dataset.id = server.id || '';
 
     const importBtn = createEl('button', 'btn ghost', 'Import config');
     importBtn.type = 'button';
@@ -6512,12 +6531,13 @@ function renderServers() {
     deleteBtn.dataset.action = 'server-delete';
     deleteBtn.dataset.id = server.id || '';
 
-    actionCell.appendChild(editBtn);
-    actionCell.appendChild(openBtn);
-    actionCell.appendChild(testBtn);
-    actionCell.appendChild(pullBtn);
-    actionCell.appendChild(importBtn);
-    actionCell.appendChild(deleteBtn);
+	    actionCell.appendChild(editBtn);
+	    actionCell.appendChild(openBtn);
+	    actionCell.appendChild(testBtn);
+	    actionCell.appendChild(streamsBtn);
+	    actionCell.appendChild(pullBtn);
+	    actionCell.appendChild(importBtn);
+	    actionCell.appendChild(deleteBtn);
 
     row.appendChild(idCell);
     row.appendChild(nameCell);
@@ -6528,6 +6548,155 @@ function renderServers() {
     row.appendChild(actionCell);
     elements.serverTable.appendChild(row);
   });
+}
+
+function resolveServerUrl(server) {
+  if (!server) return '';
+  const raw = String(server.host || '').trim();
+  if (!raw) return '';
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+  try {
+    const u = new URL(withScheme);
+    // Preserve path/base_path; inject port only when it's not already in the URL.
+    if (server.port && !u.port) {
+      u.port = String(server.port);
+    }
+    return u.toString();
+  } catch (err) {
+    return withScheme;
+  }
+}
+
+function formatServerAddress(server) {
+  const url = resolveServerUrl(server);
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    let path = u.pathname || '';
+    if (path === '/' || path === '') path = '';
+    else path = path.replace(/\/$/, '');
+    return `${u.protocol}//${u.host}${path}`;
+  } catch (err) {
+    return url;
+  }
+}
+
+function clearServerStreamsTable() {
+  if (!elements.serverStreamsTable) return;
+  elements.serverStreamsTable.querySelectorAll('.table-row:not(.header)').forEach((el) => el.remove());
+}
+
+function renderServerStreams() {
+  if (!elements.serverStreamsTable || !elements.serverStreamsEmpty) return;
+  clearServerStreamsTable();
+
+  const items = Array.isArray(state.serverStreamsItems) ? state.serverStreamsItems : [];
+  const filter = String(state.serverStreamsFilter || '').trim().toLowerCase();
+  const filtered = filter
+    ? items.filter((it) => {
+      const id = String((it && it.id) || '').toLowerCase();
+      const name = String((it && it.name) || '').toLowerCase();
+      const type = String((it && it.type) || '').toLowerCase();
+      return id.includes(filter) || name.includes(filter) || type.includes(filter);
+    })
+    : items;
+
+  if (!filtered.length) {
+    elements.serverStreamsEmpty.hidden = false;
+    elements.serverStreamsEmpty.textContent = !items.length
+      ? 'No streams received'
+      : (filter ? 'No matches' : 'No streams received');
+    return;
+  }
+  elements.serverStreamsEmpty.hidden = true;
+
+  const serverId = state.serverStreamsServerId || '';
+  filtered.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    row.appendChild(createEl('div', '', item.id || ''));
+    row.appendChild(createEl('div', '', item.name || item.id || ''));
+    row.appendChild(createEl('div', '', item.type || '-'));
+    row.appendChild(createEl('div', '', item.enabled === false ? 'No' : 'Yes'));
+    const actionCell = document.createElement('div');
+    const openBtn = createEl('button', 'btn ghost', 'Open');
+    openBtn.type = 'button';
+    openBtn.dataset.action = 'server-stream-open';
+    openBtn.dataset.serverId = serverId;
+    openBtn.dataset.streamId = item.id || '';
+    actionCell.appendChild(openBtn);
+    row.appendChild(actionCell);
+    elements.serverStreamsTable.appendChild(row);
+  });
+}
+
+async function loadServerStreams(id) {
+  if (!id) return;
+  if (elements.serverStreamsError) elements.serverStreamsError.textContent = '';
+  if (elements.serverStreamsEmpty) {
+    elements.serverStreamsEmpty.hidden = false;
+    elements.serverStreamsEmpty.textContent = 'Loading...';
+  }
+  clearServerStreamsTable();
+  const payload = await apiJson('/api/v1/servers/streams', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  });
+  const items = Array.isArray(payload && payload.items) ? payload.items : [];
+  state.serverStreamsItems = items;
+  renderServerStreams();
+}
+
+function openServerStreamsModal(id) {
+  if (!id) return;
+  const server = (state.servers || []).find((s) => s && s.id === id);
+  state.serverStreamsServerId = id;
+  state.serverStreamsItems = [];
+  state.serverStreamsFilter = '';
+  if (elements.serverStreamsFilter) elements.serverStreamsFilter.value = '';
+  if (elements.serverStreamsTitle) {
+    const name = server ? (server.name || server.id || id) : id;
+    elements.serverStreamsTitle.textContent = `Remote streams: ${name}`;
+  }
+  if (elements.serverStreamsError) elements.serverStreamsError.textContent = '';
+  setOverlay(elements.serverStreamsOverlay, true);
+  loadServerStreams(id).catch((err) => {
+    const message = err && err.message ? err.message : 'Failed to load remote streams';
+    if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+    if (elements.serverStreamsEmpty) {
+      elements.serverStreamsEmpty.hidden = false;
+      elements.serverStreamsEmpty.textContent = 'Failed to load';
+    }
+  });
+}
+
+function closeServerStreamsModal() {
+  state.serverStreamsServerId = '';
+  state.serverStreamsItems = [];
+  state.serverStreamsFilter = '';
+  if (elements.serverStreamsFilter) elements.serverStreamsFilter.value = '';
+  setOverlay(elements.serverStreamsOverlay, false);
+}
+
+function openRemoteStream(serverId, streamId) {
+  if (!serverId || !streamId) return;
+  const server = (state.servers || []).find((s) => s && s.id === serverId);
+  if (!server) return;
+  const base = resolveServerUrl(server);
+  if (!base) return;
+  try {
+    const u = new URL(base);
+    const basePath = (u.pathname && u.pathname !== '/') ? u.pathname.replace(/\/$/, '') : '';
+    u.pathname = basePath ? `${basePath}/index.html` : '/index.html';
+    const params = new URLSearchParams();
+    params.set('player', streamId);
+    params.set('kind', 'play');
+    params.set('autoplay', '1');
+    u.hash = params.toString();
+    window.open(u.toString(), '_blank');
+  } catch (err) {
+    window.open(base, '_blank');
+  }
 }
 
 function openServerModal(server) {
@@ -6977,19 +7146,9 @@ async function testServer(id, payload) {
 function openServerUrl(id) {
   const server = (state.servers || []).find((s) => s && s.id === id);
   if (!server) return;
-  const raw = String(server.host || '').trim();
-  if (!raw) return;
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
-  try {
-    const u = new URL(withScheme);
-    // Preserve path/base_path; inject port only when it's not already in the URL.
-    if (server.port && !u.port) {
-      u.port = String(server.port);
-    }
-    window.open(u.toString(), '_blank');
-  } catch (err) {
-    window.open(withScheme, '_blank');
-  }
+  const url = resolveServerUrl(server);
+  if (!url) return;
+  window.open(url, '_blank');
 }
 
 function syncGroupIdFromName() {
@@ -30767,6 +30926,9 @@ function bindEvents() {
       if (action === 'server-test') {
         testServer(id).catch((err) => setStatus(err.message || 'Server test failed'));
       }
+      if (action === 'server-streams') {
+        openServerStreamsModal(id);
+      }
       if (action === 'server-pull') {
         pullServerStreams(id).catch((err) => setStatus(err.message || 'Pull streams failed'));
       }
@@ -30778,6 +30940,64 @@ function bindEvents() {
         if (!confirmed) return;
         deleteServer(id).catch((err) => setStatus(err.message || 'Delete failed'));
       }
+    });
+  }
+
+  if (elements.serverStreamsClose) {
+    elements.serverStreamsClose.addEventListener('click', closeServerStreamsModal);
+  }
+  if (elements.serverStreamsCancel) {
+    elements.serverStreamsCancel.addEventListener('click', closeServerStreamsModal);
+  }
+  if (elements.serverStreamsRefresh) {
+    elements.serverStreamsRefresh.addEventListener('click', () => {
+      loadServerStreams(state.serverStreamsServerId).catch((err) => {
+        const message = err && err.message ? err.message : 'Failed to load remote streams';
+        if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+      });
+    });
+  }
+  if (elements.serverStreamsPull) {
+    elements.serverStreamsPull.addEventListener('click', async () => {
+      const id = state.serverStreamsServerId;
+      if (!id) return;
+      try {
+        await pullServerStreams(id);
+        closeServerStreamsModal();
+      } catch (err) {
+        const message = err && err.message ? err.message : 'Pull streams failed';
+        if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+      }
+    });
+  }
+  if (elements.serverStreamsImport) {
+    elements.serverStreamsImport.addEventListener('click', async () => {
+      const id = state.serverStreamsServerId;
+      if (!id) return;
+      try {
+        await importServerConfig(id);
+        closeServerStreamsModal();
+      } catch (err) {
+        const message = err && err.message ? err.message : 'Import failed';
+        if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
+      }
+    });
+  }
+  if (elements.serverStreamsFilter) {
+    elements.serverStreamsFilter.addEventListener('input', () => {
+      state.serverStreamsFilter = elements.serverStreamsFilter.value || '';
+      renderServerStreams();
+    });
+  }
+  if (elements.serverStreamsTable) {
+    elements.serverStreamsTable.addEventListener('click', (event) => {
+      const target = event.target.closest('[data-action]');
+      if (!target) return;
+      const action = target.dataset.action;
+      if (action !== 'server-stream-open') return;
+      const serverId = target.dataset.serverId;
+      const streamId = target.dataset.streamId;
+      openRemoteStream(serverId, streamId);
     });
   }
 

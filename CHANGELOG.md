@@ -25,6 +25,8 @@
   - Watchdog: fix `/proc/self/stat` parsing for CPU usage (use utime+stime; avoid false spikes from child cutime that could trigger restarts).
   - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
   - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
+  - Servers: add `/api/v1/servers/streams` + UI `Streams` to list remote streams (channels) without importing; fix address rendering for `HOST:PORT/base_path`.
+  - Influx: default measurement name is now `stream_metrics` (instead of legacy `astra_metrics`).
 - Tests:
   - `./configure.sh && make`
   - `./stream scripts/tests/config_primary_fingerprint_unit.lua`
@@ -35,6 +37,7 @@
   - `node --check web/app.js`
   - `./stream scripts/tests/sharding_apply_preflight_unit.lua`
   - `./stream scripts/tests/servers_test_normalize_unit.lua`
+  - `./stream scripts/tests/servers_streams_list_unit.lua`
   - `./stream scripts/tests/sqlite_compat_replace_unit.lua`
   - `./stream scripts/tests/config_export_reuse_unit.lua`
   - `./stream scripts/tests/process_spawn_env_unit.lua`
