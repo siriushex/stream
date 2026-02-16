@@ -126,7 +126,8 @@ MPTS workflows, publishing, diagnostics.
   `GET /api/v1/buffer-status`, `GET /api/v1/buffer-status/<id>`.
 - Token auth: `GET /api/v1/sessions?type=auth`, `GET /api/v1/auth-debug/session` (admin),
   `GET /api/v1/alerts?type=auth`.
-- Servers: `POST /api/v1/servers/test` (test remote server health/login).
+- Servers: `POST /api/v1/servers/test` (test remote server health/login),
+  `POST /api/v1/servers/streams` (list remote streams).
 - NOTE: all endpoints except login/logout require a valid session; unauthorized
   returns 401.
 - NOTE: if `http_csrf_enabled` is on, state-changing requests that rely on the

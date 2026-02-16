@@ -4281,8 +4281,8 @@
     </div>
   </div>
 
-  <div class="overlay" id="server-overlay" aria-hidden="true">
-    <div class="modal">
+	  <div class="overlay" id="server-overlay" aria-hidden="true">
+	    <div class="modal">
       <div class="modal-head">
         <div class="modal-title" id="server-title">New server</div>
         <button class="icon-btn" id="server-close" aria-label="Close">
@@ -4336,12 +4336,48 @@
           </div>
         </div>
       </form>
-    </div>
-  </div>
+	    </div>
+	  </div>
 
-  <div class="overlay" id="auth-backend-overlay" aria-hidden="true">
-    <div class="modal">
-      <div class="modal-head">
+	  <div class="overlay" id="server-streams-overlay" aria-hidden="true">
+	    <div class="modal">
+	      <div class="modal-head">
+	        <div class="modal-title" id="server-streams-title">Remote streams</div>
+	        <button class="icon-btn" id="server-streams-close" aria-label="Close">
+	          <span class="icon-x"></span>
+	        </button>
+	      </div>
+	      <div class="modal-body-scroll">
+	        <label class="field">
+	          <span>Filter</span>
+	          <input type="text" id="server-streams-filter" placeholder="ID or name" />
+	        </label>
+	        <div class="table" id="server-streams-table">
+	          <div class="table-row header">
+	            <div>ID</div>
+	            <div>Name</div>
+	            <div>Type</div>
+	            <div>Enabled</div>
+	            <div></div>
+	          </div>
+	        </div>
+	        <div class="muted" id="server-streams-empty">No streams received</div>
+	      </div>
+	      <div class="modal-footer">
+	        <div class="footer-actions">
+	          <button class="btn ghost" type="button" id="server-streams-refresh">Refresh</button>
+	          <button class="btn ghost" type="button" id="server-streams-pull">Pull streams</button>
+	          <button class="btn ghost" type="button" id="server-streams-import">Import config</button>
+	          <button class="btn" type="button" id="server-streams-cancel">Close</button>
+	          <div class="form-note" id="server-streams-error"></div>
+	        </div>
+	      </div>
+	    </div>
+	  </div>
+	
+	  <div class="overlay" id="auth-backend-overlay" aria-hidden="true">
+	    <div class="modal">
+	      <div class="modal-head">
         <div class="modal-title" id="auth-backend-title">New auth backend</div>
         <button class="icon-btn" id="auth-backend-close" aria-label="Close">
           <span class="icon-x"></span>
