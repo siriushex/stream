@@ -168,13 +168,16 @@ local function db_count(db, table_name, where)
 end
 
 local function db_supports_upsert(db)
-    local ok = db:exec("CREATE TABLE IF NOT EXISTS __astra_upsert_check (id INTEGER PRIMARY KEY, v TEXT);")
-    if not ok then
-        return false
+    local ok, err = db:exec("CREATE TABLE IF NOT EXISTS __astra_upsert_check (id INTEGER PRIMARY KEY, v TEXT);")
+    if ok ~= true then
+        return false, err
     end
-    ok = db:exec("INSERT INTO __astra_upsert_check(id, v) VALUES(1, 'a') " ..
+    ok, err = db:exec("INSERT INTO __astra_upsert_check(id, v) VALUES(1, 'a') " ..
         "ON CONFLICT(id) DO UPDATE SET v=excluded.v;")
-    return ok == true
+    if ok ~= true then
+        return false, err
+    end
+    return true
 end
 
 local VALUE_KEY = "__astra_value"
@@ -623,9 +626,13 @@ function config.init(opts)
     db_exec_safe(db, "PRAGMA busy_timeout=3000;")
 
     config.migrate()
-    config.supports_upsert = db_supports_upsert(db)
+    local supports, upsert_err = db_supports_upsert(db)
+    config.supports_upsert = (supports == true)
     if not config.supports_upsert then
-        log.warning("[config] sqlite upsert not supported, using compatibility mode")
+        local version = db_scalar(db, "SELECT sqlite_version();")
+        local detail = upsert_err and (": " .. tostring(upsert_err)) or ""
+        log.warning("[config] sqlite upsert not supported (sqlite_version=" .. tostring(version) ..
+            "), using compatibility mode" .. detail)
     end
     config.ensure_admin()
     config.sanitize_adapters()

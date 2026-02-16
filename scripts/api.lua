@@ -570,6 +570,15 @@ pcall(dofile, "scripts/export_async.lua")
 local function apply_config_change(server, client, request, opts)
     opts = opts or {}
     local defer_export = opts.defer_export == true
+    if defer_export then
+        -- Async export is supported only on the primary writer (shard 0 / single instance).
+        -- Other shards must keep synchronous exports to avoid races and "missing snapshot" states.
+        if not (config and config.is_primary_writer == true) then
+            defer_export = false
+        elseif not (stream_export_async and type(stream_export_async.request) == "function") then
+            defer_export = false
+        end
+    end
     local t_start = os.clock()
     local timing = {
         backup_ms = nil,
@@ -1236,6 +1245,8 @@ local function upsert_stream(server, client, id, request)
     end
     apply_config_change(server, client, request, {
         comment = "stream " .. id,
+        -- Keep stream Save fast: export primary config + revisions asynchronously (primary writer only).
+        defer_export = true,
         validate = function()
             if enabled and type(validate_stream_config) == "function" then
                 local ok, err = validate_stream_config(cfg)
@@ -1273,6 +1284,7 @@ end
 local function delete_stream(server, client, id, request)
     apply_config_change(server, client, request, {
         comment = "stream " .. id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_stream(id)
         end,
@@ -1312,6 +1324,7 @@ local function purge_disabled_streams(server, client, request)
     apply_config_change(server, client, request, {
         actor = admin.username,
         comment = "purge disabled streams",
+        defer_export = true,
         apply = function()
             for _, id in ipairs(ids) do
                 config.delete_stream(id)
@@ -1459,6 +1472,7 @@ local function transcode_all_streams(server, client, request)
     apply_config_change(server, client, request, {
         actor = admin.username,
         comment = "transcode all streams",
+        defer_export = true,
         validate = function()
             for _, item in ipairs(targets) do
                 local cfg = build_default_transcode_ladder(item.base_id, item.base_name)
@@ -1588,6 +1602,7 @@ local function upsert_adapter(server, client, id, request)
 
     apply_config_change(server, client, request, {
         comment = "adapter " .. id,
+        defer_export = true,
         apply = function()
             config.upsert_adapter(id, enabled, cfg)
         end,
@@ -1597,6 +1612,7 @@ end
 local function delete_adapter(server, client, id, request)
     apply_config_change(server, client, request, {
         comment = "adapter " .. id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_adapter(id)
         end,
@@ -1658,6 +1674,7 @@ local function upsert_splitter(server, client, id, request)
 
     apply_config_change(server, client, request, {
         comment = "splitter " .. id,
+        defer_export = true,
         apply = function()
             config.upsert_splitter(id, body)
         end,
@@ -1670,6 +1687,7 @@ end
 local function delete_splitter(server, client, id, request)
     apply_config_change(server, client, request, {
         comment = "splitter " .. id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_splitter(id)
         end,
@@ -1712,6 +1730,7 @@ local function upsert_splitter_link(server, client, splitter_id, link_id, reques
     end
     apply_config_change(server, client, request, {
         comment = "splitter " .. splitter_id .. " link " .. link_id,
+        defer_export = true,
         apply = function()
             config.upsert_splitter_link(splitter_id, link_id, body)
         end,
@@ -1727,6 +1746,7 @@ local function delete_splitter_link(server, client, splitter_id, link_id, reques
     end
     apply_config_change(server, client, request, {
         comment = "splitter " .. splitter_id .. " link " .. link_id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_splitter_link(splitter_id, link_id)
         end,
@@ -1823,6 +1843,7 @@ local function add_splitter_allow(server, client, splitter_id, request)
     local id = body.id or generate_id("allow")
     apply_config_change(server, client, request, {
         comment = "splitter " .. splitter_id .. " allow " .. id,
+        defer_export = true,
         apply = function()
             config.add_splitter_allow(splitter_id, id, kind, value)
         end,
@@ -1838,6 +1859,7 @@ local function delete_splitter_allow(server, client, splitter_id, rule_id, reque
     end
     apply_config_change(server, client, request, {
         comment = "splitter " .. splitter_id .. " allow " .. rule_id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_splitter_allow(splitter_id, rule_id)
         end,
@@ -2032,6 +2054,7 @@ local function upsert_buffer_resource(server, client, id, body, request)
     body.path = path
     apply_config_change(server, client, request, {
         comment = "buffer resource " .. id,
+        defer_export = true,
         validate = function()
             if path == "" then
                 return false, "path required", { { path = "path", message = "path required" } }
@@ -2056,6 +2079,7 @@ end
 local function delete_buffer_resource(server, client, id, request)
     apply_config_change(server, client, request, {
         comment = "buffer resource " .. id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_buffer_resource(id)
         end,
@@ -2090,6 +2114,7 @@ local function upsert_buffer_input(server, client, resource_id, input_id, body, 
     end
     apply_config_change(server, client, request, {
         comment = "buffer input " .. resource_id .. "/" .. input_id,
+        defer_export = true,
         apply = function()
             config.upsert_buffer_input(resource_id, input_id, body)
         end,
@@ -2118,6 +2143,7 @@ local function delete_buffer_input(server, client, resource_id, input_id, reques
     end
     apply_config_change(server, client, request, {
         comment = "buffer input " .. resource_id .. "/" .. input_id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_buffer_input(resource_id, input_id)
         end,
@@ -2149,6 +2175,7 @@ local function add_buffer_allow(server, client, body, request)
     log.debug("[buffers] save allow id=" .. id .. " payload=" .. json.encode(body))
     apply_config_change(server, client, request, {
         comment = "buffer allow " .. id,
+        defer_export = true,
         apply = function()
             config.add_buffer_allow(id, kind, value)
         end,
@@ -2174,6 +2201,7 @@ end
 local function delete_buffer_allow(server, client, rule_id, request)
     apply_config_change(server, client, request, {
         comment = "buffer allow " .. rule_id .. " delete",
+        defer_export = true,
         apply = function()
             config.delete_buffer_allow(rule_id)
         end,
@@ -5953,6 +5981,7 @@ local function pull_server_streams(server, client, request)
                 end
                 apply_config_change(server, client, request, {
                     comment = "pull streams",
+                    defer_export = true,
                     apply = function()
                         return config.import_astra(payload, { mode = "merge", transaction = true })
                     end,
@@ -6037,6 +6066,7 @@ local function import_server_config(server, client, request)
                 end
                 apply_config_change(server, client, request, {
                     comment = "import remote config",
+                    defer_export = true,
                     apply = function()
                         return config.import_astra(data, { mode = mode, transaction = true })
                     end,
