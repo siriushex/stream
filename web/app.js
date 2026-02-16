@@ -6432,7 +6432,7 @@ async function saveAuthBackend() {
 
   authBackends[id] = nextCfg;
 
-  await saveSettings({ auth_backends: authBackends });
+  await saveSettings({ auth_backends: authBackends }, { reload: false });
   state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
   renderAuthBackends();
   closeAuthBackendModal();
@@ -6441,9 +6441,26 @@ async function saveAuthBackend() {
 async function deleteAuthBackend(id) {
   const authBackends = { ...(state.authBackends || {}) };
   delete authBackends[id];
-  await saveSettings({ auth_backends: authBackends });
+  await saveSettings({ auth_backends: authBackends }, { reload: false });
   state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
   renderAuthBackends();
+}
+
+function formatServerActionError(err, fallback) {
+  const status = Number(err && err.status) || 0;
+  const payloadError = (err && err.payload && (err.payload.error || err.payload.message))
+    ? String(err.payload.error || err.payload.message)
+    : '';
+  const fallbackText = fallback || 'Request failed';
+  const raw = payloadError || (err && err.message ? String(err.message) : fallbackText);
+  let message = raw;
+  if (!/^HTTP\s+\d+:/i.test(raw) && status > 0) {
+    message = `HTTP ${status}: ${raw}`;
+  }
+  if ((status === 401 || status === 403) && /login failed/i.test(message)) {
+    message = `${message}. Check remote admin credentials or auth policy.`;
+  }
+  return message;
 }
 
 function renderServers() {
@@ -6661,7 +6678,7 @@ function openServerStreamsModal(id) {
   if (elements.serverStreamsError) elements.serverStreamsError.textContent = '';
   setOverlay(elements.serverStreamsOverlay, true);
   loadServerStreams(id).catch((err) => {
-    const message = err && err.message ? err.message : 'Failed to load remote streams';
+    const message = formatServerActionError(err, 'Failed to load remote streams');
     if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
     if (elements.serverStreamsEmpty) {
       elements.serverStreamsEmpty.hidden = false;
@@ -30901,10 +30918,7 @@ function bindEvents() {
         };
         await testServer(null, payload);
       } catch (err) {
-        const payloadError = (err && err.payload && err.payload.error) ? String(err.payload.error) : '';
-        const message = payloadError
-          ? `HTTP ${err.status || 0}: ${payloadError}`
-          : (err && err.message) ? err.message : 'Server test failed';
+        const message = formatServerActionError(err, 'Server test failed');
         setStatus(message);
         if (elements.serverError) elements.serverError.textContent = message;
       }
@@ -30924,16 +30938,16 @@ function bindEvents() {
         openServerUrl(id);
       }
       if (action === 'server-test') {
-        testServer(id).catch((err) => setStatus(err.message || 'Server test failed'));
+        testServer(id).catch((err) => setStatus(formatServerActionError(err, 'Server test failed')));
       }
       if (action === 'server-streams') {
         openServerStreamsModal(id);
       }
       if (action === 'server-pull') {
-        pullServerStreams(id).catch((err) => setStatus(err.message || 'Pull streams failed'));
+        pullServerStreams(id).catch((err) => setStatus(formatServerActionError(err, 'Pull streams failed')));
       }
       if (action === 'server-import') {
-        importServerConfig(id).catch((err) => setStatus(err.message || 'Import failed'));
+        importServerConfig(id).catch((err) => setStatus(formatServerActionError(err, 'Import failed')));
       }
       if (action === 'server-delete') {
         const confirmed = window.confirm(`Delete server ${id}?`);
@@ -30952,7 +30966,7 @@ function bindEvents() {
   if (elements.serverStreamsRefresh) {
     elements.serverStreamsRefresh.addEventListener('click', () => {
       loadServerStreams(state.serverStreamsServerId).catch((err) => {
-        const message = err && err.message ? err.message : 'Failed to load remote streams';
+        const message = formatServerActionError(err, 'Failed to load remote streams');
         if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
       });
     });
@@ -30965,7 +30979,7 @@ function bindEvents() {
         await pullServerStreams(id);
         closeServerStreamsModal();
       } catch (err) {
-        const message = err && err.message ? err.message : 'Pull streams failed';
+        const message = formatServerActionError(err, 'Pull streams failed');
         if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
       }
     });
@@ -30978,7 +30992,7 @@ function bindEvents() {
         await importServerConfig(id);
         closeServerStreamsModal();
       } catch (err) {
-        const message = err && err.message ? err.message : 'Import failed';
+        const message = formatServerActionError(err, 'Import failed');
         if (elements.serverStreamsError) elements.serverStreamsError.textContent = message;
       }
     });
@@ -31046,7 +31060,10 @@ function bindEvents() {
   if (elements.btnSaveHls) {
     elements.btnSaveHls.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHlsSettings(), { status: 'HLS settings saved (restart to apply).' });
+        await saveSettings(collectHlsSettings(), {
+          reload: false,
+          status: 'HLS settings saved (restart to apply).',
+        });
       } catch (err) {
         setStatus(err.message);
       }
@@ -31055,7 +31072,7 @@ function bindEvents() {
   if (elements.btnApplyHls) {
     elements.btnApplyHls.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHlsSettings());
+        await saveSettings(collectHlsSettings(), { reload: false, silent: true });
         requestRestart();
       } catch (err) {
         setStatus(err.message);
@@ -31076,7 +31093,7 @@ function bindEvents() {
   if (elements.btnApplyCas) {
     elements.btnApplyCas.addEventListener('click', async () => {
       try {
-        await saveSettings(collectCasSettings());
+        await saveSettings(collectCasSettings(), { reload: false });
       } catch (err) {
         setStatus(err.message);
       }
@@ -31185,7 +31202,10 @@ function bindEvents() {
   if (elements.btnSaveHttpPlay) {
     elements.btnSaveHttpPlay.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHttpPlaySettings(), { status: 'HTTP Play settings saved (restart to apply).' });
+        await saveSettings(collectHttpPlaySettings(), {
+          reload: false,
+          status: 'HTTP Play settings saved (restart to apply).',
+        });
       } catch (err) {
         setStatus(err.message);
       }
@@ -31194,7 +31214,7 @@ function bindEvents() {
   if (elements.btnApplyHttpPlay) {
     elements.btnApplyHttpPlay.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHttpPlaySettings());
+        await saveSettings(collectHttpPlaySettings(), { reload: false, silent: true });
         requestRestart();
       } catch (err) {
         setStatus(err.message);
@@ -31218,7 +31238,7 @@ function bindEvents() {
   if (elements.btnApplyBuffer) {
     elements.btnApplyBuffer.addEventListener('click', async () => {
       try {
-        await saveSettings(collectBufferSettings());
+        await saveSettings(collectBufferSettings(), { reload: false, silent: true });
         setStatus('Buffer settings saved');
       } catch (err) {
         setStatus(err.message);
@@ -31229,7 +31249,10 @@ function bindEvents() {
   if (elements.btnSaveHttpAuth) {
     elements.btnSaveHttpAuth.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHttpAuthSettings(), { status: 'HTTP auth settings saved (restart to apply).' });
+        await saveSettings(collectHttpAuthSettings(), {
+          reload: false,
+          status: 'HTTP auth settings saved (restart to apply).',
+        });
       } catch (err) {
         setStatus(err.message);
       }
@@ -31238,7 +31261,7 @@ function bindEvents() {
   if (elements.btnApplyHttpAuth) {
     elements.btnApplyHttpAuth.addEventListener('click', async () => {
       try {
-        await saveSettings(collectHttpAuthSettings());
+        await saveSettings(collectHttpAuthSettings(), { reload: false, silent: true });
         requestRestart();
       } catch (err) {
         setStatus(err.message);
@@ -31249,7 +31272,7 @@ function bindEvents() {
   if (elements.btnApplyPasswordPolicy) {
     elements.btnApplyPasswordPolicy.addEventListener('click', async () => {
       try {
-        await saveSettings(collectPasswordPolicySettings());
+        await saveSettings(collectPasswordPolicySettings(), { reload: false, silent: true });
         setStatus('Password policy saved');
       } catch (err) {
         setStatus(err.message);
@@ -33195,6 +33218,9 @@ function bindEvents() {
       saveSettings({
         http_auth_allow: formatCommaList(nextAllow),
         http_auth_deny: formatCommaList(nextDeny),
+      }, {
+        reload: false,
+        silent: true,
       }).then(() => {
         setStatus(action === 'allow-ip' ? `IP ${ip} added to whitelist` : `IP ${ip} added to block list`);
       }).catch((err) => setStatus(err.message));
