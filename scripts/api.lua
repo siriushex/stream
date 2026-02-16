@@ -5316,6 +5316,63 @@ local function decode_json_safe(text)
     return data
 end
 
+function api._servers_extract_error_text(payload)
+    local text = ""
+    if type(payload) == "table" then
+        local candidate = payload.error
+            or payload.message
+            or payload.detail
+            or payload.reason
+        if candidate ~= nil then
+            text = tostring(candidate)
+        end
+    elseif payload ~= nil then
+        text = tostring(payload)
+    end
+    text = tostring(text or ""):gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    return text
+end
+
+function api._servers_http_error_text(code, payload)
+    local code_num = tonumber(code)
+    local prefix = code_num and ("http " .. tostring(math.floor(code_num))) or "http error"
+    local detail = api._servers_extract_error_text(payload)
+    if detail ~= "" then
+        return prefix .. ": " .. detail
+    end
+    return prefix
+end
+
+function api._servers_classify_error_status(message, fallback_code)
+    local status = tonumber(fallback_code) or 400
+    local text = tostring(message or ""):lower()
+    local parsed = tonumber(text:match("http%s+(%d%d%d)"))
+    if parsed then
+        status = parsed
+    end
+    if text:find("forbidden", 1, true) then
+        return 403
+    end
+    if text:find("unauthorized", 1, true) then
+        return 401
+    end
+    if text:find("no response", 1, true)
+        or text:find("timeout", 1, true)
+        or text:find("curl failed", 1, true)
+        or text:find("curl unavailable", 1, true)
+        or text:find("curl spawn failed", 1, true)
+    then
+        return 502
+    end
+    if status == 408 or status == 429 or status >= 500 then
+        return 502
+    end
+    if status >= 400 and status < 500 then
+        return status
+    end
+    return 400
+end
+
 local function parse_cookie_from_headers(headers)
     if not headers then
         return nil
@@ -5442,7 +5499,7 @@ end
 
 local function remote_http_login(cfg, callback)
     if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
-        callback(true, nil)
+        callback(true, nil, nil, nil)
         return
     end
     local payload = json.encode({ username = cfg.login, password = cfg.password })
@@ -5468,7 +5525,7 @@ local function remote_http_login(cfg, callback)
             content = payload,
             callback = function(self, response)
                 if not response then
-                    return callback(false, nil, "login failed (no response)")
+                    return callback(false, nil, "login failed (no response)", nil)
                 end
                 local code = response.code or 0
                 if (code == 404 or code == 403) and idx < #paths then
@@ -5476,13 +5533,19 @@ local function remote_http_login(cfg, callback)
                     return attempt()
                 end
                 if not code or code >= 400 then
-                    return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
+                    local data = decode_json_safe(response.content or "")
+                    local detail = api._servers_extract_error_text(data)
+                    if detail ~= "" then
+                        return callback(false, nil, "login failed (" .. tostring(code or "unknown") ..
+                            ": " .. detail .. ")", code)
+                    end
+                    return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")", code)
                 end
                 local cookie = parse_cookie_from_headers(response.headers)
                 if not cookie then
-                    return callback(false, nil, "login failed (no session cookie)")
+                    return callback(false, nil, "login failed (no session cookie)", code)
                 end
-                callback(true, cookie)
+                callback(true, cookie, nil, code)
             end,
         })
     end
@@ -5515,7 +5578,8 @@ local function remote_http_fetch_json(cfg, path, cookie, method, body, callback)
             end
             local code = response.code or 0
             if code >= 400 then
-                return callback(false, nil, "http " .. tostring(code))
+                local data = decode_json_safe(response.content or "")
+                return callback(false, nil, api._servers_http_error_text(code, data), code)
             end
             local data = decode_json_safe(response.content or "")
             if not data then
@@ -5528,7 +5592,7 @@ end
 
 local function remote_https_login(cfg, callback)
     if not cfg.login or cfg.login == "" or not cfg.password or cfg.password == "" then
-        callback(true, nil)
+        callback(true, nil, nil, nil)
         return
     end
     local payload = json.encode({ username = cfg.login, password = cfg.password })
@@ -5564,22 +5628,28 @@ local function remote_https_login(cfg, callback)
         args = filtered
         run_curl(args, function(status, stdout, stderr)
             if not status then
-                return callback(false, nil, stderr or "login failed")
+                return callback(false, nil, stderr or "login failed", nil)
             end
-            local head, _ = split_headers_body(stdout or "")
+            local head, body = split_headers_body(stdout or "")
             local code = parse_status_from_headers(head) or 0
             if (code == 404 or code == 403) and idx < #paths then
                 idx = idx + 1
                 return attempt()
             end
             if not code or code >= 400 then
-                return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")")
+                local data = decode_json_safe(body or "")
+                local detail = api._servers_extract_error_text(data)
+                if detail ~= "" then
+                    return callback(false, nil, "login failed (" .. tostring(code or "unknown") ..
+                        ": " .. detail .. ")", code)
+                end
+                return callback(false, nil, "login failed (" .. tostring(code or "unknown") .. ")", code)
             end
             local cookie = parse_cookie_from_header_text(head)
             if not cookie then
-                return callback(false, nil, "login failed (no session cookie)")
+                return callback(false, nil, "login failed (no session cookie)", code)
             end
-            callback(true, cookie)
+            callback(true, cookie, nil, code)
         end)
     end
     attempt()
@@ -5618,7 +5688,8 @@ local function remote_https_fetch_json(cfg, path, cookie, method, body, callback
             return callback(false, nil, "no http code")
         end
         if code >= 400 then
-            return callback(false, nil, "http " .. tostring(code), code)
+            local data = decode_json_safe(bodyText or "")
+            return callback(false, nil, api._servers_http_error_text(code, data), code)
         end
         local data = decode_json_safe(bodyText or "")
         if not data then
@@ -5646,20 +5717,20 @@ local function remote_health_check(cfg, callback)
     local function do_health(cookie, path)
         remote_fetch_json(cfg, path, cookie, "GET", nil, function(ok, data, err, code)
             if ok then
-                return callback(true, "health ok")
+                return callback(true, "health ok", code)
             end
             if err == "invalid json" and code and code >= 200 and code < 300 then
-                return callback(true, "health ok")
+                return callback(true, "health ok", code)
             end
             if code == 404 and path == "/api/v1/health/process" then
                 return do_health(cookie, "/api/v1/health")
             end
-            return callback(false, err or "health check failed")
+            return callback(false, err or "health check failed", code)
         end)
     end
-    remote_login(cfg, function(ok, cookie, err)
+    remote_login(cfg, function(ok, cookie, err, code)
         if not ok then
-            return callback(false, err or "login failed")
+            return callback(false, err or "login failed", code)
         end
         do_health(cookie, "/api/v1/health/process")
     end)
@@ -5772,20 +5843,12 @@ local function server_test(server, client, request)
     if not cfg then
         return error_response(server, client, 400, cfg_err or "invalid server")
     end
-    remote_health_check(cfg, function(ok, msg)
+    remote_health_check(cfg, function(ok, msg, remote_code)
         if ok then
             return json_response(server, client, 200, { status = "ok", message = msg or "ok" })
         end
         local text = tostring(msg or "failed")
-        local code = 400
-        if text:find("no response", 1, true)
-            or text:find("timeout", 1, true)
-            or text:find("curl failed", 1, true)
-            or text:find("curl unavailable", 1, true)
-            or text:find("curl spawn failed", 1, true)
-        then
-            code = 502
-        end
+        local code = api._servers_classify_error_status(text, remote_code)
         return error_response(server, client, code, text)
     end)
 end
@@ -6038,13 +6101,17 @@ function api._servers_pull_streams(server, client, request)
         return error_response(server, client, 500, "config import unavailable")
     end
 
-    remote_login(cfg, function(ok, cookie, login_err)
+    remote_login(cfg, function(ok, cookie, login_err, login_code)
         if not ok then
-            return error_response(server, client, 400, login_err or "login failed")
+            local text = tostring(login_err or "login failed")
+            local code = api._servers_classify_error_status(text, login_code)
+            return error_response(server, client, code, text)
         end
-        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err)
+        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err, fetch_code)
             if not ok2 then
-                return error_response(server, client, 400, fetch_err or "fetch failed")
+                local text = tostring(fetch_err or "fetch failed")
+                local code = api._servers_classify_error_status(text, fetch_code)
+                return error_response(server, client, code, text)
             end
 
             local payload = { make_stream = {} }
@@ -6099,13 +6166,17 @@ function api._servers_list_streams(server, client, request)
         return error_response(server, client, 400, cfg_err or "invalid server")
     end
 
-    remote_login(cfg, function(ok, cookie, login_err)
+    remote_login(cfg, function(ok, cookie, login_err, login_code)
         if not ok then
-            return error_response(server, client, 400, login_err or "login failed")
+            local text = tostring(login_err or "login failed")
+            local code = api._servers_classify_error_status(text, login_code)
+            return error_response(server, client, code, text)
         end
-        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err)
+        api._servers_fetch_streams(cfg, cookie, function(ok2, data, fetch_err, fetch_code)
             if not ok2 then
-                return error_response(server, client, 400, fetch_err or "fetch failed")
+                local text = tostring(fetch_err or "fetch failed")
+                local code = api._servers_classify_error_status(text, fetch_code)
+                return error_response(server, client, code, text)
             end
             local items = api._servers_extract_stream_summaries(data)
             json_response(server, client, 200, {
@@ -6167,9 +6238,11 @@ local function import_server_config(server, client, request)
         include_splitters and "1" or "0"
     )
 
-    remote_login(cfg, function(ok, cookie, login_err)
+    remote_login(cfg, function(ok, cookie, login_err, login_code)
         if not ok then
-            return error_response(server, client, 400, login_err or "login failed")
+            local text = tostring(login_err or "login failed")
+            local code = api._servers_classify_error_status(text, login_code)
+            return error_response(server, client, code, text)
         end
         local paths = { query, legacy_query }
         local idx = 1
@@ -6181,7 +6254,9 @@ local function import_server_config(server, client, request)
                         idx = idx + 1
                         return fetch_next()
                     end
-                    return error_response(server, client, 400, fetch_err or "fetch failed")
+                    local text = tostring(fetch_err or "fetch failed")
+                    local status = api._servers_classify_error_status(text, code)
+                    return error_response(server, client, status, text)
                 end
                 if type(data) ~= "table" or next(data) == nil then
                     return error_response(server, client, 400, "empty config")
