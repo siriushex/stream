@@ -13,9 +13,11 @@
 ### 2026-02-16
 - Changes:
   - Settings Save: defer primary config + revision snapshot + LKG export to an async helper process (reduces UI latency and avoids blocking the main event loop on large configs).
+  - Stream/Adapter/Splitter/Buffer Save: also defer config export/snapshots to the async exporter (primary writer only) to reduce Save-induced stalls under load.
   - Boot/import: track primary config file fingerprint and skip import when the file is unchanged (prevents overwriting newer SQLite state after restarts and reduces boot work on large configs).
   - Export: add `scripts/export_write.lua` (atomic multi-target writer) and `scripts/export_async.lua` (coalesced async export queue).
   - Export async: run the background export worker via `nice -n 10` when available (reduces CPU priority and helps keep broadcasting stable during config saves).
+  - Export async: also use `ionice` when available to reduce IO contention during background exports.
   - SQLite: bundle SQLite amalgamation (v3.51.2) into `stream` to guarantee UPSERT support and improve CentOS 7 performance/predictability.
   - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
   - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.

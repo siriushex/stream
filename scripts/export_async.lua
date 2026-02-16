@@ -32,6 +32,7 @@ local function resolve_self_bin()
 end
 
 local nice_cache = nil
+local ionice_cache = nil
 
 local function can_nice()
     if nice_cache ~= nil then
@@ -46,6 +47,19 @@ local function can_nice()
     return nice_cache
 end
 
+local function can_ionice()
+    if ionice_cache ~= nil then
+        return ionice_cache
+    end
+    if package and package.config and package.config:sub(1, 1) == "\\" then
+        ionice_cache = false
+        return false
+    end
+    local ok = os.execute("command -v ionice >/dev/null 2>&1")
+    ionice_cache = (ok == true or ok == 0)
+    return ionice_cache
+end
+
 local function with_nice(argv)
     if not argv or type(argv) ~= "table" then
         return argv
@@ -58,6 +72,27 @@ local function with_nice(argv)
         out[#out + 1] = argv[i]
     end
     return out
+end
+
+local function with_ionice(argv)
+    if not argv or type(argv) ~= "table" then
+        return argv
+    end
+    if not can_ionice() then
+        return argv
+    end
+    -- Best-effort IO deprioritization (does not require root on most distros).
+    local out = { "ionice", "-c2", "-n", "7" }
+    for i = 1, #argv do
+        out[#out + 1] = argv[i]
+    end
+    return out
+end
+
+local function with_low_priority(argv)
+    argv = with_nice(argv)
+    argv = with_ionice(argv)
+    return argv
 end
 
 local function append_tail(prev, chunk, limit)
@@ -123,7 +158,7 @@ local function spawn_job(paths, cfg)
         return nil
     end
 
-    argv = with_nice(argv)
+    argv = with_low_priority(argv)
     local ok, proc = pcall(process.spawn, argv, {
         stdout = "pipe",
         stderr = "pipe",
