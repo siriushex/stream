@@ -21,7 +21,7 @@
   - SQLite: bundle SQLite amalgamation (v3.51.2) into `stream` to guarantee UPSERT support and improve CentOS 7 performance/predictability.
   - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
   - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.
-  - Transcode: add resilient decode defaults for UDP/RTP/SRT (discardcorrupt + ignore_err + thread_queue_size) and restart quickly on FFmpeg output backpressure for per-output and ladder workers.
+  - Transcode: resilient decode auto-mode now applies to common network sources (UDP/RTP/SRT/HTTP/HTTPS/RTMP/RTSP): inject discardcorrupt + ignore_err + thread_queue_size and restart quickly on FFmpeg output backpressure for per-output and ladder workers.
   - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
   - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
 - Tests:
