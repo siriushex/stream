@@ -118,6 +118,20 @@ do
   assert_true(fflags:find("discardcorrupt", 1, true) ~= nil, "expected discardcorrupt in -fflags")
 end
 
+-- auto mode: HTTP inputs also enable resilient decode by default.
+do
+  local job = build_job("tc_res_http", {
+    input_url = "http://127.0.0.1:8000/live.ts",
+    ffmpeg_global_args = { "-fflags", "+genpts" },
+  })
+  local argv, err = transcode._build_ladder_encoder_ffmpeg_args(job)
+  assert_true(argv ~= nil, err or "expected argv")
+  assert_true(has_pair(argv, "-thread_queue_size", "1024"), "expected -thread_queue_size 1024")
+  assert_true(has_pair(argv, "-err_detect", "ignore_err"), "expected -err_detect ignore_err")
+  local fflags = tostring(find_last_value(argv, "-fflags") or "")
+  assert_true(fflags:find("discardcorrupt", 1, true) ~= nil, "expected discardcorrupt in -fflags")
+end
+
 -- off mode: do not inject resilient decode args.
 do
   local job = build_job("tc_res_off", {
@@ -135,4 +149,3 @@ end
 
 log.info("[unit] transcode_resilient_decode_unit ok")
 astra.exit()
-

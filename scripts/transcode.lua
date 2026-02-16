@@ -6909,21 +6909,28 @@ function transcode._should_enable_resilient_decode(job, worker)
     if (worker and worker.force_resilient_decode == true) or job.force_resilient_decode == true then
         return true
     end
-    local inputs = ensure_list(job.config.input)
-    for _, input in ipairs(inputs) do
-        local url = get_input_url(input)
-        if url and url ~= "" then
-            local lower = tostring(url):lower()
-            if lower:find("^udp://") == 1
-                or lower:find("^rtp://") == 1
-                or lower:find("^srt://") == 1
-            then
-                return true
-            end
-        end
-    end
-    return false
-end
+	    local inputs = ensure_list(job.config.input)
+	    for _, input in ipairs(inputs) do
+	        local url = get_input_url(input)
+	        if url and url ~= "" then
+	            local lower = tostring(url):lower()
+	            -- Auto-mode heuristic: enable resilient decode for common live/network inputs.
+	            -- This is intentionally broader than just UDP to reduce stalls on lossy sources.
+	            if lower:find("^udp://") == 1
+	                or lower:find("^rtp://") == 1
+	                or lower:find("^srt://") == 1
+	                or lower:find("^http://") == 1
+	                or lower:find("^https://") == 1
+	                or lower:find("^rtmp://") == 1
+	                or lower:find("^rtmps://") == 1
+	                or lower:find("^rtsp://") == 1
+	            then
+	                return true
+	            end
+	        end
+	    end
+	    return false
+	end
 
 function transcode._apply_resilient_decode_argv(job, worker, argv)
     if type(argv) ~= "table" then
