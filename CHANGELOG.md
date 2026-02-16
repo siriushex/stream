@@ -22,6 +22,7 @@
   - Installer: add `--ffmpeg-bundle/--ffmpeg-system` and auto-select the bundled FFmpeg on RHEL-family distros; install as `/usr/local/bin/stream-ffmpeg` + `/usr/local/bin/stream-ffprobe` and wire via `STREAM_FFMPEG_PATH` / `STREAM_FFPROBE_PATH` in instance env.
   - Deploy: sync `deploy/stream.centv.ru/install*.sh` with installer updates.
   - Transcode: resilient decode auto-mode now applies to common network sources (UDP/RTP/SRT/HTTP/HTTPS/RTMP/RTSP): inject discardcorrupt + ignore_err + thread_queue_size and restart quickly on FFmpeg output backpressure for per-output and ladder workers.
+  - Watchdog: fix `/proc/self/stat` parsing for CPU usage (use utime+stime; avoid false spikes from child cutime that could trigger restarts).
   - API: log `settings update` config apply latency as slow starting from 500ms (instead of 1500ms).
   - Servers: add optional `insecure` flag to skip TLS certificate validation for HTTPS remote servers (fixes Test/Pull/Import with self-signed certs).
 - Tests:
@@ -40,6 +41,7 @@
   - `./stream scripts/tests/transcode_qsv_args_unit.lua`
   - `./stream scripts/tests/transcode_resilient_decode_unit.lua`
   - `./stream scripts/tests/transcode_recovery_unit.lua`
+  - `./stream scripts/tests/watchdog_proc_self_stat_unit.lua`
 ### 2026-02-15
 - Changes:
   - Transcode: add Intel QSV presets (1080p/720p/540p + optional HEVC), engine support, and per-process LIBVA env.

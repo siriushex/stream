@@ -94,8 +94,7 @@ local function read_proc_stat_total()
     return total
 end
 
-local function read_proc_self_time()
-    local content = read_file("/proc/self/stat")
+local function parse_proc_self_time_line(content)
     if not content then
         return nil
     end
@@ -107,12 +106,23 @@ local function read_proc_self_time()
     for value in rest:gmatch("%S+") do
         table.insert(fields, value)
     end
-    local utime = tonumber(fields[13])
-    local stime = tonumber(fields[14])
+    -- /proc/<pid>/stat fields:
+    --  1 pid, 2 comm, 3 state, ... 14 utime, 15 stime, 16 cutime, ...
+    -- We already stripped pid+comm, so utime/stime become fields[12]/fields[13].
+    local utime = tonumber(fields[12])
+    local stime = tonumber(fields[13])
     if not utime or not stime then
         return nil
     end
     return utime + stime
+end
+
+-- Unit-test hook.
+watchdog._parse_proc_self_time_line = parse_proc_self_time_line
+
+local function read_proc_self_time()
+    local content = read_file("/proc/self/stat")
+    return parse_proc_self_time_line(content)
 end
 
 local function read_rss_kb()
