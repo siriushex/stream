@@ -108,6 +108,21 @@
               </thead>
               <tbody id="stream-table-body"></tbody>
             </table>
+            <div class="stream-table-pagination" id="stream-table-pager" hidden>
+              <div class="stream-table-pagination-info" id="stream-table-page-info"></div>
+              <div class="stream-table-pagination-controls">
+                <label class="stream-table-page-size">
+                  <span>Rows</span>
+                  <select id="stream-table-page-size">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <button class="btn ghost tiny" type="button" id="stream-table-page-prev">Prev</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-page-next">Next</button>
+              </div>
+            </div>
           </div>
           <div class="stream-compact stream-view stream-view-compact" id="stream-compact"></div>
         </div>
@@ -3415,7 +3430,7 @@
           <div class="form-subsection radio-block" id="stream-radio-block" hidden>
             <div class="radio-header">
               <div class="radio-title">Create radio (Audio + PNG → UDP TS)</div>
-              <div class="form-hint">Generate a live UDP MPEG-TS with static PNG video and audio stream.</div>
+              <div class="form-hint">Generate a live UDP MPEG-TS with static PNG video and audio stream. CPU mode: low FPS + one-time PNG pre-scale.</div>
             </div>
             <div class="form-grid">
               <label class="field span-6">
@@ -3462,7 +3477,7 @@
                 <div class="form-grid">
                   <label class="field">
                     <span>FPS</span>
-                    <input type="number" id="radio-fps" placeholder="25" />
+                    <input type="number" id="radio-fps" placeholder="2" />
                   </label>
                   <label class="field">
                     <span>Width</span>
@@ -3485,15 +3500,15 @@
                   </label>
                   <label class="field">
                     <span>Preset</span>
-                    <input type="text" id="radio-preset" placeholder="veryfast" />
+                    <input type="text" id="radio-preset" placeholder="superfast" />
                   </label>
                   <label class="field">
                     <span>Video bitrate</span>
-                    <input type="text" id="radio-video-bitrate" placeholder="1400k" />
+                    <input type="text" id="radio-video-bitrate" placeholder="600k" />
                   </label>
                   <label class="field">
                     <span>GOP</span>
-                    <input type="number" id="radio-gop" placeholder="50" />
+                    <input type="number" id="radio-gop" placeholder="4" />
                   </label>
                   <label class="field">
                     <span>Pixel format</span>
