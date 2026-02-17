@@ -19,6 +19,26 @@
 
 ## Частые вопросы
 
+??? question "Что такое Stream Hub?"
+    Stream Hub — это платформа для управления вещанием: входы, relay, выходы, мониторинг, Web UI и API.
+    Быстрый обзор: [Что такое Stream Hub](about/what-is-stream-hub.md).
+
+??? question "Как установить Stream Hub?"
+    Используйте страницу [Установка](quick-start/installation.md).
+    Для Linux обычно достаточно команды installer через HTTPS.
+
+??? question "Как проверить, почему stream не играет?"
+    Откройте [чек-лист диагностики](manual/troubleshooting.md):
+    сначала `Input ONLINE`, потом bitrate, потом доступность output URL и логи.
+
+??? question "Stream Hub — альтернатива Flussonic?"
+    Stream Hub закрывает класс задач IPTV relay/monitoring/management с Web UI и API.
+    Flussonic упоминается только как рыночный ориентир, а не как часть бренда продукта.
+
+??? question "Поддерживается ли Astra-подобный сценарий?"
+    Да, поддерживаются типовые Astra-подобные паттерны конфигурации и эксплуатации.
+    При этом Stream Hub позиционируется как самостоятельный продукт.
+
 ??? question "Где лежат конфиги и данные?"
     По умолчанию:
 
@@ -115,3 +135,52 @@
     echo '{}' | sudo tee /etc/stream/b.json
     sudo systemctl enable --now stream@b
     ```
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "Что такое Stream Hub?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Stream Hub — это платформа для управления вещанием: входы, relay, выходы, мониторинг, Web UI и API."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Как установить Stream Hub?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Используйте страницу Установка в Быстром старте. Для Linux обычно достаточно installer-команды через HTTPS."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Как проверить, почему stream не играет?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Проверьте состояние Input (ONLINE), bitrate, доступность output URL и логи сервиса по чек-листу диагностики."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Stream Hub — альтернатива Flussonic?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Stream Hub решает класс задач IPTV relay и управления потоками. Flussonic упоминается только как рыночный ориентир."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Поддерживается ли Astra-подобный сценарий?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Да, поддерживаются типовые Astra-подобные сценарии, при этом продукт оформлен как самостоятельный бренд Stream Hub."
+      }
+    }
+  ]
+}
+</script>

@@ -1,8 +1,11 @@
 site_name: Stream Hub
 site_url: https://stream.centv.ru/
+site_description: "Stream Hub — платформа для IPTV/OTT вещания: stream relay, входы UDP/HTTP-TS/HLS/DASH, мониторинг, Web UI и API."
+site_author: Stream Hub
 
 theme:
   name: material
+  custom_dir: overrides
   language: ru
   logo: assets/logo.svg
   features:
@@ -49,6 +52,7 @@ exclude_docs: |
   softcam_descramble_parallel.md
   transcode_publish.md
   update_names_from_sdt.md
+  manual/*.html
   engineering/*
 
 markdown_extensions:
@@ -71,6 +75,10 @@ extra_javascript:
 
 nav:
   - Главная: index.md
+  - О Stream Hub:
+      - Что такое Stream Hub: about/what-is-stream-hub.md
+      - Stream Hub для IPTV: about/stream-hub-iptv.md
+      - Почему Stream Hub: about/why-stream-hub.md
   - Быстрый старт:
       - Обзор: quick-start/index.md
       - Установка: quick-start/installation.md

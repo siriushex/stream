@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% set src_uri = page.file.src_uri if page and page.file else "" %}
+{% set seo_titles = {
+  "index.md": "Stream Hub: IPTV relay, мониторинг и управление потоками",
+  "about/what-is-stream-hub.md": "Что такое Stream Hub: IPTV relay платформа и Web UI",
+  "about/stream-hub-iptv.md": "Stream Hub для IPTV: relay сервер, мониторинг и API",
+  "about/why-stream-hub.md": "Почему Stream Hub: стабильность вещания, Web UI и API",
+  "quick-start/index.md": "Быстрый старт Stream Hub: установка и первый поток",
+  "quick-start/installation.md": "Установка Stream Hub: Ubuntu, Debian, CentOS и macOS",
+  "quick-start/run.md": "Запуск Stream Hub: Web UI, API и проверка статуса!",
+  "quick-start/web-ui.md": "Stream Hub Web UI: вход, авторизация и первый канал",
+  "quick-start/first-stream.md": "Первый канал Stream Hub: input, output и статус ONLINE",
+  "quick-start/check-playback.md": "Проверка потока Stream Hub: HTTP-TS, HLS, UDP и ffplay",
+  "quick-start/run-as-service.md": "Stream Hub systemd-сервис: автозапуск, порт и логи",
+  "faq.md": "FAQ Stream Hub: установка, диагностика, совместимость",
+  "manual/troubleshooting.md": "Диагностика Stream Hub: почему поток не играет и решения",
+  "changelog.md": "Changelog Stream Hub: версии, релизы и ключевые изменения"
+} %}
+{% set seo_descriptions = {
+  "index.md": "Stream Hub для IPTV/OTT вещания: relay входов UDP/HTTP-TS/HLS/DASH, Web UI, API и мониторинг bitrate. Запустите первый поток за 5 минут и добавьте диагностику.",
+  "about/what-is-stream-hub.md": "Stream Hub — самостоятельная платформа вещания: input/output, relay, failover, мониторинг и API. Подходит для IPTV/OTT и стабильной работы в production.",
+  "about/stream-hub-iptv.md": "Stream Hub для IPTV: приём UDP/HTTP-TS/HLS/DASH, стабильный relay, контроль ONLINE/bitrate, backup input и диагностика. Подходит для операторов и NOC-команд.",
+  "about/why-stream-hub.md": "Почему Stream Hub: фокус на стабильности вещания, прозрачном Web UI/API и предсказуемой эксплуатации. Astra/Flussonic указаны только как контекст сценариев.",
+  "quick-start/index.md": "Быстрый старт Stream Hub: установка, запуск Web UI, создание первого stream и проверка ONLINE/bitrate. Пошаговый маршрут без лишних действий.",
+  "quick-start/installation.md": "Установка Stream Hub на Ubuntu, Debian, CentOS и macOS: команды installer, HTTPS-first, выбор FULL/LITE и проверка готовности к запуску и транскодированию.",
+  "quick-start/run.md": "Запуск Stream Hub из CLI: создание базового конфига, выбор порта, проверка Web UI/API и быстрый переход к созданию первого канала и проверке статуса.",
+  "quick-start/web-ui.md": "Web UI Stream Hub: первичный вход, проверка доступа, создание первого канала и переход к мониторингу состояния потоков через Dashboard и Analyze.",
+  "quick-start/first-stream.md": "Первый канал в Stream Hub: добавьте input и output, сохраните конфиг и убедитесь, что поток ONLINE. Подходит для тестового запуска и боевого шаблона.",
+  "quick-start/check-playback.md": "Проверка потока Stream Hub через HTTP-TS, HLS и UDP: команды ffplay/VLC, контроль задержки и быстрый маршрут диагностики, если поток не воспроизводится.",
+  "quick-start/run-as-service.md": "Запуск Stream Hub как systemd-сервиса: инициализация инстанса, env-файл порта, автозапуск после reboot и просмотр логов для production-эксплуатации.",
+  "faq.md": "FAQ Stream Hub: что это, как установить, как диагностировать неиграющий поток, как работать с Astra-подобными сценариями и где искать быстрые решения.",
+  "manual/troubleshooting.md": "Диагностика Stream Hub: пошаговый чек-лист для ошибок input/output, auth и сети. Помогает быстро найти причину, восстановить поток и снизить простой.",
+  "changelog.md": "Changelog Stream Hub: актуальные версии, install scripts и ключевые изменения по релизам. Используйте страницу для безопасного обновления и проверки."
+} %}
+{% set seo_title = seo_titles.get(src_uri, page.title ~ " - " ~ config.site_name if page and page.title and not page.is_homepage else config.site_name) %}
+{% set seo_description = seo_descriptions.get(src_uri, config.site_description) %}
+{% set canonical_url = page.canonical_url if page and page.canonical_url else config.site_url %}
+
+{% block site_meta %}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="{{ seo_description | e }}">
+  {% if config.site_author %}
+    <meta name="author" content="{{ config.site_author | e }}">
+  {% endif %}
+  {% if page and page.canonical_url %}
+    <link rel="canonical" href="{{ page.canonical_url }}">
+  {% endif %}
+  {% if page and page.previous_page %}
+    <link rel="prev" href="{{ page.previous_page.url | url }}">
+  {% endif %}
+  {% if page and page.next_page %}
+    <link rel="next" href="{{ page.next_page.url | url }}">
+  {% endif %}
+  <link rel="icon" href="{{ config.theme.favicon | url }}">
+  <meta name="generator" content="mkdocs-{{ mkdocs_version }}, mkdocs-material-9.6.5">
+{% endblock %}
+
+{% block htmltitle %}
+  <title>{{ seo_title | e }}</title>
+{% endblock %}
+
+{% block extrahead %}
+  {{ super() }}
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name | e }}">
+  <meta property="og:title" content="{{ seo_title | e }}">
+  <meta property="og:description" content="{{ seo_description | e }}">
+  <meta property="og:url" content="{{ canonical_url | e }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="{{ seo_title | e }}">
+  <meta name="twitter:description" content="{{ seo_description | e }}">
+{% endblock %}

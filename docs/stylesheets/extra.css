@@ -22,10 +22,22 @@
 
 .md-typeset p {
   margin: 0.55em 0;
+  max-width: 74ch;
+}
+
+.md-typeset li {
+  max-width: 74ch;
 }
 
 .md-typeset pre > code {
   font-size: 0.85em;
+}
+
+@media (max-width: 960px) {
+  .md-typeset p,
+  .md-typeset li {
+    max-width: 100%;
+  }
 }
 
 /* -----------------------------
@@ -382,56 +394,9 @@
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .sh-hero-art {
-    animation: sh-float 10s ease-in-out infinite;
-  }
-  .sh-hero::after {
-    animation: sh-grid 18s linear infinite;
-  }
-  .sh-hero-wires-svg {
-    animation: sh-wires 14s ease-in-out infinite;
-  }
   .sh-hero-wires path {
     stroke-dasharray: 6 18;
-    animation: sh-flow 3.6s linear infinite;
   }
-  .sh-hero-hub {
-    animation: sh-hub 3.2s ease-in-out infinite;
-  }
-  .sh-hero-nodes circle {
-    transform-origin: center;
-    animation: sh-node 2.6s ease-in-out infinite;
-  }
-}
-
-@keyframes sh-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-8px); }
-}
-
-@keyframes sh-grid {
-  0% { background-position: 0 0, 0 0; }
-  100% { background-position: 56px 0, 0 56px; }
-}
-
-@keyframes sh-wires {
-  0%, 100% { transform: translateY(0); opacity: 0.85; }
-  50% { transform: translateY(-6px); opacity: 0.95; }
-}
-
-@keyframes sh-flow {
-  0% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: -96; }
-}
-
-@keyframes sh-hub {
-  0%, 100% { transform: scale(1); opacity: 0.60; }
-  50% { transform: scale(1.03); opacity: 0.78; }
-}
-
-@keyframes sh-node {
-  0%, 100% { transform: scale(1); opacity: 0.55; }
-  50% { transform: scale(1.15); opacity: 0.82; }
 }
 
 .sh-section {
@@ -533,26 +498,6 @@
     opacity: 1;
     transform: none;
     transition: none;
-  }
-}
-
-/* -----------------------------
- * Subtle pointer parallax (landing only)
- * ----------------------------- */
-
-.sh-hero {
-  --sh-mx: 0px;
-  --sh-my: 0px;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .sh-hero-art {
-    transform: translate3d(calc(var(--sh-mx) * 0.06), calc(var(--sh-my) * 0.06), 0);
-    transition: transform 120ms ease;
-  }
-  .sh-hero-wires-svg {
-    transform: translate3d(calc(var(--sh-mx) * 0.10), calc(var(--sh-my) * 0.10), 0);
-    transition: transform 120ms ease;
   }
 }
 

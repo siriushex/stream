@@ -63,12 +63,11 @@
   function initLandingFx() {
     const landing = document.querySelector(".sh-landing");
     // Маркер для CSS: главная страница = “витрина”.
-    // На ней мы хотим скрытую навигацию (drawer по кнопке) и full-bleed секции.
     document.body.classList.toggle("sh-home", !!landing);
 
     if (!landing) return;
 
-    // Reveal-on-scroll
+    // Лёгкий reveal без тяжёлых pointer-эффектов.
     const revealEls = [
       ...document.querySelectorAll(".sh-hero-copy > *"),
       ...document.querySelectorAll(".sh-card"),
@@ -76,59 +75,22 @@
     ];
     for (const el of revealEls) el.classList.add("sh-reveal");
 
-    if (!prefersReducedMotion() && "IntersectionObserver" in window) {
-      const io = new IntersectionObserver(
-        (entries) => {
-          for (const e of entries) {
-            if (!e.isIntersecting) continue;
-            e.target.classList.add("is-in");
-            io.unobserve(e.target);
-          }
-        },
-        { threshold: 0.12, rootMargin: "0px 0px -8% 0px" }
-      );
-      for (const el of revealEls) io.observe(el);
-    } else {
+    if (prefersReducedMotion() || !("IntersectionObserver" in window)) {
       for (const el of revealEls) el.classList.add("is-in");
+      return;
     }
 
-    // Pointer parallax (hero only)
-    const hero = document.querySelector(".sh-hero");
-    if (!hero) return;
-    if (prefersReducedMotion()) return;
-
-    let raf = 0;
-    let lastX = 0;
-    let lastY = 0;
-
-    const apply = () => {
-      raf = 0;
-      hero.style.setProperty("--sh-mx", `${lastX}px`);
-      hero.style.setProperty("--sh-my", `${lastY}px`);
-    };
-
-    const onMove = (ev) => {
-      const r = hero.getBoundingClientRect();
-      const cx = r.left + r.width / 2;
-      const cy = r.top + r.height / 2;
-      const dx = (ev.clientX - cx) / Math.max(1, r.width / 2);
-      const dy = (ev.clientY - cy) / Math.max(1, r.height / 2);
-      // clamp
-      const cdx = Math.max(-1, Math.min(1, dx));
-      const cdy = Math.max(-1, Math.min(1, dy));
-      lastX = Math.round(cdx * 24);
-      lastY = Math.round(cdy * 18);
-      if (!raf) raf = requestAnimationFrame(apply);
-    };
-
-    const onLeave = () => {
-      lastX = 0;
-      lastY = 0;
-      if (!raf) raf = requestAnimationFrame(apply);
-    };
-
-    hero.addEventListener("pointermove", onMove, { passive: true });
-    hero.addEventListener("pointerleave", onLeave, { passive: true });
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          e.target.classList.add("is-in");
+          io.unobserve(e.target);
+        }
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -8% 0px" }
+    );
+    for (const el of revealEls) io.observe(el);
   }
 
   // MkDocs Material может жить с instant navigation. Поддерживаем оба режима.

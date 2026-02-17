@@ -1,8 +1,3 @@
----
-hide:
-  - toc
----
-
 <div class="sh-landing" markdown="1">
 
 <div class="sh-hero sh-bleed">
@@ -13,8 +8,9 @@ hide:
         Управление вещанием в одном месте: входы, каналы, выходы, диагностика и API.
       </p>
       <div class="sh-cta">
-        <a class="md-button md-button--primary" href="quick-start/installation/">Начать установку</a>
-        <a class="md-button" href="manual/troubleshooting/">Узнать диагностику</a>
+        <a class="md-button md-button--primary" href="quick-start/">Начать за 5 минут</a>
+        <a class="md-button" href="quick-start/check-playback/">Проверить статус</a>
+        <a class="md-button" href="manual/troubleshooting/">Диагностика</a>
       </div>
       <div class="sh-hero-badges">
         <span class="sh-badge">Web UI + API</span>
@@ -70,7 +66,7 @@ hide:
 
 <div class="sh-section">
 
-## Запусти за 3 шага
+<h2>Запусти за 3 шага</h2>
 
 <div class="sh-grid">
   <div class="sh-card" markdown="1">
@@ -104,7 +100,7 @@ hide:
   <div class="sh-progress-item is-alert"><span>Проверка и диагностика</span></div>
 </div>
 
-## Схема потока
+<h2>Схема потока</h2>
 
 <div class="sh-pipeline" role="img" aria-label="Input переходит в Stream Hub и отправляется в Output">
   <div class="sh-pipeline-node">
@@ -123,22 +119,32 @@ hide:
   </div>
 </div>
 
-## Быстрая установка
+<h2>Что такое Stream Hub</h2>
+
+<ul>
+  <li><a href="about/what-is-stream-hub/">Что такое Stream Hub</a></li>
+  <li><a href="about/stream-hub-iptv/">Stream Hub для IPTV</a></li>
+  <li><a href="about/why-stream-hub/">Почему Stream Hub</a></li>
+</ul>
+
+<h2>Быстрая установка</h2>
 
 ```bash
 curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only
 ```
 
-Если нужен транскод: убедитесь, что у вас профиль **FULL** и доступен `ffmpeg`.
-Подробнее: [Build profiles (FULL/LITE)](manual/build-profiles.md).
+<p>Если нужен транскод: убедитесь, что у вас профиль <strong>FULL</strong> и доступен <code>ffmpeg</code>.</p>
+<p>Подробнее: <a href="manual/build-profiles/">Build profiles (FULL/LITE)</a>.</p>
 
-## Что получите после установки
+<h2>Что получите после установки</h2>
 
-- Web UI для управления каналами и диагностики.
-- API для автоматизации и интеграций.
-- Базовый operational контур: логи, systemd, статус вещания.
+<ul>
+  <li>Web UI для управления каналами и диагностики.</li>
+  <li>API для автоматизации и интеграций.</li>
+  <li>Базовый operational контур: логи, systemd, статус вещания.</li>
+</ul>
 
-## Дальше
+<h2>Дальше</h2>
 
 <div class="sh-next">
   <a class="md-button md-button--primary" href="quick-start/">Открыть быстрый старт</a>
@@ -149,7 +155,7 @@ curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --
 
 <div class="sh-section">
 
-## Первый запуск вручную (опционально)
+<h2>Первый запуск вручную (опционально)</h2>
 
 ```bash
 sudo mkdir -p /etc/stream
@@ -157,9 +163,10 @@ sudo sh -c 'echo {} > /etc/stream/prod.json'
 sudo /usr/local/bin/stream -c /etc/stream/prod.json -p 9060
 ```
 
-Панель откроется здесь:
-
-- `http://SERVER:9060`
+<p>Панель откроется здесь:</p>
+<ul>
+  <li><code>http://SERVER:9060</code></li>
+</ul>
 
 <div class="sh-next">
   <a class="md-button md-button--primary" href="quick-start/web-ui/">Перейти в Web UI</a>
