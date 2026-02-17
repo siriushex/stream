@@ -8,6 +8,7 @@ set -euo pipefail
 
 BASE_URL="https://stream.centv.ru"
 INSTALL_URL="${BASE_URL}/install.sh"
+BOOTSTRAP_VERSION="1.2.2"
 TMP_FILE="$(mktemp -t stream-install.XXXXXX)"
 CURL_FLAGS=(-fL -sS --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 120)
 
@@ -15,6 +16,8 @@ cleanup() {
   rm -f "$TMP_FILE" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+echo "Stream CentOS bootstrap ${BOOTSTRAP_VERSION}" >&2
 
 # On older CentOS/RHEL the CA bundle is often outdated, so curl prints:
 #   curl: (60) Peer's Certificate issuer is not recognized.

@@ -10,6 +10,20 @@
     - Itemized list of tests (or "Not run")
 
 ## Entries
+### 2026-02-17
+- Changes:
+  - Release: bumped product version to `STREAM_VERSION=1.2.2`.
+  - Installer: added explicit installer release banner (`1.2.2`) for `install.sh` and `install-centos.sh`.
+  - Installer: source mode now tries versioned tarball first (`stream-src-1.2.2.tar.gz`) and falls back to `stream-src.tar.gz`, then `git clone`.
+  - Deploy: synced `deploy/stream.centv.ru/install.sh` and `deploy/stream.centv.ru/install-centos.sh` with the same release/versioned source logic.
+  - CentOS install path validated for:
+    `curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode`
+- Tests:
+  - `bash -n install.sh`
+  - `bash -n install-centos.sh`
+  - `bash -n deploy/stream.centv.ru/install.sh`
+  - `bash -n deploy/stream.centv.ru/install-centos.sh`
+
 ### 2026-02-16
 - Changes:
   - Settings Save: defer primary config + revision snapshot + LKG export to an async helper process (reduces UI latency and avoids blocking the main event loop on large configs).

@@ -30,6 +30,12 @@
 
 ### Что изменилось
 
+- Релиз:
+  - версия Stream Hub обновлена до **1.2.2**.
+- Installer/Deploy:
+  - `install.sh` и `install-centos.sh` получили release-маркер `1.2.2` в выводе.
+  - source installer сначала пробует versioned tarball `stream-src-1.2.2.tar.gz`, затем fallback на `stream-src.tar.gz`, затем `git clone`.
+  - синхронизированы deploy-скрипты для `stream.centv.ru`.
 - Устойчивость API/UI:
   - ускорено сохранение настроек без фактических изменений (`no-op save`),
   - стабилизирован список stream при большом количестве элементов,
@@ -49,6 +55,8 @@
 
 - Операторы с большим числом каналов и частыми Save/Apply.
 - Инстансы, где нужны remote API серверы и DASH источники.
+- CentOS-установки через команду:
+  - `curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode`
 
 ## 2026-02-16
 
