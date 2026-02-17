@@ -26,6 +26,22 @@
 
 Полная история изменений: [CHANGELOG.md в GitHub](https://github.com/siriushex/stream/blob/main/CHANGELOG.md)
 
+## 2026-02-17 (1.2.4)
+
+### Что изменилось
+
+- Исправлена деградация UI на CentOS при долгой сессии: добавлены timeout и de-duplication для GET API запросов (исключены очереди из overlapping polling).
+- В `Save settings` добавлена пауза фонового polling на время запроса с безопасным возобновлением после ответа.
+- Кнопка Save в Settings защищена от двойного клика (`Saving...` во время in-flight запроса).
+- Обновлена UI build-метка до `20260217a`.
+- Обновлены release-маркеры installer-скриптов до `1.2.4`.
+
+### Команда установки (CentOS)
+
+```bash
+curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode
+```
+
 ## 2026-02-17 (1.2.3)
 
 ### Что изменилось

@@ -12,6 +12,21 @@
 ## Entries
 ### 2026-02-17
 - Changes:
+  - Release: bumped product version to `STREAM_VERSION=1.2.4`.
+  - UI performance: added API GET de-duplication and request timeouts to prevent request queue buildup on slow CentOS hosts.
+  - UI save flow: `saveSettings` now pauses background polling while request is in-flight and resumes after completion.
+  - UI/UX: Settings save button is now guarded from double-submit (`Saving...` state).
+  - UI build: updated build stamp and cache-bust to `20260217a`.
+  - Installer: bumped `install.sh` and `install-centos.sh` release markers to `1.2.4` (root + deploy copies).
+- Tests:
+  - `node --check web/app.js`
+  - `bash -n install.sh`
+  - `bash -n install-centos.sh`
+  - `bash -n deploy/stream.centv.ru/install.sh`
+  - `bash -n deploy/stream.centv.ru/install-centos.sh`
+
+### 2026-02-17
+- Changes:
   - Release: bumped product version to `STREAM_VERSION=1.2.3`.
   - Export async: fixed CentOS save stalls when helper worker is unavailable.
   - Export async: added generated helper fallback (`.stream-export-write.lua`) when packaged helper files are missing.
