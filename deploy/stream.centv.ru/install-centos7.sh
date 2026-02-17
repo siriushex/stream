@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Централизованный установщик для CentOS/RHEL/Rocky/Alma.
-# Нужен для случаев, когда HTTPS недоступен из‑за старых CA.
-# Не принуждаем --verify-transcode: на старых системах ffmpeg может быть
-# установлен, но не запускаться из-за системных библиотек.
+# Dedicated bootstrap for CentOS 7 / RHEL 7.
+# Uses legacy static ffmpeg bundle profile compatible with glibc 2.17.
 
 BASE_URL="https://stream.centv.ru"
 INSTALL_URL="${BASE_URL}/install.sh"
@@ -17,11 +15,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Stream CentOS bootstrap ${BOOTSTRAP_VERSION}" >&2
+echo "Stream CentOS 7 bootstrap ${BOOTSTRAP_VERSION}" >&2
 
-# On older CentOS/RHEL the CA bundle is often outdated, so curl prints:
-#   curl: (60) Peer's Certificate issuer is not recognized.
-# Hide the noisy curl error and show a clear warning instead.
 if ! curl "${CURL_FLAGS[@]}" "$INSTALL_URL" -o "$TMP_FILE" 2>/dev/null; then
   echo "WARN: HTTPS download failed (old CA bundle?). Falling back to HTTP for bootstrap: http://stream.centv.ru/install.sh" >&2
   BASE_URL="http://stream.centv.ru"
@@ -30,5 +25,30 @@ if ! curl "${CURL_FLAGS[@]}" "$INSTALL_URL" -o "$TMP_FILE" 2>/dev/null; then
 fi
 
 chmod +x "$TMP_FILE"
+
+has_mode=0
+has_ffmpeg=0
+for arg in "$@"; do
+  case "$arg" in
+    --mode|--mode=*)
+      has_mode=1
+      ;;
+    --ffmpeg-bundle|--ffmpeg-system|--no-ffmpeg)
+      has_ffmpeg=1
+      ;;
+  esac
+done
+
+extra=()
+if [ "$has_mode" -eq 0 ]; then
+  extra+=(--mode source)
+fi
+if [ "$has_ffmpeg" -eq 0 ]; then
+  extra+=(--ffmpeg-bundle)
+fi
+
+# CentOS7-specific profile: static ffmpeg build compatible with old glibc.
+export FFMPEG_BUNDLE_PROFILE="${FFMPEG_BUNDLE_PROFILE:-legacy-static}"
+
 # Run through bash to work even when /tmp is mounted with noexec.
-exec bash "$TMP_FILE" --base-url "$BASE_URL" "$@"
+exec bash "$TMP_FILE" --base-url "$BASE_URL" "${extra[@]}" "$@"

@@ -12,6 +12,20 @@
 ## Entries
 ### 2026-02-17
 - Changes:
+  - Release: bumped product version to `STREAM_VERSION=1.2.5`.
+  - Installer: added dedicated CentOS 7 bootstrap `install-centos7.sh` (defaults to `--mode source` + `--ffmpeg-bundle`).
+  - Installer: introduced legacy ffmpeg bundle profile (`FFMPEG_BUNDLE_PROFILE=legacy-static`) for CentOS 7 compatibility (glibc 2.17).
+  - Deploy: synced `deploy/stream.centv.ru/install*.sh` including new `install-centos7.sh`.
+- Tests:
+  - `bash -n install.sh`
+  - `bash -n install-centos.sh`
+  - `bash -n install-centos7.sh`
+  - `bash -n deploy/stream.centv.ru/install.sh`
+  - `bash -n deploy/stream.centv.ru/install-centos.sh`
+  - `bash -n deploy/stream.centv.ru/install-centos7.sh`
+
+### 2026-02-17
+- Changes:
   - Release: bumped product version to `STREAM_VERSION=1.2.4`.
   - UI performance: added API GET de-duplication and request timeouts to prevent request queue buildup on slow CentOS hosts.
   - UI save flow: `saveSettings` now pauses background polling while request is in-flight and resumes after completion.

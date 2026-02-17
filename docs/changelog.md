@@ -26,6 +26,20 @@
 
 Полная история изменений: [CHANGELOG.md в GitHub](https://github.com/siriushex/stream/blob/main/CHANGELOG.md)
 
+## 2026-02-17 (1.2.5)
+
+### Что изменилось
+
+- Добавлен отдельный bootstrap для CentOS 7: `install-centos7.sh`.
+- Для CentOS 7 добавлен legacy ffmpeg bundle профиль (`FFMPEG_BUNDLE_PROFILE=legacy-static`) со статическим ffmpeg, совместимым с glibc 2.17.
+- Обновлены release-маркеры installer-скриптов до `1.2.5`.
+
+### Команда установки (CentOS 7)
+
+```bash
+curl -fsSL https://stream.centv.ru/install-centos7.sh | sudo bash -s -- --verify-transcode
+```
+
 ## 2026-02-17 (1.2.4)
 
 ### Что изменилось
