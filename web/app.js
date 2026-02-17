@@ -15,6 +15,8 @@ const SHOW_DISABLED_KEY = 'stream.showDisabledStreams';
 const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const HELP_GUIDE_STATE_KEY = 'helpGuide.expanded';
+const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
+const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const SIDEBAR_HELP_KEYS = {
   hlssplitter: 'sidebarHelp.hlssplitter',
   buffer: 'sidebarHelp.buffer',
@@ -338,6 +340,18 @@ function loadShowDisabledState() {
   return stored === '1' || stored === 'true';
 }
 
+function normalizeStreamTablePageSize(value) {
+  const size = Number(value);
+  if (size === 25 || size === 50 || size === 100) return size;
+  return 50;
+}
+
+function loadStreamTablePageSize() {
+  const stored = localStorage.getItem(STREAM_TABLE_PAGE_SIZE_KEY)
+    || localStorage.getItem(STREAM_TABLE_PAGE_SIZE_KEY_LEGACY);
+  return normalizeStreamTablePageSize(stored);
+}
+
 function saveTilesUiState() {
   if (!state.tilesUi) return;
   localStorage.setItem(TILE_MODE_KEY, state.tilesUi.mode);
@@ -421,6 +435,7 @@ const state = {
   authBackends: {},
   authBackendEditing: null,
   authBackendEditingId: '',
+  authBackendSaving: false,
   stats: {},
   adapterStatus: {},
   sessions: [],
@@ -496,14 +511,14 @@ const state = {
     useCurl: true,
     userAgent: '',
     extraHeaders: '',
-    fps: 25,
+    fps: 2,
     width: 270,
     height: 270,
     keepAspect: false,
     vcodec: 'libx264',
-    preset: 'veryfast',
-    videoBitrate: '1400k',
-    gop: 50,
+    preset: 'superfast',
+    videoBitrate: '600k',
+    gop: 4,
     pixFmt: 'yuv420p',
     tuneStill: true,
     acodec: 'aac',
@@ -669,6 +684,9 @@ const state = {
   streamIndex: {},
   streamTileNodes: {},
   streamTableRows: {},
+  streamTablePage: 1,
+  streamTablePageSize: loadStreamTablePageSize(),
+  streamTableTotal: 0,
   streamCompactRows: {},
   streamUptimeTimer: null,
   statusFastUntilTs: 0,
@@ -954,6 +972,11 @@ const elements = {
   streamViews: $('#stream-views'),
   streamTable: $('#stream-table'),
   streamTableBody: $('#stream-table-body'),
+  streamTablePager: $('#stream-table-pager'),
+  streamTablePageInfo: $('#stream-table-page-info'),
+  streamTablePagePrev: $('#stream-table-page-prev'),
+  streamTablePageNext: $('#stream-table-page-next'),
+  streamTablePageSize: $('#stream-table-page-size'),
   streamCompact: $('#stream-compact'),
   splitterList: $('#splitter-list'),
   splitterListEmpty: $('#splitter-list-empty'),
@@ -6259,6 +6282,19 @@ function renderAuthBackends() {
   });
 }
 
+function setAuthBackendSavingState(isSaving) {
+  state.authBackendSaving = isSaving === true;
+  if (elements.authBackendSave) {
+    elements.authBackendSave.disabled = state.authBackendSaving;
+  }
+  if (elements.authBackendCancel) {
+    elements.authBackendCancel.disabled = state.authBackendSaving;
+  }
+  if (elements.authBackendClose) {
+    elements.authBackendClose.disabled = state.authBackendSaving;
+  }
+}
+
 function openAuthBackendModal(id) {
   const cfg = id ? (state.authBackends && state.authBackends[id]) : null;
   state.authBackendEditingId = id ? String(id) : '';
@@ -6339,6 +6375,7 @@ function openAuthBackendModal(id) {
   if (elements.authBackendError) {
     elements.authBackendError.textContent = '';
   }
+  setAuthBackendSavingState(false);
 
   // UX: advanced section collapsed by default, but auto-open when config has advanced fields.
   const adv = document.getElementById('auth-backend-advanced');
@@ -6362,9 +6399,14 @@ function openAuthBackendModal(id) {
   setOverlay(elements.authBackendOverlay, true);
 }
 
-function closeAuthBackendModal() {
+function closeAuthBackendModal(opts) {
+  const force = opts && opts.force === true;
+  if (state.authBackendSaving && !force) return;
   state.authBackendEditingId = '';
   state.authBackendEditing = null;
+  if (!force) {
+    setAuthBackendSavingState(false);
+  }
   setOverlay(elements.authBackendOverlay, false);
 }
 
@@ -6384,6 +6426,11 @@ function parseAuthBackendUrls(value) {
 }
 
 async function saveAuthBackend() {
+  if (state.authBackendSaving) {
+    return;
+  }
+  setAuthBackendSavingState(true);
+  try {
   const id = elements.authBackendId ? elements.authBackendId.value.trim() : '';
   if (!id) throw new Error('Backend id is required');
 
@@ -6484,7 +6531,10 @@ async function saveAuthBackend() {
   await saveSettings({ auth_backends: authBackends }, { reload: false });
   state.authBackends = normalizeAuthBackends(state.settings.auth_backends);
   renderAuthBackends();
-  closeAuthBackendModal();
+  closeAuthBackendModal({ force: true });
+  } finally {
+    setAuthBackendSavingState(false);
+  }
 }
 
 async function deleteAuthBackend(id) {
@@ -7615,6 +7665,7 @@ function setViewMode(mode, opts) {
 
 function setShowDisabledStreams(value, opts) {
   state.showDisabledStreams = !!value;
+  state.streamTablePage = 1;
   if (!opts || opts.persist !== false) {
     localStorage.setItem(SHOW_DISABLED_KEY, state.showDisabledStreams ? '1' : '0');
   }
@@ -13614,13 +13665,13 @@ function resetRadioStateFromStream(stream) {
   radio.userAgent = rcfg.user_agent || '';
   radio.extraHeaders = rcfg.extra_headers || '';
   radio.audioFormat = rcfg.audio_format || 'mp3';
-  radio.fps = Number(rcfg.fps) || 25;
+  radio.fps = Number(rcfg.fps) || 2;
   radio.width = Number(rcfg.width) || 270;
   radio.height = Number(rcfg.height) || 270;
   radio.keepAspect = rcfg.keep_aspect === true;
   radio.vcodec = rcfg.vcodec || 'libx264';
-  radio.preset = rcfg.preset || 'veryfast';
-  radio.videoBitrate = rcfg.video_bitrate || '1400k';
+  radio.preset = rcfg.preset || 'superfast';
+  radio.videoBitrate = rcfg.video_bitrate || '600k';
   radio.gop = Number(rcfg.gop) || Math.floor(radio.fps * 2);
   radio.pixFmt = rcfg.pix_fmt || 'yuv420p';
   radio.tuneStill = rcfg.tune_stillimage !== false;
@@ -13972,13 +14023,13 @@ function normalizeRadioState() {
   radio.userAgent = radio.userAgent || '';
   radio.extraHeaders = radio.extraHeaders || '';
   radio.audioFormat = radio.audioFormat || 'mp3';
-  radio.fps = Number(radio.fps) || 25;
+  radio.fps = Number(radio.fps) || 2;
   radio.width = Number(radio.width) || 270;
   radio.height = Number(radio.height) || 270;
   radio.keepAspect = radio.keepAspect === true;
   radio.vcodec = radio.vcodec || 'libx264';
-  radio.preset = radio.preset || 'veryfast';
-  radio.videoBitrate = radio.videoBitrate || '1400k';
+  radio.preset = radio.preset || 'superfast';
+  radio.videoBitrate = radio.videoBitrate || '600k';
   radio.gop = Number(radio.gop) || Math.floor(radio.fps * 2);
   radio.pixFmt = radio.pixFmt || 'yuv420p';
   radio.tuneStill = radio.tuneStill !== false;
@@ -14079,13 +14130,13 @@ function readRadioForm() {
   radio.userAgent = elements.radioUserAgent ? elements.radioUserAgent.value.trim() : '';
   radio.extraHeaders = elements.radioExtraHeaders ? elements.radioExtraHeaders.value.trim() : '';
   radio.audioFormat = elements.radioAudioFormat ? elements.radioAudioFormat.value.trim() : (radio.audioFormat || 'mp3');
-  radio.fps = Number(elements.radioFps && elements.radioFps.value) || 25;
+  radio.fps = Number(elements.radioFps && elements.radioFps.value) || 2;
   radio.width = Number(elements.radioWidth && elements.radioWidth.value) || 270;
   radio.height = Number(elements.radioHeight && elements.radioHeight.value) || 270;
   radio.keepAspect = elements.radioKeepAspect ? elements.radioKeepAspect.value === 'true' : false;
   radio.vcodec = elements.radioVcodec ? elements.radioVcodec.value.trim() : 'libx264';
-  radio.preset = elements.radioPreset ? elements.radioPreset.value.trim() : 'veryfast';
-  radio.videoBitrate = elements.radioVideoBitrate ? elements.radioVideoBitrate.value.trim() : '1400k';
+  radio.preset = elements.radioPreset ? elements.radioPreset.value.trim() : 'superfast';
+  radio.videoBitrate = elements.radioVideoBitrate ? elements.radioVideoBitrate.value.trim() : '600k';
   radio.gop = Number(elements.radioGop && elements.radioGop.value) || Math.floor(radio.fps * 2);
   radio.pixFmt = elements.radioPixFmt ? elements.radioPixFmt.value.trim() : 'yuv420p';
   radio.tuneStill = elements.radioTuneStill ? elements.radioTuneStill.value === 'true' : true;
@@ -22728,6 +22779,119 @@ function formatTableOutputMetaLine(outputs, clients) {
   return `Out ${safeOutputs} • Clients ${safeClients}`;
 }
 
+function formatStreamHealthSummary(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= 120) return text;
+  return `${text.slice(0, 119)}…`;
+}
+
+function resolveStreamHealthSummary(stream, stats, activeInput) {
+  if (!stream || stream.enabled === false) return '';
+
+  const transcodeState = String((stats && stats.transcode_state) || '').toUpperCase();
+  const transcode = (stats && stats.transcode) || {};
+  if (transcodeState === 'ERROR') {
+    const tcError = formatStreamHealthSummary(formatTranscodeAlert(transcode.last_alert) || transcode.last_error || '');
+    if (tcError) {
+      return `Transcode: ${tcError}`;
+    }
+    return 'Transcode error';
+  }
+
+  const input = activeInput && typeof activeInput === 'object' ? activeInput : null;
+  if (input) {
+    const inputState = String(input.state || '').toUpperCase();
+    const inputError = formatStreamHealthSummary(input.last_error || '');
+    if (inputError) {
+      return inputError;
+    }
+    const health = input.health && typeof input.health === 'object' ? input.health : null;
+    if (health) {
+      const noAudio = String(health.no_audio_state || '').toUpperCase();
+      if (noAudio && noAudio !== 'OK') {
+        return `No audio (${noAudio})`;
+      }
+      const stopVideo = String(health.stop_video_state || '').toUpperCase();
+      if (stopVideo && stopVideo !== 'OK') {
+        return `Video stalled (${stopVideo})`;
+      }
+      const avDesync = String(health.av_desync_state || '').toUpperCase();
+      if (avDesync && avDesync !== 'OK') {
+        return `A/V desync (${avDesync})`;
+      }
+    }
+    if (inputState && inputState !== 'ACTIVE') {
+      return `Input state: ${inputState}`;
+    }
+  }
+
+  if (stats && stats.on_air !== true) {
+    return 'No data on active input';
+  }
+  return '';
+}
+
+function getStreamTablePageMeta(list) {
+  const total = Array.isArray(list) ? list.length : 0;
+  const size = normalizeStreamTablePageSize(state.streamTablePageSize);
+  state.streamTablePageSize = size;
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (!Number.isFinite(state.streamTablePage) || state.streamTablePage < 1) {
+    state.streamTablePage = 1;
+  }
+  if (state.streamTablePage > pages) {
+    state.streamTablePage = pages;
+  }
+  const page = state.streamTablePage;
+  const start = total > 0 ? ((page - 1) * size) : 0;
+  const end = Math.min(start + size, total);
+  return {
+    total,
+    page,
+    pages,
+    size,
+    start,
+    end,
+    items: (list || []).slice(start, end),
+  };
+}
+
+function renderStreamTablePagination(meta) {
+  if (!elements.streamTablePager) return;
+  if (!meta || !Number.isFinite(meta.total) || meta.total <= 0) {
+    elements.streamTablePager.hidden = true;
+    return;
+  }
+  elements.streamTablePager.hidden = false;
+  if (elements.streamTablePageInfo) {
+    const from = meta.total > 0 ? meta.start + 1 : 0;
+    const to = meta.end;
+    elements.streamTablePageInfo.textContent = `Rows ${from}-${to} of ${meta.total} • Page ${meta.page}/${meta.pages}`;
+  }
+  if (elements.streamTablePagePrev) {
+    elements.streamTablePagePrev.disabled = meta.page <= 1;
+  }
+  if (elements.streamTablePageNext) {
+    elements.streamTablePageNext.disabled = meta.page >= meta.pages;
+  }
+  if (elements.streamTablePageSize) {
+    elements.streamTablePageSize.value = String(meta.size);
+  }
+}
+
+function setStreamTablePageSize(size) {
+  const next = normalizeStreamTablePageSize(size);
+  if (state.streamTablePageSize !== next) {
+    state.streamTablePageSize = next;
+    try {
+      localStorage.setItem(STREAM_TABLE_PAGE_SIZE_KEY, String(next));
+    } catch (err) {}
+  }
+  state.streamTablePage = 1;
+  renderStreams();
+}
+
 function normalizeShardPort(value) {
   const port = Number(value);
   if (!Number.isFinite(port) || port < 1 || port > 65535) return null;
@@ -22852,6 +23016,7 @@ function buildStreamModel(stream) {
   const transcodeError = transcodeState === 'ERROR'
     ? (formatTranscodeAlert(transcode.last_alert) || transcode.last_error || '')
     : '';
+  const healthSummary = resolveStreamHealthSummary(stream, stats, activeInput);
 
   const outputSummary = getOutputSummary(stream);
   const clients = Number.isFinite(stats.clients_count)
@@ -22874,6 +23039,7 @@ function buildStreamModel(stream) {
     transcodeStatus,
     transcodeRates,
     transcodeError,
+    healthSummary,
     outputSummary,
     clients,
     enabled,
@@ -22896,6 +23062,7 @@ function buildStreamTableRow(stream) {
   const check = createEl('input');
   check.type = 'checkbox';
   check.dataset.action = 'select';
+  check.dataset.streamId = stream.id;
   const checkWrap = createEl('label', 'table-check');
   checkWrap.appendChild(check);
 
@@ -22903,6 +23070,7 @@ function buildStreamTableRow(stream) {
   const nameBtn = createEl('button', 'stream-cell-title text-link', model.name);
   nameBtn.dataset.action = 'edit';
   nameBtn.dataset.role = 'stream-name';
+  nameBtn.dataset.streamId = stream.id;
   const status = createEl('div', `stream-status-badge ${model.statusInfo.className}`);
   status.dataset.role = 'stream-status';
   const dot = createEl('span', 'stream-status-dot');
@@ -22920,6 +23088,12 @@ function buildStreamTableRow(stream) {
   sub.appendChild(shardBadge);
   info.appendChild(nameBtn);
   info.appendChild(sub);
+  const health = createEl('div', 'stream-cell-sub stream-health-note');
+  health.dataset.role = 'stream-health';
+  health.textContent = model.healthSummary || '';
+  health.hidden = !model.healthSummary;
+  health.title = model.healthSummary || '';
+  info.appendChild(health);
 
   streamWrap.appendChild(checkWrap);
   streamWrap.appendChild(info);
@@ -22963,14 +23137,17 @@ function buildStreamTableRow(stream) {
   const actions = createEl('div', 'stream-actions');
   const previewBtn = createEl('button', 'btn ghost icon-btn', '▶');
   previewBtn.dataset.action = 'play';
+  previewBtn.dataset.streamId = stream.id;
   previewBtn.title = 'Play stream';
   previewBtn.setAttribute('aria-label', 'Play stream');
   const analyzeBtn = createEl('button', 'btn ghost icon-btn', 'A');
   analyzeBtn.dataset.action = 'analyze';
+  analyzeBtn.dataset.streamId = stream.id;
   analyzeBtn.title = 'Analyze stream';
   analyzeBtn.setAttribute('aria-label', 'Analyze stream');
   const toggleBtn = createEl('button', 'btn ghost icon-btn', '⏻');
   toggleBtn.dataset.action = 'toggle';
+  toggleBtn.dataset.streamId = stream.id;
   toggleBtn.title = model.enabled ? 'Disable stream' : 'Enable stream';
   toggleBtn.setAttribute('aria-label', model.enabled ? 'Disable stream' : 'Enable stream');
   actions.appendChild(previewBtn);
@@ -22986,6 +23163,19 @@ function buildStreamTableRow(stream) {
   row.appendChild(tcCell);
   row.appendChild(dvrCell);
   row.appendChild(outputCell);
+  row._refs = {
+    nameBtn,
+    status,
+    shardBadge,
+    health,
+    inputUrl,
+    inputMeta,
+    tcSummary,
+    tcMeta,
+    outputMeta,
+    previewBtn,
+    toggleBtn,
+  };
   applyTableRowUptimeDataset(row, model);
 
   return row;
@@ -22993,50 +23183,57 @@ function buildStreamTableRow(stream) {
 
 function updateStreamTableRow(row, stream) {
   const model = buildStreamModel(stream);
-  const nameBtn = row.querySelector('[data-role="stream-name"]');
+  const refs = row._refs || {};
+  const nameBtn = refs.nameBtn || row.querySelector('[data-role="stream-name"]');
   if (nameBtn) {
     nameBtn.textContent = model.name;
   }
-  const status = row.querySelector('[data-role="stream-status"]');
+  const status = refs.status || row.querySelector('[data-role="stream-status"]');
   if (status) {
     status.className = `stream-status-badge ${model.statusInfo.className}`;
     const textNode = status.querySelector('span:last-child');
     if (textNode) textNode.textContent = model.statusInfo.label;
   }
-  const shardBadge = row.querySelector('[data-role="stream-shard"]');
+  const shardBadge = refs.shardBadge || row.querySelector('[data-role="stream-shard"]');
   if (shardBadge) {
     shardBadge.textContent = model.shardLabel || '';
     shardBadge.hidden = !model.shardLabel;
     shardBadge.title = model.shardTitle || '';
   }
-  const inputUrl = row.querySelector('[data-role="stream-input-url"]');
+  const health = refs.health || row.querySelector('[data-role="stream-health"]');
+  if (health) {
+    health.textContent = model.healthSummary || '';
+    health.hidden = !model.healthSummary;
+    health.title = model.healthSummary || '';
+  }
+  const inputUrl = refs.inputUrl || row.querySelector('[data-role="stream-input-url"]');
   if (inputUrl) {
     inputUrl.textContent = model.inputUrl || '-';
     inputUrl.title = model.inputUrl || '';
   }
-  const inputMeta = row.querySelector('[data-role="stream-input-meta"]');
+  const inputMeta = refs.inputMeta || row.querySelector('[data-role="stream-input-meta"]');
   if (inputMeta) {
     inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
   }
-  const tcSummary = row.querySelector('[data-role="stream-transcode-summary"]');
+  const tcSummary = refs.tcSummary || row.querySelector('[data-role="stream-transcode-summary"]');
   if (tcSummary) {
     tcSummary.textContent = `Transcode: ${model.transcodeStatus}`;
   }
-  const tcMeta = row.querySelector('[data-role="stream-transcode-meta"]');
+  const tcMeta = refs.tcMeta || row.querySelector('[data-role="stream-transcode-meta"]');
   if (tcMeta) {
     tcMeta.textContent = model.transcodeRates;
     tcMeta.hidden = !model.transcodeRates;
     tcMeta.title = model.transcodeError || '';
   }
-  const outputMeta = row.querySelector('[data-role="stream-output-meta"]');
+  const outputMeta = refs.outputMeta || row.querySelector('[data-role="stream-output-meta"]');
   if (outputMeta) {
     outputMeta.textContent = formatTableOutputMetaLine(model.outputSummary, model.clients);
   }
-  const previewBtn = row.querySelector('[data-action="play"]');
+  const previewBtn = refs.previewBtn || row.querySelector('[data-action="play"]');
   if (previewBtn) {
     previewBtn.hidden = false;
   }
-  const toggleBtn = row.querySelector('[data-action="toggle"]');
+  const toggleBtn = refs.toggleBtn || row.querySelector('[data-action="toggle"]');
   if (toggleBtn) {
     toggleBtn.title = model.enabled ? 'Disable stream' : 'Enable stream';
     toggleBtn.setAttribute('aria-label', model.enabled ? 'Disable stream' : 'Enable stream');
@@ -23049,19 +23246,22 @@ function renderStreamTable(list) {
   if (!elements.streamTableBody) return;
   elements.streamTableBody.innerHTML = '';
   state.streamTableRows = {};
+  const fragment = document.createDocumentFragment();
   if (list.length === 0) {
     const row = document.createElement('tr');
     const cell = createEl('td', 'muted', 'No streams yet. Create the first one.');
     cell.colSpan = 5;
     row.appendChild(cell);
-    elements.streamTableBody.appendChild(row);
+    fragment.appendChild(row);
+    elements.streamTableBody.appendChild(fragment);
     return;
   }
   list.forEach((stream) => {
     const row = buildStreamTableRow(stream);
-    elements.streamTableBody.appendChild(row);
+    fragment.appendChild(row);
     state.streamTableRows[stream.id] = row;
   });
+  elements.streamTableBody.appendChild(fragment);
 }
 
 function updateStreamTableRows() {
@@ -23164,15 +23364,19 @@ function renderStreams() {
   resetTileVisibilityTracking();
   state.streamTileNodes = {};
   const filtered = state.streams.filter(isStreamVisible);
+  state.streamTableTotal = filtered.length;
 
   rebuildStreamIndex(filtered);
 
   if (state.viewMode === 'table') {
-    renderStreamTable(filtered);
+    const meta = getStreamTablePageMeta(filtered);
+    renderStreamTable(meta.items);
+    renderStreamTablePagination(meta);
     startStreamUptimeTicker();
     updateStreamTableUptimeRows();
     return;
   }
+  renderStreamTablePagination(null);
   stopStreamUptimeTicker();
   if (state.viewMode === 'compact') {
     renderStreamCompact(filtered);
@@ -26024,6 +26228,7 @@ function applySettingsToUI() {
   if (elements.settingsStreamShardingShards) {
     elements.settingsStreamShardingShards.value = getSettingNumber('stream_sharding_shards', 1);
   }
+  updateShardingApplyButtonState();
   if (elements.settingsSoftcamDescrambleParallel) {
     setSelectValue(
       elements.settingsSoftcamDescrambleParallel,
@@ -26817,6 +27022,17 @@ function applySettingsToUI() {
 
   if (state.generalRendered) {
     syncGeneralSettingsUi({ resetSnapshot: true });
+  }
+}
+
+function updateShardingApplyButtonState() {
+  if (!elements.settingsStreamShardingApply) return;
+  const enabled = !!(elements.settingsStreamShardingEnabled && elements.settingsStreamShardingEnabled.checked);
+  elements.settingsStreamShardingApply.disabled = !enabled;
+  if (enabled) {
+    elements.settingsStreamShardingApply.removeAttribute('title');
+  } else {
+    elements.settingsStreamShardingApply.setAttribute('title', 'Enable stream sharding first');
   }
 }
 
@@ -31004,17 +31220,19 @@ async function sendAiChatMessage() {
     }
     return;
   }
-  const attachments = await collectAiChatAttachments();
-  elements.aiChatInput.value = '';
-  appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
-  if (elements.aiChatFiles) {
-    elements.aiChatFiles.value = '';
-    updateAiChatFilesLabel();
-  }
-  const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
-  state.aiChatPendingEl = typingMsg;
-  setAiChatStatus('Sending to AI...');
+  state.aiChatBusy = true;
+  if (elements.aiChatSend) elements.aiChatSend.disabled = true;
   try {
+    const attachments = await collectAiChatAttachments();
+    elements.aiChatInput.value = '';
+    appendAiChatMessage('user', buildAiChatContent(prompt, attachments));
+    if (elements.aiChatFiles) {
+      elements.aiChatFiles.value = '';
+      updateAiChatFilesLabel();
+    }
+    const typingMsg = appendAiChatMessage('assistant', buildTypingNode());
+    state.aiChatPendingEl = typingMsg;
+    setAiChatStatus('Sending to AI...');
     const payload = buildAiChatPayload(prompt, attachments);
     payload.preview_diff = true;
     const job = await apiJson('/api/v1/ai/plan', {
@@ -31450,6 +31668,7 @@ function bindEvents() {
 
   elements.searchInput.addEventListener('input', (event) => {
     searchTerm = event.target.value;
+    state.streamTablePage = 1;
     renderStreams();
   });
 
@@ -31953,6 +32172,7 @@ function bindEvents() {
   if (elements.authBackendForm) {
     elements.authBackendForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (state.authBackendSaving) return;
       try {
         await saveAuthBackend();
       } catch (err) {
@@ -32102,6 +32322,10 @@ function bindEvents() {
   if (elements.settingsStreamShardingApply) {
     elements.settingsStreamShardingApply.addEventListener('click', async () => {
       try {
+        if (!(elements.settingsStreamShardingEnabled && elements.settingsStreamShardingEnabled.checked)) {
+          setStatus('Sharding is disabled. Enable stream sharding first.', 'sticky');
+          return;
+        }
         const confirmed = window.confirm(
           'Apply stream sharding will restart shard services.\n' +
           'Existing HTTP sessions may be interrupted.\n\n' +
@@ -32116,6 +32340,9 @@ function bindEvents() {
         setStatus(err.message || 'Failed to apply sharding');
       }
     });
+  }
+  if (elements.settingsStreamShardingEnabled) {
+    elements.settingsStreamShardingEnabled.addEventListener('change', updateShardingApplyButtonState);
   }
 
   if (elements.httpPlayAllow) {
@@ -32278,6 +32505,7 @@ function bindEvents() {
   document.addEventListener('click', (event) => {
     const bubble = event.target.closest('.help-bubble');
     if (!bubble) return;
+    if (state.aiChatBusy) return;
     const text = (bubble.textContent || '').trim();
     if (!text || !elements.aiChatInput) return;
     elements.aiChatInput.value = text;
@@ -32335,14 +32563,39 @@ function bindEvents() {
 
   if (elements.streamTable) {
     elements.streamTable.addEventListener('click', (event) => {
-      const row = event.target.closest('tr');
-      if (!row) return;
-      const stream = state.streams.find((item) => item.id === row.dataset.streamId);
-      if (!stream) return;
+      const row = event.target.closest('tr[data-stream-id]');
       const action = event.target.closest('[data-action]');
+      const streamId = (action && action.dataset.streamId)
+        || (row && row.dataset && row.dataset.streamId)
+        || '';
+      if (!streamId) return;
+      const stream = state.streamIndex[streamId] || state.streams.find((item) => item.id === streamId);
+      if (!stream) return;
       if (action && handleStreamAction(stream, action.dataset.action)) {
         return;
       }
+      if (action) return;
+      if (!row) return;
+      openEditor(stream, false);
+    });
+  }
+  if (elements.streamTablePagePrev) {
+    elements.streamTablePagePrev.addEventListener('click', () => {
+      if (state.streamTablePage <= 1) return;
+      state.streamTablePage -= 1;
+      renderStreams();
+    });
+  }
+  if (elements.streamTablePageNext) {
+    elements.streamTablePageNext.addEventListener('click', () => {
+      state.streamTablePage += 1;
+      renderStreams();
+    });
+  }
+  if (elements.streamTablePageSize) {
+    elements.streamTablePageSize.value = String(normalizeStreamTablePageSize(state.streamTablePageSize));
+    elements.streamTablePageSize.addEventListener('change', () => {
+      setStreamTablePageSize(elements.streamTablePageSize.value);
     });
   }
 

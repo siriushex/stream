@@ -167,6 +167,14 @@ dofile(script_path("system_metrics.lua"))
 dofile(script_path("watchdog.lua"))
 dofile(script_path("preview.lua"))
 dofile(script_path("sharding.lua"))
+do
+    local ok_remote, remote_mod = pcall(dofile, script_path("remote_servers.lua"))
+    if ok_remote and type(remote_mod) == "table" then
+        _G.__stream_remote_servers = remote_mod
+    else
+        log.warning("[servers] remote adapters unavailable: " .. tostring(remote_mod))
+    end
+end
 if transcode_supported then
     dofile(script_path("png_to_ts.lua"))
     dofile(script_path("radio_stream.lua"))

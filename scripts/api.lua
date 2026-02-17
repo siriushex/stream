@@ -126,14 +126,47 @@ end
 
 local remote_servers = nil
 do
-    local ok, mod = pcall(require, "remote_servers")
-    if (not ok) or type(mod) ~= "table" then
-        ok, mod = pcall(dofile, "scripts/remote_servers.lua")
+    local function load_remote_servers()
+        local injected = rawget(_G, "__stream_remote_servers")
+        if type(injected) == "table" then
+            return injected
+        end
+
+        local ok, mod = pcall(require, "remote_servers")
+        if ok and type(mod) == "table" then
+            return mod
+        end
+
+        local candidates = {
+            "scripts/remote_servers.lua",
+            "remote_servers.lua",
+        }
+        local dbg = (type(debug) == "table") and debug or nil
+        local src = dbg and dbg.getinfo and dbg.getinfo(1, "S")
+        if src and type(src.source) == "string" and src.source:sub(1, 1) == "@" then
+            local api_path = src.source:sub(2)
+            local api_dir = api_path:match("^(.*[\\/])[^\\/]+$")
+            if api_dir and api_dir ~= "" then
+                table.insert(candidates, api_dir .. "remote_servers.lua")
+            end
+        end
+
+        local last_err = tostring(mod)
+        for _, path in ipairs(candidates) do
+            local loaded, payload = pcall(dofile, path)
+            if loaded and type(payload) == "table" then
+                return payload
+            end
+            last_err = tostring(payload)
+        end
+        return nil, last_err
     end
-    if ok and type(mod) == "table" then
+
+    local mod, err = load_remote_servers()
+    if type(mod) == "table" then
         remote_servers = mod
     else
-        log.warning("[servers] remote adapters unavailable: " .. tostring(mod))
+        log.warning("[servers] remote adapters unavailable: " .. tostring(err))
     end
 end
 
@@ -4474,19 +4507,89 @@ local function switch_stream_input(server, client, request, id)
     })
 end
 
-local function kill_ffmpeg_processes()
-    if package and package.config and package.config:sub(1, 1) == "\\" then
-        return
+local function kill_known_child_processes()
+    local function process_ref_key(ref)
+        local t = type(ref)
+        if t ~= "table" and t ~= "userdata" then
+            return nil
+        end
+        return t .. ":" .. tostring(ref)
     end
-    local ok, err = pcall(os.execute, "pkill -f ffmpeg >/dev/null 2>&1 || true")
-    if not ok then
-        log.warning("[restart] failed to kill ffmpeg processes: " .. tostring(err))
-        return
+
+    local function killable_process(ref)
+        local t = type(ref)
+        if t ~= "table" and t ~= "userdata" then
+            return false
+        end
+        local ok, method = pcall(function()
+            return ref and ref.kill
+        end)
+        return ok and type(method) == "function"
     end
-    log.info("[restart] ffmpeg cleanup requested")
+
+    local stats = { killed = 0, failed = 0 }
+    local seen = {}
+
+    local function visit(node, depth)
+        if depth > 8 then
+            return
+        end
+        local t = type(node)
+        if t ~= "table" and t ~= "userdata" then
+            return
+        end
+
+        local key = process_ref_key(node)
+        if key and seen[key] then
+            return
+        end
+        if key then
+            seen[key] = true
+        end
+
+        if killable_process(node) then
+            local ok = pcall(function()
+                node:kill()
+            end)
+            if ok then
+                stats.killed = stats.killed + 1
+            else
+                stats.failed = stats.failed + 1
+            end
+        end
+
+        if t == "table" then
+            for _, value in pairs(node) do
+                visit(value, depth + 1)
+            end
+        end
+    end
+
+    if transcode and type(transcode.jobs) == "table" then
+        visit(transcode.jobs, 0)
+    end
+    if radio and type(radio.jobs) == "table" then
+        visit(radio.jobs, 0)
+    end
+
+    if stats.killed > 0 then
+        if stats.failed > 0 then
+            log.warning("[restart] child process cleanup: killed=" .. tostring(stats.killed)
+                .. " failed=" .. tostring(stats.failed))
+        else
+            log.info("[restart] child process cleanup: killed=" .. tostring(stats.killed))
+        end
+    elseif stats.failed > 0 then
+        log.warning("[restart] child process cleanup failed for " .. tostring(stats.failed) .. " process(es)")
+    else
+        log.info("[restart] child process cleanup: no known process handles")
+    end
 end
 
-local function reload_service(server, client)
+local function reload_service(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
     local ok, err = reload_runtime(true)
     if not ok then
         return json_response(server, client, 500, { error = "reload failed", detail = err })
@@ -4495,9 +4598,12 @@ local function reload_service(server, client)
 end
 
 local function restart_service(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
     local mode = request and request.query and request.query.mode or "soft"
     if mode ~= "hard" then
-        return reload_service(server, client)
+        return reload_service(server, client, request)
     end
     local supervisor_enabled = setting_bool("supervisor_enabled", false)
         or (os.getenv("ASTRA_SUPERVISOR") == "1")
@@ -4506,7 +4612,7 @@ local function restart_service(server, client, request)
         return error_response(server, client, 400, "hard restart disabled (no supervisor)")
     end
     json_response(server, client, 200, { status = "restarting" })
-    kill_ffmpeg_processes()
+    kill_known_child_processes()
     timer({
         interval = 0.2,
         callback = function(self)
@@ -4519,6 +4625,12 @@ end
 local function apply_sharding(server, client, request)
     if not require_admin(request) then
         return error_response(server, client, 403, "forbidden")
+    end
+    if not setting_bool("stream_sharding_enabled", false) then
+        return json_response(server, client, 200, {
+            status = "disabled",
+            message = "stream sharding is disabled; nothing to apply",
+        })
     end
     if not sharding or type(sharding.apply_systemd) ~= "function" then
         return error_response(server, client, 400, "sharding module unavailable")
@@ -7200,6 +7312,20 @@ function api.handle_request(server, client, request)
         return json_response(server, client, 200, { status = "ok", force = force })
     end
 
+    -- Security hardening:
+    -- when web auth is disabled, allow API only from trusted loopback by default.
+    -- Explicitly opt out with http_allow_public_noauth=1 for legacy/test setups.
+    if (not auth_enabled()) and (not setting_bool("http_allow_public_noauth", false)) then
+        if not is_internal_loopback(request) then
+            return error_response(
+                server,
+                client,
+                403,
+                "public API disabled without auth; enable http_auth_enabled or set http_allow_public_noauth=1"
+            )
+        end
+    end
+
     local session = require_auth(request)
     if not session then
         return error_response(server, client, 401, "unauthorized")
@@ -7624,7 +7750,7 @@ function api.handle_request(server, client, request)
     end
 
     if path == "/api/v1/reload" and method == "POST" then
-        return reload_service(server, client)
+        return reload_service(server, client, request)
     end
 
     if path == "/api/v1/restart" and method == "POST" then
