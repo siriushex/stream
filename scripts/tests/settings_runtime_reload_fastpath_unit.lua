@@ -9,6 +9,7 @@ local function assert_true(v, msg)
 end
 
 local store = {}
+local set_calls = 0
 config = {
   db = {},
 }
@@ -19,6 +20,7 @@ config.get_setting = function(key)
   return store[key]
 end
 config.set_setting = function(key, value)
+  set_calls = set_calls + 1
   store[key] = value
 end
 config.add_alert = function() end
@@ -66,6 +68,22 @@ assert_true(sent ~= nil and tonumber(sent.code) == 200,
   "expected 200 for metadata-only settings save, got code=" .. tostring(sent and sent.code) ..
   " body=" .. tostring(sent and sent.content))
 assert_true(reload_calls == 0, "metadata-only settings patch must not call reload_runtime")
+assert_true(set_calls > 0, "expected settings writes for first metadata patch")
+
+local prev_set_calls = set_calls
+api.handle_request(server, client, make_request({
+  servers = {
+    { id = "r1", host = "127.0.0.1", port = 8000 },
+  },
+}))
+assert_true(sent ~= nil and tonumber(sent.code) == 200,
+  "expected 200 for no-op settings save, got code=" .. tostring(sent and sent.code) ..
+  " body=" .. tostring(sent and sent.content))
+local no_op_ok, no_op_payload = pcall(json.decode, sent and sent.content or "{}")
+assert_true(no_op_ok and type(no_op_payload) == "table" and no_op_payload.unchanged == true,
+  "expected unchanged=true for no-op settings save")
+assert_true(set_calls == prev_set_calls, "no-op settings patch must not write settings")
+assert_true(reload_calls == 0, "no-op settings patch must not call reload_runtime")
 
 api.handle_request(server, client, make_request({
   hls_enabled = true,

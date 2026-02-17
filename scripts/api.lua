@@ -4860,6 +4860,59 @@ local function settings_patch_skip_runtime_reload(body)
     return has_keys
 end
 
+local function settings_values_equal(a, b, depth)
+    depth = tonumber(depth) or 0
+    if a == b then
+        return true
+    end
+    if depth > 16 then
+        return false
+    end
+    local ta = type(a)
+    local tb = type(b)
+    if ta ~= tb then
+        return false
+    end
+    if ta ~= "table" then
+        return false
+    end
+    local count_a = 0
+    for k, v in pairs(a) do
+        count_a = count_a + 1
+        if not settings_values_equal(v, b[k], depth + 1) then
+            return false
+        end
+    end
+    local count_b = 0
+    for k, _ in pairs(b) do
+        count_b = count_b + 1
+        if a[k] == nil then
+            return false
+        end
+    end
+    return count_a == count_b
+end
+
+local function settings_patch_is_noop(body)
+    if type(body) ~= "table" then
+        return false
+    end
+    if not config or type(config.get_setting) ~= "function" then
+        return false
+    end
+    local has_keys = false
+    for k, v in pairs(body) do
+        if type(k) == "string" then
+            has_keys = true
+            local current = config.get_setting(k)
+            if not settings_values_equal(current, v, 0) then
+                return false
+            end
+        end
+    end
+    return has_keys
+end
+
 local function set_settings(server, client, request)
     local body = parse_json_body(request)
     if not body then
@@ -4889,6 +4942,15 @@ local function set_settings(server, client, request)
     body.telegram_bot_token_set = nil
     body.ai_api_key_masked = nil
     body.ai_api_key_set = nil
+
+    if settings_patch_is_noop(body) then
+        return json_response(server, client, 200, {
+            status = "ok",
+            unchanged = true,
+            message = "settings unchanged",
+        })
+    end
+
     local skip_runtime_reload = settings_patch_skip_runtime_reload(body)
     apply_config_change(server, client, request, {
         comment = "settings update",
