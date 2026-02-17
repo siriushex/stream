@@ -71,6 +71,8 @@ PORT=""
 ENABLE_SERVICE=0
 ALLOW_GENERIC=0
 VERIFY_TRANSCODE=0
+INSTALLER_VERSION="1.2.2"
+STREAM_RELEASE="${STREAM_RELEASE:-1.2.2}"
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -670,6 +672,17 @@ resolve_url() {
   printf '%s/stream-src.tar.gz' "$BASE_URL"
 }
 
+source_url_candidates() {
+  local urls=()
+  local rel
+  rel="$(printf '%s' "${STREAM_RELEASE:-}" | tr -cd '0-9A-Za-z._-')"
+  if [ -n "$rel" ]; then
+    urls+=("${BASE_URL}/stream-src-${rel}.tar.gz")
+  fi
+  urls+=("${BASE_URL}/stream-src.tar.gz")
+  printf '%s\n' "${urls[@]}"
+}
+
 binary_url_candidates() {
   # Пытаемся подобрать "наиболее совместимый" артефакт.
   # Правило: сначала дистро-специфичный, затем generic.
@@ -753,24 +766,36 @@ build_from_source() {
       die "Could not find configure.sh in extracted sources. Provide --url explicitly."
     fi
   else
-    # Prefer source tarball from the artifact host (stream-src.tar.gz).
+    # Prefer versioned source tarball from the artifact host, then fallback.
     # Fall back to git clone if the tarball doesn't exist or can't be downloaded.
-    local url
-    url=$(resolve_url)
-    log "Downloading sources: $url"
+    local url=""
+    local fetched=0
     local archive="$WORKDIR/stream-src.tar.gz"
-    if fetch_artifact "$url" "$archive"; then
-      if tar -tf "$archive" >/dev/null 2>&1; then
-        run tar -xf "$archive" -C "$WORKDIR"
-        src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
-        if [ -z "$src_root" ]; then
-          warn "Could not find configure.sh in extracted sources. Falling back to git clone."
+
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      log "Downloading sources: $url"
+      if fetch_artifact "$url" "$archive"; then
+        fetched=1
+        if tar -tf "$archive" >/dev/null 2>&1; then
+          run tar -xf "$archive" -C "$WORKDIR"
+          src_root=$(find "$WORKDIR" -maxdepth 3 -name configure.sh -print -quit | xargs -r dirname)
+          if [ -z "$src_root" ]; then
+            warn "Could not find configure.sh in extracted sources ($url). Trying next source candidate."
+            run rm -rf "$WORKDIR"/*
+            continue
+          fi
+          break
+        else
+          warn "Source tarball is not a valid archive (maybe an HTML error page): $url"
         fi
       else
-        warn "Source tarball is not a valid archive (maybe an HTML error page). Falling back to git clone."
+        warn "Source tarball download failed: $url"
       fi
-    else
-      warn "Source tarball download failed. Falling back to git clone."
+    done < <(source_url_candidates)
+
+    if [ "$fetched" -eq 0 ]; then
+      warn "Source tarball download failed for all candidates. Falling back to git clone."
     fi
 
     if [ -z "$src_root" ]; then
@@ -1056,6 +1081,8 @@ main() {
   if [ "$RUNTIME_ONLY" -eq 1 ] && [ "$MODE" != "binary" ]; then
     die "--runtime-only requires --mode binary"
   fi
+
+  log "Stream installer ${INSTALLER_VERSION} (release ${STREAM_RELEASE})"
 
   # Важно: НЕ переключаемся автоматически на сборку из исходников.
   # Пользователь должен явно выбрать --mode source, если бинарник не подходит.
