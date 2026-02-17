@@ -18,6 +18,18 @@ sudo /usr/local/bin/stream --reset-password
     Параметр `--no-web-auth` отключает авторизацию в Web UI.
     Используйте только в закрытой сети и для тестов.
 
+## Установка через installer
+
+- Предпочитайте `https://stream.centv.ru/...`.
+- `http://` используйте только как временный fallback на старых системах с проблемным CA-bundle.
+- Для production лучше скачивать installer в файл, просматривать и запускать локально.
+
+```bash
+curl -fsSL https://stream.centv.ru/install.sh -o /tmp/stream-install.sh
+head -n 60 /tmp/stream-install.sh
+sudo bash /tmp/stream-install.sh --mode binary --runtime-only
+```
+
 ## Практика
 
 - В проде лучше держать UI/API за VPN или за reverse‑proxy.

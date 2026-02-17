@@ -10,17 +10,17 @@ hide:
     <div class="sh-hero-copy">
       <h1 class="sh-title">Stream Hub</h1>
       <p class="sh-lead">
-        Центр управления стримами: конфигурация, запуск, диагностика, API-доступ.
+        Управление вещанием в одном месте: входы, каналы, выходы, диагностика и API.
       </p>
       <div class="sh-cta">
-        <a class="md-button md-button--primary" href="quick-start/">Быстрый старт</a>
-        <a class="md-button" href="manual/">Руководство</a>
-        <a class="md-button" href="https://stream.centv.ru/stream">Скачать</a>
+        <a class="md-button md-button--primary" href="quick-start/installation/">Начать установку</a>
+        <a class="md-button" href="manual/troubleshooting/">Узнать диагностику</a>
       </div>
       <div class="sh-hero-badges">
         <span class="sh-badge">Web UI + API</span>
-        <span class="sh-badge">UDP / HTTP‑TS / HLS</span>
-        <span class="sh-badge">transcoding / mpts</span>
+        <span class="sh-badge">UDP / HTTP‑TS / HLS / DASH</span>
+        <span class="sh-badge">Backup / failover / MPTS</span>
+        <span class="sh-badge">Relay + Transcode (FULL)</span>
       </div>
       <div class="sh-hero-contacts" aria-label="Контакты">
         <a class="sh-hero-contact" href="https://t.me/streamhubfree" target="_blank" rel="noopener">Чат в Telegram</a>
@@ -28,7 +28,7 @@ hide:
         <a class="sh-hero-contact" href="https://t.me/Serhiidevel" target="_blank" rel="noopener">Автор</a>
       </div>
       <div class="sh-hero-note">
-        Проект бесплатный и с открытым кодом (GPLv3). Обсуждение функций — в чате. Нужна новая фича — напишите, если это реально, добавим.
+        Open Source (GPLv3). Фокус проекта: стабильное вещание, понятный контроль и предсказуемая эксплуатация.
       </div>
     </div>
     <div class="sh-hero-art" aria-hidden="true">
@@ -70,67 +70,90 @@ hide:
 
 <div class="sh-section">
 
-## Установка
+## Запусти за 3 шага
 
 <div class="sh-grid">
   <div class="sh-card" markdown="1">
-    <h3>Ubuntu / Debian</h3>
+    <h3>1. Установка</h3>
+    <p><span class="sh-step-status is-ready">Готово</span></p>
+    <p>Поставьте Stream Hub через installer под вашу ОС.</p>
+    <p>Сразу получите бинарник, systemd-шаблон и базовую проверку окружения.</p>
+    <p><a href="quick-start/installation/">Открыть шаг установки</a></p>
+  </div>
+
+  <div class="sh-card" markdown="1">
+    <h3>2. Первый канал</h3>
+    <p><span class="sh-step-status is-progress">Выполняется</span></p>
+    <p>Создайте stream в Web UI: добавьте input и output, затем сохраните конфиг.</p>
+    <p>Для старта достаточно одного входа и одного выхода.</p>
+    <p><a href="quick-start/first-stream/">Открыть шаг создания канала</a></p>
+  </div>
+
+  <div class="sh-card" markdown="1">
+    <h3>3. Проверка статуса</h3>
+    <p><span class="sh-step-status is-attention">Нужно внимание</span></p>
+    <p>Проверьте в Dashboard состояние канала: <code>online</code>, <code>bitrate</code>, <code>clients</code>.</p>
+    <p class="sh-critical-step">Критично: если input в состоянии <code>OFFLINE</code>, выход не появится.</p>
+    <p><a href="quick-start/check-playback/">Открыть шаг проверки</a></p>
+  </div>
+</div>
+
+<div class="sh-onboarding-progress" aria-label="Прогресс онбординга">
+  <div class="sh-progress-item is-done"><span>Установка</span></div>
+  <div class="sh-progress-item is-active"><span>Первый канал</span></div>
+  <div class="sh-progress-item is-alert"><span>Проверка и диагностика</span></div>
+</div>
+
+## Схема потока
+
+<div class="sh-pipeline" role="img" aria-label="Input переходит в Stream Hub и отправляется в Output">
+  <div class="sh-pipeline-node">
+    <div class="sh-pipeline-title">Input</div>
+    <div class="sh-pipeline-text">UDP / HTTP-TS / HLS / DASH</div>
+  </div>
+  <div class="sh-pipeline-arrow" aria-hidden="true">→</div>
+  <div class="sh-pipeline-node is-core">
+    <div class="sh-pipeline-title">Stream Hub</div>
+    <div class="sh-pipeline-text">Failover, Remap, MPTS, API, UI</div>
+  </div>
+  <div class="sh-pipeline-arrow" aria-hidden="true">→</div>
+  <div class="sh-pipeline-node">
+    <div class="sh-pipeline-title">Output</div>
+    <div class="sh-pipeline-text">UDP / HTTP-TS / HLS</div>
+  </div>
+</div>
+
+## Быстрая установка
 
 ```bash
 curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode binary --runtime-only
 ```
 
-<div class="sh-muted" markdown="1">
-Если бинарник не подошёл (старая система или не хватает библиотек), поставьте из исходников:
+Если нужен транскод: убедитесь, что у вас профиль **FULL** и доступен `ffmpeg`.
+Подробнее: [Build profiles (FULL/LITE)](manual/build-profiles.md).
 
-```bash
-curl -fsSL https://stream.centv.ru/install.sh | sudo bash -s -- --mode source
-```
-</div>
-  </div>
+## Что получите после установки
 
-  <div class="sh-card" markdown="1">
-    <h3>CentOS / Rocky / Alma / RHEL</h3>
+- Web UI для управления каналами и диагностики.
+- API для автоматизации и интеграций.
+- Базовый operational контур: логи, systemd, статус вещания.
 
-```bash
-curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash
-```
+## Дальше
 
-<div class="sh-muted" markdown="1">
-Если `curl` ругается на сертификат, используйте HTTP для запуска установщика:
-
-```bash
-curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash
-```
-
-По умолчанию CentOS‑установщик проверяет, что установлена **FULL**‑сборка и доступен `ffmpeg`.
-Отключить проверку можно так:
-
-```bash
-curl -fsSL http://stream.centv.ru/install-centos.sh | sudo bash -s -- --no-verify-transcode
-```
-</div>
-  </div>
-
-  <div class="sh-card" markdown="1">
-    <h3>macOS</h3>
-
-```bash
-curl -fsSL https://stream.centv.ru/install-macos.sh | bash
-```
-
-<div class="sh-muted">
-Транскодирование на macOS — отдельная история. Если оно нужно, ставьте ffmpeg (например через Homebrew).
-</div>
-  </div>
+<div class="sh-next">
+  <a class="md-button md-button--primary" href="quick-start/">Открыть быстрый старт</a>
+  <a class="md-button" href="manual/">Открыть руководство</a>
 </div>
 
-## Первый запуск
+</div>
+
+<div class="sh-section">
+
+## Первый запуск вручную (опционально)
 
 ```bash
 sudo mkdir -p /etc/stream
 sudo sh -c 'echo {} > /etc/stream/prod.json'
-
 sudo /usr/local/bin/stream -c /etc/stream/prod.json -p 9060
 ```
 
@@ -139,8 +162,8 @@ sudo /usr/local/bin/stream -c /etc/stream/prod.json -p 9060
 - `http://SERVER:9060`
 
 <div class="sh-next">
-  <a class="md-button md-button--primary" href="quick-start/">Продолжить: быстрый старт</a>
-  <a class="md-button" href="manual/">Открыть руководство</a>
+  <a class="md-button md-button--primary" href="quick-start/web-ui/">Перейти в Web UI</a>
+  <a class="md-button" href="manual/troubleshooting/">Если не играет</a>
 </div>
 
 </div>
