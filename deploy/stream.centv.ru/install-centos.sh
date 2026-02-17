@@ -8,7 +8,7 @@ set -euo pipefail
 
 BASE_URL="https://stream.centv.ru"
 INSTALL_URL="${BASE_URL}/install.sh"
-BOOTSTRAP_VERSION="1.2.4"
+BOOTSTRAP_VERSION="1.2.5"
 TMP_FILE="$(mktemp -t stream-install.XXXXXX)"
 CURL_FLAGS=(-fL -sS --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 120)
 

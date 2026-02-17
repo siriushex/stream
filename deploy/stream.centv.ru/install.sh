@@ -48,6 +48,7 @@ Notes:
   - Supports CentOS/RHEL/Rocky/Alma and Debian/Ubuntu.
   - Source mode builds locally using ./configure.sh && make.
   - By default, build artifacts are removed after install.
+  - Optional env: FFMPEG_BUNDLE_PROFILE=legacy-static (CentOS 7 compatible static bundle).
 USAGE
 }
 
@@ -71,8 +72,8 @@ PORT=""
 ENABLE_SERVICE=0
 ALLOW_GENERIC=0
 VERIFY_TRANSCODE=0
-INSTALLER_VERSION="1.2.4"
-STREAM_RELEASE="${STREAM_RELEASE:-1.2.4}"
+INSTALLER_VERSION="1.2.5"
+STREAM_RELEASE="${STREAM_RELEASE:-1.2.5}"
 
 log() { printf '%s\n' "$*"; }
 warn() { printf 'WARN: %s\n' "$*" >&2; }
@@ -322,6 +323,10 @@ ffmpeg_bundle_url_sha() {
       ;;
     linux-aarch64/gpl)
       printf '%s' "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linuxarm64-gpl.tar.xz|061235d7f44059fbf0b2e2068f43f1fbddcdf35400e1c25dc7a2c84161b031eb"
+      ;;
+    # Legacy static build for CentOS 7 (glibc 2.17): avoids runtime mismatch with modern shared bundles.
+    linux-x86_64/legacy-static|linux-x86_64/legacy|linux-x86_64/centos7)
+      printf '%s' "http://stream.centv.ru/ffmpeg-centos7-amd64-static.tar.xz|abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67"
       ;;
     *)
       printf '%s' ""
