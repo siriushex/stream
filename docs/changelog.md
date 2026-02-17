@@ -26,6 +26,21 @@
 
 Полная история изменений: [CHANGELOG.md в GitHub](https://github.com/siriushex/stream/blob/main/CHANGELOG.md)
 
+## 2026-02-17 (1.2.3)
+
+### Что изменилось
+
+- Исправлены долгие зависания `Save` на CentOS в кейсе, когда async export worker недоступен.
+- Добавлен fallback-генератор helper-скрипта экспорта (`.stream-export-write.lua`), чтобы worker запускался даже при отсутствии runtime scripts на диске.
+- Для in-process fallback добавлен throttle (по умолчанию 30 секунд), чтобы исключить фризы UI от частых тяжёлых экспортов.
+- Обновлены release-маркеры installer-скриптов до `1.2.3`.
+
+### Команда установки (CentOS)
+
+```bash
+curl -fsSL https://stream.centv.ru/install-centos.sh | sudo bash -s -- --mode source --ffmpeg-system --verify-transcode
+```
+
 ## 2026-02-17
 
 ### Что изменилось

@@ -12,6 +12,21 @@
 ## Entries
 ### 2026-02-17
 - Changes:
+  - Release: bumped product version to `STREAM_VERSION=1.2.3`.
+  - Export async: fixed CentOS save stalls when helper worker is unavailable.
+  - Export async: added generated helper fallback (`.stream-export-write.lua`) when packaged helper files are missing.
+  - Export async: worker now picks a safer `cwd` based on helper location; fallback export is throttled (default 30s) to avoid event-loop freezes.
+  - Installer: bumped `install.sh` and `install-centos.sh` release markers to `1.2.3` (root + deploy copies).
+- Tests:
+  - `./stream scripts/tests/export_async_resolve_bin_unit.lua`
+  - `./stream scripts/tests/export_async_embedded_helper_unit.lua`
+  - `./stream scripts/tests/export_async_generated_helper_unit.lua`
+  - `./stream scripts/tests/export_async_missing_bin_fallback_unit.lua`
+  - `./stream scripts/tests/export_async_exit127_disable_unit.lua`
+  - `./stream scripts/tests/export_async_fallback_cooldown_unit.lua`
+
+### 2026-02-17
+- Changes:
   - Release: bumped product version to `STREAM_VERSION=1.2.2`.
   - Installer: added explicit installer release banner (`1.2.2`) for `install.sh` and `install-centos.sh`.
   - Installer: source mode now tries versioned tarball first (`stream-src-1.2.2.tar.gz`) and falls back to `stream-src.tar.gz`, then `git clone`.
