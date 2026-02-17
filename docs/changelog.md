@@ -16,6 +16,9 @@
 > В репозитории пока нет оформленных `tags/releases`, поэтому для разных версий используем ссылки на конкретные коммиты.
 
 - **2026-02-17** `627c306` (docs pass): [commit](https://github.com/siriushex/stream/commit/627c306), [tar.gz](https://github.com/siriushex/stream/archive/627c306.tar.gz)
+- **2026-02-17** `fef5e0b` (SEO monitoring page): [commit](https://github.com/siriushex/stream/commit/fef5e0b), [tar.gz](https://github.com/siriushex/stream/archive/fef5e0b.tar.gz)
+- **2026-02-17** `a26e38b` (SEO indexation hardening): [commit](https://github.com/siriushex/stream/commit/a26e38b), [tar.gz](https://github.com/siriushex/stream/archive/a26e38b.tar.gz)
+- **2026-02-17** `f2a3685` (SEO web-ui/api pages + CI checks): [commit](https://github.com/siriushex/stream/commit/f2a3685), [tar.gz](https://github.com/siriushex/stream/archive/f2a3685.tar.gz)
 - **2026-02-17** `a78d4ca` (SEO/docs optimization): [commit](https://github.com/siriushex/stream/commit/a78d4ca), [tar.gz](https://github.com/siriushex/stream/archive/a78d4ca.tar.gz)
 - **2026-02-17** `d617cb8` (settings no-op save): [commit](https://github.com/siriushex/stream/commit/d617cb8), [tar.gz](https://github.com/siriushex/stream/archive/d617cb8.tar.gz)
 - **2026-02-17** `971bb64` (DASH + remote API + stability): [commit](https://github.com/siriushex/stream/commit/971bb64), [tar.gz](https://github.com/siriushex/stream/archive/971bb64.tar.gz)
@@ -38,6 +41,9 @@
 - Документация:
   - улучшен onboarding (первый запуск, диагностика, безопасность установки).
   - SEO-пасc по docs-сайту: новые брендовые страницы Stream Hub, page-level title/description, FAQ schema, robots/sitemap и обновлённые CTA.
+  - Добавлены отдельные intent-страницы `Stream Hub Web UI`, `Stream Hub API`, `Stream Hub Monitoring`.
+  - Внедрены CI-проверки docs SEO (`mkdocs + meta + schema + robots + sitemap`).
+  - Усилена индексация: `/admin/` исключён из sitemap, для admin установлен `noindex`.
 
 ### Для кого важно
 
