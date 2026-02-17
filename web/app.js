@@ -601,6 +601,8 @@ const state = {
   statusTimer: null,
   statusPollStartMs: 0,
   statusPollInFlight: false,
+  saveRequestsInFlight: 0,
+  pollingPausedBySave: false,
   adapterTimer: null,
   dvbTimer: null,
   adapterScanJobId: null,
@@ -715,6 +717,8 @@ const POLL_SERVER_STREAMS_ACTIVE_MS = 5000;
 const POLL_SERVER_STREAMS_FOCUSED_MS = 1000;
 const POLL_SERVER_STREAMS_BACKGROUND_MS = 120000;
 const POLL_OBSERVABILITY_MS = 60000;
+const API_GET_TIMEOUT_MS = 12000;
+const API_MUTATION_TIMEOUT_MS = 45000;
 const NET_RESILIENCE_DEFAULTS = {
   connect_timeout_ms: 3000,
   read_timeout_ms: 8000,
@@ -25685,10 +25689,29 @@ function pauseAllPolling() {
 }
 
 function resumeAllPolling() {
+  if ((Number(state.saveRequestsInFlight) || 0) > 0) return;
   if (document.hidden) return;
   syncPollingForView();
   if (state.currentView === 'adapters') {
     startDvbPolling();
+  }
+}
+
+function beginSavePollingPause() {
+  state.saveRequestsInFlight = Math.max(0, Number(state.saveRequestsInFlight) || 0) + 1;
+  if (state.saveRequestsInFlight === 1) {
+    pauseAllPolling();
+    state.pollingPausedBySave = true;
+  }
+}
+
+function endSavePollingPause() {
+  state.saveRequestsInFlight = Math.max(0, (Number(state.saveRequestsInFlight) || 0) - 1);
+  if (state.saveRequestsInFlight > 0) return;
+  if (!state.pollingPausedBySave) return;
+  state.pollingPausedBySave = false;
+  if (!document.hidden) {
+    resumeAllPolling();
   }
 }
 
@@ -26000,6 +26023,7 @@ function canPlayMpegTs() {
 }
 
 let hlsJsPromise = null;
+const apiGetInFlight = new Map();
 
 function canPlayHlsNatively() {
   if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
@@ -26049,7 +26073,18 @@ function ensureHlsJsLoaded() {
   return hlsJsPromise;
 }
 
+function resolveApiMethod(options = {}) {
+  return String(options.method || 'GET').toUpperCase();
+}
+
+function resolveApiTimeoutMs(method, options = {}) {
+  const custom = Number(options.timeout_ms);
+  if (Number.isFinite(custom) && custom > 0) return Math.round(custom);
+  return method === 'GET' ? API_GET_TIMEOUT_MS : API_MUTATION_TIMEOUT_MS;
+}
+
 async function apiFetch(path, options = {}) {
+  const method = resolveApiMethod(options);
   const headers = options.headers ? { ...options.headers } : {};
   if (state.token) {
     headers.Authorization = `Bearer ${state.token}`;
@@ -26059,36 +26094,93 @@ async function apiFetch(path, options = {}) {
   }
 
   const retries = Number.isFinite(options.retry) ? options.retry : 1;
-  let lastError = null;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      const response = await fetch(path, {
-        credentials: 'same-origin',
-        ...options,
-        headers,
-      });
-
-      if (response.status === 401) {
-        setOverlay(elements.loginOverlay, true);
-      }
-
-      return response;
-    } catch (err) {
-      lastError = err;
-      if (attempt < retries) {
-        await delay(250 * (attempt + 1));
-      }
-    }
+  const timeoutMs = resolveApiTimeoutMs(method, options);
+  const dedupeGet = method === 'GET' && options.no_dedupe !== true;
+  const dedupeKey = dedupeGet ? `${method}:${path}:token:${state.token || ''}` : '';
+  if (dedupeGet) {
+    const existing = apiGetInFlight.get(dedupeKey);
+    if (existing) return existing;
   }
 
-  const error = new Error('Network error: cannot reach server');
-  error.network = true;
-  error.cause = lastError;
-  throw error;
+  const requestPromise = (async () => {
+    let lastError = null;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      let timeoutId = null;
+      let controller = null;
+      try {
+        const fetchOptions = {
+          credentials: 'same-origin',
+          ...options,
+          method,
+          headers,
+        };
+        delete fetchOptions.retry;
+        delete fetchOptions.timeout_ms;
+        delete fetchOptions.no_dedupe;
+
+        if (typeof AbortController !== 'undefined') {
+          controller = new AbortController();
+          fetchOptions.signal = controller.signal;
+          if (timeoutMs > 0) {
+            timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          }
+        }
+
+        const response = await fetch(path, fetchOptions);
+
+        if (response.status === 401) {
+          pauseAllPolling();
+          setOverlay(elements.loginOverlay, true);
+        }
+
+        return response;
+      } catch (err) {
+        const timedOut = !!(controller && controller.signal && controller.signal.aborted && timeoutMs > 0);
+        if (timedOut) {
+          const timeoutErr = new Error(`Network timeout after ${timeoutMs}ms`);
+          timeoutErr.network = true;
+          timeoutErr.timeout = true;
+          timeoutErr.timeout_ms = timeoutMs;
+          timeoutErr.cause = err;
+          lastError = timeoutErr;
+        } else {
+          lastError = err;
+        }
+        if (attempt < retries) {
+          await delay(250 * (attempt + 1));
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+
+    if (lastError && lastError.timeout) {
+      throw lastError;
+    }
+    const error = new Error('Network error: cannot reach server');
+    error.network = true;
+    error.cause = lastError;
+    throw error;
+  })();
+
+  if (dedupeGet) {
+    apiGetInFlight.set(dedupeKey, requestPromise);
+    requestPromise.finally(() => {
+      if (apiGetInFlight.get(dedupeKey) === requestPromise) {
+        apiGetInFlight.delete(dedupeKey);
+      }
+    });
+  }
+
+  return requestPromise;
 }
 
 function formatNetworkError(err) {
   if (!err) return '';
+  if (err.timeout) {
+    const timeoutMs = Number(err.timeout_ms) || API_GET_TIMEOUT_MS;
+    return `Таймаут API (${timeoutMs} ms). Проверьте нагрузку сервера и сеть.`;
+  }
   const message = String(err.message || '');
   const isNetwork = err.network || message.includes('Failed to fetch') || message.includes('Network error');
   if (isNetwork) return 'Не удалось связаться с сервером (network). Проверьте адрес/порт и что UI открыта на нужном инстансе.';
@@ -27972,6 +28064,10 @@ function collectHttpAuthSettings() {
 }
 
 async function saveSettings(update, opts = {}) {
+  const pausePolling = opts.pause_polling !== false;
+  if (pausePolling) {
+    beginSavePollingPause();
+  }
   let path = '/api/v1/settings';
   if (opts.query) {
     const query = String(opts.query || '');
@@ -27979,24 +28075,31 @@ async function saveSettings(update, opts = {}) {
       path += query.startsWith('?') ? query : `?${query}`;
     }
   }
-  await apiJson(path, {
-    method: 'PUT',
-    body: JSON.stringify(update),
-  });
-
-  const shouldReload = opts.reload !== false;
-  if (shouldReload) {
-    await loadSettings();
-  } else {
-    // Не перерисовываем все поля (иначе можно потерять несохранённый ввод в форме).
-    state.settings = state.settings || {};
-    Object.keys(update || {}).forEach((key) => {
-      state.settings[key] = update[key];
+  try {
+    await apiJson(path, {
+      method: 'PUT',
+      timeout_ms: Number(opts.timeout_ms) || API_MUTATION_TIMEOUT_MS,
+      body: JSON.stringify(update),
     });
-  }
 
-  if (!opts.silent) {
-    setStatus(opts.status || 'Settings saved');
+    const shouldReload = opts.reload !== false;
+    if (shouldReload) {
+      await loadSettings();
+    } else {
+      // Не перерисовываем все поля (иначе можно потерять несохранённый ввод в форме).
+      state.settings = state.settings || {};
+      Object.keys(update || {}).forEach((key) => {
+        state.settings[key] = update[key];
+      });
+    }
+
+    if (!opts.silent) {
+      setStatus(opts.status || 'Settings saved');
+    }
+  } finally {
+    if (pausePolling) {
+      endSavePollingPause();
+    }
   }
 }
 
@@ -31431,6 +31534,16 @@ function bindEvents() {
   }
   if (elements.settingsActionSave) {
     elements.settingsActionSave.addEventListener('click', async () => {
+      const button = elements.settingsActionSave;
+      const baseLabel = (button && button.dataset && button.dataset.baseLabel) || (button ? button.textContent : 'Save');
+      if (button && button.dataset && !button.dataset.baseLabel) {
+        button.dataset.baseLabel = baseLabel;
+      }
+      if (button && button.disabled) return;
+      if (button) {
+        button.disabled = true;
+        button.textContent = 'Saving...';
+      }
       try {
         const beforeEnabled = getSettingBool('stream_sharding_enabled', false);
         const beforeBasePort = Math.floor(Number((state.settings && state.settings.stream_sharding_base_port) || 0) || 0);
@@ -31456,6 +31569,11 @@ function bindEvents() {
       } catch (err) {
         setStatus(err.message);
         computeDirtyState();
+      } finally {
+        if (button) {
+          button.disabled = false;
+          button.textContent = baseLabel || 'Save';
+        }
       }
     });
   }
