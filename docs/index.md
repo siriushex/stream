@@ -127,6 +127,7 @@
   <li><a href="about/why-stream-hub/">Почему Stream Hub</a></li>
   <li><a href="about/stream-hub-web-ui/">Stream Hub Web UI</a></li>
   <li><a href="about/stream-hub-api/">Stream Hub API</a></li>
+  <li><a href="about/stream-hub-monitoring/">Stream Hub Monitoring</a></li>
 </ul>
 
 <h2>Быстрая установка</h2>

@@ -84,6 +84,7 @@ nav:
       - Почему Stream Hub: about/why-stream-hub.md
       - Stream Hub Web UI: about/stream-hub-web-ui.md
       - Stream Hub API: about/stream-hub-api.md
+      - Stream Hub Monitoring: about/stream-hub-monitoring.md
   - Быстрый старт:
       - Обзор: quick-start/index.md
       - Установка: quick-start/installation.md

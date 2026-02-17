@@ -27,8 +27,9 @@
 
 1. Проверить первые SERP-сниппеты ключевых страниц (бренд + IPTV intent).
 2. Точечно скорректировать title/description страниц с CTR ниже baseline.
-3. Добавить 1 intent-страницу в docs (без спама):
-   - `stream-hub-monitoring`.
+3. Сформировать отдельный mini-cluster для monitoring intent:
+   - усилить перелинковку между `about/stream-hub-monitoring`, `manual/observability` и `manual/logs`,
+   - добавить 2 коротких how-to блока с диагностическими сценариями.
 
 ## Неделя 3: Контентный рост и внутренние связи
 

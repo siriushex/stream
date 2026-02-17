@@ -10,6 +10,7 @@
 | `/about/why-stream-hub/` | `почему stream hub` | `stream hub vs flussonic`, `astra-like`, `stream stability`, `web ui api` |
 | `/about/stream-hub-web-ui/` | `stream hub web ui` | `iptv web panel`, `stream monitoring`, `online bitrate`, `operator dashboard` |
 | `/about/stream-hub-api/` | `stream hub api` | `stream automation api`, `iptv api control`, `monitoring integration`, `stream management api` |
+| `/about/stream-hub-monitoring/` | `stream hub monitoring` | `bitrate monitoring`, `stream uptime`, `iptv monitoring`, `error diagnostics` |
 | `/quick-start/` | `быстрый старт stream hub` | `stream hub install`, `first stream`, `online bitrate` |
 | `/quick-start/installation/` | `установка stream hub` | `install stream hub`, `ubuntu centos`, `full lite`, `secure install` |
 | `/quick-start/run/` | `запуск stream hub` | `stream hub web ui`, `stream hub api`, `port check`, `first run` |

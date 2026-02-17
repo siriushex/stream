@@ -40,6 +40,7 @@ pages=(
   "about/why-stream-hub/"
   "about/stream-hub-web-ui/"
   "about/stream-hub-api/"
+  "about/stream-hub-monitoring/"
   "quick-start/"
   "quick-start/installation/"
   "quick-start/run/"
