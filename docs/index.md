@@ -125,6 +125,8 @@
   <li><a href="about/what-is-stream-hub/">Что такое Stream Hub</a></li>
   <li><a href="about/stream-hub-iptv/">Stream Hub для IPTV</a></li>
   <li><a href="about/why-stream-hub/">Почему Stream Hub</a></li>
+  <li><a href="about/stream-hub-web-ui/">Stream Hub Web UI</a></li>
+  <li><a href="about/stream-hub-api/">Stream Hub API</a></li>
 </ul>
 
 <h2>Быстрая установка</h2>

@@ -6,6 +6,8 @@
 - `/about/what-is-stream-hub/` — что такое Stream Hub.
 - `/about/stream-hub-iptv/` — SEO-целевая страница для IPTV intent.
 - `/about/why-stream-hub/` — ценностное сравнение/позиционирование.
+- `/about/stream-hub-web-ui/` — SEO-страница под intent `Stream Hub Web UI`.
+- `/about/stream-hub-api/` — SEO-страница под intent `Stream Hub API`.
 - `/quick-start/` — общий старт.
 - `/quick-start/installation/` — установка.
 - `/quick-start/run/` — запуск.

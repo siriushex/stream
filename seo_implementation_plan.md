@@ -14,6 +14,9 @@
    - `about/why-stream-hub.md`
 2. Сохранён существующий пользовательский путь quick-start/manual/faq.
 3. Вынесены сравнительные упоминания Astra/Flussonic в нейтральный контекст.
+4. Добавлены intent-страницы для брендовых запросов:
+   - `Stream Hub Web UI`
+   - `Stream Hub API`
 
 ## B) On-page SEO
 
@@ -70,6 +73,10 @@
 - `docs/about/what-is-stream-hub.md`
 - `docs/about/stream-hub-iptv.md`
 - `docs/about/why-stream-hub.md`
+- `docs/about/stream-hub-web-ui.md`
+- `docs/about/stream-hub-api.md`
 - `docs/javascripts/extra.js`
 - `docs/stylesheets/extra.css`
 - `docs/robots.txt`
+- `scripts/ci/check_docs_seo.sh`
+- `.github/workflows/ci.yml`
