@@ -40,6 +40,7 @@
 {% set seo_title = seo_titles.get(src_uri, page.title ~ " - " ~ config.site_name if page and page.title and not page.is_homepage else config.site_name) %}
 {% set seo_description = seo_descriptions.get(src_uri, config.site_description) %}
 {% set canonical_url = page.canonical_url if page and page.canonical_url else config.site_url %}
+{% set seo_og_image = config.site_url ~ "assets/logo.svg" %}
 
 {% block site_meta %}
   <meta charset="utf-8">
@@ -50,6 +51,9 @@
   {% endif %}
   {% if page and page.canonical_url %}
     <link rel="canonical" href="{{ page.canonical_url }}">
+  {% endif %}
+  {% if src_uri == "admin/index.md" %}
+    <meta name="robots" content="noindex,nofollow,noarchive">
   {% endif %}
   {% if page and page.previous_page %}
     <link rel="prev" href="{{ page.previous_page.url | url }}">
@@ -72,7 +76,10 @@
   <meta property="og:title" content="{{ seo_title | e }}">
   <meta property="og:description" content="{{ seo_description | e }}">
   <meta property="og:url" content="{{ canonical_url | e }}">
+  <meta property="og:image" content="{{ seo_og_image | e }}">
+  <meta property="og:locale" content="ru_RU">
   <meta name="twitter:card" content="summary">
   <meta name="twitter:title" content="{{ seo_title | e }}">
   <meta name="twitter:description" content="{{ seo_description | e }}">
+  <meta name="twitter:image" content="{{ seo_og_image | e }}">
 {% endblock %}

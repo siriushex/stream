@@ -1,4 +1,6 @@
 User-agent: *
 Allow: /
+Disallow: /admin/
+Disallow: /admin/api/
 
 Sitemap: https://stream.centv.ru/sitemap.xml

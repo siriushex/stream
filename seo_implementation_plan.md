@@ -28,6 +28,7 @@
 3. Проверены canonical URL на ключевых страницах.
 4. Добавлен `robots.txt`.
 5. Проверено наличие `sitemap.xml`.
+6. Добавлен post-build hook для исключения `/admin/` из `sitemap.xml`.
 
 ## C) Контент и бренд
 
@@ -54,6 +55,7 @@
    - `manual/*.html` в `exclude_docs`.
 2. Проверена валидность внутренних ссылок.
 3. Упрощены тяжёлые анимации/эффекты на landing.
+4. Для admin-пути добавлен `noindex,nofollow,noarchive`.
 
 ## E) Валидация
 

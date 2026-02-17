@@ -12,9 +12,12 @@
 | Open Graph / Twitter | PASS | OG title/description/url и Twitter card присутствуют. |
 | Sitemap | PASS | `site/sitemap.xml` генерируется. |
 | robots.txt | PASS | `site/robots.txt` присутствует и содержит `Sitemap`. |
-| FAQ Schema | PASS | На `/faq/` присутствует `FAQPage` с 5 вопросами. |
+| robots disallow admin | PASS | `Disallow: /admin/` и `Disallow: /admin/api/` присутствуют. |
+| FAQ Schema | PASS | На `/faq/` присутствует `FAQPage` с search-intent вопросами. |
+| FAQ Schema coverage | PASS | В schema отражены основные intent-вопросы, включая Web UI/API. |
 | Внутренние ссылки | PASS | `missing_count=0` (при исключении download endpoints `/stream`, `install*.sh`, `stream-src.tar.gz`). |
 | Дубли `manual/*.html` | PASS | Legacy HTML исключены из публикации. |
+| sitemap admin cleanup | PASS | `/admin/` удалён из sitemap post-build hook. |
 | Поиск MkDocs | PASS | `site/search/search_index.json` присутствует. |
 
 ## Чек-лист PASS / REVIEW

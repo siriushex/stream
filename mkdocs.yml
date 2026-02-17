@@ -33,6 +33,9 @@ plugins:
   - search:
       lang: ru
 
+hooks:
+  - scripts/docs_hooks.py
+
 # В репозитории есть инженерные заметки в docs/*.md.
 # Публичная документация Stream Hub должна быть компактной, поэтому исключаем их из сборки.
 exclude_docs: |

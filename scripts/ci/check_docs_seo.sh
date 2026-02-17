@@ -26,7 +26,12 @@ fail() {
 [[ -f site/search/search_index.json ]] || fail "missing site/search/search_index.json"
 
 grep -q "Sitemap: https://stream.centv.ru/sitemap.xml" site/robots.txt || fail "robots.txt missing Sitemap link"
+grep -q "Disallow: /admin/" site/robots.txt || fail "robots.txt missing Disallow /admin/"
+grep -q "Disallow: /admin/api/" site/robots.txt || fail "robots.txt missing Disallow /admin/api/"
 grep -q "FAQPage" site/faq/index.html || fail "FAQ schema is missing on /faq/"
+if grep -q "https://stream.centv.ru/admin/" site/sitemap.xml; then
+  fail "sitemap must not contain /admin/"
+fi
 
 pages=(
   "/"

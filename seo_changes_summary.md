@@ -32,13 +32,16 @@
 - `mkdocs.yml`:
   - добавлены `site_description`, `site_author`;
   - добавлен `theme.custom_dir: overrides`;
-  - исключены `manual/*.html` (снижение риска дублей).
+  - исключены `manual/*.html` (снижение риска дублей);
+  - добавлен hook post-build для исключения `/admin/` из sitemap.
 - `overrides/main.html`:
   - page-level SEO title/description;
-  - OG/Twitter metadata;
+  - OG/Twitter metadata + `og:image`;
+  - `noindex` для страницы admin.
   - canonical сохранён.
 - `docs/robots.txt`:
   - `Allow: /`
+  - `Disallow: /admin/`, `Disallow: /admin/api/`
   - `Sitemap: https://stream.centv.ru/sitemap.xml`
 
 ## 4) Контент и UX

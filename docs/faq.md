@@ -39,6 +39,15 @@
     Да, поддерживаются типовые Astra-подобные паттерны конфигурации и эксплуатации.
     При этом Stream Hub позиционируется как самостоятельный продукт.
 
+??? question "Что можно делать в Stream Hub Web UI?"
+    В Web UI доступны создание и редактирование stream, управление input/output,
+    мониторинг ONLINE/bitrate, диагностика и базовые операционные действия.
+    Подробнее: [Stream Hub Web UI](about/stream-hub-web-ui.md).
+
+??? question "Где посмотреть API Stream Hub?"
+    Документация API находится в [API reference](manual/api.md).
+    Для обзорного контекста: [Stream Hub API](about/stream-hub-api.md).
+
 ??? question "Где лежат конфиги и данные?"
     По умолчанию:
 
@@ -179,6 +188,22 @@
       "acceptedAnswer": {
         "@type": "Answer",
         "text": "Да, поддерживаются типовые Astra-подобные сценарии, при этом продукт оформлен как самостоятельный бренд Stream Hub."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Что можно делать в Stream Hub Web UI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "В Web UI доступны создание и редактирование stream, управление input/output, мониторинг ONLINE/bitrate, диагностика и базовые операционные действия."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Где посмотреть API Stream Hub?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Документация API доступна в разделе API reference, а обзорный материал расположен на странице Stream Hub API."
       }
     }
   ]
