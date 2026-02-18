@@ -29,7 +29,12 @@
 
 /* maximum number of local variables per function (must be smaller
    than 250, due to the bytecode format) */
-#define MAXVARS		200
+/*
+ * Stream Hub embeds a large Lua API surface in single chunks (e.g. scripts/api.lua),
+ * which can legitimately exceed Lua's historical default of 200 locals at chunk scope.
+ * Keep this below 250 (bytecode format limitation).
+ */
+#define MAXVARS		240
 
 
 #define hasmultret(k)		((k) == VCALL || (k) == VVARARG)
@@ -1635,4 +1640,3 @@ Closure *luaY_parser (lua_State *L, ZIO *z, Mbuffer *buff,
   lua_assert(dyd->actvar.n == 0 && dyd->gt.n == 0 && dyd->label.n == 0);
   return cl;  /* it's on the stack too */
 }
-
