@@ -35,3 +35,27 @@ __pycache__/
 
 # Perf tool outputs.
 /tools/perf/results/
+
+# Keep repository code-only (no local docs/manuals/log dumps/ops notes).
+/docs/
+/site/
+/overrides/
+/mkdocs.yml
+/AGENT.md
+/SKILL.md
+/CHANGELOG.md
+/PLAN*.md
+/PERF_*.md
+/audit_report.md
+/before_after.md
+/implementation_summary.md
+/verification.md
+/risks_next_steps.md
+/seo_*.md
+
+# Runtime data, snapshots and local diagnostics.
+/data/
+/data_*/
+/relay.json
+/stream-diag-*.tar.gz
+/stream-diag-*/
