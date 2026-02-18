@@ -5145,7 +5145,9 @@ local function start_input_probe(job)
     end
     local tc = job.config.transcode or {}
     local extra_args = nil
-    local include_packets = false
+    -- For many HTTP/HLS/TS inputs ffprobe does not expose stable stream/format bit_rate.
+    -- Keep packet-based bitrate estimation enabled to report real pre-transcode IN bitrate.
+    local include_packets = true
     if is_udp_url(url) then
         if tc.input_probe_udp ~= true then
             return
@@ -5157,7 +5159,6 @@ local function start_input_probe(job)
             "-analyzeduration", tostring(UDP_PROBE_ANALYZE_US),
             "-probesize", tostring(UDP_PROBE_SIZE),
         }
-        include_packets = true
     end
     local ffprobe_bin = resolve_ffprobe_path(tc)
     local args = build_probe_args(url, job.watchdog.probe_duration_sec, include_packets, extra_args, ffprobe_bin)
