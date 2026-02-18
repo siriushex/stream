@@ -22148,12 +22148,19 @@ function updateTiles() {
     const stats = state.stats[id] || {};
     const transcodeState = stats.transcode_state;
     const transcode = stats.transcode || {};
+    const transcodeStateUpper = String(transcodeState || '').toUpperCase();
+    const statsBitrateKbps = Number(stats && stats.bitrate);
+    const tcOutputKbps = Number(transcode && transcode.output_bitrate_kbps);
+    const hasTranscodeTraffic = (Number.isFinite(tcOutputKbps) && tcOutputKbps > 0)
+      || (Number.isFinite(statsBitrateKbps) && statsBitrateKbps > 0);
     const isRunning = transcodeState
-      ? transcodeState === 'RUNNING'
+      ? (transcodeStateUpper === 'RUNNING'
+        || ((transcodeStateUpper === 'STARTING' || transcodeStateUpper === 'RESTARTING') && hasTranscodeTraffic))
       : stats.on_air === true;
     const onAir = enabled && isRunning;
     const inputs = Array.isArray(stats.inputs) ? stats.inputs : [];
     const activeIndex = getActiveInputIndex(stats);
+    const activeInput = Number.isFinite(activeIndex) ? inputs[activeIndex] : null;
     const activeLabel = getActiveInputLabel(inputs, activeIndex);
     const statusInfo = stream
       ? getStreamStatusInfo(stream, stats)
@@ -22165,8 +22172,19 @@ function updateTiles() {
 
     if (refs && refs.rateEl) {
       if (transcodeState) {
-        const inputLabel = formatMaybeBitrate(transcode.input_bitrate_kbps);
-        const outputLabel = formatMaybeBitrate(transcode.output_bitrate_kbps);
+        const activeInputKbps = activeInput
+          ? (Number.isFinite(Number(activeInput.bitrate_kbps))
+            ? Number(activeInput.bitrate_kbps)
+            : Number(activeInput.bitrate))
+          : NaN;
+        const inputKbps = Number.isFinite(Number(transcode.input_bitrate_kbps))
+          ? Number(transcode.input_bitrate_kbps)
+          : activeInputKbps;
+        const outputKbps = Number.isFinite(Number(transcode.output_bitrate_kbps))
+          ? Number(transcode.output_bitrate_kbps)
+          : statsBitrateKbps;
+        const inputLabel = formatMaybeBitrate(inputKbps);
+        const outputLabel = formatMaybeBitrate(outputKbps);
         const compactLine = `In ${inputLabel} | Out ${outputLabel}`;
         if (tile.classList.contains('is-compact')) {
           if (refs.rateEl.dataset.mode !== 'transcode-compact') {
@@ -22207,7 +22225,8 @@ function updateTiles() {
         const text = formatBitrate(stats.bitrate || 0);
         if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       }
-      refs.rateEl.classList.toggle('warn', enabled && !onAir);
+      const pendingTranscode = transcodeStateUpper === 'STARTING' || transcodeStateUpper === 'RESTARTING';
+      refs.rateEl.classList.toggle('warn', enabled && !onAir && !pendingTranscode);
       refs.rateEl.classList.toggle('disabled', !enabled);
     }
     if (refs && refs.metaEl) {
