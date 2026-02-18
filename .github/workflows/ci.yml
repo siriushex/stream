@@ -5,6 +5,13 @@ on:
   pull_request:
 
 jobs:
+  repo-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sensitive data guard
+        run: scripts/ci/check_sensitive_data.sh --all
+
   docs-seo:
     runs-on: ubuntu-latest
     steps:

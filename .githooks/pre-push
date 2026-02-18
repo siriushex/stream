@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+upstream="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || true)"
+if [[ -n "$upstream" ]]; then
+  exec scripts/ci/check_sensitive_data.sh --range "$upstream..HEAD"
+fi
+
+exec scripts/ci/check_sensitive_data.sh --all

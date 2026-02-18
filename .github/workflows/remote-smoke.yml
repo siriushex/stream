@@ -2,16 +2,23 @@ name: remote-smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      url:
+        description: "Remote UI URL to check (for example: https://example.com/index.html)"
+        required: true
+        type: string
 
 jobs:
   http-check:
     runs-on: ubuntu-latest
     steps:
       - name: Check public UI
+        env:
+          TARGET_URL: ${{ github.event.inputs.url }}
         run: |
           set -euo pipefail
-          URL="http://178.212.236.6:9060/index.html"
-          echo "Checking $URL"
+          URL="${TARGET_URL}"
+          echo "Checking ${URL}"
           for i in 1 2 3 4 5; do
             if curl -fsS -I --max-time 10 "$URL" | head -n 1 | grep -q "200"; then
               echo "OK: $URL"

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec scripts/ci/check_sensitive_data.sh --staged
