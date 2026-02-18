@@ -115,6 +115,12 @@ local function is_auth_error(status_or_message)
         or text:find("forbidden", 1, true) ~= nil
 end
 
+local function is_adapter_unavailable_error(message)
+    local text = tostring(message or ""):lower()
+    return text:find("http_request unavailable", 1, true) ~= nil
+        or text:find("cesbo api client unavailable", 1, true) ~= nil
+end
+
 local function parse_cookie_from_headers(headers)
     if type(headers) ~= "table" then
         return nil
@@ -616,8 +622,18 @@ local function detect_adapter(cfg, callback)
                 end
                 return callback(false, nil, "login/password incorrect", auth_code)
             end
-            local err = astra_err or stream_err or "remote api probe failed"
-            local code = astra_code or stream_code
+            local err = nil
+            local code = nil
+            if astra_err and is_adapter_unavailable_error(astra_err) and stream_err then
+                err = stream_err
+                code = stream_code
+            elseif stream_err and is_adapter_unavailable_error(stream_err) and astra_err then
+                err = astra_err
+                code = astra_code
+            else
+                err = astra_err or stream_err or "remote api probe failed"
+                code = astra_code or stream_code
+            end
             return callback(false, nil, err, code)
         end)
     end)

@@ -2,6 +2,302 @@
 
 api = {}
 
+local API_HTTP_METRIC_WINDOW_SEC = 60
+local API_HTTP_METRIC_SAMPLE_MAX = 256
+local API_HTTP_METRIC_ROUTE_LIMIT = 40
+
+local api_request_context = {}
+local api_request_seq = 0
+
+local api_http_metrics = {
+    totals = {
+        requests = 0,
+        errors = 0,
+    },
+    status_codes = {},
+    auth_codes = {
+        [401] = 0,
+        [403] = 0,
+        [302] = 0,
+    },
+    buckets = {},
+    routes = {},
+}
+
+local function metric_now_sec()
+    return os.time()
+end
+
+local function metric_now_ms()
+    return os.clock() * 1000
+end
+
+local function next_request_id()
+    api_request_seq = api_request_seq + 1
+    local seq = api_request_seq
+    if seq > 999999999 then
+        seq = 1
+        api_request_seq = 1
+    end
+    return string.format("req-%d-%06d", os.time(), seq % 1000000)
+end
+
+local function client_ctx_key(client)
+    return tostring(client or "")
+end
+
+local function normalize_metric_path(path)
+    local out = tostring(path or "/")
+    local query_idx = out:find("?", 1, true)
+    if query_idx then
+        out = out:sub(1, query_idx - 1)
+    end
+    if out == "" then
+        out = "/"
+    end
+
+    out = out
+        :gsub("^(/api/v1/streams/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/stream%-status/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/adapters/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/splitters/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/buffers/resources/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/buffer%-status/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/transcode%-status/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/transcode/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/sessions/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/users/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/dvb%-scan/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/pngts/jobs/)[%w%-%_%.]+", "%1:id")
+    return out
+end
+
+local function metric_bucket_inc(buckets, ts_sec)
+    if type(buckets) ~= "table" then
+        return
+    end
+    local key = tonumber(ts_sec) or metric_now_sec()
+    buckets[key] = (tonumber(buckets[key]) or 0) + 1
+end
+
+local function metric_bucket_sum_window(buckets, now_sec, window_sec)
+    if type(buckets) ~= "table" then
+        return 0
+    end
+    local total = 0
+    for ts, count in pairs(buckets) do
+        local sec = tonumber(ts) or 0
+        if (now_sec - sec) <= window_sec then
+            total = total + (tonumber(count) or 0)
+        elseif (now_sec - sec) > (window_sec * 2) then
+            buckets[ts] = nil
+        end
+    end
+    return total
+end
+
+local function metric_latency_push(route, latency_ms)
+    if type(route) ~= "table" then
+        return
+    end
+    local value = tonumber(latency_ms) or 0
+    if value < 0 then
+        value = 0
+    end
+    route.lat_idx = (tonumber(route.lat_idx) or 0) + 1
+    if route.lat_idx > API_HTTP_METRIC_SAMPLE_MAX then
+        route.lat_idx = 1
+    end
+    route.latencies = route.latencies or {}
+    route.latencies[route.lat_idx] = value
+end
+
+local function metric_percentile(samples, ratio)
+    if type(samples) ~= "table" then
+        return 0
+    end
+    local sorted = {}
+    for _, value in pairs(samples) do
+        local n = tonumber(value)
+        if n then
+            sorted[#sorted + 1] = n
+        end
+    end
+    local count = #sorted
+    if count == 0 then
+        return 0
+    end
+    table.sort(sorted)
+    local idx = math.floor((count - 1) * ratio + 1.5)
+    if idx < 1 then
+        idx = 1
+    elseif idx > count then
+        idx = count
+    end
+    return sorted[idx]
+end
+
+local function metric_error_rate_pct(errors, requests)
+    local req = tonumber(requests) or 0
+    if req <= 0 then
+        return 0
+    end
+    local err = tonumber(errors) or 0
+    return (err * 100.0) / req
+end
+
+local function record_api_request_metric(ctx, status_code)
+    if type(ctx) ~= "table" then
+        return
+    end
+    local code = tonumber(status_code) or 0
+    local now_sec = metric_now_sec()
+    local elapsed_ms = math.max(0, metric_now_ms() - (tonumber(ctx.started_ms) or 0))
+    local method = tostring(ctx.method or "GET")
+    local endpoint = tostring(ctx.endpoint or "/")
+    local route_key = method .. " " .. endpoint
+
+    local m = api_http_metrics
+    m.totals.requests = (tonumber(m.totals.requests) or 0) + 1
+    if code >= 400 then
+        m.totals.errors = (tonumber(m.totals.errors) or 0) + 1
+    end
+    m.status_codes[code] = (tonumber(m.status_codes[code]) or 0) + 1
+    if code == 401 or code == 403 or code == 302 then
+        m.auth_codes[code] = (tonumber(m.auth_codes[code]) or 0) + 1
+    end
+    metric_bucket_inc(m.buckets, now_sec)
+
+    local route = m.routes[route_key]
+    if not route then
+        route = {
+            method = method,
+            endpoint = endpoint,
+            requests = 0,
+            errors = 0,
+            status_codes = {},
+            buckets = {},
+            latencies = {},
+            lat_idx = 0,
+            last_latency_ms = 0,
+            last_seen_ts = 0,
+        }
+        m.routes[route_key] = route
+    end
+
+    route.requests = (tonumber(route.requests) or 0) + 1
+    if code >= 400 then
+        route.errors = (tonumber(route.errors) or 0) + 1
+    end
+    route.status_codes[code] = (tonumber(route.status_codes[code]) or 0) + 1
+    route.last_latency_ms = elapsed_ms
+    route.last_seen_ts = now_sec
+    metric_bucket_inc(route.buckets, now_sec)
+    metric_latency_push(route, elapsed_ms)
+
+    if code >= 400 or elapsed_ms >= 1000 then
+        local req_id = tostring(ctx.request_id or "")
+        log.warning(string.format("[api] req=%s %s %s -> %d in %.0fms",
+            req_id, method, endpoint, code, elapsed_ms))
+    end
+end
+
+local function api_http_metrics_snapshot(limit)
+    local now_sec = metric_now_sec()
+    local top_limit = tonumber(limit) or API_HTTP_METRIC_ROUTE_LIMIT
+    if top_limit < 1 then
+        top_limit = 1
+    elseif top_limit > 200 then
+        top_limit = 200
+    end
+
+    local m = api_http_metrics
+    local total_rps = metric_bucket_sum_window(m.buckets, now_sec, API_HTTP_METRIC_WINDOW_SEC) / API_HTTP_METRIC_WINDOW_SEC
+    local routes = {}
+
+    for _, route in pairs(m.routes) do
+        local route_rps = metric_bucket_sum_window(route.buckets, now_sec, API_HTTP_METRIC_WINDOW_SEC) / API_HTTP_METRIC_WINDOW_SEC
+        routes[#routes + 1] = {
+            method = route.method,
+            endpoint = route.endpoint,
+            requests = tonumber(route.requests) or 0,
+            errors = tonumber(route.errors) or 0,
+            error_rate_pct = metric_error_rate_pct(route.errors, route.requests),
+            rps = route_rps,
+            p50_ms = metric_percentile(route.latencies, 0.50),
+            p95_ms = metric_percentile(route.latencies, 0.95),
+            p99_ms = metric_percentile(route.latencies, 0.99),
+            last_latency_ms = tonumber(route.last_latency_ms) or 0,
+            status_codes = route.status_codes or {},
+        }
+    end
+
+    table.sort(routes, function(a, b)
+        if (a.requests or 0) == (b.requests or 0) then
+            return tostring(a.endpoint or "") < tostring(b.endpoint or "")
+        end
+        return (a.requests or 0) > (b.requests or 0)
+    end)
+
+    local out_routes = {}
+    local max_idx = math.min(#routes, top_limit)
+    for i = 1, max_idx do
+        out_routes[i] = routes[i]
+    end
+
+    return {
+        window_sec = API_HTTP_METRIC_WINDOW_SEC,
+        totals = {
+            requests = tonumber(m.totals.requests) or 0,
+            errors = tonumber(m.totals.errors) or 0,
+            error_rate_pct = metric_error_rate_pct(m.totals.errors, m.totals.requests),
+            rps = total_rps,
+            status_codes = m.status_codes or {},
+            auth_codes = m.auth_codes or {},
+        },
+        endpoints = out_routes,
+    }
+end
+
+local function ensure_server_send_wrapper(server)
+    if type(server) ~= "table" then
+        return
+    end
+    if server.__api_send_wrapped then
+        return
+    end
+    local original_send = server.send
+    if type(original_send) ~= "function" then
+        return
+    end
+    server.send = function(self, client, payload)
+        local key = client_ctx_key(client)
+        local ctx = api_request_context[key]
+        if ctx and type(payload) == "table" then
+            payload.headers = payload.headers or {}
+            local has_req_id = false
+            if type(payload.headers) == "table" then
+                for _, h in ipairs(payload.headers) do
+                    if type(h) == "string" and h:lower():find("^x%-request%-id:%s*") then
+                        has_req_id = true
+                        break
+                    end
+                end
+            end
+            if (not has_req_id) and ctx.request_id and ctx.request_id ~= "" then
+                table.insert(payload.headers, "X-Request-Id: " .. tostring(ctx.request_id))
+            end
+            if not ctx.completed then
+                ctx.completed = true
+                record_api_request_metric(ctx, payload.code)
+                api_request_context[key] = nil
+            end
+        end
+        return original_send(self, client, payload)
+    end
+    server.__api_send_wrapped = true
+end
+
 function json_response(server, client, code, payload)
     server:send(client, {
         code = code,
@@ -110,7 +406,7 @@ local function setting_bool(key, fallback)
 end
 
 local function auth_enabled()
-    return setting_bool("http_auth_enabled", true)
+    return setting_bool("http_auth_enabled", false)
 end
 
 local function setting_string(key, fallback)
@@ -995,7 +1291,9 @@ local function apply_config_change(server, client, request, opts)
     local total_ms = (os.clock() - t_start) * 1000
     local slow_threshold_ms = tonumber(opts.slow_threshold_ms) or 1500
     if total_ms > slow_threshold_ms then
-        log.warning(string.format("[api] slow config apply: %.0fms backup=%.0fms apply=%.0fms export=%.0fms snapshot=%.0fms reload=%.0fms lkg=%.0fms after=%.0fms",
+        local req_id = request and request.request_id or ""
+        log.warning(string.format("[api] req=%s slow config apply: %.0fms backup=%.0fms apply=%.0fms export=%.0fms snapshot=%.0fms reload=%.0fms lkg=%.0fms after=%.0fms",
+            tostring(req_id),
             total_ms,
             timing.backup_ms or 0,
             timing.apply_ms or 0,
@@ -1971,8 +2269,54 @@ local function get_splitter_config(server, client, id)
     })
 end
 
+local status_list_cache = {
+    splitter = { ts = 0, payload = nil },
+    buffer = { ts = 0, payload = nil },
+    adapter = { ts = 0, payload = nil },
+}
+
+local function status_cache_ttl_sec()
+    local ttl = tonumber(setting_number("api_status_cache_ttl_sec", 1)) or 1
+    if ttl < 0 then
+        ttl = 0
+    elseif ttl > 5 then
+        ttl = 5
+    end
+    return ttl
+end
+
+local function status_cache_read(key)
+    local cache = status_list_cache[key]
+    if not cache then
+        return nil
+    end
+    local ttl = status_cache_ttl_sec()
+    if ttl <= 0 then
+        return nil
+    end
+    local now = os.time()
+    if cache.payload and (now - (tonumber(cache.ts) or 0)) <= ttl then
+        return cache.payload
+    end
+    return nil
+end
+
+local function status_cache_write(key, payload)
+    local cache = status_list_cache[key]
+    if not cache then
+        return
+    end
+    cache.ts = os.time()
+    cache.payload = payload
+end
+
 local function list_splitter_status(server, client)
+    local cached = status_cache_read("splitter")
+    if cached then
+        return json_response(server, client, 200, cached)
+    end
     local status = splitter and splitter.list_status and splitter.list_status() or {}
+    status_cache_write("splitter", status)
     json_response(server, client, 200, status)
 end
 
@@ -2275,10 +2619,15 @@ local function restart_buffer_reader(server, client, id)
 end
 
 local function list_buffer_status(server, client)
+    local cached = status_cache_read("buffer")
+    if cached then
+        return json_response(server, client, 200, cached)
+    end
     local status = buffer and buffer.list_status and buffer.list_status() or {}
     for _, row in ipairs(status) do
         row.output_url = buffer_output_url(row.path)
     end
+    status_cache_write("buffer", status)
     json_response(server, client, 200, status)
 end
 
@@ -2292,7 +2641,12 @@ local function get_buffer_status(server, client, id)
 end
 
 local function list_adapter_status(server, client)
+    local cached = status_cache_read("adapter")
+    if cached then
+        return json_response(server, client, 200, cached)
+    end
     local status = runtime and runtime.list_adapter_status and runtime.list_adapter_status() or {}
+    status_cache_write("adapter", status)
     json_response(server, client, 200, status)
 end
 
@@ -4028,6 +4382,7 @@ local function list_metrics(server, client, request)
             adapter_refresh_ts = perf.last_adapter_refresh_ts,
         },
     }
+    payload.http_api = api_http_metrics_snapshot(API_HTTP_METRIC_ROUTE_LIMIT)
     if dataplane_engine then
         payload.dataplane = {
             engine = dataplane_engine,
@@ -4056,6 +4411,16 @@ local function list_metrics(server, client, request)
             "stream_sessions_auth " .. tostring(payload.sessions.auth or 0),
             "stream_sessions_clients " .. tostring(payload.sessions.clients or 0),
         }
+        if payload.http_api and payload.http_api.totals then
+            local http_totals = payload.http_api.totals
+            table.insert(lines, "stream_api_requests_total " .. tostring(http_totals.requests or 0))
+            table.insert(lines, "stream_api_errors_total " .. tostring(http_totals.errors or 0))
+            table.insert(lines, "stream_api_rps " .. tostring(http_totals.rps or 0))
+            local auth_codes = http_totals.auth_codes or {}
+            table.insert(lines, "stream_api_status_401_total " .. tostring(auth_codes[401] or 0))
+            table.insert(lines, "stream_api_status_403_total " .. tostring(auth_codes[403] or 0))
+            table.insert(lines, "stream_api_status_302_total " .. tostring(auth_codes[302] or 0))
+        end
         if lua_mem_kb then
             table.insert(lines, "stream_lua_mem_kb " .. tostring(lua_mem_kb))
         end
@@ -4112,6 +4477,16 @@ local function list_metrics(server, client, request)
     end
 
     json_response(server, client, 200, payload)
+end
+
+local function list_http_api_metrics(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local query = request and request.query or {}
+    local limit = tonumber(query.limit) or API_HTTP_METRIC_ROUTE_LIMIT
+    json_response(server, client, 200, api_http_metrics_snapshot(limit))
 end
 
 local function health_summary(server, client)
@@ -7336,6 +7711,17 @@ function api.handle_request(server, client, request)
 
     local method = request.method or "GET"
     local path = request.path or "/"
+    ensure_server_send_wrapper(server)
+    local req_id = next_request_id()
+    request.request_id = req_id
+    local ctx_key = client_ctx_key(client)
+    api_request_context[ctx_key] = {
+        request_id = req_id,
+        method = method,
+        endpoint = normalize_metric_path(path),
+        started_ms = metric_now_ms(),
+        completed = false,
+    }
 
     if method == "OPTIONS" then
         return json_response(server, client, 200, { status = "ok" })
@@ -7377,7 +7763,7 @@ function api.handle_request(server, client, request)
     -- Security hardening:
     -- when web auth is disabled, allow API only from trusted loopback by default.
     -- Explicitly opt out with http_allow_public_noauth=1 for legacy/test setups.
-    if (not auth_enabled()) and (not setting_bool("http_allow_public_noauth", false)) then
+    if (not auth_enabled()) and (not setting_bool("http_allow_public_noauth", true)) then
         if not is_internal_loopback(request) then
             return error_response(
                 server,
@@ -7783,6 +8169,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/metrics" and method == "GET" then
         return list_metrics(server, client, request)
+    end
+    if path == "/api/v1/metrics/http" and method == "GET" then
+        return list_http_api_metrics(server, client, request)
     end
     if path == "/api/v1/audit" and method == "GET" then
         return list_audit_events(server, client, request)

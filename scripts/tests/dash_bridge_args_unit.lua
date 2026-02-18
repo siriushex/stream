@@ -98,5 +98,28 @@ do
     "hls:// source must normalize to http://")
 end
 
+do
+  local conf = {
+    name = "dash dns ip fallback",
+    format = "http",
+    host = "origin.example",
+    port = 80,
+    path = "/live/manifest.mpd",
+    bridge_port = 33793,
+  }
+  local dns_ctx = {
+    source_url = "http://198.51.100.77:80/live/manifest.mpd",
+    using_ip = true,
+    original_host = "origin.example",
+    original_port = 80,
+  }
+  local argv, err = build_dash_bridge_args(conf, nil, dns_ctx)
+  assert_true(argv and not err, "build_dash_bridge_args should support dns context")
+  assert_true(argv_value_after(argv, "-i") == "http://198.51.100.77:80/live/manifest.mpd",
+    "dns context should rewrite source url to resolved IP")
+  local headers = argv_value_after(argv, "-headers") or ""
+  assert_true(headers:find("Host:%s*origin%.example:80") ~= nil, "dns context should append Host header")
+end
+
 print("dash_bridge_args_unit: ok")
 astra.exit()

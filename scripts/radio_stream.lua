@@ -417,14 +417,95 @@ local function should_restart(job)
     return true
 end
 
+local function is_exec_ok(result)
+    return result == true or result == 0
+end
+
+local function build_scaled_png_path(stream_id, settings)
+    local dir = resolve_stream_radio_dir(stream_id)
+    local safe_id = sanitize_id(stream_id)
+    local mode = settings.keep_aspect and "fit" or "fill"
+    return string.format("%s/cover_scaled_%s_%dx%d_%s.png", dir, safe_id, settings.width, settings.height, mode)
+end
+
+local function can_reuse_scaled_png(src_path, scaled_path)
+    local src_stat = utils and utils.stat and utils.stat(src_path) or nil
+    local scaled_stat = utils and utils.stat and utils.stat(scaled_path) or nil
+    if not src_stat or src_stat.type ~= "file" then
+        return false
+    end
+    if not scaled_stat or scaled_stat.type ~= "file" then
+        return false
+    end
+    local src_mtime = tonumber(src_stat.mtime) or 0
+    local scaled_mtime = tonumber(scaled_stat.mtime) or 0
+    if src_mtime > 0 and scaled_mtime > 0 and scaled_mtime < src_mtime then
+        return false
+    end
+    return true
+end
+
+local function build_png_prescale_filter(settings)
+    local scale_flags = tostring((settings and settings.scale_flags) or "fast_bilinear")
+    if settings.keep_aspect then
+        return string.format(
+            "scale=%s:%s:force_original_aspect_ratio=decrease:flags=%s,pad=%s:%s:(ow-iw)/2:(oh-ih)/2",
+            settings.width,
+            settings.height,
+            scale_flags,
+            settings.width,
+            settings.height
+        )
+    end
+    return string.format("scale=%s:%s:flags=%s", settings.width, settings.height, scale_flags)
+end
+
+local function prepare_runtime_png(stream_id, settings, job)
+    if not settings or not settings.pre_scale_png then
+        return tostring(settings and settings.png_path or ""), false, nil
+    end
+
+    local src_path = tostring(settings.png_path or "")
+    if src_path == "" or not file_exists(src_path) then
+        return src_path, false, "png file not found"
+    end
+
+    local scaled_path = build_scaled_png_path(stream_id, settings)
+    if can_reuse_scaled_png(src_path, scaled_path) then
+        return scaled_path, true
+    end
+
+    local ffmpeg = read_setting_string("ffmpeg_path", "ffmpeg")
+    local vf = build_png_prescale_filter(settings)
+    local cmd = shell_escape(ffmpeg)
+        .. " -hide_banner -loglevel error -y"
+        .. " -i " .. shell_escape(src_path)
+        .. " -frames:v 1"
+        .. " -vf " .. shell_escape(vf)
+        .. " " .. shell_escape(scaled_path)
+        .. " >/dev/null 2>&1"
+    local ok = os.execute(cmd)
+    if is_exec_ok(ok) and file_exists(scaled_path) then
+        return scaled_path, true
+    end
+
+    if job then
+        append_log(job, "[radio]", "png pre-scale failed; fallback to realtime scale")
+    end
+    return src_path, false, "png prescale failed"
+end
+
 local function build_ffmpeg_args(settings, fifo_path)
     local ffmpeg = read_setting_string("ffmpeg_path", "ffmpeg")
     local args = { ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "info", "-thread_queue_size", "1024" }
 
+    local png_input = tostring(settings.runtime_png_path or settings.png_path or "")
+    table.insert(args, "-framerate")
+    table.insert(args, tostring(settings.fps))
     table.insert(args, "-loop")
     table.insert(args, "1")
     table.insert(args, "-i")
-    table.insert(args, tostring(settings.png_path or ""))
+    table.insert(args, png_input)
 
     if settings.use_curl then
         local fmt = tostring(settings.audio_format or "mp3")
@@ -436,6 +517,8 @@ local function build_ffmpeg_args(settings, fifo_path)
         table.insert(args, fifo_path)
     else
         local input_url = tostring(settings.audio_url or "")
+        table.insert(args, "-thread_queue_size")
+        table.insert(args, tostring(settings.audio_thread_queue_size or 1024))
         if is_http_url(input_url) then
             if settings.user_agent and settings.user_agent ~= "" then
                 table.insert(args, "-user_agent")
@@ -461,13 +544,16 @@ local function build_ffmpeg_args(settings, fifo_path)
         table.insert(args, input_url)
     end
 
-    local vf = string.format("fps=%s,scale=%s:%s:flags=lanczos", settings.fps, settings.width, settings.height)
-    if settings.keep_aspect then
-        vf = string.format("scale=%s:%s:force_original_aspect_ratio=decrease:flags=lanczos,pad=%s:%s:(ow-iw)/2:(oh-ih)/2, fps=%s",
-            settings.width, settings.height, settings.width, settings.height, settings.fps)
+    if not settings.runtime_png_prescaled then
+        local scale_flags = tostring(settings.scale_flags or "fast_bilinear")
+        local vf = string.format("scale=%s:%s:flags=%s", settings.width, settings.height, scale_flags)
+        if settings.keep_aspect then
+            vf = string.format("scale=%s:%s:force_original_aspect_ratio=decrease:flags=%s,pad=%s:%s:(ow-iw)/2:(oh-ih)/2",
+                settings.width, settings.height, scale_flags, settings.width, settings.height)
+        end
+        table.insert(args, "-vf")
+        table.insert(args, vf)
     end
-    table.insert(args, "-vf")
-    table.insert(args, vf)
 
     table.insert(args, "-r")
     table.insert(args, tostring(settings.fps))
@@ -542,16 +628,22 @@ local function normalize_settings(raw)
     out.extra_headers = tostring(raw.extra_headers or "")
     out.user_agent = tostring(raw.user_agent or "")
     out.audio_format = normalize_audio_format(raw.audio_format)
-    out.fps = clamp_number(raw.fps, 1, 120, 25)
+    out.fps = clamp_number(raw.fps, 1, 120, 1)
     out.width = clamp_int(raw.width, 16, 8192, 270)
     out.height = clamp_int(raw.height, 16, 8192, 270)
     out.keep_aspect = normalize_bool(raw.keep_aspect, false)
     out.vcodec = tostring(raw.vcodec or "libx264")
-    out.preset = tostring(raw.preset or "veryfast")
-    out.video_bitrate = tostring(raw.video_bitrate or "1400k")
+    out.preset = tostring(raw.preset or "ultrafast")
+    out.video_bitrate = tostring(raw.video_bitrate or "400k")
     out.pix_fmt = tostring(raw.pix_fmt or "yuv420p")
+    local scale_flags = tostring(raw.scale_flags or "fast_bilinear")
+    if scale_flags ~= "fast_bilinear" and scale_flags ~= "bilinear" and scale_flags ~= "bicubic" and scale_flags ~= "lanczos" then
+        scale_flags = "fast_bilinear"
+    end
+    out.scale_flags = scale_flags
     out.gop = clamp_int(raw.gop, 1, 100000, math.floor(out.fps * 2))
     out.tune_stillimage = normalize_bool(raw.tune_stillimage, true)
+    out.pre_scale_png = normalize_bool(raw.pre_scale_png, true)
     out.acodec = tostring(raw.acodec or "aac")
     out.audio_bitrate = tostring(raw.audio_bitrate or "256k")
     out.channels = clamp_int(raw.channels, 1, 8, 2)
@@ -559,6 +651,7 @@ local function normalize_settings(raw)
     out.pcr_period = clamp_int(raw.pcr_period, 0, 10000, 30)
     out.max_interleave_delta = clamp_int(raw.max_interleave_delta, 0, 100000, 0)
     out.muxdelay = clamp_number(raw.muxdelay, 0, 100, 0.7)
+    out.audio_thread_queue_size = clamp_int(raw.audio_thread_queue_size, 8, 65535, 1024)
     out.pkt_size = clamp_int(raw.pkt_size, 188, 65507, 1316)
     local base_out = tostring(raw.output_url or "")
     out.output_url = build_udp_url(base_out, out.pkt_size)
@@ -793,6 +886,13 @@ function radio.start(stream_id, raw_settings)
             return false, "fifo create failed"
         end
         job.fifo_path = fifo_path
+    end
+
+    local runtime_png_path, runtime_png_prescaled = prepare_runtime_png(stream_id, settings, job)
+    settings.runtime_png_path = runtime_png_path
+    settings.runtime_png_prescaled = runtime_png_prescaled == true
+    if settings.runtime_png_prescaled then
+        append_log(job, "[radio]", "png pre-scaled for runtime; realtime scale disabled")
     end
 
     local ffmpeg_args = build_ffmpeg_args(settings, fifo_path)

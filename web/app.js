@@ -603,6 +603,8 @@ const state = {
   statusPollInFlight: false,
   saveRequestsInFlight: 0,
   pollingPausedBySave: false,
+  statusPollBackoffMs: 0,
+  statusPollToken: 0,
   adapterTimer: null,
   dvbTimer: null,
   adapterScanJobId: null,
@@ -693,6 +695,12 @@ const state = {
   streamUptimeTimer: null,
   statusFastUntilTs: 0,
   visibleTileIds: new Set(),
+  authBlockedUntil: 0,
+  authPollingPaused: false,
+  settingsSaveBusy: false,
+  splitterPollTick: 0,
+  bufferPollTick: 0,
+  pollLoops: {},
 };
 
 const POLL_STATUS_DEFAULT_MS = 1000;
@@ -712,6 +720,8 @@ const POLL_ACCESS_MS = 8000;
 const POLL_LOG_MS = 8000;
 const POLL_SPLITTER_MS = 10000;
 const POLL_BUFFER_MS = 10000;
+const POLL_SPLITTER_FULL_REFRESH_EVERY = 6;
+const POLL_BUFFER_FULL_REFRESH_EVERY = 6;
 const POLL_SERVER_STATUS_MS = 60000;
 const POLL_SERVER_STREAMS_ACTIVE_MS = 5000;
 const POLL_SERVER_STREAMS_FOCUSED_MS = 1000;
@@ -719,6 +729,162 @@ const POLL_SERVER_STREAMS_BACKGROUND_MS = 120000;
 const POLL_OBSERVABILITY_MS = 60000;
 const API_GET_TIMEOUT_MS = 12000;
 const API_MUTATION_TIMEOUT_MS = 45000;
+const AUTH_BLOCK_WINDOW_MS = 5000;
+const POLL_BACKOFF_START_MS = 1000;
+const POLL_BACKOFF_MAX_MS = 60000;
+const POLL_BACKOFF_401_MS = 15000;
+const POLL_LOOP_MIN_MS = 100;
+const POLL_LOOP_JITTER_PCT = 10;
+const API_TELEMETRY_SAMPLE_MAX = 200;
+
+const apiInFlightGet = new Map();
+let uiApiRequestSeq = 0;
+
+const uiPerfTelemetry = {
+  api: {
+    total: 0,
+    errors: 0,
+    unauthorized: 0,
+    redirectLike: 0,
+    byEndpoint: {},
+    recent: [],
+  },
+  saveFlows: [],
+  longTasks: {
+    count: 0,
+    totalMs: 0,
+    recent: [],
+  },
+  renders: {},
+  viewSwitches: 0,
+};
+
+function uiNowMs() {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function telemetryPushSample(list, item, maxSize = API_TELEMETRY_SAMPLE_MAX) {
+  if (!Array.isArray(list)) return;
+  list.push(item);
+  if (list.length > maxSize) {
+    list.splice(0, list.length - maxSize);
+  }
+}
+
+function telemetryRecordRender(name) {
+  const key = String(name || '').trim();
+  if (!key) return;
+  uiPerfTelemetry.renders[key] = (Number(uiPerfTelemetry.renders[key]) || 0) + 1;
+}
+
+function telemetryRecordApiMetric({ path, method, status, latencyMs, requestId, deduped, redirected }) {
+  const endpoint = String(path || '').split('?')[0] || '/';
+  const code = Number(status || 0);
+  const latency = Math.max(0, Number(latencyMs) || 0);
+  const api = uiPerfTelemetry.api;
+
+  api.total += 1;
+  if (code >= 400) api.errors += 1;
+  if (code === 401) api.unauthorized += 1;
+  if (code === 302 || redirected === true) api.redirectLike += 1;
+
+  if (!api.byEndpoint[endpoint]) {
+    api.byEndpoint[endpoint] = {
+      total: 0,
+      errors: 0,
+      unauthorized: 0,
+      lastMs: 0,
+      avgMs: 0,
+      maxMs: 0,
+      statuses: {},
+      deduped: 0,
+      redirectLike: 0,
+    };
+  }
+  const row = api.byEndpoint[endpoint];
+  row.total += 1;
+  if (code >= 400) row.errors += 1;
+  if (code === 401) row.unauthorized += 1;
+  if (code === 302 || redirected === true) row.redirectLike += 1;
+  if (deduped) row.deduped += 1;
+  row.statuses[code] = (Number(row.statuses[code]) || 0) + 1;
+  row.lastMs = latency;
+  row.maxMs = Math.max(row.maxMs, latency);
+  row.avgMs = row.avgMs <= 0 ? latency : (row.avgMs * 0.8 + latency * 0.2);
+
+  telemetryPushSample(api.recent, {
+    ts: Date.now(),
+    endpoint,
+    method: String(method || 'GET').toUpperCase(),
+    status: code,
+    latency_ms: Math.round(latency),
+    request_id: requestId || '',
+    redirected: redirected === true,
+  });
+}
+
+function telemetryRecordSaveFlow(sample) {
+  telemetryPushSample(uiPerfTelemetry.saveFlows, {
+    ts: Date.now(),
+    endpoint: sample.endpoint || '/api/v1/settings',
+    request_ms: Math.round(Number(sample.request_ms) || 0),
+    total_ms: Math.round(Number(sample.total_ms) || 0),
+    reload: !!sample.reload,
+    ok: sample.ok !== false,
+    error: sample.error || '',
+  }, 120);
+}
+
+function setupUiLongTaskObserver() {
+  if (typeof window === 'undefined' || typeof PerformanceObserver === 'undefined') return;
+  try {
+    const observer = new PerformanceObserver((entryList) => {
+      const entries = entryList.getEntries();
+      entries.forEach((entry) => {
+        const duration = Math.max(0, Number(entry.duration) || 0);
+        if (duration < 50) return;
+        uiPerfTelemetry.longTasks.count += 1;
+        uiPerfTelemetry.longTasks.totalMs += duration;
+        telemetryPushSample(uiPerfTelemetry.longTasks.recent, {
+          ts: Date.now(),
+          duration_ms: Math.round(duration),
+          name: entry.name || 'longtask',
+        }, 120);
+      });
+    });
+    observer.observe({ type: 'longtask', buffered: true });
+  } catch (err) {
+  }
+}
+
+function nextUiRequestId() {
+  uiApiRequestSeq += 1;
+  if (uiApiRequestSeq > 999999999) {
+    uiApiRequestSeq = 1;
+  }
+  return `ui-${Date.now().toString(36)}-${uiApiRequestSeq.toString(36)}`;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    try {
+      const nav = (typeof performance !== 'undefined' && performance.getEntriesByType)
+        ? performance.getEntriesByType('navigation')[0]
+        : null;
+      const dclMs = nav && Number.isFinite(Number(nav.domContentLoadedEventEnd))
+        ? Number(nav.domContentLoadedEventEnd)
+        : uiNowMs();
+      uiPerfTelemetry.domContentLoadedMs = Math.max(0, Math.round(dclMs));
+    } catch (_err) {
+    }
+  }, { once: true });
+  window.__streamUiPerf = {
+    getSnapshot: () => JSON.parse(JSON.stringify(uiPerfTelemetry)),
+  };
+}
 const NET_RESILIENCE_DEFAULTS = {
   connect_timeout_ms: 3000,
   read_timeout_ms: 8000,
@@ -5307,6 +5473,7 @@ function setView(name) {
     if (!proceed) return;
   }
   state.currentView = name;
+  uiPerfTelemetry.viewSwitches += 1;
   elements.views.forEach((view) => {
     view.classList.toggle('active', view.id === `view-${name}`);
   });
@@ -7097,8 +7264,152 @@ function getServerStatusInfo(server) {
   return { label: 'Down', className: 'warn', title: status.message || '' };
 }
 
+function isPollUnauthorizedError(err) {
+  const status = Number(err && err.status);
+  if (status === 401 || status === 403) return true;
+  const payloadError = String(err && err.payload && err.payload.error || '').toLowerCase();
+  if (payloadError === 'unauthorized' || payloadError === 'forbidden') return true;
+  const message = String(err && err.message || '').toLowerCase();
+  return message.includes('401') || message.includes('403') || message.includes('unauthorized') || message.includes('forbidden');
+}
+
+function isPollTimeoutError(err) {
+  if (!err) return false;
+  const status = Number(err.status);
+  if ([408, 429, 502, 503, 504].includes(status)) return true;
+  if (err.network === true) return true;
+  const name = String(err.name || '').toLowerCase();
+  if (name === 'aborterror') return true;
+  const message = String(err.message || '').toLowerCase();
+  return message.includes('timeout') || message.includes('timed out') || message.includes('network error') || message.includes('failed to fetch');
+}
+
+function computePollBackoffMs(previousMs, err) {
+  if (isPollUnauthorizedError(err)) {
+    return Math.min(POLL_BACKOFF_MAX_MS, Math.max(POLL_BACKOFF_401_MS, Number(previousMs) || 0));
+  }
+  if (!isPollTimeoutError(err)) {
+    return 0;
+  }
+  const current = Number(previousMs) || 0;
+  if (current <= 0) {
+    return POLL_BACKOFF_START_MS;
+  }
+  return Math.min(POLL_BACKOFF_MAX_MS, current * 2);
+}
+
+function normalizePollLoopTickResult(result) {
+  if (result === false) {
+    return { ok: false, error: null };
+  }
+  if (result && typeof result === 'object' && Object.prototype.hasOwnProperty.call(result, 'ok')) {
+    return {
+      ok: result.ok !== false,
+      error: result.error || null,
+    };
+  }
+  return { ok: true, error: null };
+}
+
+function applyPollLoopJitter(delayMs, jitterPct) {
+  const base = Math.max(POLL_LOOP_MIN_MS, Number(delayMs) || 0);
+  const pct = Math.max(0, Number(jitterPct) || 0);
+  if (pct <= 0) return base;
+  const spread = base * (pct / 100);
+  const offset = (Math.random() * 2 - 1) * spread;
+  return Math.max(POLL_LOOP_MIN_MS, Math.round(base + offset));
+}
+
+function schedulePollLoop(name, delayMs) {
+  const loop = state.pollLoops[name];
+  if (!loop || loop.stopped) return;
+  if (loop.timer) {
+    clearTimeout(loop.timer);
+    loop.timer = null;
+  }
+  let target = Math.max(POLL_LOOP_MIN_MS, Number(delayMs) || 0);
+  if (loop.pauseWhenHidden !== false && document.hidden) {
+    target = Math.max(target, POLL_STATUS_HIDDEN_MIN_MS);
+  }
+  if (loop.pauseWhenAuthBlocked !== false && state.authPollingPaused) {
+    target = Math.max(target, POLL_BACKOFF_401_MS);
+  }
+  loop.timer = setTimeout(() => {
+    runPollLoop(name).catch(() => {});
+  }, applyPollLoopJitter(target, loop.jitterPct));
+}
+
+async function runPollLoop(name) {
+  const loop = state.pollLoops[name];
+  if (!loop || loop.stopped) return;
+  loop.timer = null;
+  if (loop.inFlight) {
+    schedulePollLoop(name, Math.max(loop.intervalMs, loop.backoffMs || 0));
+    return;
+  }
+  if (loop.pauseWhenHidden !== false && document.hidden) {
+    schedulePollLoop(name, Math.max(loop.intervalMs, POLL_STATUS_HIDDEN_MIN_MS));
+    return;
+  }
+  if (loop.pauseWhenAuthBlocked !== false && state.authPollingPaused) {
+    schedulePollLoop(name, Math.max(loop.intervalMs, POLL_BACKOFF_401_MS));
+    return;
+  }
+
+  loop.inFlight = true;
+  let result = { ok: true, error: null };
+  try {
+    result = normalizePollLoopTickResult(await loop.tick());
+  } catch (err) {
+    result = { ok: false, error: err };
+  } finally {
+    loop.inFlight = false;
+  }
+
+  const active = state.pollLoops[name];
+  if (!active || active !== loop || loop.stopped) return;
+  if (result.ok) {
+    loop.backoffMs = 0;
+  } else {
+    loop.backoffMs = computePollBackoffMs(loop.backoffMs, result.error);
+  }
+  schedulePollLoop(name, Math.max(loop.intervalMs, loop.backoffMs || 0));
+}
+
+function startPollLoop(name, options = {}) {
+  const key = String(name || '').trim();
+  if (!key || typeof options.tick !== 'function') return;
+  stopPollLoop(key);
+  const intervalMs = Math.max(POLL_LOOP_MIN_MS, Number(options.intervalMs) || POLL_STATUS_DEFAULT_MS);
+  state.pollLoops[key] = {
+    timer: null,
+    inFlight: false,
+    backoffMs: 0,
+    intervalMs,
+    tick: options.tick,
+    pauseWhenHidden: options.pauseWhenHidden !== false,
+    pauseWhenAuthBlocked: options.pauseWhenAuthBlocked !== false,
+    jitterPct: Number.isFinite(Number(options.jitterPct)) ? Number(options.jitterPct) : POLL_LOOP_JITTER_PCT,
+    stopped: false,
+  };
+  schedulePollLoop(key, options.immediate === true ? 0 : intervalMs);
+}
+
+function stopPollLoop(name) {
+  const key = String(name || '').trim();
+  if (!key) return;
+  const loop = state.pollLoops[key];
+  if (!loop) return;
+  loop.stopped = true;
+  if (loop.timer) {
+    clearTimeout(loop.timer);
+    loop.timer = null;
+  }
+  delete state.pollLoops[key];
+}
+
 async function loadServerStatus() {
-  if (state.serverStatusInFlight) return;
+  if (state.serverStatusInFlight) return { ok: true };
   state.serverStatusInFlight = true;
   try {
     const data = await apiJson('/api/v1/servers/status');
@@ -7111,25 +7422,26 @@ async function loadServerStatus() {
     });
     state.serverStatus = next;
     renderServers();
+    return { ok: true };
   } catch (err) {
+    return { ok: false, error: err };
   } finally {
     state.serverStatusInFlight = false;
   }
 }
 
 function startServerStatusPolling() {
-  if (state.serverStatusTimer) {
-    clearInterval(state.serverStatusTimer);
-  }
-  state.serverStatusTimer = setInterval(() => loadServerStatus(), POLL_SERVER_STATUS_MS);
-  loadServerStatus();
+  state.serverStatusTimer = true;
+  startPollLoop('server-status', {
+    intervalMs: POLL_SERVER_STATUS_MS,
+    immediate: true,
+    tick: () => loadServerStatus(),
+  });
 }
 
 function stopServerStatusPolling() {
-  if (state.serverStatusTimer) {
-    clearInterval(state.serverStatusTimer);
-    state.serverStatusTimer = null;
-  }
+  stopPollLoop('server-status');
+  state.serverStatusTimer = null;
 }
 
 function syncServerIdFromName() {
@@ -17694,6 +18006,7 @@ function makeAdapterMeter(label, percent, valueText) {
 
 function renderAdapterList() {
   if (!elements.adapterList) return;
+  telemetryRecordRender('adapters.list');
   const adapters = state.adapters || [];
   const activeId = state.adapterEditing && state.adapterEditing.adapter ? state.adapterEditing.adapter.id : null;
 
@@ -17996,60 +18309,72 @@ async function loadAdapters() {
 }
 
 async function loadAdapterStatus() {
+  let ok = true;
+  let error = null;
   try {
     const data = await apiJson('/api/v1/adapter-status');
     state.adapterStatus = data || {};
   } catch (err) {
+    ok = false;
+    error = err;
     state.adapterStatus = {};
   }
   renderAdapterList();
   updateAdapterScanAvailability();
+  return { ok, error };
 }
 
 async function loadDvbAdapters() {
+  let ok = true;
+  let error = null;
   try {
     const data = await apiJson('/api/v1/dvb-adapters');
     state.dvbAdapters = Array.isArray(data) ? data : [];
     state.dvbAdaptersLoaded = true;
   } catch (err) {
+    ok = false;
+    error = err;
     state.dvbAdapters = [];
     state.dvbAdaptersLoaded = false;
   }
   renderAdapterList();
   renderDvbDetectedSelect();
+  return { ok, error };
 }
 
 function startAdapterPolling() {
-  if (state.adapterTimer) {
-    clearInterval(state.adapterTimer);
-  }
-  state.adapterTimer = setInterval(loadAdapterStatus, POLL_ADAPTER_MS);
-  loadAdapterStatus();
+  state.adapterTimer = true;
+  startPollLoop('adapter-status', {
+    intervalMs: POLL_ADAPTER_MS,
+    immediate: true,
+    tick: () => loadAdapterStatus(),
+  });
 }
 
 function stopAdapterPolling() {
-  if (state.adapterTimer) {
-    clearInterval(state.adapterTimer);
-    state.adapterTimer = null;
-  }
+  stopPollLoop('adapter-status');
+  state.adapterTimer = null;
 }
 
 function startDvbPolling() {
   if (state.currentView !== 'adapters') return;
-  if (state.dvbTimer) {
-    clearInterval(state.dvbTimer);
-  }
-  state.dvbTimer = setInterval(() => {
-    if (state.currentView !== 'adapters' || document.hidden) return;
-    loadDvbAdapters().catch(() => {});
-  }, 3600 * 1000);
+  state.dvbTimer = true;
+  startPollLoop('dvb-adapters', {
+    intervalMs: 3600 * 1000,
+    immediate: false,
+    tick: async () => {
+      if (state.currentView !== 'adapters') {
+        return { ok: true };
+      }
+      return loadDvbAdapters();
+    },
+    pauseWhenHidden: true,
+  });
 }
 
 function stopDvbPolling() {
-  if (state.dvbTimer) {
-    clearInterval(state.dvbTimer);
-    state.dvbTimer = null;
-  }
+  stopPollLoop('dvb-adapters');
+  state.dvbTimer = null;
 }
 
 async function saveAdapter() {
@@ -18368,6 +18693,7 @@ function renderHelpGuide() {
 }
 
 function renderSplitterList() {
+  telemetryRecordRender('splitters.list');
   const list = Array.isArray(state.splitters) ? state.splitters : [];
   renderSidebarHelpCard('hlssplitter', elements.splitterSidebarHelp, list.length > 0);
   elements.splitterList.innerHTML = '';
@@ -18608,32 +18934,58 @@ function renderSplitterDetail() {
   updateSplitterActionState();
 }
 
-async function loadSplitters() {
-  try {
-    const [list, status] = await Promise.all([
-      apiJson('/api/v1/splitters'),
-      apiJson('/api/v1/splitter-status'),
-    ]);
-    state.splitters = Array.isArray(list) ? list : [];
-    const statusMap = {};
+async function loadSplitters(options = {}) {
+  const statusOnly = options.statusOnly === true;
+  const fullRefresh = !statusOnly || state.splitterPollTick <= 0
+    || (state.splitterPollTick % POLL_SPLITTER_FULL_REFRESH_EVERY) === 0
+    || !Array.isArray(state.splitters)
+    || state.splitters.length === 0;
+  const toStatusMap = (status) => {
+    const out = {};
     if (Array.isArray(status)) {
       status.forEach((item) => {
-        if (item && item.id) {
-          statusMap[item.id] = item;
-        }
+        if (item && item.id) out[item.id] = item;
       });
-    } else if (status && typeof status === 'object') {
+      return out;
+    }
+    if (status && typeof status === 'object') {
       Object.keys(status).forEach((key) => {
-        statusMap[key] = status[key];
+        out[key] = status[key];
       });
     }
-    state.splitterStatus = statusMap;
+    return out;
+  };
+  let ok = true;
+  let error = null;
+  try {
+    if (fullRefresh) {
+      const [list, status] = await Promise.all([
+        apiJson('/api/v1/splitters'),
+        apiJson('/api/v1/splitter-status'),
+      ]);
+      state.splitters = Array.isArray(list) ? list : [];
+      state.splitterStatus = toStatusMap(status);
+    } else {
+      const status = await apiJson('/api/v1/splitter-status');
+      state.splitterStatus = toStatusMap(status);
+    }
   } catch (err) {
-    state.splitters = [];
-    state.splitterStatus = {};
+    ok = false;
+    error = err;
+    if (!statusOnly) {
+      state.splitters = [];
+      state.splitterStatus = {};
+    }
   }
 
   renderSplitterList();
+
+  if (statusOnly) {
+    if (state.splitterEditing && state.splitterEditing.id) {
+      renderSplitterDetail();
+    }
+    return { ok, error };
+  }
 
   const holdEditing = state.splitterEditing && (state.splitterEditingNew || state.splitterDirty);
   if (state.splitterEditing && state.splitterEditing.id && !holdEditing) {
@@ -18641,6 +18993,7 @@ async function loadSplitters() {
   } else if (state.splitters.length > 0) {
     await loadSplitterDetail(state.splitters[0].id, true);
   }
+  return { ok, error };
 }
 
 async function loadSplitterDetail(id, silent) {
@@ -18880,18 +19233,22 @@ async function deleteSplitterAllow(ruleId) {
 }
 
 function startSplitterPolling() {
-  if (state.splitterTimer) {
-    clearInterval(state.splitterTimer);
-  }
-  state.splitterTimer = setInterval(loadSplitters, POLL_SPLITTER_MS);
-  loadSplitters();
+  state.splitterPollTick = 0;
+  state.splitterTimer = true;
+  startPollLoop('splitter-status', {
+    intervalMs: POLL_SPLITTER_MS,
+    immediate: false,
+    tick: async () => {
+      state.splitterPollTick += 1;
+      return loadSplitters({ statusOnly: true });
+    },
+  });
+  loadSplitters().catch(() => {});
 }
 
 function stopSplitterPolling() {
-  if (state.splitterTimer) {
-    clearInterval(state.splitterTimer);
-    state.splitterTimer = null;
-  }
+  stopPollLoop('splitter-status');
+  state.splitterTimer = null;
 }
 
 function isSplitterSaved() {
@@ -19332,6 +19689,7 @@ function openBufferEditor(buffer, isNew) {
 }
 
 function renderBufferList() {
+  telemetryRecordRender('buffers.list');
   const list = Array.isArray(state.buffers) ? state.buffers : [];
   renderSidebarHelpCard('buffer', elements.bufferSidebarHelp, list.length > 0);
   elements.bufferList.innerHTML = '';
@@ -19655,32 +20013,58 @@ function renderBufferDetail() {
   updateBufferActionState();
 }
 
-async function loadBuffers() {
-  try {
-    const [list, status] = await Promise.all([
-      apiJson('/api/v1/buffers/resources'),
-      apiJson('/api/v1/buffer-status'),
-    ]);
-    state.buffers = Array.isArray(list) ? list : [];
-    const statusMap = {};
+async function loadBuffers(options = {}) {
+  const statusOnly = options.statusOnly === true;
+  const fullRefresh = !statusOnly || state.bufferPollTick <= 0
+    || (state.bufferPollTick % POLL_BUFFER_FULL_REFRESH_EVERY) === 0
+    || !Array.isArray(state.buffers)
+    || state.buffers.length === 0;
+  const toStatusMap = (status) => {
+    const out = {};
     if (Array.isArray(status)) {
       status.forEach((item) => {
-        if (item && item.id) {
-          statusMap[item.id] = item;
-        }
+        if (item && item.id) out[item.id] = item;
       });
-    } else if (status && typeof status === 'object') {
+      return out;
+    }
+    if (status && typeof status === 'object') {
       Object.keys(status).forEach((key) => {
-        statusMap[key] = status[key];
+        out[key] = status[key];
       });
     }
-    state.bufferStatus = statusMap;
+    return out;
+  };
+  let ok = true;
+  let error = null;
+  try {
+    if (fullRefresh) {
+      const [list, status] = await Promise.all([
+        apiJson('/api/v1/buffers/resources'),
+        apiJson('/api/v1/buffer-status'),
+      ]);
+      state.buffers = Array.isArray(list) ? list : [];
+      state.bufferStatus = toStatusMap(status);
+    } else {
+      const status = await apiJson('/api/v1/buffer-status');
+      state.bufferStatus = toStatusMap(status);
+    }
   } catch (err) {
-    state.buffers = [];
-    state.bufferStatus = {};
+    ok = false;
+    error = err;
+    if (!statusOnly) {
+      state.buffers = [];
+      state.bufferStatus = {};
+    }
   }
 
   renderBufferList();
+
+  if (statusOnly) {
+    if (state.bufferEditing && state.bufferEditing.id) {
+      renderBufferDetail();
+    }
+    return { ok, error };
+  }
 
   const holdEditing = state.bufferEditing && (state.bufferEditingNew || state.bufferDirty);
   if (state.bufferEditing && state.bufferEditing.id && !holdEditing) {
@@ -19688,6 +20072,7 @@ async function loadBuffers() {
   } else if (!state.bufferEditing && state.buffers.length > 0) {
     await loadBufferDetail(state.buffers[0].id, true);
   }
+  return { ok, error };
 }
 
 async function loadBufferDetail(id, silent) {
@@ -19969,18 +20354,22 @@ async function deleteBufferAllow(ruleId) {
 }
 
 function startBufferPolling() {
-  if (state.bufferTimer) {
-    clearInterval(state.bufferTimer);
-  }
-  state.bufferTimer = setInterval(loadBuffers, POLL_BUFFER_MS);
-  loadBuffers();
+  state.bufferPollTick = 0;
+  state.bufferTimer = true;
+  startPollLoop('buffer-status', {
+    intervalMs: POLL_BUFFER_MS,
+    immediate: false,
+    tick: async () => {
+      state.bufferPollTick += 1;
+      return loadBuffers({ statusOnly: true });
+    },
+  });
+  loadBuffers().catch(() => {});
 }
 
 function stopBufferPolling() {
-  if (state.bufferTimer) {
-    clearInterval(state.bufferTimer);
-    state.bufferTimer = null;
-  }
+  stopPollLoop('buffer-status');
+  state.bufferTimer = null;
 }
 
 function validateOutput(output, index) {
@@ -22572,7 +22961,7 @@ async function loadStreamStatus() {
     const data = await apiJson(endpoint);
     if (statusIds && statusIds.length > 0) {
       const changed = mergePartialStreamStatus(statusIds, data);
-      if (!changed) return;
+      if (!changed) return { ok: true };
     } else {
       state.stats = data || {};
     }
@@ -22583,7 +22972,9 @@ async function loadStreamStatus() {
     updateEditorOutputStatus();
     updateEditorMptsStatus();
     // System metrics are shown only in Observability.
+    return { ok: true };
   } catch (err) {
+    return { ok: false, error: err };
   }
 }
 
@@ -22647,39 +23038,59 @@ function computeStatusPollDelayMs() {
   return Math.max(delay, floorMs);
 }
 
-function scheduleNextStatusPoll(delayMs) {
+function scheduleNextStatusPoll(delayMs, token = state.statusPollToken) {
+  if (token !== state.statusPollToken) return;
   if (state.statusTimer) {
     clearTimeout(state.statusTimer);
   }
   const delay = Math.max(100, Number(delayMs) || 0);
   state.statusTimer = setTimeout(() => {
-    tickStatusPolling().catch(() => {});
+    tickStatusPolling(token).catch(() => {});
   }, delay);
 }
 
-async function tickStatusPolling() {
+async function tickStatusPolling(token = state.statusPollToken) {
+  if (token !== state.statusPollToken) return;
   // Таймер мог быть остановлен между scheduleNextStatusPoll() и tick.
   if (!state.statusTimer) return;
+  if (document.hidden || state.authPollingPaused) {
+    const pauseDelayMs = state.authPollingPaused ? POLL_BACKOFF_401_MS : POLL_STATUS_HIDDEN_MIN_MS;
+    scheduleNextStatusPoll(Math.max(computeStatusPollDelayMs(), pauseDelayMs), token);
+    return;
+  }
   if (state.statusPollInFlight) {
-    scheduleNextStatusPoll(computeStatusPollDelayMs());
+    scheduleNextStatusPoll(Math.max(computeStatusPollDelayMs(), Number(state.statusPollBackoffMs) || 0), token);
     return;
   }
   state.statusPollInFlight = true;
+  let pollResult = { ok: true, error: null };
   try {
-    await loadStreamStatus();
+    pollResult = normalizePollLoopTickResult(await loadStreamStatus());
+  } catch (err) {
+    pollResult = { ok: false, error: err };
   } finally {
     state.statusPollInFlight = false;
   }
-  scheduleNextStatusPoll(computeStatusPollDelayMs());
+  if (token !== state.statusPollToken) return;
+  if (pollResult.ok) {
+    state.statusPollBackoffMs = 0;
+  } else {
+    state.statusPollBackoffMs = computePollBackoffMs(state.statusPollBackoffMs, pollResult.error);
+  }
+  const nextDelayMs = Math.max(computeStatusPollDelayMs(), Number(state.statusPollBackoffMs) || 0);
+  scheduleNextStatusPoll(nextDelayMs, token);
 }
 
 function startStatusPolling() {
   stopStatusPolling();
+  state.statusPollToken += 1;
   state.statusPollStartMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
-  scheduleNextStatusPoll(0);
+  state.statusPollBackoffMs = 0;
+  scheduleNextStatusPoll(0, state.statusPollToken);
 }
 
 function stopStatusPolling() {
+  state.statusPollToken += 1;
   if (state.statusTimer) {
     clearTimeout(state.statusTimer);
     state.statusTimer = null;
@@ -22687,6 +23098,7 @@ function stopStatusPolling() {
   stopStreamUptimeTicker();
   state.statusPollStartMs = 0;
   state.statusPollInFlight = false;
+  state.statusPollBackoffMs = 0;
 }
 
 function boostStatusPolling(windowMs = POLL_STATUS_FAST_WINDOW_MS) {
@@ -23362,6 +23774,7 @@ function updateStreamCompactRows() {
 }
 
 function renderStreams() {
+  telemetryRecordRender(`dashboard.streams.${state.viewMode || 'cards'}`);
   if (autoFitObserver) {
     autoFitObserver.disconnect();
   }
@@ -23592,33 +24005,37 @@ function isActiveSession(session) {
 }
 
 async function loadSessions() {
+  let ok = true;
+  let error = null;
   try {
     const data = await apiJson(`/api/v1/sessions${buildSessionQuery()}`);
     const list = Array.isArray(data) ? data : [];
     state.sessions = list.filter(isActiveSession);
     renderSessions();
   } catch (err) {
+    ok = false;
+    error = err;
     state.sessions = [];
     renderSessions();
   }
+  return { ok, error };
 }
 
 function startSessionPolling() {
   if (state.sessionPaused) {
     return;
   }
-  if (state.sessionTimer) {
-    clearInterval(state.sessionTimer);
-  }
-  state.sessionTimer = setInterval(loadSessions, POLL_SESSION_MS);
-  loadSessions();
+  state.sessionTimer = true;
+  startPollLoop('sessions', {
+    intervalMs: POLL_SESSION_MS,
+    immediate: true,
+    tick: () => loadSessions(),
+  });
 }
 
 function stopSessionPolling() {
-  if (state.sessionTimer) {
-    clearInterval(state.sessionTimer);
-    state.sessionTimer = null;
-  }
+  stopPollLoop('sessions');
+  state.sessionTimer = null;
 }
 
 function setSessionPaused(paused) {
@@ -23947,20 +24364,22 @@ function buildAuditQuery(limit) {
 
 async function loadAuditLog(reset = true) {
   if (state.accessMode !== 'audit') {
-    return;
+    return { ok: true };
   }
   try {
     const limit = Math.max(50, Math.min(500, Number(state.auditLimit) || 200));
     const data = await apiJson(`/api/v1/audit?${buildAuditQuery(limit)}`);
     state.auditEntries = Array.isArray(data) ? data : [];
     renderAuditLog();
+    return { ok: true };
   } catch (err) {
+    return { ok: false, error: err };
   }
 }
 
 async function loadAccessLog(reset = false) {
   if (state.accessMode !== 'access') {
-    return;
+    return { ok: true };
   }
   try {
     const since = reset ? 0 : state.accessLogCursor;
@@ -23980,7 +24399,9 @@ async function loadAccessLog(reset = false) {
     if (!entries.length && reset) {
       renderAccessLog();
     }
+    return { ok: true };
   } catch (err) {
+    return { ok: false, error: err };
   }
 }
 
@@ -23988,23 +24409,28 @@ function startAccessLogPolling() {
   if (state.accessPaused) {
     return;
   }
-  if (state.accessLogTimer) {
-    clearInterval(state.accessLogTimer);
-  }
+  stopPollLoop('access-log');
+  state.accessLogTimer = true;
   if (state.accessMode === 'audit') {
-    state.accessLogTimer = setInterval(() => loadAuditLog(true), POLL_ACCESS_MS);
-    loadAuditLog(true);
+    loadAuditLog(true).catch(() => {});
+    startPollLoop('access-log', {
+      intervalMs: POLL_ACCESS_MS,
+      immediate: false,
+      tick: () => loadAuditLog(true),
+    });
   } else {
-    state.accessLogTimer = setInterval(() => loadAccessLog(false), POLL_ACCESS_MS);
-    loadAccessLog(true);
+    loadAccessLog(true).catch(() => {});
+    startPollLoop('access-log', {
+      intervalMs: POLL_ACCESS_MS,
+      immediate: false,
+      tick: () => loadAccessLog(false),
+    });
   }
 }
 
 function stopAccessLogPolling() {
-  if (state.accessLogTimer) {
-    clearInterval(state.accessLogTimer);
-    state.accessLogTimer = null;
-  }
+  stopPollLoop('access-log');
+  state.accessLogTimer = null;
 }
 
 function startObservabilityPolling() {
@@ -24014,18 +24440,22 @@ function startObservabilityPolling() {
   if (onDemand) {
     return;
   }
-  state.observabilityTimer = setInterval(() => {
-    if (state.currentView === 'observability' && !document.hidden) {
-      loadObservability(false);
-    }
-  }, POLL_OBSERVABILITY_MS);
+  state.observabilityTimer = true;
+  startPollLoop('observability', {
+    intervalMs: POLL_OBSERVABILITY_MS,
+    immediate: false,
+    tick: async () => {
+      if (state.currentView !== 'observability') {
+        return { ok: true };
+      }
+      return loadObservability(false);
+    },
+  });
 }
 
 function stopObservabilityPolling() {
-  if (state.observabilityTimer) {
-    clearInterval(state.observabilityTimer);
-    state.observabilityTimer = null;
-  }
+  stopPollLoop('observability');
+  state.observabilityTimer = null;
 }
 
 function updateObservabilityStreamOptions() {
@@ -25489,7 +25919,7 @@ async function loadSystemMetricsTimeseries(range) {
 
 
 async function loadObservability(showStatus) {
-  if (!elements.observabilityRange) return;
+  if (!elements.observabilityRange) return { ok: true };
   const logsDays = getSettingNumber('ai_logs_retention_days', 0);
   const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
   const onDemand = getSettingBool('ai_metrics_on_demand', true);
@@ -25525,7 +25955,7 @@ async function loadObservability(showStatus) {
     setChartCardVisible(elements.observabilityChartCardBitrate, false);
     setChartCardVisible(elements.observabilityChartCardStreams, false);
     setChartCardVisible(elements.observabilityChartCardSwitches, false);
-    return;
+    return { ok: true };
   }
   setVisibility(true);
 
@@ -25548,7 +25978,7 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary({ bitrate_kbps: 0, on_air: 0, cc_errors: 0, pes_errors: 0, input_switch: 0 }, 'stream', '');
     renderObservabilityCharts([], 'stream');
     renderObservabilityLogs([]);
-    return;
+    return { ok: true };
   }
   if (showStatus) {
     setStatus('Loading observability...');
@@ -25620,13 +26050,19 @@ async function loadObservability(showStatus) {
     renderObservabilitySummary(summary, scope, streamId, state.systemMetricsSnapshot);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
+    return { ok: true };
   } catch (err) {
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
+    return { ok: false, error: err };
   }
 }
 
 function syncPollingForView() {
+  if (state.authPollingPaused) {
+    pauseAllPolling();
+    return;
+  }
   if (state.currentView === 'dashboard') {
     startStatusPolling();
   } else {
@@ -25690,6 +26126,7 @@ function pauseAllPolling() {
 
 function resumeAllPolling() {
   if ((Number(state.saveRequestsInFlight) || 0) > 0) return;
+  if (state.authPollingPaused) return;
   if (document.hidden) return;
   syncPollingForView();
   if (state.currentView === 'adapters') {
@@ -25854,7 +26291,9 @@ async function loadLogs(reset = false) {
     if (!entries.length && reset) {
       renderLogs();
     }
+    return { ok: true };
   } catch (err) {
+    return { ok: false, error: err };
   }
 }
 
@@ -25862,18 +26301,18 @@ function startLogPolling() {
   if (state.logPaused) {
     return;
   }
-  if (state.logTimer) {
-    clearInterval(state.logTimer);
-  }
-  state.logTimer = setInterval(() => loadLogs(false), POLL_LOG_MS);
-  loadLogs(true);
+  state.logTimer = true;
+  loadLogs(true).catch(() => {});
+  startPollLoop('logs', {
+    intervalMs: POLL_LOG_MS,
+    immediate: false,
+    tick: () => loadLogs(false),
+  });
 }
 
 function stopLogPolling() {
-  if (state.logTimer) {
-    clearInterval(state.logTimer);
-    state.logTimer = null;
-  }
+  stopPollLoop('logs');
+  state.logTimer = null;
 }
 
 function setLogPaused(paused) {
@@ -26023,7 +26462,6 @@ function canPlayMpegTs() {
 }
 
 let hlsJsPromise = null;
-const apiGetInFlight = new Map();
 
 function canPlayHlsNatively() {
   if (!elements.playerVideo || !elements.playerVideo.canPlayType) return false;
@@ -26083,8 +26521,27 @@ function resolveApiTimeoutMs(method, options = {}) {
   return method === 'GET' ? API_GET_TIMEOUT_MS : API_MUTATION_TIMEOUT_MS;
 }
 
+function enterUnauthorizedUiState() {
+  state.authBlockedUntil = Date.now() + AUTH_BLOCK_WINDOW_MS;
+  if (!state.authPollingPaused) {
+    state.authPollingPaused = true;
+    pauseAllPolling();
+  }
+  setOverlay(elements.loginOverlay, true);
+}
+
 async function apiFetch(path, options = {}) {
   const method = resolveApiMethod(options);
+  const isApiPath = typeof path === 'string' && path.startsWith('/api/');
+  const isLoginRequest = path === '/api/v1/auth/login' || path === '/api/auth/login';
+
+  if (isApiPath && !isLoginRequest && Date.now() < Number(state.authBlockedUntil || 0)) {
+    enterUnauthorizedUiState();
+    const error = new Error('HTTP 401: unauthorized');
+    error.status = 401;
+    error.payload = { error: 'unauthorized' };
+    throw error;
+  }
   const headers = options.headers ? { ...options.headers } : {};
   if (state.token) {
     headers.Authorization = `Bearer ${state.token}`;
@@ -26092,19 +26549,19 @@ async function apiFetch(path, options = {}) {
   if (options.body && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
+  if (!headers['X-Request-Id']) {
+    headers['X-Request-Id'] = nextUiRequestId();
+  }
 
   const retries = Number.isFinite(options.retry) ? options.retry : 1;
   const timeoutMs = resolveApiTimeoutMs(method, options);
-  const dedupeGet = method === 'GET' && options.no_dedupe !== true;
-  const dedupeKey = dedupeGet ? `${method}:${path}:token:${state.token || ''}` : '';
-  if (dedupeGet) {
-    const existing = apiGetInFlight.get(dedupeKey);
-    if (existing) return existing;
-  }
+  const useDedupe = method === 'GET' && options.no_dedupe !== true && options.noDedupe !== true;
+  const dedupeKey = useDedupe ? `${method}:${path}:token:${state.token || ''}` : '';
 
-  const requestPromise = (async () => {
+  const runFetch = async (deduped) => {
     let lastError = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
+      const startedMs = uiNowMs();
       let timeoutId = null;
       let controller = null;
       try {
@@ -26117,6 +26574,7 @@ async function apiFetch(path, options = {}) {
         delete fetchOptions.retry;
         delete fetchOptions.timeout_ms;
         delete fetchOptions.no_dedupe;
+        delete fetchOptions.noDedupe;
 
         if (typeof AbortController !== 'undefined') {
           controller = new AbortController();
@@ -26127,10 +26585,24 @@ async function apiFetch(path, options = {}) {
         }
 
         const response = await fetch(path, fetchOptions);
+        const latencyMs = uiNowMs() - startedMs;
+        const reqId = response.headers && response.headers.get
+          ? (response.headers.get('x-request-id') || headers['X-Request-Id'] || '')
+          : (headers['X-Request-Id'] || '');
+        telemetryRecordApiMetric({
+          path,
+          method,
+          status: response.status,
+          latencyMs,
+          requestId: reqId,
+          deduped,
+          redirected: response.redirected === true,
+        });
 
         if (response.status === 401) {
-          pauseAllPolling();
-          setOverlay(elements.loginOverlay, true);
+          enterUnauthorizedUiState();
+        } else if (response.status < 400 && !isLoginRequest) {
+          state.authBlockedUntil = 0;
         }
 
         return response;
@@ -26146,6 +26618,15 @@ async function apiFetch(path, options = {}) {
         } else {
           lastError = err;
         }
+        telemetryRecordApiMetric({
+          path,
+          method,
+          status: 0,
+          latencyMs: uiNowMs() - startedMs,
+          requestId: headers['X-Request-Id'] || '',
+          deduped,
+          redirected: false,
+        });
         if (attempt < retries) {
           await delay(250 * (attempt + 1));
         }
@@ -26161,18 +26642,19 @@ async function apiFetch(path, options = {}) {
     error.network = true;
     error.cause = lastError;
     throw error;
-  })();
+  };
 
-  if (dedupeGet) {
-    apiGetInFlight.set(dedupeKey, requestPromise);
-    requestPromise.finally(() => {
-      if (apiGetInFlight.get(dedupeKey) === requestPromise) {
-        apiGetInFlight.delete(dedupeKey);
-      }
+  if (useDedupe) {
+    if (apiInFlightGet.has(dedupeKey)) {
+      return apiInFlightGet.get(dedupeKey);
+    }
+    const req = runFetch(true).finally(() => {
+      apiInFlightGet.delete(dedupeKey);
     });
+    apiInFlightGet.set(dedupeKey, req);
+    return req;
   }
-
-  return requestPromise;
+  return runFetch(false);
 }
 
 function formatNetworkError(err) {
@@ -26190,6 +26672,18 @@ function formatNetworkError(err) {
 async function apiJson(path, options = {}) {
   const response = await apiFetch(path, options);
   const text = await response.text();
+  const contentType = String((response.headers && response.headers.get && response.headers.get('content-type')) || '').toLowerCase();
+  const isApiPath = typeof path === 'string' && path.startsWith('/api/');
+  const looksHtml = contentType.includes('text/html')
+    || /^\s*<!doctype html/i.test(text || '')
+    || /^\s*<html/i.test(text || '');
+  if (isApiPath && looksHtml) {
+    const error = new Error('HTTP 401: unauthorized');
+    error.status = 401;
+    error.payload = { error: 'unauthorized' };
+    enterUnauthorizedUiState();
+    throw error;
+  }
   let payload = {};
   if (text) {
     try {
@@ -26199,10 +26693,15 @@ async function apiJson(path, options = {}) {
     }
   }
   if (!response.ok) {
-    const message = payload.error || response.statusText || 'Request failed';
+    const reqId = response.headers && response.headers.get ? response.headers.get('x-request-id') : '';
+    let message = payload.error || response.statusText || 'Request failed';
+    if (reqId) {
+      message = `${message} (request ${reqId})`;
+    }
     const error = new Error(`HTTP ${response.status}: ${message}`);
     error.status = response.status;
     error.payload = payload;
+    error.requestId = reqId || '';
     throw error;
   }
   return payload;
@@ -28068,6 +28567,7 @@ async function saveSettings(update, opts = {}) {
   if (pausePolling) {
     beginSavePollingPause();
   }
+  const saveStartedMs = uiNowMs();
   let path = '/api/v1/settings';
   if (opts.query) {
     const query = String(opts.query || '');
@@ -28075,14 +28575,16 @@ async function saveSettings(update, opts = {}) {
       path += query.startsWith('?') ? query : `?${query}`;
     }
   }
+  const requestStartedMs = uiNowMs();
+  const shouldReload = opts.reload !== false;
+  let requestDoneMs = requestStartedMs;
   try {
     await apiJson(path, {
       method: 'PUT',
       timeout_ms: Number(opts.timeout_ms) || API_MUTATION_TIMEOUT_MS,
       body: JSON.stringify(update),
     });
-
-    const shouldReload = opts.reload !== false;
+    requestDoneMs = uiNowMs();
     if (shouldReload) {
       await loadSettings();
     } else {
@@ -28092,10 +28594,33 @@ async function saveSettings(update, opts = {}) {
         state.settings[key] = update[key];
       });
     }
-
+    const saveDoneMs = uiNowMs();
+    telemetryRecordSaveFlow({
+      endpoint: path,
+      request_ms: requestDoneMs - requestStartedMs,
+      total_ms: saveDoneMs - saveStartedMs,
+      reload: shouldReload,
+      ok: true,
+    });
+    if ((saveDoneMs - saveStartedMs) > 800) {
+      const reqMs = Math.round(requestDoneMs - requestStartedMs);
+      const totalMs = Math.round(saveDoneMs - saveStartedMs);
+      console.warn(`[save-flow] slow settings save: total=${totalMs}ms request=${reqMs}ms reload=${shouldReload ? 1 : 0}`);
+    }
     if (!opts.silent) {
       setStatus(opts.status || 'Settings saved');
     }
+  } catch (err) {
+    const failedMs = uiNowMs();
+    telemetryRecordSaveFlow({
+      endpoint: path,
+      request_ms: failedMs - requestStartedMs,
+      total_ms: failedMs - saveStartedMs,
+      reload: shouldReload,
+      ok: false,
+      error: err && err.message ? String(err.message) : 'save failed',
+    });
+    throw err;
   } finally {
     if (pausePolling) {
       endSavePollingPause();
@@ -31379,6 +31904,8 @@ async function submitLogin(event) {
       localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
     }
 
+    state.authBlockedUntil = 0;
+    state.authPollingPaused = false;
     setOverlay(elements.loginOverlay, false);
     await refreshAll();
   } catch (err) {
@@ -31392,6 +31919,8 @@ async function logout() {
   } catch (err) {
   }
   state.token = null;
+  state.authBlockedUntil = Date.now() + AUTH_BLOCK_WINDOW_MS;
+  state.authPollingPaused = true;
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_TOKEN_KEY_LEGACY);
   pauseAllPolling();
@@ -31404,6 +31933,8 @@ async function refreshAll() {
   pauseAllPolling();
   try {
     await loadSettings();
+    state.authPollingPaused = false;
+    state.authBlockedUntil = 0;
     setOverlay(elements.loginOverlay, false);
 
     const view = state.currentView || 'dashboard';
@@ -31464,6 +31995,7 @@ async function refreshAll() {
     const net = formatNetworkError(err);
     const message = net || (err && err.message ? err.message : 'Failed to load');
     if (err && err.status === 401) {
+      state.authPollingPaused = true;
       setOverlay(elements.loginOverlay, true);
       return;
     }
@@ -31539,7 +32071,8 @@ function bindEvents() {
       if (button && button.dataset && !button.dataset.baseLabel) {
         button.dataset.baseLabel = baseLabel;
       }
-      if (button && button.disabled) return;
+      if (state.settingsSaveBusy || (button && button.disabled)) return;
+      state.settingsSaveBusy = true;
       if (button) {
         button.disabled = true;
         button.textContent = 'Saving...';
@@ -31570,6 +32103,7 @@ function bindEvents() {
         setStatus(err.message);
         computeDirtyState();
       } finally {
+        state.settingsSaveBusy = false;
         if (button) {
           button.disabled = false;
           button.textContent = baseLabel || 'Save';

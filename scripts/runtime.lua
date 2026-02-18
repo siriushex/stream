@@ -657,7 +657,7 @@ local function normalize_stats(stats)
     }
 end
 
-local function collect_input_stats(channel)
+local function collect_input_stats(channel, lite)
     if not channel or not channel.input then
         return {}
     end
@@ -754,25 +754,27 @@ local function collect_input_stats(channel)
         if input_data and input_data.hls then
             entry.hls = input_data.hls
         end
-        if input_data and input_data.input and input_data.input.jitter
-            and input_data.input.jitter.stats
-        then
-            local ok, stats = pcall(function()
-                return input_data.input.jitter:stats()
-            end)
-            if ok and type(stats) == "table" then
-                entry.jitter = stats
+        if not lite then
+            if input_data and input_data.input and input_data.input.jitter
+                and input_data.input.jitter.stats
+            then
+                local ok, stats = pcall(function()
+                    return input_data.input.jitter:stats()
+                end)
+                if ok and type(stats) == "table" then
+                    entry.jitter = stats
+                end
             end
-        end
 
-        if input_data and input_data.input and input_data.input.playout
-            and input_data.input.playout.stats
-        then
-            local ok, stats = pcall(function()
-                return input_data.input.playout:stats()
-            end)
-            if ok and type(stats) == "table" then
-                entry.playout = stats
+            if input_data and input_data.input and input_data.input.playout
+                and input_data.input.playout.stats
+            then
+                local ok, stats = pcall(function()
+                    return input_data.input.playout:stats()
+                end)
+                if ok and type(stats) == "table" then
+                    entry.playout = stats
+                end
             end
         end
 
@@ -2475,7 +2477,7 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
         entry.active_input_index = nil
     end
     entry.active_input_url = get_active_input_url(channel)
-    entry.inputs = collect_input_stats(channel)
+    entry.inputs = collect_input_stats(channel, lite)
     if type(entry.inputs) == "table" then
         local active = nil
         if entry.active_input_id and entry.active_input_id > 0 then

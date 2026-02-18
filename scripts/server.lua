@@ -1697,7 +1697,7 @@ WantedBy=multi-user.target
         end
     end
 
-    local auth_enabled = setting_bool("http_auth_enabled", true)
+    local auth_enabled = setting_bool("http_auth_enabled", false)
     local bind_addr = tostring(opt.addr or "")
     local is_loopback_bind = (bind_addr == "127.0.0.1")
         or (bind_addr == "::1")

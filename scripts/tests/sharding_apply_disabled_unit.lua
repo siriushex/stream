@@ -5,13 +5,10 @@ dofile("scripts/config.lua")
 dofile("scripts/sharding.lua")
 dofile("scripts/api.lua")
 
--- Disable auth so require_admin() works via virtual admin session.
 config = config or {}
 config.get_setting = function(key)
   if key == "http_auth_enabled" then return false end
-  if key == "stream_sharding_enabled" then return true end
-  if key == "stream_sharding_shards" then return 2 end
-  if key == "stream_sharding_base_port" then return 9000 end
+  if key == "stream_sharding_enabled" then return false end
   return nil
 end
 config.get_user_by_username = function(username)
@@ -39,20 +36,19 @@ local server = {
 }
 local client = {}
 
-local function make_request(path, method)
-  return {
-    method = method or "POST",
-    path = path,
-    addr = "127.0.0.1",
-    headers = {},
-    query = {},
-  }
-end
+local request = {
+  method = "POST",
+  path = "/api/v1/sharding/apply",
+  addr = "127.0.0.1",
+  headers = {},
+  query = {},
+}
 
-api.handle_request(server, client, make_request("/api/v1/sharding/apply", "POST"))
+api.handle_request(server, client, request)
 
 assert_true(sent ~= nil, "expected response")
-assert_true(tonumber(sent.code) == 400, "expected 400 on preflight failure")
+assert_true(tonumber(sent.code) == 200, "expected 200 on disabled sharding")
+
 local decoded = nil
 if type(sent.content) == "string" and sent.content ~= "" then
   local ok, data = pcall(json.decode, sent.content)
@@ -60,12 +56,10 @@ if type(sent.content) == "string" and sent.content ~= "" then
     decoded = data
   end
 end
-local err = decoded and tostring(decoded.error or "") or tostring(sent.content or "")
-assert_true(err ~= "", "expected error message")
-assert_true(
-  err:find("systemctl", 1, true) or err:find("systemd unit not detected", 1, true),
-  "expected systemctl missing or unit not detected error"
-)
 
-log.info("[unit] sharding_apply_preflight_unit ok")
+assert_true(type(decoded) == "table", "expected json response")
+assert_true(decoded.status == "disabled", "expected disabled status")
+assert_true(type(decoded.message) == "string" and decoded.message ~= "", "expected disabled message")
+
+log.info("[unit] sharding_apply_disabled_unit ok")
 astra.exit()

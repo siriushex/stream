@@ -2575,6 +2575,133 @@ local function is_local_http_source_path(path)
         or path:match("^/input/")
 end
 
+local function http_same_location(http_conf, origin)
+    if not http_conf or not origin then
+        return false
+    end
+    return tostring(http_conf.host or "") == tostring(origin.host or "")
+        and tonumber(http_conf.port or 0) == tonumber(origin.port or 0)
+        and tostring(http_conf.path or "") == tostring(origin.path or "")
+end
+
+local function http_redirect_is_ephemeral(path)
+    local p = tostring(path or ""):lower()
+    if p == "" then
+        return false
+    end
+    if p:find("token=", 1, true)
+        or p:find("sig=", 1, true)
+        or p:find("signature=", 1, true)
+        or p:find("expires=", 1, true)
+        or p:find("expire=", 1, true)
+        or p:find("exp=", 1, true)
+        or p:find("session=", 1, true)
+        or p:find("auth=", 1, true)
+        or p:find("key=", 1, true)
+        or p:find("st=", 1, true)
+    then
+        return true
+    end
+    return false
+end
+
+local function http_mark_redirect_target(instance)
+    if not instance or not instance.http_conf or not instance.origin then
+        return
+    end
+    local base_sec = tonumber(instance.origin_refresh_sec_default) or 120
+    local short_sec = tonumber(instance.origin_refresh_sec_ephemeral) or 30
+    if base_sec < 5 then
+        base_sec = 5
+    end
+    if short_sec < 5 then
+        short_sec = 5
+    end
+    if http_same_location(instance.http_conf, instance.origin) then
+        instance.redirect_switch_ts = nil
+        instance.origin_refresh_sec_effective = base_sec
+        return
+    end
+    instance.redirect_switch_ts = os.time()
+    if http_redirect_is_ephemeral(instance.http_conf.path) then
+        instance.origin_refresh_sec_effective = math.max(5, math.min(base_sec, short_sec))
+    else
+        instance.origin_refresh_sec_effective = base_sec
+    end
+end
+
+local function http_reason_requires_origin_refresh(reason, code)
+    local c = tonumber(code) or 0
+    if c >= 400 and c < 500 and c ~= 429 then
+        return true
+    end
+    local r = tostring(reason or "")
+    if r == "http_stream_closed"
+        or r == "http_no_response"
+        or r == "redirect_failed"
+        or r == "redirect_no_location"
+        or r == "init_failed"
+    then
+        return true
+    end
+    if r:match("^http_err_") then
+        return true
+    end
+    return false
+end
+
+local function http_refresh_origin(instance, conf, options)
+    options = options or {}
+    if not instance or not instance.http_conf or not instance.origin then
+        return false
+    end
+    if http_same_location(instance.http_conf, instance.origin) then
+        return false
+    end
+
+    local should_refresh = false
+    if options.periodic then
+        local now = os.time()
+        local refresh_sec = tonumber(instance.origin_refresh_sec_effective)
+            or tonumber(instance.origin_refresh_sec_default)
+            or 120
+        if refresh_sec < 5 then
+            refresh_sec = 5
+        end
+        local since = instance.redirect_switch_ts or instance.last_origin_reset_ts or now
+        if now - since >= refresh_sec then
+            should_refresh = true
+        end
+    else
+        should_refresh = http_reason_requires_origin_refresh(options.reason, options.code)
+    end
+
+    if not should_refresh then
+        return false
+    end
+
+    local origin = instance.origin
+    instance.http_conf.host = origin.host
+    instance.http_conf.port = origin.port
+    instance.http_conf.path = origin.path
+    if origin.format then
+        local secure = (origin.format == "https")
+        instance.http_conf.https = secure or nil
+        instance.http_conf.ssl = secure or nil
+    end
+    instance.redirect_switch_ts = nil
+    instance.origin_refresh_sec_effective = tonumber(instance.origin_refresh_sec_default) or 120
+
+    local now = os.time()
+    local reason_text = options.periodic and "periodic refresh"
+        or ("reason=" .. tostring(options.reason or ("http_" .. tostring(options.code or 0))))
+    if (not instance.last_origin_reset_ts) or (now - instance.last_origin_reset_ts) > 5 or options.periodic then
+        log.info("[" .. conf.name .. "] Refreshing input via origin (" .. reason_text .. ")")
+    end
+    instance.last_origin_reset_ts = now
+    return true
+end
+
 init_input_module.http = function(conf)
     local instance_id = conf.host .. ":" .. conf.port .. conf.path
     local instance = http_input_instance_list[instance_id]
@@ -2598,14 +2725,20 @@ init_input_module.http = function(conf)
 	        end
 
 	        -- Некоторые IPTV-панели отдают одноразовые URL через 302/301 (например, `token=...`).
-	        -- Если дальше мы ловим 4xx на уже редиректнутом URL, имеет смысл вернуться на origin
-	        -- и получить свежий redirect, иначе мы можем бесконечно ретраить протухший URL.
+	        -- Если дальше мы ловим ошибки на уже редиректнутом URL, возвращаемся к origin,
+	        -- чтобы получить свежий redirect и не зависеть от протухшей ссылки.
 	        instance.origin = {
 	            host = conf.host,
 	            port = conf.port,
 	            path = conf.path,
+	            format = conf.format or "http",
 	        }
 	        instance.last_origin_reset_ts = nil
+	        instance.redirect_switch_ts = nil
+	        instance.origin_refresh_sec_default = tonumber(conf.redirect_origin_refresh_sec) or 120
+	        instance.origin_refresh_sec_ephemeral = tonumber(conf.redirect_origin_refresh_sec_ephemeral) or 30
+	        instance.origin_refresh_sec_effective = instance.origin_refresh_sec_default
+	        instance.origin_fast_retry_ms = tonumber(conf.redirect_origin_fast_retry_ms) or 1000
 
 		        local sync = conf.sync
 		        -- Если sync задан флагом (например, `#sync` без значения), то в Lua это boolean=true.
@@ -2686,10 +2819,19 @@ init_input_module.http = function(conf)
             return headers
         end
 
-        local function schedule_retry(reason)
+	        local function schedule_retry(reason, options)
+            options = options or {}
             if instance.request then
                 instance.request:close()
                 instance.request = nil
+            end
+
+            local refreshed_origin = false
+            if options.allow_origin_refresh ~= false then
+                refreshed_origin = http_refresh_origin(instance, conf, {
+                    reason = reason,
+                    code = options.code,
+                })
             end
 
             net_mark_error(instance.net, reason)
@@ -2700,12 +2842,22 @@ init_input_module.http = function(conf)
 
             local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)
             local max_retries = tonumber(instance.net_cfg.max_retries) or 0
-            if max_retries > 0 and instance.net.fail_count >= max_retries then
+            if max_retries > 0 and instance.net.fail_count >= max_retries and not refreshed_origin then
                 instance.net.state = "offline"
                 local cooldown = tonumber(instance.net_cfg.cooldown_sec) or 30
                 if cooldown < 0 then cooldown = 0 end
                 instance.net.cooldown_until = os.time() + math.floor(cooldown)
                 delay_ms = math.max(delay_ms, math.floor(cooldown * 1000))
+            end
+            if refreshed_origin then
+                instance.net.cooldown_until = nil
+                local fast_retry_ms = tonumber(instance.origin_fast_retry_ms) or 1000
+                if fast_retry_ms < 100 then
+                    fast_retry_ms = 100
+                elseif fast_retry_ms > 5000 then
+                    fast_retry_ms = 5000
+                end
+                delay_ms = math.min(delay_ms, fast_retry_ms)
             end
             instance.net.current_backoff_ms = delay_ms
             net_emit(conf, instance.net)
@@ -2753,31 +2905,6 @@ init_input_module.http = function(conf)
 	        end
 	        apply_local_http_source_overrides()
 
-	        local function maybe_reset_to_origin(code)
-	            if not instance.origin or not instance.http_conf then
-	                return
-	            end
-	            local origin = instance.origin
-	            if instance.http_conf.host == origin.host
-	                and instance.http_conf.port == origin.port
-	                and instance.http_conf.path == origin.path then
-	                return
-	            end
-	            local c = tonumber(code) or 0
-	            -- 4xx на редиректнутом URL часто означает "протух токен/сессия" на панелях.
-	            -- Исключаем 429, там лучше уважать backoff.
-	            if c >= 400 and c < 500 and c ~= 429 then
-	                instance.http_conf.host = origin.host
-	                instance.http_conf.port = origin.port
-	                instance.http_conf.path = origin.path
-	                local now = os.time()
-	                if (not instance.last_origin_reset_ts) or (now - instance.last_origin_reset_ts) > 10 then
-	                    instance.last_origin_reset_ts = now
-	                    log.info("[" .. conf.name .. "] Redirect URL may be expired (HTTP " .. tostring(c) ..
-	                        "), refreshing via origin")
-	                end
-	            end
-	        end
 	        instance.apply_net_cfg = function()
 	            if not instance.net_cfg or not instance.http_conf then
 	                return
@@ -2793,7 +2920,7 @@ init_input_module.http = function(conf)
             net_auto_apply(instance)
         end
 
-        instance.start_request = function()
+	        instance.start_request = function()
             if instance.request then
                 instance.request:close()
                 instance.request = nil
@@ -2822,6 +2949,9 @@ init_input_module.http = function(conf)
                 end
                 instance.net.cooldown_until = nil
             end
+
+            -- Периодически возвращаемся на origin, чтобы обновлять short-lived redirect URL.
+            http_refresh_origin(instance, conf, { periodic = true })
 
             if instance.net then
                 instance.net.state = "connecting"
@@ -2852,13 +2982,13 @@ init_input_module.http = function(conf)
                     return
                 end
 
-                if response.code == 301 or response.code == 302 then
-                    local loc = response.headers and response.headers["location"] or nil
-                    if type(loc) ~= "string" or loc == "" then
-                        instance.on_error("HTTP Error: Redirect without Location")
-                        schedule_retry("redirect_no_location")
-                        return
-                    end
+	                if response.code == 301 or response.code == 302 then
+	                    local loc = response.headers and response.headers["location"] or nil
+	                    if type(loc) ~= "string" or loc == "" then
+	                        instance.on_error("HTTP Error: Redirect without Location")
+	                        schedule_retry("redirect_no_location")
+	                        return
+	                    end
 
                     -- Совместимость: многие панели/скрипты отдают относительный Location ("/path" или "file.ts").
                     -- parse_url ожидает абсолютный URL (scheme://...), поэтому обрабатываем относительные ссылки отдельно.
@@ -2867,48 +2997,50 @@ init_input_module.http = function(conf)
                         if resolved:sub(1, 2) == "//" then
                             local scheme = (instance.http_conf.https or instance.http_conf.ssl) and "https:" or "http:"
                             resolved = scheme .. resolved
-                        elseif resolved:sub(1, 1) == "/" then
-                            -- абсолютный путь на том же хосте
-                            instance.http_conf.path = resolved
-                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
-                                .. ":" .. tostring(instance.http_conf.port) .. resolved)
-                            instance.start_request()
-                            return
+	                        elseif resolved:sub(1, 1) == "/" then
+	                            -- абсолютный путь на том же хосте
+	                            instance.http_conf.path = resolved
+	                            http_mark_redirect_target(instance)
+	                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
+	                                .. ":" .. tostring(instance.http_conf.port) .. resolved)
+	                            instance.start_request()
+	                            return
                         else
                             -- относительный путь относительно текущей директории
                             local base_dir = tostring(instance.http_conf.path or "/"):match("(.*/)")
-                            if not base_dir then base_dir = "/" end
-                            if base_dir:sub(-1) ~= "/" then base_dir = base_dir .. "/" end
-                            instance.http_conf.path = base_dir .. resolved
-                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
-                                .. ":" .. tostring(instance.http_conf.port) .. instance.http_conf.path)
-                            instance.start_request()
-                            return
+	                            if not base_dir then base_dir = "/" end
+	                            if base_dir:sub(-1) ~= "/" then base_dir = base_dir .. "/" end
+	                            instance.http_conf.path = base_dir .. resolved
+	                            http_mark_redirect_target(instance)
+	                            log.info("[" .. conf.name .. "] Redirect to " .. tostring(instance.http_conf.host)
+	                                .. ":" .. tostring(instance.http_conf.port) .. instance.http_conf.path)
+	                            instance.start_request()
+	                            return
                         end
                     end
 
                     local o = parse_url(resolved)
-                    if o then
-                        instance.http_conf.host = o.host
-                        instance.http_conf.port = o.port
-                        instance.http_conf.path = o.path
-                        -- Если редирект уводит на https, нужно переключить режим http_request.
-                        instance.http_conf.https = (o.format == "https") or nil
-                        instance.http_conf.ssl = (o.format == "https") or nil
-                        log.info("[" .. conf.name .. "] Redirect to " .. o.format .. "://" .. o.host .. ":" .. o.port .. o.path)
-                        instance.start_request()
-                    else
-                        instance.on_error("HTTP Error: Redirect failed")
-                        schedule_retry("redirect_failed")
-                    end
-                    return
-                end
+	                    if o then
+	                        instance.http_conf.host = o.host
+	                        instance.http_conf.port = o.port
+	                        instance.http_conf.path = o.path
+	                        -- Если редирект уводит на https, нужно переключить режим http_request.
+	                        instance.http_conf.https = (o.format == "https") or nil
+	                        instance.http_conf.ssl = (o.format == "https") or nil
+	                        http_mark_redirect_target(instance)
+	                        log.info("[" .. conf.name .. "] Redirect to " .. o.format .. "://" .. o.host .. ":" .. o.port .. o.path)
+	                        instance.start_request()
+	                    else
+	                        instance.on_error("HTTP Error: Redirect failed")
+	                        schedule_retry("redirect_failed")
+	                    end
+	                    return
+	                end
 
 	                local code = tonumber(response.code) or 0
 	                local message = response.message or "error"
 	                instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
-	                maybe_reset_to_origin(code)
-	                schedule_retry(http_reason(response))
+	                schedule_retry(http_reason(response), { code = code })
 	            end
 	            instance.request = http_request(instance.http_conf)
 	        end
@@ -2940,6 +3072,19 @@ end
         if conf.ua and not conf.user_agent then
             conf.user_agent = conf.ua
         end
+
+        instance.origin = {
+            host = conf.host,
+            port = conf.port,
+            path = conf.path,
+            format = "https",
+        }
+        instance.last_origin_reset_ts = nil
+        instance.redirect_switch_ts = nil
+        instance.origin_refresh_sec_default = tonumber(conf.redirect_origin_refresh_sec) or 120
+        instance.origin_refresh_sec_ephemeral = tonumber(conf.redirect_origin_refresh_sec_ephemeral) or 30
+        instance.origin_refresh_sec_effective = instance.origin_refresh_sec_default
+        instance.origin_fast_retry_ms = tonumber(conf.redirect_origin_fast_retry_ms) or 1000
 
 	        local res = resolve_input_resilience(conf)
 	        local is_local_http_source = is_local_http_host(conf.host) and is_local_http_source_path(conf.path)
@@ -2988,10 +3133,19 @@ end
             return headers
         end
 
-        local function schedule_retry(reason)
+        local function schedule_retry(reason, options)
+            options = options or {}
             if instance.request then
                 instance.request:close()
                 instance.request = nil
+            end
+
+            local refreshed_origin = false
+            if options.allow_origin_refresh ~= false then
+                refreshed_origin = http_refresh_origin(instance, conf, {
+                    reason = reason,
+                    code = options.code,
+                })
             end
 
             net_mark_error(instance.net, reason)
@@ -3001,12 +3155,22 @@ end
 
             local delay_ms = calc_backoff_ms(instance.net_cfg, instance.net.fail_count)
             local max_retries = tonumber(instance.net_cfg.max_retries) or 0
-            if max_retries > 0 and instance.net.fail_count >= max_retries then
+            if max_retries > 0 and instance.net.fail_count >= max_retries and not refreshed_origin then
                 instance.net.state = "offline"
                 local cooldown = tonumber(instance.net_cfg.cooldown_sec) or 30
                 if cooldown < 0 then cooldown = 0 end
                 instance.net.cooldown_until = os.time() + math.floor(cooldown)
                 delay_ms = math.max(delay_ms, math.floor(cooldown * 1000))
+            end
+            if refreshed_origin then
+                instance.net.cooldown_until = nil
+                local fast_retry_ms = tonumber(instance.origin_fast_retry_ms) or 1000
+                if fast_retry_ms < 100 then
+                    fast_retry_ms = 100
+                elseif fast_retry_ms > 5000 then
+                    fast_retry_ms = 5000
+                end
+                delay_ms = math.min(delay_ms, fast_retry_ms)
             end
             instance.net.current_backoff_ms = delay_ms
             net_emit(conf, instance.net)
@@ -3099,6 +3263,9 @@ end
                 instance.net.cooldown_until = nil
             end
 
+            -- Периодически возвращаемся на origin, чтобы не зависеть от short-lived redirect URL.
+            http_refresh_origin(instance, conf, { periodic = true })
+
             if instance.net then
                 instance.net.state = "connecting"
                 instance.net.state_ts = os.time()
@@ -3127,12 +3294,49 @@ end
                 end
 
                 if response.code == 301 or response.code == 302 then
-                    local o = parse_url(response.headers["location"])
+                    local loc = response.headers and response.headers["location"] or nil
+                    if type(loc) ~= "string" or loc == "" then
+                        instance.on_error("HTTPS Error: Redirect without Location")
+                        schedule_retry("redirect_no_location")
+                        return
+                    end
+
+                    local resolved = loc
+                    if not resolved:match("://") then
+                        if resolved:sub(1, 2) == "//" then
+                            resolved = "https:" .. resolved
+                        elseif resolved:sub(1, 1) == "/" then
+                            instance.http_conf.path = resolved
+                            http_mark_redirect_target(instance)
+                            log.info("[" .. conf.name .. "] Redirect to https://" .. tostring(instance.http_conf.host)
+                                .. ":" .. tostring(instance.http_conf.port) .. resolved)
+                            instance.start_request()
+                            return
+                        else
+                            local base_dir = tostring(instance.http_conf.path or "/"):match("(.*/)")
+                            if not base_dir then
+                                base_dir = "/"
+                            end
+                            if base_dir:sub(-1) ~= "/" then
+                                base_dir = base_dir .. "/"
+                            end
+                            instance.http_conf.path = base_dir .. resolved
+                            http_mark_redirect_target(instance)
+                            log.info("[" .. conf.name .. "] Redirect to https://" .. tostring(instance.http_conf.host)
+                                .. ":" .. tostring(instance.http_conf.port) .. instance.http_conf.path)
+                            instance.start_request()
+                            return
+                        end
+                    end
+
+                    local o = parse_url(resolved)
                     if o then
                         instance.http_conf.host = o.host
                         instance.http_conf.port = o.port
                         instance.http_conf.path = o.path
-                        instance.http_conf.ssl = (o.format == "https")
+                        instance.http_conf.https = (o.format == "https") or nil
+                        instance.http_conf.ssl = (o.format == "https") or nil
+                        http_mark_redirect_target(instance)
                         log.info("[" .. conf.name .. "] Redirect to " .. tostring(o.format) ..
                             "://" .. o.host .. ":" .. o.port .. o.path)
                         instance.start_request()
@@ -3146,7 +3350,7 @@ end
                 local code = tonumber(response.code) or 0
                 local message = response.message or "error"
                 instance.on_error("HTTP Error: " .. tostring(code) .. ":" .. tostring(message))
-                schedule_retry(http_reason(response))
+                schedule_retry(http_reason(response), { code = code })
             end
             local ok, req = pcall(http_request, instance.http_conf)
             if ok and req then
@@ -4050,8 +4254,21 @@ end
 
 local dash_bridge_port_map = {}
 local dash_cenc_support_cache = {}
+local dash_dns_cache = {}
 local DASH_BACKOFF_STEPS = { 1, 2, 5, 10, 30 }
 local DASH_STDERR_TAIL_MAX = 80
+local DASH_DNS_DEFAULT_CACHE_TTL_SEC = 120
+local DASH_DNS_DEFAULT_STALE_TTL_SEC = 1800
+local DASH_DNS_DEFAULT_RESOLVE_TIMEOUT_SEC = 2
+local DASH_DNS_DEFAULT_MAX_IPS = 2
+local DASH_DNS_ERROR_PATTERNS = {
+    "temporary failure in name resolution",
+    "failed to resolve hostname",
+    "could not resolve host",
+    "name or service not known",
+    "no address associated with hostname",
+    "nodename nor servname provided",
+}
 
 local function dash_instance_key(conf)
     local key = https_instance_key(conf)
@@ -4096,6 +4313,102 @@ local function dash_shell_escape(value)
     return "'" .. text:gsub("'", "'\\''") .. "'"
 end
 
+local function dash_boolish(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" or value == "true" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" then
+        return false
+    end
+    return fallback
+end
+
+local function dash_is_ipv4_literal(host)
+    local a, b, c, d = tostring(host or ""):match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+    if not a then
+        return false
+    end
+    a, b, c, d = tonumber(a), tonumber(b), tonumber(c), tonumber(d)
+    if not a or not b or not c or not d then
+        return false
+    end
+    if a < 0 or a > 255 or b < 0 or b > 255 or c < 0 or c > 255 or d < 0 or d > 255 then
+        return false
+    end
+    return true
+end
+
+local function dash_is_ipv6_literal(host)
+    local text = tostring(host or "")
+    if text == "" then
+        return false
+    end
+    return text:find(":", 1, true) ~= nil
+end
+
+local function dash_is_ip_literal(host)
+    local text = tostring(host or ""):gsub("^%[", ""):gsub("%]$", "")
+    return dash_is_ipv4_literal(text) or dash_is_ipv6_literal(text)
+end
+
+local function dash_dns_cache_ttl_sec(conf)
+    local ttl = tonumber(conf and conf.dash_dns_cache_ttl_sec)
+    if not ttl then
+        ttl = tonumber(conf and conf.dns_cache_ttl_sec)
+    end
+    if not ttl or ttl <= 0 then
+        ttl = DASH_DNS_DEFAULT_CACHE_TTL_SEC
+    end
+    if ttl > 86400 then
+        ttl = 86400
+    end
+    return math.floor(ttl)
+end
+
+local function dash_dns_stale_ttl_sec(conf, ttl)
+    local stale = tonumber(conf and conf.dash_dns_stale_ttl_sec)
+    if not stale or stale <= 0 then
+        stale = DASH_DNS_DEFAULT_STALE_TTL_SEC
+    end
+    local min_stale = tonumber(ttl) or DASH_DNS_DEFAULT_CACHE_TTL_SEC
+    if stale < min_stale then
+        stale = min_stale
+    end
+    if stale > 86400 then
+        stale = 86400
+    end
+    return math.floor(stale)
+end
+
+local function dash_dns_resolve_timeout_sec(conf)
+    local timeout_sec = tonumber(conf and conf.dash_dns_resolve_timeout_sec)
+    if not timeout_sec or timeout_sec <= 0 then
+        timeout_sec = DASH_DNS_DEFAULT_RESOLVE_TIMEOUT_SEC
+    end
+    if timeout_sec < 1 then
+        timeout_sec = 1
+    elseif timeout_sec > 10 then
+        timeout_sec = 10
+    end
+    return math.floor(timeout_sec)
+end
+
+local function dash_dns_max_ips(conf)
+    local max_ips = tonumber(conf and conf.dash_dns_max_ips)
+    if not max_ips or max_ips <= 0 then
+        max_ips = DASH_DNS_DEFAULT_MAX_IPS
+    end
+    if max_ips < 1 then
+        max_ips = 1
+    elseif max_ips > 8 then
+        max_ips = 8
+    end
+    return math.floor(max_ips)
+end
+
 local function dash_has_timeout()
     local ok = os.execute("command -v timeout >/dev/null 2>&1")
     return ok == true or ok == 0
@@ -4125,6 +4438,295 @@ local function dash_exec_capture(argv, timeout_sec, stderr_to_stdout)
     local out = handle:read("*a") or ""
     handle:close()
     return out
+end
+
+local function dash_parse_resolver_output(raw, max_ips)
+    local ips = {}
+    local seen = {}
+    local limit = tonumber(max_ips) or DASH_DNS_DEFAULT_MAX_IPS
+    if limit < 1 then
+        limit = 1
+    end
+    for line in tostring(raw or ""):gmatch("[^\r\n]+") do
+        local ip = line:match("^%s*([%d%.:]+)")
+        if ip and ip ~= "" then
+            local plain = tostring(ip):gsub("^%[", ""):gsub("%]$", "")
+            if (dash_is_ipv4_literal(plain) or dash_is_ipv6_literal(plain)) and not seen[plain] then
+                seen[plain] = true
+                ips[#ips + 1] = plain
+                if #ips >= limit then
+                    break
+                end
+            end
+        end
+    end
+    return ips
+end
+
+local function dash_dns_resolve_now(host, timeout_sec, max_ips)
+    local clean = tostring(host or ""):gsub("^%[", ""):gsub("%]$", "")
+    if clean == "" then
+        return nil, "dns resolve host is empty"
+    end
+    if dash_is_ip_literal(clean) then
+        return { clean }, nil
+    end
+
+    local resolver_commands = {
+        { "getent", "ahostsv4", clean },
+        { "getent", "hosts", clean },
+        { "host", clean },
+        { "nslookup", clean },
+    }
+    local last_err = nil
+    for _, cmd in ipairs(resolver_commands) do
+        local out = dash_exec_capture(cmd, timeout_sec, true) or ""
+        local ips = dash_parse_resolver_output(out, max_ips)
+        if #ips > 0 then
+            return ips, nil
+        end
+        if out ~= "" then
+            last_err = sanitize_reason_suffix(out)
+        end
+    end
+    return nil, last_err or ("dns resolve failed for " .. tostring(clean))
+end
+
+local function dash_dns_lookup(conf, host)
+    local clean = tostring(host or ""):gsub("^%[", ""):gsub("%]$", ""):lower()
+    if clean == "" then
+        return nil, "dns resolve host is empty"
+    end
+    if dash_is_ip_literal(clean) then
+        return {
+            ips = { clean },
+            cache_hit = true,
+            stale = false,
+            ttl_sec = 0,
+            expires_ts = 0,
+            resolve_error = nil,
+        }, nil
+    end
+
+    local now = os.time()
+    local ttl = dash_dns_cache_ttl_sec(conf)
+    local stale_ttl = dash_dns_stale_ttl_sec(conf, ttl)
+    local timeout_sec = dash_dns_resolve_timeout_sec(conf)
+    local max_ips = dash_dns_max_ips(conf)
+
+    local entry = dash_dns_cache[clean]
+    if entry and type(entry.ips) == "table" and #entry.ips > 0 and tonumber(entry.expires_ts or 0) >= now then
+        return {
+            ips = entry.ips,
+            cache_hit = true,
+            stale = false,
+            ttl_sec = ttl,
+            expires_ts = tonumber(entry.expires_ts) or 0,
+            resolve_error = nil,
+        }, nil
+    end
+
+    local ips, err = dash_dns_resolve_now(clean, timeout_sec, max_ips)
+    if ips and #ips > 0 then
+        entry = {
+            ips = ips,
+            updated_ts = now,
+            expires_ts = now + ttl,
+            stale_until_ts = now + stale_ttl,
+            last_error = nil,
+        }
+        dash_dns_cache[clean] = entry
+        return {
+            ips = ips,
+            cache_hit = false,
+            stale = false,
+            ttl_sec = ttl,
+            expires_ts = tonumber(entry.expires_ts) or 0,
+            resolve_error = nil,
+        }, nil
+    end
+
+    if entry and type(entry.ips) == "table" and #entry.ips > 0 and tonumber(entry.stale_until_ts or 0) >= now then
+        entry.last_error = err
+        return {
+            ips = entry.ips,
+            cache_hit = true,
+            stale = true,
+            ttl_sec = ttl,
+            expires_ts = tonumber(entry.expires_ts) or 0,
+            resolve_error = err,
+        }, nil
+    end
+
+    if entry then
+        entry.last_error = err
+    end
+    return nil, err or ("dns resolve failed for " .. tostring(clean))
+end
+
+local function dash_url_host_value(host)
+    local text = tostring(host or "")
+    if text == "" then
+        return text
+    end
+    if dash_is_ipv6_literal(text) and not text:match("^%[.*%]$") then
+        return "[" .. text .. "]"
+    end
+    return text
+end
+
+local function dash_rewrite_source_url_host(source_url, replacement_host)
+    local parsed = parse_url(source_url)
+    if type(parsed) ~= "table" then
+        return nil
+    end
+    local scheme = tostring(parsed.format or "")
+    local host = dash_url_host_value(tostring(replacement_host or ""))
+    if scheme == "" or host == "" then
+        return nil
+    end
+    local auth = ""
+    if parsed.login and tostring(parsed.login) ~= "" then
+        auth = tostring(parsed.login)
+        if parsed.password and tostring(parsed.password) ~= "" then
+            auth = auth .. ":" .. tostring(parsed.password)
+        end
+        auth = auth .. "@"
+    end
+    local out = scheme .. "://" .. auth .. host
+    local port = tonumber(parsed.port)
+    if port and port > 0 then
+        out = out .. ":" .. tostring(math.floor(port))
+    end
+    local path = tostring(parsed.path or "/")
+    if path == "" then
+        path = "/"
+    end
+    out = out .. path
+    return out
+end
+
+local function dash_headers_has_host(headers)
+    local text = tostring(headers or "")
+    if text == "" then
+        return false
+    end
+    for line in text:gmatch("[^\r\n]+") do
+        if line:lower():match("^%s*host%s*:") then
+            return true
+        end
+    end
+    return false
+end
+
+local function dash_merge_host_header(headers, host, port)
+    local h = tostring(host or "")
+    if h == "" then
+        return headers
+    end
+    local host_value = h
+    local p = tonumber(port)
+    if p and p > 0 then
+        host_value = host_value .. ":" .. tostring(math.floor(p))
+    end
+    local text = tostring(headers or "")
+    if text ~= "" and dash_headers_has_host(text) then
+        return text
+    end
+    local host_line = "Host: " .. host_value .. "\r\n"
+    if text == "" then
+        return host_line
+    end
+    if text:sub(-2) ~= "\r\n" then
+        text = text .. "\r\n"
+    end
+    return text .. host_line
+end
+
+local function dash_reason_has_dns_error(text)
+    local low = tostring(text or ""):lower()
+    if low == "" then
+        return false
+    end
+    for _, needle in ipairs(DASH_DNS_ERROR_PATTERNS) do
+        if low:find(needle, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function dash_prepare_dns_context(conf, state, source_url)
+    local ctx = {
+        source_url = source_url,
+        original_host = nil,
+        original_port = nil,
+        selected_ip = nil,
+        cache_hit = false,
+        stale = false,
+        using_ip = false,
+        resolve_error = nil,
+        ttl_sec = nil,
+        expires_ts = nil,
+        host_header = nil,
+    }
+    if not source_url or source_url == "" then
+        return ctx
+    end
+
+    local parsed = parse_url(source_url)
+    if type(parsed) ~= "table" then
+        return ctx
+    end
+    local host = tostring(parsed.host or "")
+    if host == "" then
+        return ctx
+    end
+    ctx.original_host = host
+    ctx.original_port = tonumber(parsed.port)
+
+    if dash_is_ip_literal(host) then
+        return ctx
+    end
+    if not dash_boolish(conf and conf.dash_dns_cache_enabled, true) then
+        return ctx
+    end
+
+    local resolved, err = dash_dns_lookup(conf, host)
+    if not resolved or type(resolved.ips) ~= "table" or #resolved.ips == 0 then
+        ctx.resolve_error = err or "dns resolve failed"
+        return ctx
+    end
+
+    local ips = resolved.ips
+    local idx = 1
+    if #ips > 1 then
+        local seed = tonumber(state and state.bridge_restarts) or 0
+        idx = (seed % #ips) + 1
+    end
+    local selected_ip = tostring(ips[idx] or "")
+    ctx.selected_ip = selected_ip ~= "" and selected_ip or nil
+    ctx.cache_hit = resolved.cache_hit == true
+    ctx.stale = resolved.stale == true
+    ctx.resolve_error = resolved.resolve_error
+    ctx.ttl_sec = tonumber(resolved.ttl_sec)
+    ctx.expires_ts = tonumber(resolved.expires_ts)
+
+    local scheme = tostring(parsed.format or ""):lower()
+    local allow_https_ip = dash_boolish(conf and conf.dash_dns_https_ip_fallback, false)
+    local use_ip = (scheme == "http" or scheme == "hls" or scheme == "dash")
+    if scheme == "https" and allow_https_ip then
+        use_ip = true
+    end
+    if use_ip and ctx.selected_ip then
+        local rewritten = dash_rewrite_source_url_host(source_url, ctx.selected_ip)
+        if rewritten and rewritten ~= "" then
+            ctx.source_url = rewritten
+            ctx.using_ip = true
+            ctx.host_header = dash_merge_host_header(nil, host, parsed.port)
+        end
+    end
+    return ctx
 end
 
 local function dash_stream_id(stream)
@@ -4342,8 +4944,8 @@ function dash_select_streams(streams, conf)
     return out
 end
 
-function dash_probe_streams(conf)
-    local source_url = dash_resolve_source_url(conf or {})
+function dash_probe_streams(conf, dns_ctx)
+    local source_url = (dns_ctx and dns_ctx.source_url) or dash_resolve_source_url(conf or {})
     if not source_url or source_url == "" then
         return nil, "dash source url is required"
     end
@@ -4368,8 +4970,32 @@ function dash_probe_streams(conf)
         "-show_format",
         "-show_entries",
         "stream=index,codec_type,codec_name,bit_rate,width,height,id:stream_tags=id,variant_bitrate,BANDWIDTH,bandwidth,representation_id:format=format_name",
-        source_url,
     }
+    local ua = conf and (conf.dash_user_agent or conf.user_agent or conf.ua) or nil
+    if ua and tostring(ua) ~= "" then
+        args[#args + 1] = "-user_agent"
+        args[#args + 1] = tostring(ua)
+    end
+    local referer = conf and conf.dash_referer or nil
+    if referer and tostring(referer) ~= "" then
+        args[#args + 1] = "-referer"
+        args[#args + 1] = tostring(referer)
+    end
+    local cookies = conf and conf.dash_cookies or nil
+    if cookies and tostring(cookies) ~= "" then
+        args[#args + 1] = "-cookies"
+        args[#args + 1] = tostring(cookies)
+    end
+    local headers = dash_decode_headers(conf and conf.dash_headers or nil)
+    if dns_ctx and dns_ctx.using_ip and dns_ctx.original_host then
+        headers = dash_merge_host_header(headers, dns_ctx.original_host, dns_ctx.original_port)
+    end
+    if headers and headers ~= "" then
+        args[#args + 1] = "-headers"
+        args[#args + 1] = headers
+    end
+    args[#args + 1] = source_url
+
     local raw = dash_exec_capture(args, timeout_sec, false)
     if not raw or raw == "" then
         local err = dash_exec_capture(args, timeout_sec, true)
@@ -4429,13 +5055,13 @@ local function dash_ffmpeg_supports_option(bin, option)
     return supported
 end
 
-function build_dash_bridge_args(conf, selection)
+function build_dash_bridge_args(conf, selection, dns_ctx)
     local bridge_port = ensure_dash_bridge_port(conf)
     if not bridge_port then
         return nil, "dash bridge_port is required or no free port found"
     end
     local bridge_addr = conf.bridge_addr or "127.0.0.1"
-    local source_url = dash_resolve_source_url(conf)
+    local source_url = (dns_ctx and dns_ctx.source_url) or dash_resolve_source_url(conf)
     if not source_url then
         return nil, "dash source url is required"
     end
@@ -4486,6 +5112,9 @@ function build_dash_bridge_args(conf, selection)
         args[#args + 1] = tostring(cookies)
     end
     local headers = dash_decode_headers(conf.dash_headers)
+    if dns_ctx and dns_ctx.using_ip and dns_ctx.original_host then
+        headers = dash_merge_host_header(headers, dns_ctx.original_host, dns_ctx.original_port)
+    end
     if headers and headers ~= "" then
         args[#args + 1] = "-headers"
         args[#args + 1] = headers
@@ -4550,6 +5179,13 @@ local function dash_extract_reason_from_tail(tail_lines)
         return "dash_bridge_exit"
     end
     local text = table.concat(tail_lines, "\n"):lower()
+    if dash_reason_has_dns_error(text) then
+        local last_dns = tostring(tail_lines[#tail_lines] or "")
+        if last_dns ~= "" then
+            return "dash_dns_resolve_failed: " .. sanitize_reason_suffix(last_dns)
+        end
+        return "dash_dns_resolve_failed"
+    end
     if text:find("could not find tag for codec", 1, true)
         or text:find("incompatible with output codec id", 1, true)
         or text:find("unsupported codec", 1, true)
@@ -4603,6 +5239,14 @@ local function dash_schedule_restart(state, reason)
         return
     end
     local low_reason = tostring(reason or ""):lower()
+    local dns_reason = low_reason:find("dash_dns_resolve_failed", 1, true) ~= nil
+    if dns_reason and state and state.dns_ctx and state.dns_ctx.original_host then
+        local key = tostring(state.dns_ctx.original_host):gsub("^%[", ""):gsub("%]$", ""):lower()
+        local cached = dash_dns_cache[key]
+        if cached then
+            cached.expires_ts = 0
+        end
+    end
     local fatal = false
     if low_reason ~= "" then
         if low_reason:find("dash fixed_id requires", 1, true)
@@ -4654,7 +5298,29 @@ local function dash_start_bridge_proc(state)
     local conf = state.conf
     local selected = nil
     local strategy = tostring(conf.dash_strategy or "auto_max"):lower()
-    local probe_data, probe_err = dash_probe_streams(conf)
+    local source_url = dash_resolve_source_url(conf)
+    local dns_ctx = dash_prepare_dns_context(conf, state, source_url)
+    state.dns_ctx = dns_ctx
+    dash_update_status(state, {
+        dns_host = dns_ctx.original_host,
+        dns_ip = dns_ctx.selected_ip,
+        dns_cache_hit = dns_ctx.cache_hit == true,
+        dns_stale = dns_ctx.stale == true,
+        dns_error = dns_ctx.resolve_error,
+        dns_ttl_sec = dns_ctx.ttl_sec,
+        dns_expires_ts = dns_ctx.expires_ts,
+    })
+    if dns_ctx.resolve_error and dns_ctx.resolve_error ~= "" then
+        log.warning("[" .. conf.name .. "] dash dns resolve failed for " .. tostring(dns_ctx.original_host or "?")
+            .. ": " .. tostring(dns_ctx.resolve_error))
+    elseif dns_ctx.using_ip and dns_ctx.selected_ip then
+        log.info("[" .. conf.name .. "] dash dns resolved " .. tostring(dns_ctx.original_host)
+            .. " -> " .. tostring(dns_ctx.selected_ip)
+            .. " (cache=" .. tostring(dns_ctx.cache_hit == true)
+            .. ", stale=" .. tostring(dns_ctx.stale == true) .. ")")
+    end
+
+    local probe_data, probe_err = dash_probe_streams(conf, dns_ctx)
     if probe_data and type(probe_data.streams) == "table" then
         local choice, choose_err = dash_select_streams(probe_data.streams, conf)
         if choice then
@@ -4694,7 +5360,7 @@ local function dash_start_bridge_proc(state)
         log.warning("[" .. conf.name .. "] dash probe failed, fallback maps will be used: " .. tostring(probe_err))
     end
 
-    local args, err = build_dash_bridge_args(conf, selected)
+    local args, err = build_dash_bridge_args(conf, selected, dns_ctx)
     if not args then
         dash_update_status(state, {
             probe_ok = (probe_err == nil),
@@ -4723,6 +5389,7 @@ local function dash_start_bridge_proc(state)
     dash_update_status(state, {
         last_error = nil,
         running = true,
+        dns_last_ok_ts = os.time(),
     })
     state.net.state = "running"
     state.net.state_ts = os.time()
@@ -4880,6 +5547,7 @@ init_input_module.dash = function(conf)
         restart_due_ts = nil,
         bridge_restarts = 0,
         stderr_tail = {},
+        dns_ctx = nil,
         stopping = false,
         net = net_make_state(build_net_resilience(conf, resolve_input_resilience(conf))),
         status = {
@@ -4896,6 +5564,14 @@ init_input_module.dash = function(conf)
             last_bridge_exit = nil,
             last_error = nil,
             running = false,
+            dns_host = nil,
+            dns_ip = nil,
+            dns_cache_hit = nil,
+            dns_stale = nil,
+            dns_error = nil,
+            dns_ttl_sec = nil,
+            dns_expires_ts = nil,
+            dns_last_ok_ts = nil,
             startup_grace_sec = nil,
             max_no_data_sec = nil,
             run_age_sec = nil,
@@ -5839,11 +6515,29 @@ local function join_log_message(first, ...)
     return table.concat(parts, " ")
 end
 
+-- Keep logger wrapping idempotent across hot reloads.
+local LOG_WRAP_STATE_KEY = "__stream_log_wrap_state"
+local log_wrap_state = rawget(_G, LOG_WRAP_STATE_KEY)
+if type(log_wrap_state) ~= "table" then
+    log_wrap_state = {
+        wrapped = setmetatable({}, { __mode = "k" }),
+        original = setmetatable({}, { __mode = "k" }),
+    }
+    rawset(_G, LOG_WRAP_STATE_KEY, log_wrap_state)
+end
+
 local function wrap_logger(level)
     if not log or type(log[level]) ~= "function" then
         return
     end
-    local original = log[level]
+    local current = log[level]
+    if log_wrap_state.wrapped[current] then
+        return
+    end
+    local original = log_wrap_state.original[current] or current
+    if type(original) ~= "function" then
+        return
+    end
     log[level] = function(first, ...)
         -- Чтобы не создавать лишние таблицы/строки в hot-path:
         -- если message один аргумент, не собираем parts[].
@@ -5856,6 +6550,8 @@ local function wrap_logger(level)
         log_store_add(level, message)
         return original(message)
     end
+    log_wrap_state.wrapped[log[level]] = true
+    log_wrap_state.original[log[level]] = original
 end
 
 wrap_logger("error")
