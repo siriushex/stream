@@ -2412,7 +2412,7 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
         end
         local input_bitrate_kbps = tonumber(tc_status.input_bitrate_kbps)
         if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
-            input_bitrate_kbps = output_bitrate_kbps
+            input_bitrate_kbps = nil
         end
         return {
             on_air = tc_status.state == "RUNNING",

@@ -8571,8 +8571,18 @@ function transcode.get_status_lite(id)
     end
     local input_bitrate_kbps = tonumber(job.input_bitrate_kbps)
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
-        if output_bitrate_kbps and output_bitrate_kbps > 0 then
-            input_bitrate_kbps = output_bitrate_kbps
+        local active_input = nil
+        if fo and type(fo.inputs) == "table" and job.active_input_id and job.active_input_id > 0 then
+            active_input = fo.inputs[job.active_input_id]
+        end
+        if not active_input and fo and type(fo.inputs) == "table" then
+            active_input = fo.inputs[1]
+        end
+        if type(active_input) == "table" then
+            local rate = tonumber(active_input.bitrate_kbps or active_input.bitrate)
+            if rate and rate > 0 then
+                input_bitrate_kbps = rate
+            end
         end
     end
     return {
@@ -9126,9 +9136,7 @@ function transcode.get_status(id)
         end
     end
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
-        if output_bitrate_kbps and output_bitrate_kbps > 0 then
-            input_bitrate_kbps = output_bitrate_kbps
-        end
+        input_bitrate_kbps = nil
     end
 
     return {
