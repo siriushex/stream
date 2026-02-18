@@ -5,9 +5,11 @@ api = {}
 local API_HTTP_METRIC_WINDOW_SEC = 60
 local API_HTTP_METRIC_SAMPLE_MAX = 256
 local API_HTTP_METRIC_ROUTE_LIMIT = 40
+local API_HTTP_AUTH_LOG_INTERVAL_SEC = 30
 
 local api_request_context = {}
 local api_request_seq = 0
+local api_auth_log_state = {}
 
 local api_http_metrics = {
     totals = {
@@ -197,8 +199,30 @@ local function record_api_request_metric(ctx, status_code)
 
     if code >= 400 or elapsed_ms >= 1000 then
         local req_id = tostring(ctx.request_id or "")
-        log.warning(string.format("[api] req=%s %s %s -> %d in %.0fms",
-            req_id, method, endpoint, code, elapsed_ms))
+        if (code == 401 or code == 403 or code == 302) and elapsed_ms < 1000 then
+            local auth_key = route_key .. "#" .. tostring(code)
+            local st = api_auth_log_state[auth_key]
+            if not st then
+                st = { last_ts = 0, suppressed = 0 }
+                api_auth_log_state[auth_key] = st
+            end
+            if (now_sec - (tonumber(st.last_ts) or 0)) >= API_HTTP_AUTH_LOG_INTERVAL_SEC then
+                local suppressed = tonumber(st.suppressed) or 0
+                local suffix = ""
+                if suppressed > 0 then
+                    suffix = string.format(" (suppressed=%d)", suppressed)
+                end
+                log.info(string.format("[api] req=%s %s %s -> %d in %.0fms%s",
+                    req_id, method, endpoint, code, elapsed_ms, suffix))
+                st.last_ts = now_sec
+                st.suppressed = 0
+            else
+                st.suppressed = (tonumber(st.suppressed) or 0) + 1
+            end
+        else
+            log.warning(string.format("[api] req=%s %s %s -> %d in %.0fms",
+                req_id, method, endpoint, code, elapsed_ms))
+        end
     end
 end
 
