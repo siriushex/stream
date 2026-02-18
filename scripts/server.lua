@@ -1740,7 +1740,7 @@ WantedBy=multi-user.target
         return false
     end
 
-    local hls_storage = setting_string("hls_storage", "disk")
+    local hls_storage = setting_string("hls_storage", "memfd")
     local stored_hls_dir = config.get_setting("hls_dir")
     local hls_dir = opt.hls_dir or stored_hls_dir or (opt.data_dir .. "/hls")
     local hls_needs_disk = needs_hls_disk_dir(hls_storage)
@@ -2084,7 +2084,7 @@ WantedBy=multi-user.target
         return web_static(server, client, request)
     end
 
-    local http_play_allow = setting_bool("http_play_allow", false)
+    local http_play_allow = setting_bool("http_play_allow", true)
     local http_play_hls = setting_bool("http_play_hls", false)
     local http_play_port = setting_number("http_play_port", opt.port)
     if opt.http_play_port_set and opt.http_play_port then

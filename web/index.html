@@ -1028,10 +1028,10 @@
 	            <div class="form-stack">
 	              <label class="field">
 	                <span>Storage backend</span>
-	                <select id="hls-storage">
-	                  <option value="disk">Disk (classic)</option>
-	                  <option value="memfd">Memfd (in-memory, zero disk I/O)</option>
-	                </select>
+		                <select id="hls-storage">
+		                  <option value="memfd">Memfd (in-memory, zero disk I/O)</option>
+		                  <option value="disk">Disk (classic)</option>
+		                </select>
 	              </label>
 	              <div class="form-hint">
 	                Memfd keeps HLS segments in memory and serves them with low CPU (sendfile on Linux).

@@ -255,7 +255,7 @@ local function resolve_hls_output_config(channel_data, conf)
     end
 
     if conf.storage == nil or conf.storage == "" then
-        conf.storage = setting_string("hls_storage", "disk")
+        conf.storage = setting_string("hls_storage", "memfd")
     end
     if conf.stream_id == nil or conf.stream_id == "" then
         conf.stream_id = stream_id
@@ -302,7 +302,7 @@ local function ensure_auto_hls_output(channel_config, output_list)
     end
 
     if not warned_disk_hls_storage then
-        local storage = setting_string("hls_storage", "disk")
+        local storage = setting_string("hls_storage", "memfd")
         if storage ~= "memfd" then
             warned_disk_hls_storage = true
             log.warning("[hls] http_play_hls=true with hls_storage=disk: will write segments to disk. " ..
@@ -3499,7 +3499,7 @@ local function validate_output_entry(output_config, stream_config, opts)
     if format == "hls" then
         local storage = output_config.storage
         if storage == nil or storage == "" then
-            storage = setting_string("hls_storage", "disk")
+            storage = setting_string("hls_storage", "memfd")
         end
         if storage ~= "memfd" and (not output_config.path or output_config.path == "") then
             local stream_id = tostring(stream_config.id or stream_config.name or "")

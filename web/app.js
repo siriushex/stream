@@ -2612,7 +2612,7 @@ const SETTINGS_GENERAL_SECTIONS = [
           const access = readBoolValue('settings-show-access', true);
           const epgOn = readBoolValue('settings-show-epg', false);
           const epgInterval = readNumberValue('settings-epg-interval', 0);
-          const polling = readNumberValue('settings-ui-polling-interval', 4);
+          const polling = readNumberValue('settings-ui-polling-interval', 1);
           const lite = readBoolValue('settings-ui-status-lite-enabled', false);
           const aggStreams = readBoolValue('settings-performance-aggregate-stream-timers', false);
           const aggTc = readBoolValue('settings-performance-aggregate-transcode-timers', false);
@@ -27380,11 +27380,11 @@ function applySettingsToUI() {
     elements.hlsQuantity.value = getSettingNumber('hls_quantity', 5);
   }
   if (elements.hlsStorage) {
-    elements.hlsStorage.value = getSettingString('hls_storage', 'disk');
+    elements.hlsStorage.value = getSettingString('hls_storage', 'memfd');
   }
   const hlsStorageMode = elements.hlsStorage
-    ? String(elements.hlsStorage.value || 'disk')
-    : getSettingString('hls_storage', 'disk');
+    ? String(elements.hlsStorage.value || 'memfd')
+    : getSettingString('hls_storage', 'memfd');
   if (elements.hlsOnDemand) {
     elements.hlsOnDemand.checked = getSettingBool('hls_on_demand', hlsStorageMode === 'memfd');
   }
@@ -27432,7 +27432,7 @@ function applySettingsToUI() {
   updateHlsStorageUi();
 
   if (elements.httpPlayAllow) {
-    elements.httpPlayAllow.checked = getSettingBool('http_play_allow', false);
+    elements.httpPlayAllow.checked = getSettingBool('http_play_allow', true);
   }
   if (elements.httpPlayHls) {
     elements.httpPlayHls.checked = getSettingBool('http_play_hls', false);
@@ -28436,7 +28436,7 @@ function collectPasswordPolicySettings() {
 }
 
 function collectHlsSettings() {
-  const storage = elements.hlsStorage ? elements.hlsStorage.value : 'disk';
+  const storage = elements.hlsStorage ? elements.hlsStorage.value : 'memfd';
   const maxMb = toNumber(elements.hlsMaxBytesMb && elements.hlsMaxBytesMb.value);
   const maxBytes = (maxMb !== undefined ? Math.max(0, maxMb) : 64) * 1024 * 1024;
   return {
@@ -28466,7 +28466,7 @@ function updateHttpPlayHlsStorageWarning() {
   }
   const hlsEnabled = elements.httpPlayHls.checked;
   // В конфиге `hls_storage` может отсутствовать, но в UI select всегда имеет значение.
-  const storage = String(elements.hlsStorage.value || 'disk');
+  const storage = String(elements.hlsStorage.value || 'memfd');
   elements.httpPlayHlsStorageWarning.hidden = !(hlsEnabled && storage !== 'memfd');
 }
 

@@ -5042,6 +5042,18 @@ end
 
 local function get_settings(server, client)
     local rows = config.list_settings and config.list_settings() or {}
+    if rows.hls_storage == nil or tostring(rows.hls_storage) == "" then
+        rows.hls_storage = "memfd"
+    end
+    if rows.hls_on_demand == nil then
+        rows.hls_on_demand = tostring(rows.hls_storage) == "memfd"
+    end
+    if rows.http_play_allow == nil then
+        rows.http_play_allow = true
+    end
+    if rows.ui_polling_interval_sec == nil then
+        rows.ui_polling_interval_sec = 1
+    end
     rows.build_transcode = astra and astra.features and astra.features.transcode == true
     rows.build_variant = rows.build_transcode and "full" or "lite"
     local token = rows.telegram_bot_token

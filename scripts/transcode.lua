@@ -283,7 +283,7 @@ local function build_transcode_play_url(stream_id, input_id, opts)
 	    local force_http_port = (opts.force_http_port == true) or (path == "/input/")
 	    local http_port = tonumber(config.get_setting("http_port"))
 	    local play_port = tonumber(config.get_setting("http_play_port"))
-	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), false)
+	    local http_play_allow = normalize_setting_bool(config.get_setting("http_play_allow"), true)
 	    local http_play_hls = normalize_setting_bool(config.get_setting("http_play_hls"), false)
 	    local http_play_enabled = http_play_allow or http_play_hls
 	    local port = http_port
