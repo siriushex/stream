@@ -575,6 +575,59 @@ local function is_udp_url(url)
     return lower:find("^udp://") or lower:find("^rtp://")
 end
 
+local function pick_loop_channel_input_bitrate_kbps(job)
+    if not job then
+        return nil
+    end
+    local function pick_channel(channel)
+        if not channel or type(channel.input) ~= "table" then
+            return nil
+        end
+        local active_id = tonumber(channel.active_input_id or 0) or 0
+        if active_id > 0 then
+            local active = channel.input[active_id]
+            if active and type(active.stats) == "table" then
+                local rate = tonumber(active.stats.bitrate)
+                if rate and rate > 0 then
+                    return rate
+                end
+            end
+        end
+        for _, input_data in ipairs(channel.input) do
+            if input_data and input_data.on_air == true and type(input_data.stats) == "table" then
+                local rate = tonumber(input_data.stats.bitrate)
+                if rate and rate > 0 then
+                    return rate
+                end
+            end
+        end
+        for _, input_data in ipairs(channel.input) do
+            if input_data and type(input_data.stats) == "table" then
+                local rate = tonumber(input_data.stats.bitrate)
+                if rate and rate > 0 then
+                    return rate
+                end
+            end
+        end
+        return nil
+    end
+
+    local active_id = tonumber(job.active_input_id or 0) or 0
+    if active_id > 0 and type(job.loop_channels) == "table" then
+        local rate = pick_channel(job.loop_channels[active_id])
+        if rate then
+            return rate
+        end
+    end
+    if type(job.loop_channels) == "table" then
+        local rate = pick_channel(job.loop_channels[1])
+        if rate then
+            return rate
+        end
+    end
+    return pick_channel(job.loop_channel)
+end
+
 local function append_args(dst, args)
     if type(args) ~= "table" then
         return
@@ -8586,6 +8639,9 @@ function transcode.get_status_lite(id)
             end
         end
     end
+    if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
+        input_bitrate_kbps = pick_loop_channel_input_bitrate_kbps(job)
+    end
     return {
         id = job.id,
         name = job.name,
@@ -9135,6 +9191,9 @@ function transcode.get_status(id)
                 input_bitrate_kbps = rate
             end
         end
+    end
+    if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
+        input_bitrate_kbps = pick_loop_channel_input_bitrate_kbps(job)
     end
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
         input_bitrate_kbps = nil
