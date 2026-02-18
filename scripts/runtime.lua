@@ -2406,10 +2406,21 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
         if not tc_status then
             return nil
         end
+        local output_bitrate_kbps = tonumber(tc_status.output_bitrate_kbps)
+        if not (output_bitrate_kbps and output_bitrate_kbps > 0) then
+            output_bitrate_kbps = nil
+        end
+        local input_bitrate_kbps = tonumber(tc_status.input_bitrate_kbps)
+        if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
+            input_bitrate_kbps = output_bitrate_kbps
+        end
         return {
             on_air = tc_status.state == "RUNNING",
             transcode_state = tc_status.state,
             transcode = tc_status,
+            bitrate = input_bitrate_kbps,
+            input_bitrate_kbps = input_bitrate_kbps,
+            output_bitrate_kbps = output_bitrate_kbps,
             uptime_sec = tc_status.uptime_sec,
             clients_count = clients_count,
             clients = clients_count,
