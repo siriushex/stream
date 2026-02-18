@@ -22866,34 +22866,62 @@ function addStatusPollId(ids, id) {
 }
 
 function collectStatusPollIds() {
-  if (state.currentView !== 'dashboard' || state.viewMode !== 'cards') return null;
+  if (state.currentView !== 'dashboard') return null;
   const total = Array.isArray(state.streams) ? state.streams.length : 0;
-  if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
+  if (state.viewMode === 'cards') {
+    if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
 
-  const ids = new Set();
-  if (state.visibleTileIds && state.visibleTileIds.size > 0) {
-    state.visibleTileIds.forEach((id) => addStatusPollId(ids, id));
-  }
-  $$('.tile.is-expanded').forEach((tile) => addStatusPollId(ids, tile && tile.dataset && tile.dataset.id));
-  addStatusPollId(ids, state.playerStreamId);
-  addStatusPollId(ids, state.analyzeStreamId);
-  if (state.editing && state.editing.stream) {
-    addStatusPollId(ids, state.editing.stream.id);
-  }
-
-  if (ids.size === 0) {
-    const fallback = Object.keys(state.streamIndex || {});
-    for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
-      addStatusPollId(ids, fallback[i]);
+    const ids = new Set();
+    if (state.visibleTileIds && state.visibleTileIds.size > 0) {
+      state.visibleTileIds.forEach((id) => addStatusPollId(ids, id));
     }
+    $$('.tile.is-expanded').forEach((tile) => addStatusPollId(ids, tile && tile.dataset && tile.dataset.id));
+    addStatusPollId(ids, state.playerStreamId);
+    addStatusPollId(ids, state.analyzeStreamId);
+    if (state.editing && state.editing.stream) {
+      addStatusPollId(ids, state.editing.stream.id);
+    }
+
+    if (ids.size === 0) {
+      const fallback = Object.keys(state.streamIndex || {});
+      for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+        addStatusPollId(ids, fallback[i]);
+      }
+    }
+
+    if (ids.size === 0) return null;
+    const out = Array.from(ids);
+    if (out.length > STATUS_POLL_IDS_MAX) {
+      return out.slice(0, STATUS_POLL_IDS_MAX);
+    }
+    return out;
   }
 
-  if (ids.size === 0) return null;
-  const out = Array.from(ids);
-  if (out.length > STATUS_POLL_IDS_MAX) {
-    return out.slice(0, STATUS_POLL_IDS_MAX);
+  if (state.viewMode === 'table') {
+    // Table view is paginated. Poll only the currently rendered rows to keep status updates fast.
+    if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
+    const ids = new Set();
+    Object.keys(state.streamTableRows || {}).forEach((id) => addStatusPollId(ids, id));
+    addStatusPollId(ids, state.playerStreamId);
+    addStatusPollId(ids, state.analyzeStreamId);
+    if (state.editing && state.editing.stream) {
+      addStatusPollId(ids, state.editing.stream.id);
+    }
+    if (ids.size === 0) {
+      const fallback = Object.keys(state.streamIndex || {});
+      for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+        addStatusPollId(ids, fallback[i]);
+      }
+    }
+    if (ids.size === 0) return null;
+    const out = Array.from(ids);
+    if (out.length > STATUS_POLL_IDS_MAX) {
+      return out.slice(0, STATUS_POLL_IDS_MAX);
+    }
+    return out;
   }
-  return out;
+
+  return null;
 }
 
 function statusEntrySignature(entry) {
@@ -22947,6 +22975,10 @@ async function loadStreamStatus() {
       || state.analyzeJob
     );
     const statusIds = collectStatusPollIds();
+    // Used by computeStatusPollDelayMs() safety floor: when we poll only a subset of streams
+    // (ids=...), we should base the UI load heuristic on the polled count, not total streams.
+    state.statusPollUsingIds = Array.isArray(statusIds) && statusIds.length > 0;
+    state.statusPollLastIdsCount = state.statusPollUsingIds ? statusIds.length : 0;
     const liteEnabled = getSettingBool('ui_status_lite_enabled', true);
     const params = [];
     if (liteEnabled && !needsFullStatus) {
@@ -22986,7 +23018,11 @@ function getUiPollingIntervalSec() {
 }
 
 function getStatusPollSafetyFloorMs() {
-  const count = Array.isArray(state.streams) ? state.streams.length : 0;
+  const total = Array.isArray(state.streams) ? state.streams.length : 0;
+  const polled = state.statusPollUsingIds === true
+    ? Math.floor(Number(state.statusPollLastIdsCount) || 0)
+    : 0;
+  const count = (polled > 0 && polled <= STATUS_POLL_IDS_MAX) ? polled : total;
   if (state.viewMode === 'cards') {
     if (count >= 240) return 5000;
     if (count >= 120) return 3000;

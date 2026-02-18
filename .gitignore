@@ -22,7 +22,11 @@ id_ed25519.pub
 
 # Python / MkDocs
 .venv/
+.venv-docs/
 __pycache__/
+
+# Local release/build artifacts (do not commit).
+/dist/
 
 # MkDocs build output
 /site/
