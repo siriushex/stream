@@ -8565,11 +8565,14 @@ function transcode.get_status_lite(id)
     if not active_input_url and job.input_url then
         active_input_url = tostring(job.input_url)
     end
+    local output_bitrate_kbps = tonumber(job.output_bitrate_kbps)
+    if not (output_bitrate_kbps and output_bitrate_kbps > 0) then
+        output_bitrate_kbps = parse_bitrate_kbps(job.last_progress and job.last_progress.bitrate)
+    end
     local input_bitrate_kbps = tonumber(job.input_bitrate_kbps)
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
-        local out_kbps = tonumber(job.output_bitrate_kbps)
-        if out_kbps and out_kbps > 0 then
-            input_bitrate_kbps = out_kbps
+        if output_bitrate_kbps and output_bitrate_kbps > 0 then
+            input_bitrate_kbps = output_bitrate_kbps
         end
     end
     return {
@@ -8586,7 +8589,7 @@ function transcode.get_status_lite(id)
         ffmpeg_exit_code = job.ffmpeg_exit_code,
         ffmpeg_exit_signal = job.ffmpeg_exit_signal,
         input_bitrate_kbps = input_bitrate_kbps,
-        output_bitrate_kbps = job.output_bitrate_kbps,
+        output_bitrate_kbps = output_bitrate_kbps,
         input_last_ok_ts = job.input_last_ok_ts,
         output_last_ok_ts = job.output_last_ok_ts,
         input_last_error = job.input_last_error,
@@ -9099,6 +9102,10 @@ function transcode.get_status(id)
     if job.start_ts and (job.state == "RUNNING" or job.state == "STARTING" or job.state == "RESTARTING") then
         uptime_sec = math.max(0, now - job.start_ts)
     end
+    local output_bitrate_kbps = tonumber(job.output_bitrate_kbps)
+    if not (output_bitrate_kbps and output_bitrate_kbps > 0) then
+        output_bitrate_kbps = parse_bitrate_kbps(job.last_progress and job.last_progress.bitrate)
+    end
     local input_bitrate_kbps = tonumber(job.input_bitrate_kbps)
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
         local active_input = nil
@@ -9119,9 +9126,8 @@ function transcode.get_status(id)
         end
     end
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
-        local out_kbps = tonumber(job.output_bitrate_kbps)
-        if out_kbps and out_kbps > 0 then
-            input_bitrate_kbps = out_kbps
+        if output_bitrate_kbps and output_bitrate_kbps > 0 then
+            input_bitrate_kbps = output_bitrate_kbps
         end
     end
 
@@ -9166,7 +9172,7 @@ function transcode.get_status(id)
         ffmpeg_exit_signal = job.ffmpeg_exit_signal,
         desync_ms_last = job.last_desync_ms,
         input_bitrate_kbps = input_bitrate_kbps,
-        output_bitrate_kbps = job.output_bitrate_kbps,
+        output_bitrate_kbps = output_bitrate_kbps,
         input_last_ok_ts = job.input_last_ok_ts,
         output_last_ok_ts = job.output_last_ok_ts,
         input_last_error = job.input_last_error,
