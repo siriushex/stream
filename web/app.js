@@ -511,18 +511,18 @@ const state = {
     useCurl: true,
     userAgent: '',
     extraHeaders: '',
-    fps: 2,
+    fps: 1,
     width: 270,
     height: 270,
     keepAspect: false,
     vcodec: 'libx264',
-    preset: 'superfast',
-    videoBitrate: '600k',
-    gop: 4,
+    preset: 'ultrafast',
+    videoBitrate: '400k',
+    gop: 2,
     pixFmt: 'yuv420p',
     tuneStill: true,
     acodec: 'aac',
-    audioBitrate: '256k',
+    audioBitrate: '128k',
     channels: 2,
     sampleRate: 48000,
     outputUrl: '',
@@ -530,7 +530,7 @@ const state = {
     pktSize: 1316,
     pcrPeriod: 30,
     maxInterleave: 0,
-    muxdelay: 0.7,
+    muxdelay: 0.2,
     status: 'stopped',
     logs: '',
     busy: false,
@@ -13981,18 +13981,18 @@ function resetRadioStateFromStream(stream) {
   radio.userAgent = rcfg.user_agent || '';
   radio.extraHeaders = rcfg.extra_headers || '';
   radio.audioFormat = rcfg.audio_format || 'mp3';
-  radio.fps = Number(rcfg.fps) || 2;
+  radio.fps = Number(rcfg.fps) || 1;
   radio.width = Number(rcfg.width) || 270;
   radio.height = Number(rcfg.height) || 270;
   radio.keepAspect = rcfg.keep_aspect === true;
   radio.vcodec = rcfg.vcodec || 'libx264';
-  radio.preset = rcfg.preset || 'superfast';
-  radio.videoBitrate = rcfg.video_bitrate || '600k';
+  radio.preset = rcfg.preset || 'ultrafast';
+  radio.videoBitrate = rcfg.video_bitrate || '400k';
   radio.gop = Number(rcfg.gop) || Math.floor(radio.fps * 2);
   radio.pixFmt = rcfg.pix_fmt || 'yuv420p';
   radio.tuneStill = rcfg.tune_stillimage !== false;
   radio.acodec = rcfg.acodec || 'aac';
-  radio.audioBitrate = rcfg.audio_bitrate || '256k';
+  radio.audioBitrate = rcfg.audio_bitrate || '128k';
   radio.channels = Number(rcfg.channels) || 2;
   radio.sampleRate = Number(rcfg.sample_rate) || 48000;
   radio.outputUrl = rcfg.output_url || '';
@@ -14000,7 +14000,7 @@ function resetRadioStateFromStream(stream) {
   radio.pktSize = Number(rcfg.pkt_size) || 1316;
   radio.pcrPeriod = Number(rcfg.pcr_period) || 30;
   radio.maxInterleave = Number(rcfg.max_interleave_delta) || 0;
-  radio.muxdelay = rcfg.muxdelay || 0.7;
+  radio.muxdelay = rcfg.muxdelay || 0.2;
   radio.status = 'stopped';
   radio.logs = '';
   if (elements.radioPngFile) elements.radioPngFile.value = '';
@@ -14339,18 +14339,18 @@ function normalizeRadioState() {
   radio.userAgent = radio.userAgent || '';
   radio.extraHeaders = radio.extraHeaders || '';
   radio.audioFormat = radio.audioFormat || 'mp3';
-  radio.fps = Number(radio.fps) || 2;
+  radio.fps = Number(radio.fps) || 1;
   radio.width = Number(radio.width) || 270;
   radio.height = Number(radio.height) || 270;
   radio.keepAspect = radio.keepAspect === true;
   radio.vcodec = radio.vcodec || 'libx264';
-  radio.preset = radio.preset || 'superfast';
-  radio.videoBitrate = radio.videoBitrate || '600k';
+  radio.preset = radio.preset || 'ultrafast';
+  radio.videoBitrate = radio.videoBitrate || '400k';
   radio.gop = Number(radio.gop) || Math.floor(radio.fps * 2);
   radio.pixFmt = radio.pixFmt || 'yuv420p';
   radio.tuneStill = radio.tuneStill !== false;
   radio.acodec = radio.acodec || 'aac';
-  radio.audioBitrate = radio.audioBitrate || '256k';
+  radio.audioBitrate = radio.audioBitrate || '128k';
   radio.channels = Number(radio.channels) || 2;
   radio.sampleRate = Number(radio.sampleRate) || 48000;
   radio.outputUrl = radio.outputUrl || '';
@@ -14358,7 +14358,7 @@ function normalizeRadioState() {
   radio.pktSize = Number(radio.pktSize) || 1316;
   radio.pcrPeriod = Number(radio.pcrPeriod) || 30;
   radio.maxInterleave = Number(radio.maxInterleave) || 0;
-  radio.muxdelay = radio.muxdelay || 0.7;
+  radio.muxdelay = radio.muxdelay || 0.2;
   radio.status = radio.status || 'stopped';
   radio.logs = radio.logs || '';
   radio.busy = radio.busy === true;
@@ -14446,18 +14446,18 @@ function readRadioForm() {
   radio.userAgent = elements.radioUserAgent ? elements.radioUserAgent.value.trim() : '';
   radio.extraHeaders = elements.radioExtraHeaders ? elements.radioExtraHeaders.value.trim() : '';
   radio.audioFormat = elements.radioAudioFormat ? elements.radioAudioFormat.value.trim() : (radio.audioFormat || 'mp3');
-  radio.fps = Number(elements.radioFps && elements.radioFps.value) || 2;
+  radio.fps = Number(elements.radioFps && elements.radioFps.value) || 1;
   radio.width = Number(elements.radioWidth && elements.radioWidth.value) || 270;
   radio.height = Number(elements.radioHeight && elements.radioHeight.value) || 270;
   radio.keepAspect = elements.radioKeepAspect ? elements.radioKeepAspect.value === 'true' : false;
   radio.vcodec = elements.radioVcodec ? elements.radioVcodec.value.trim() : 'libx264';
-  radio.preset = elements.radioPreset ? elements.radioPreset.value.trim() : 'superfast';
-  radio.videoBitrate = elements.radioVideoBitrate ? elements.radioVideoBitrate.value.trim() : '600k';
+  radio.preset = elements.radioPreset ? elements.radioPreset.value.trim() : 'ultrafast';
+  radio.videoBitrate = elements.radioVideoBitrate ? elements.radioVideoBitrate.value.trim() : '400k';
   radio.gop = Number(elements.radioGop && elements.radioGop.value) || Math.floor(radio.fps * 2);
   radio.pixFmt = elements.radioPixFmt ? elements.radioPixFmt.value.trim() : 'yuv420p';
   radio.tuneStill = elements.radioTuneStill ? elements.radioTuneStill.value === 'true' : true;
   radio.acodec = elements.radioAcodec ? elements.radioAcodec.value.trim() : 'aac';
-  radio.audioBitrate = elements.radioAudioBitrate ? elements.radioAudioBitrate.value.trim() : '256k';
+  radio.audioBitrate = elements.radioAudioBitrate ? elements.radioAudioBitrate.value.trim() : '128k';
   radio.channels = Number(elements.radioChannels && elements.radioChannels.value) || 2;
   radio.sampleRate = Number(elements.radioSampleRate && elements.radioSampleRate.value) || 48000;
   radio.outputUrl = elements.radioOutputUrl ? elements.radioOutputUrl.value.trim() : '';
@@ -14465,7 +14465,7 @@ function readRadioForm() {
   radio.pktSize = Number(elements.radioPktSize && elements.radioPktSize.value) || 1316;
   radio.pcrPeriod = Number(elements.radioPcrPeriod && elements.radioPcrPeriod.value) || 30;
   radio.maxInterleave = Number(elements.radioMaxInterleave && elements.radioMaxInterleave.value) || 0;
-  radio.muxdelay = elements.radioMuxdelay ? elements.radioMuxdelay.value.trim() : '0.7';
+  radio.muxdelay = elements.radioMuxdelay ? elements.radioMuxdelay.value.trim() : '0.2';
   updateRadioUiFromState();
   return radio;
 }
