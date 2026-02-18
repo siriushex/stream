@@ -4944,6 +4944,9 @@ function dash_select_streams(streams, conf)
     return out
 end
 
+-- Forward declaration: used by dash_probe_streams (declared below).
+local dash_decode_headers
+
 function dash_probe_streams(conf, dns_ctx)
     local source_url = (dns_ctx and dns_ctx.source_url) or dash_resolve_source_url(conf or {})
     if not source_url or source_url == "" then
@@ -5009,15 +5012,15 @@ function dash_probe_streams(conf, dns_ctx)
     local streams = parsed.streams
     if type(streams) ~= "table" or #streams == 0 then
         return nil, "ffprobe streams are empty"
-    end
-    return parsed, nil
-end
-
-local function dash_decode_headers(value)
-    local text = tostring(value or "")
-    if text == "" then
-        return nil
-    end
+	    end
+	    return parsed, nil
+	end
+	
+	dash_decode_headers = function(value)
+	    local text = tostring(value or "")
+	    if text == "" then
+	        return nil
+	    end
     text = text:gsub("\\r\\n", "\r\n")
     text = text:gsub("\\n", "\r\n")
     text = text:gsub("%%0[Dd]%%0[Aa]", "\r\n")
