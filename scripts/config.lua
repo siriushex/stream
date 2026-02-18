@@ -727,6 +727,16 @@ function config.ensure_admin()
         "VALUES('admin', '" .. sql_escape(hash) .. "', '" .. sql_escape(salt) .. "', 1);")
     db_exec(db, "UPDATE users SET enabled=1, created_at=" .. now .. " WHERE username='admin';")
     log.warning("[config] created default admin user with password 'admin'")
+
+    -- Fresh install bootstrap: enable web auth by default to avoid exposing the API publicly
+    -- on 0.0.0.0 binds. Respect CLI override (--no-web-auth) which sets runtime_overrides.
+    if not (config.runtime_overrides and config.runtime_overrides.http_auth_enabled == false) then
+        local current = config.get_setting("http_auth_enabled")
+        if current == nil then
+            config.set_setting("http_auth_enabled", true)
+            log.warning("[security] web auth enabled by default (http_auth_enabled=true); change default admin/admin")
+        end
+    end
 end
 
 function config.get_user_by_username(username)
