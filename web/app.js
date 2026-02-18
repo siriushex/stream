@@ -23460,6 +23460,7 @@ function stopStreamUptimeTicker() {
 
 function buildStreamModel(stream) {
   const stats = state.stats[stream.id] || {};
+  const transcode = stats.transcode || {};
   const name = (stream.config && stream.config.name) || stream.id;
   const statusInfo = getStreamStatusInfo(stream, stats);
   const { activeInput, activeIndex } = getActiveInputStats(stats);
@@ -23476,12 +23477,23 @@ function buildStreamModel(stream) {
       inputBitrateValue = activeRate;
     }
   }
+  if (!Number.isFinite(inputBitrateValue)) {
+    const tcIn = Number(transcode.input_bitrate_kbps);
+    if (Number.isFinite(tcIn)) {
+      inputBitrateValue = tcIn;
+    }
+  }
+  if (!Number.isFinite(inputBitrateValue)) {
+    const statsIn = Number(stats.input_bitrate_kbps);
+    if (Number.isFinite(statsIn)) {
+      inputBitrateValue = statsIn;
+    }
+  }
   const inputBitrate = formatMaybeBitrate(inputBitrateValue);
   const uptime = resolveModelInputUptime(stats, activeInput);
   const inputUptime = uptime.text;
 
   const transcodeState = stats.transcode_state || '';
-  const transcode = stats.transcode || {};
   const transcodeStatus = transcodeState ? transcodeState : 'OFF';
   const transcodeRates = transcodeState ? formatTranscodeBitrates(transcode) : '';
   const transcodeError = transcodeState === 'ERROR'
