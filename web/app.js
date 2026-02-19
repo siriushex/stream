@@ -627,6 +627,8 @@ const state = {
   observabilityLastScope: 'global',
   observabilityLastStreamId: '',
   observabilityLastRange: '24h',
+  observabilityDomainFromMs: 0,
+  observabilityDomainToMs: 0,
   logCursor: 0,
   logEntries: [],
   logLevelFilter: 'all',
@@ -25389,6 +25391,8 @@ function renderObservabilityCharts(items, scope) {
   const range = state.observabilityLastRange || (elements.observabilityRange && elements.observabilityRange.value) || '24h';
   const rangeMs = parseObservabilityRangeMs(range);
   const nowMs = Date.now();
+  const hintFromMs = Number(state.observabilityDomainFromMs || 0);
+  const hintToMs = Number(state.observabilityDomainToMs || 0);
   let dataMaxMs = 0;
   Object.keys(seriesMap).forEach((key) => {
     const rows = Array.isArray(seriesMap[key]) ? seriesMap[key] : [];
@@ -25399,10 +25403,18 @@ function renderObservabilityCharts(items, scope) {
       dataMaxMs = ts;
     }
   });
-  // Keep short-range charts anchored to "now" so selected windows (15m/1h/6h) match operator expectation.
-  // Use data max only when it is noticeably ahead of local wall clock (server/client skew).
-  const domainToMs = (dataMaxMs > (nowMs + 120000)) ? dataMaxMs : nowMs;
-  const fromMs = domainToMs - rangeMs;
+  let domainToMs;
+  let fromMs;
+  if (Number.isFinite(hintFromMs) && Number.isFinite(hintToMs) && hintToMs > hintFromMs) {
+    // Prefer backend-provided window to avoid client clock skew issues.
+    fromMs = hintFromMs;
+    domainToMs = hintToMs;
+  } else {
+    // Keep short-range charts anchored to "now" so selected windows (15m/1h/6h) match operator expectation.
+    // Use data max only when it is noticeably ahead of local wall clock (server/client skew).
+    domainToMs = (dataMaxMs > (nowMs + 120000)) ? dataMaxMs : nowMs;
+    fromMs = domainToMs - rangeMs;
+  }
   const accent = getThemeColor('--accent', '#5aaae5');
   const warning = getThemeColor('--warning', '#f0b54d');
   const danger = getThemeColor('--danger', '#e06666');
@@ -26139,6 +26151,8 @@ async function loadObservability(showStatus) {
   const scope = elements.observabilityScope.value || 'global';
   const streamId = elements.observabilityStream ? elements.observabilityStream.value : '';
   state.observabilityLastRange = range;
+  state.observabilityDomainFromMs = 0;
+  state.observabilityDomainToMs = 0;
   await loadSystemMetricsSnapshot(true);
   await loadSystemMetricsTimeseries(range);
   if (scope === 'stream' && !streamId) {
@@ -26198,6 +26212,12 @@ async function loadObservability(showStatus) {
       mapSeries('stream.on_air.state', 'on_air');
       if (seriesPayload && seriesPayload.meta) {
         collectionEnabled = !!seriesPayload.meta.collection_enabled;
+        const fromSec = Number(seriesPayload.meta.from);
+        const toSec = Number(seriesPayload.meta.to);
+        if (Number.isFinite(fromSec) && Number.isFinite(toSec) && toSec > fromSec) {
+          state.observabilityDomainFromMs = fromSec * 1000;
+          state.observabilityDomainToMs = toSec * 1000;
+        }
       }
 
       const eventsUrl = new URL('/api/v1/observability/stream-events', window.location.origin);
@@ -26230,6 +26250,9 @@ async function loadObservability(showStatus) {
       logsUrl.searchParams.set('limit', '20');
       const logs = await apiJson(logsUrl.toString());
       logItems = logs && logs.items ? logs.items : [];
+      const nowMs = Date.now();
+      state.observabilityDomainToMs = nowMs;
+      state.observabilityDomainFromMs = nowMs - parseObservabilityRangeMs(range);
     }
 
     const latest = {};
