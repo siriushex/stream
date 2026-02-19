@@ -894,6 +894,9 @@
             <label class="field">
               <span>Range</span>
               <select id="obs-range">
+                <option value="15m">15m</option>
+                <option value="1h">1h</option>
+                <option value="6h">6h</option>
                 <option value="24h">24h</option>
                 <option value="7d">7d</option>
                 <option value="30d">30d</option>
@@ -917,6 +920,7 @@
           </div>
 
           <div class="observability-empty muted" id="obs-empty">Observability disabled or no data yet.</div>
+          <div class="observability-hint muted" id="obs-readonly" hidden></div>
           <div class="observability-hint muted" id="obs-hint"></div>
 
           <div class="observability-system" id="obs-system" hidden>

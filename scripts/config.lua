@@ -581,6 +581,33 @@ config.migrations = {
     CREATE INDEX IF NOT EXISTS ai_alerts_ts_idx ON ai_alerts(ts);
     CREATE INDEX IF NOT EXISTS ai_alerts_severity_idx ON ai_alerts(severity);
     ]],
+    [[
+    CREATE TABLE IF NOT EXISTS system_metrics_rollup (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts_bucket INTEGER NOT NULL UNIQUE,
+        cpu_usage REAL,
+        mem_used_percent REAL,
+        disk_used_percent REAL,
+        net_json TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS system_metrics_rollup_ts_idx ON system_metrics_rollup(ts_bucket);
+    ]],
+    [[
+    ALTER TABLE ai_metrics_rollup ADD COLUMN resolution_sec INTEGER NOT NULL DEFAULT 60;
+
+    DROP INDEX IF EXISTS ai_metrics_rollup_unique;
+    CREATE UNIQUE INDEX IF NOT EXISTS ai_metrics_rollup_unique2
+        ON ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, resolution_sec);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_ts_res_idx
+        ON ai_metrics_rollup(scope, scope_id, ts_bucket, resolution_sec);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_metric_ts_res_idx
+        ON ai_metrics_rollup(scope, scope_id, metric_key, ts_bucket, resolution_sec);
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_metric_ts_res_idx
+        ON ai_metrics_rollup(metric_key, ts_bucket, resolution_sec);
+    CREATE INDEX IF NOT EXISTS ai_log_events_stream_component_ts_idx
+        ON ai_log_events(stream_id, component, ts DESC);
+    ]],
 }
 
 function config.init(opts)
@@ -634,6 +661,7 @@ function config.init(opts)
         log.warning("[config] sqlite upsert not supported (sqlite_version=" .. tostring(version) ..
             "), using compatibility mode" .. detail)
     end
+    config.migrate_observability_master_switch()
     config.ensure_admin()
     config.sanitize_adapters()
 end
@@ -711,6 +739,25 @@ function config.migrate()
             astra.abort()
         end
     end
+end
+
+function config.migrate_observability_master_switch()
+    local current = config.get_setting("observability_enabled")
+    if current ~= nil then
+        return
+    end
+
+    local logs_days = tonumber(config.get_setting("ai_logs_retention_days")) or 0
+    local on_demand = normalize_bool(config.get_setting("ai_metrics_on_demand"), true)
+    local metrics_days = tonumber(config.get_setting("ai_metrics_retention_days")) or 0
+    local system_rollup = normalize_bool(config.get_setting("observability_system_rollup_enabled"), false)
+    if on_demand then
+        metrics_days = 0
+    end
+    local legacy_enabled = logs_days > 0 or metrics_days > 0 or system_rollup == true
+    config.set_setting("observability_enabled", legacy_enabled)
+    log.info("[observability] migrated observability_enabled=" ..
+        tostring(legacy_enabled and "true" or "false") .. " from legacy settings")
 end
 
 function config.ensure_admin()
@@ -1629,6 +1676,10 @@ function config.get_setting(key)
     return json_decode(rows[1].value_json)
 end
 
+function config.get_bool_setting(key, fallback)
+    return normalize_bool(config.get_setting(key), fallback)
+end
+
 function config.list_settings()
     local rows = db_query(config.db, "SELECT key, value_json FROM settings ORDER BY key;")
     local out = {}
@@ -2008,9 +2059,19 @@ function config.list_ai_log_events(opts)
     if opts.stream_id and tostring(opts.stream_id) ~= "" then
         table.insert(where, "stream_id='" .. sql_escape(tostring(opts.stream_id)) .. "'")
     end
+    if opts.component and tostring(opts.component) ~= "" then
+        table.insert(where, "component='" .. sql_escape(tostring(opts.component)) .. "'")
+    end
+    if opts.component_prefix and tostring(opts.component_prefix) ~= "" then
+        table.insert(where, "component LIKE '" .. sql_escape(tostring(opts.component_prefix)) .. "%'")
+    end
     local where_sql = table.concat(where, " AND ")
+    local order = "DESC"
+    if opts.order and tostring(opts.order):lower() == "asc" then
+        order = "ASC"
+    end
     local rows = db_query(config.db, "SELECT id, ts, level, stream_id, component, message, fingerprint, tags_json " ..
-        "FROM ai_log_events WHERE " .. where_sql .. " ORDER BY ts DESC LIMIT " .. limit .. ";")
+        "FROM ai_log_events WHERE " .. where_sql .. " ORDER BY ts " .. order .. " LIMIT " .. limit .. ";")
     for _, row in ipairs(rows) do
         if row.tags_json and row.tags_json ~= "" then
             row.tags = json_decode(row.tags_json)
@@ -2045,17 +2106,61 @@ function config.upsert_ai_metric(entry)
         return nil, "metric_key required"
     end
     local value = tonumber(entry.value) or 0
+    local resolution_sec = tonumber(entry.resolution_sec) or tonumber(entry.resolution) or 60
+    if resolution_sec < 1 then
+        resolution_sec = 1
+    end
+    resolution_sec = math.floor(resolution_sec)
     local tags_json = ""
     if entry.tags ~= nil then
         tags_json = json_encode(entry.tags)
     end
-    local ok, err = db_exec_safe(config.db,
-        "INSERT OR REPLACE INTO ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, value, tags_json) VALUES(" ..
-        ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
-        sql_escape(metric_key) .. "', " .. value .. ", '" .. sql_escape(tags_json) .. "');")
+    local mode = tostring(entry.mode or "")
+    local accumulate = entry.accumulate == true or mode == "sum" or mode == "inc"
+    local sql
+    if config.supports_upsert and accumulate then
+        sql =
+            "INSERT INTO ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json) VALUES(" ..
+            ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
+            sql_escape(metric_key) .. "', " .. resolution_sec .. ", " .. value .. ", '" .. sql_escape(tags_json) .. "') " ..
+            "ON CONFLICT(ts_bucket, scope, scope_id, metric_key, resolution_sec) DO UPDATE SET " ..
+            "value=ai_metrics_rollup.value + excluded.value, tags_json=excluded.tags_json;"
+    else
+        sql =
+            "INSERT OR REPLACE INTO ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json) VALUES(" ..
+            ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
+            sql_escape(metric_key) .. "', " .. resolution_sec .. ", " .. value .. ", '" .. sql_escape(tags_json) .. "');"
+    end
+    local ok, err = db_exec_safe(config.db, sql)
     if not ok then
         -- Метрики не критичны; не прерываем работу процесса.
         log.warning("[observability] failed to upsert ai_metric: " .. tostring(err))
+        return nil, err
+    end
+    return true
+end
+
+function config.upsert_ai_metrics_batch(rows)
+    if type(rows) ~= "table" then
+        return nil, "rows table is required"
+    end
+    if #rows == 0 then
+        return true
+    end
+    local ok, err = db_exec_safe(config.db, "BEGIN;")
+    if not ok then
+        return nil, err
+    end
+    for _, entry in ipairs(rows) do
+        local applied, apply_err = config.upsert_ai_metric(entry)
+        if not applied then
+            db_exec_safe(config.db, "ROLLBACK;")
+            return nil, apply_err
+        end
+    end
+    ok, err = db_exec_safe(config.db, "COMMIT;")
+    if not ok then
+        db_exec_safe(config.db, "ROLLBACK;")
         return nil, err
     end
     return true
@@ -2084,8 +2189,29 @@ function config.list_ai_metrics(opts)
     if opts.metric_key and tostring(opts.metric_key) ~= "" then
         table.insert(where, "metric_key='" .. sql_escape(tostring(opts.metric_key)) .. "'")
     end
+    if opts.metric_keys and type(opts.metric_keys) == "table" and #opts.metric_keys > 0 then
+        local keys = {}
+        for _, key in ipairs(opts.metric_keys) do
+            local text = tostring(key or "")
+            if text ~= "" then
+                table.insert(keys, "'" .. sql_escape(text) .. "'")
+            end
+        end
+        if #keys > 0 then
+            table.insert(where, "metric_key IN (" .. table.concat(keys, ",") .. ")")
+        end
+    end
+    if opts.resolution_sec and tonumber(opts.resolution_sec) then
+        table.insert(where, "resolution_sec=" .. math.floor(tonumber(opts.resolution_sec)))
+    end
+    if opts.resolution_min and tonumber(opts.resolution_min) then
+        table.insert(where, "resolution_sec>=" .. math.floor(tonumber(opts.resolution_min)))
+    end
+    if opts.resolution_max and tonumber(opts.resolution_max) then
+        table.insert(where, "resolution_sec<=" .. math.floor(tonumber(opts.resolution_max)))
+    end
     local where_sql = table.concat(where, " AND ")
-    local rows = db_query(config.db, "SELECT ts_bucket, scope, scope_id, metric_key, value, tags_json " ..
+    local rows = db_query(config.db, "SELECT ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json " ..
         "FROM ai_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
     for _, row in ipairs(rows) do
         if row.tags_json and row.tags_json ~= "" then
@@ -2103,6 +2229,78 @@ function config.prune_ai_metrics(before_ts)
         return 0
     end
     local res = db_exec(config.db, "DELETE FROM ai_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
+    return res and true or false
+end
+
+function config.upsert_system_metric_rollup(entry)
+    if type(entry) ~= "table" then
+        return nil, "invalid entry"
+    end
+    local ts_bucket = tonumber(entry.ts_bucket) or 0
+    if ts_bucket <= 0 then
+        return nil, "invalid ts_bucket"
+    end
+    local cpu_usage = tonumber(entry.cpu_usage)
+    local mem_used_percent = tonumber(entry.mem_used_percent)
+    local disk_used_percent = tonumber(entry.disk_used_percent)
+    local net_json = ""
+    if entry.net ~= nil then
+        net_json = json_encode(entry.net)
+    elseif entry.net_json ~= nil then
+        net_json = tostring(entry.net_json)
+    end
+
+    local function sql_num_or_null(v)
+        if v == nil then
+            return "NULL"
+        end
+        return tostring(v)
+    end
+
+    local ok, err = db_exec_safe(config.db,
+        "INSERT OR REPLACE INTO system_metrics_rollup(ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json) VALUES(" ..
+        ts_bucket .. ", " .. sql_num_or_null(cpu_usage) .. ", " .. sql_num_or_null(mem_used_percent) .. ", " ..
+        sql_num_or_null(disk_used_percent) .. ", '" .. sql_escape(net_json) .. "');")
+    if not ok then
+        log.warning("[observability] failed to upsert system metric: " .. tostring(err))
+        return nil, err
+    end
+    return true
+end
+
+function config.list_system_metric_rollup(opts)
+    opts = opts or {}
+    local since = tonumber(opts.since) or 0
+    local until_ts = tonumber(opts["until"]) or 0
+    local limit = tonumber(opts.limit) or 20000
+    if limit < 1 then
+        limit = 1
+    elseif limit > 200000 then
+        limit = 200000
+    end
+    local where = { "ts_bucket >= " .. since }
+    if until_ts and until_ts > 0 then
+        table.insert(where, "ts_bucket < " .. until_ts)
+    end
+    local where_sql = table.concat(where, " AND ")
+    local rows = db_query(config.db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
+        "FROM system_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    for _, row in ipairs(rows) do
+        if row.net_json and row.net_json ~= "" then
+            row.net = json_decode(row.net_json)
+        else
+            row.net = nil
+        end
+    end
+    return rows
+end
+
+function config.prune_system_metric_rollup(before_ts)
+    local cutoff = tonumber(before_ts) or 0
+    if cutoff <= 0 then
+        return 0
+    end
+    local res = db_exec(config.db, "DELETE FROM system_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
     return res and true or false
 end
 

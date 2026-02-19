@@ -1059,6 +1059,7 @@ const elements = {
   observabilityChartsBlock: $('#obs-charts'),
   observabilityLogsBlock: $('#obs-errors'),
   observabilityEmpty: $('#obs-empty'),
+  observabilityReadOnly: $('#obs-readonly'),
   observabilityHint: $('#obs-hint'),
   observabilitySystem: $('#obs-system'),
   observabilitySystemCards: $('#obs-system-cards'),
@@ -2983,7 +2984,7 @@ const SETTINGS_GENERAL_SECTIONS = [
         title: 'Observability',
         description: 'Логи, метрики и rollup.',
         level: 'basic',
-        toggle: { id: 'settings-observability-enabled', label: 'Включено' },
+        toggle: { id: 'settings-observability-enabled', key: 'observability_enabled', label: 'Включено' },
         collapsible: true,
         fields: [
           {
@@ -3033,7 +3034,7 @@ const SETTINGS_GENERAL_SECTIONS = [
           },
           {
             type: 'note',
-            text: 'Метрики всегда считаются по запросу (фоновый rollup отключён).',
+            text: 'On-demand снижает фоновую нагрузку, но история зависит от логов. Для устойчивых долгих графиков выключите on-demand и включите rollup.',
             level: 'advanced',
           },
         ],
@@ -3088,11 +3089,14 @@ const SETTINGS_GENERAL_SECTIONS = [
             key: 'observability_system_retention_sec',
             level: 'advanced',
             options: [
-              { value: '0', label: '0 (disabled)' },
+              { value: '0', label: 'Auto (Log retention days)' },
               { value: '600', label: '10 min' },
               { value: '3600', label: '1 hour' },
               { value: '21600', label: '6 hours' },
               { value: '86400', label: '24 hours' },
+              { value: '604800', label: '7 days' },
+              { value: '2592000', label: '30 days' },
+              { value: '7776000', label: '90 days' },
             ],
             dependsOn: { id: 'settings-system-metrics-rollup-enabled', value: true },
           },
@@ -3106,7 +3110,7 @@ const SETTINGS_GENERAL_SECTIONS = [
           },
           {
             type: 'note',
-            text: 'История хранится в памяти (ring buffer). Вкладка Observability может показать графики только если rollup включён.',
+            text: 'История server metrics хранится в stream.db и переживает рестарт процесса. При значении Auto retention берётся из Log retention (days).',
             level: 'advanced',
           },
         ],
@@ -3114,9 +3118,10 @@ const SETTINGS_GENERAL_SECTIONS = [
           const enabled = readBoolValue('settings-system-metrics-rollup-enabled', false);
           if (!enabled) return 'Выключено';
           const interval = readNumberValue('settings-system-metrics-rollup-interval', 60);
-          const retention = readNumberValue('settings-system-metrics-retention', 3600);
+          const retention = readNumberValue('settings-system-metrics-retention', 0);
           const virt = readBoolValue('settings-system-metrics-include-virtual', false);
-          return `Включено · Interval: ${formatSeconds(interval)} · Retention: ${formatSeconds(retention)} · Virtual ifaces: ${formatOnOff(virt)}`;
+          const retentionLabel = retention > 0 ? formatSeconds(retention) : 'Auto (Log retention)';
+          return `Включено · Interval: ${formatSeconds(interval)} · Retention: ${retentionLabel} · Virtual ifaces: ${formatOnOff(virt)}`;
         },
       },
       {
@@ -5612,10 +5617,8 @@ function isViewEnabled(name) {
   if (name === 'access') return getSettingBool('ui_access_enabled', true);
   if (name === 'help') return true;
   if (name === 'observability') {
-    const onDemand = getSettingBool('ai_metrics_on_demand', true);
-    const logsDays = getSettingNumber('ai_logs_retention_days', 0);
-    const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
-    return logsDays > 0 || (!onDemand && metricsDays > 0);
+    // Observability view remains available in read-only mode even when collection is disabled.
+    return true;
   }
   return true;
 }
@@ -24502,16 +24505,23 @@ function stopAccessLogPolling() {
   state.accessLogTimer = null;
 }
 
+function getObservabilitySeriesPollMs() {
+  const range = (elements.observabilityRange && elements.observabilityRange.value) || state.observabilityLastRange || '24h';
+  if (range === '15m' || range === '1h') return 5000;
+  if (range === '6h' || range === '24h') return 15000;
+  return 30000;
+}
+
 function startObservabilityPolling() {
   stopObservabilityPolling();
-  // Default: on-demand refresh only (no background polling).
-  const onDemand = getSettingBool('ai_metrics_on_demand', true);
-  if (onDemand) {
+  const collectionEnabled = getSettingBool('observability_enabled', false);
+  if (!collectionEnabled) {
     return;
   }
+  const intervalMs = getObservabilitySeriesPollMs();
   state.observabilityTimer = true;
   startPollLoop('observability', {
-    intervalMs: POLL_OBSERVABILITY_MS,
+    intervalMs,
     immediate: false,
     tick: async () => {
       if (state.currentView !== 'observability') {
@@ -24553,13 +24563,7 @@ function updateObservabilityScopeFields() {
 }
 
 function updateObservabilityOnDemandFields() {
-  if (elements.settingsObservabilityOnDemand) {
-    elements.settingsObservabilityOnDemand.checked = true;
-    elements.settingsObservabilityOnDemand.disabled = true;
-    const field = elements.settingsObservabilityOnDemand.closest ? elements.settingsObservabilityOnDemand.closest('.field') : null;
-    if (field) field.hidden = true;
-  }
-  const onDemand = true;
+  const onDemand = !!(elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked);
   const toggleField = (input, hidden) => {
     if (!input) return;
     input.disabled = hidden;
@@ -24648,6 +24652,9 @@ function formatCountAxisLabel(value) {
 }
 
 function parseObservabilityRangeMs(range) {
+  if (range === '15m') return 15 * 60 * 1000;
+  if (range === '1h') return 3600 * 1000;
+  if (range === '6h') return 6 * 3600 * 1000;
   if (range === '30d') return 30 * 24 * 3600 * 1000;
   if (range === '7d') return 7 * 24 * 3600 * 1000;
   return 24 * 3600 * 1000;
@@ -24657,7 +24664,7 @@ function formatObservabilityTimeTick(tsMs, range) {
   const date = new Date(Number(tsMs) || 0);
   if (Number.isNaN(date.getTime())) return '-';
   const two = (v) => String(v).padStart(2, '0');
-  if (range === '24h') {
+  if (range === '15m' || range === '1h' || range === '6h' || range === '24h') {
     return `${two(date.getHours())}:${two(date.getMinutes())}`;
   }
   return `${two(date.getMonth() + 1)}-${two(date.getDate())}`;
@@ -25235,6 +25242,7 @@ function renderObservabilitySummary(summary, scope, streamId, systemSnapshot) {
     addCard('CC errors', Number(summary.cc_errors || 0));
     addCard('PES errors', Number(summary.pes_errors || 0));
     addCard('Input switch', Number(summary.input_switch || 0));
+    addCard('FFmpeg restarts', Number(summary.ffmpeg_restarts || 0));
   } else {
     const totals = getSystemNetTotalsBps(systemSnapshot || state.systemMetricsSnapshot);
     const rxKbps = Number.isFinite(Number(summary.total_rx_kbps))
@@ -25330,14 +25338,17 @@ function renderObservabilityCharts(items, scope) {
       elements.observabilityChartTitleStreams.textContent = 'Channel CC / PES errors (count)';
     }
     if (elements.observabilityChartTitleSwitches) {
-      elements.observabilityChartTitleSwitches.textContent = 'Input switches (count)';
+      elements.observabilityChartTitleSwitches.textContent = 'Input switches / FFmpeg restarts (count)';
     }
     setChartLegend(elements.observabilityChartLegendBitrate, [{ label: 'BITRATE', color: accent }]);
     setChartLegend(elements.observabilityChartLegendStreams, [
       { label: 'CC', color: warning },
       { label: 'PES', color: danger },
     ]);
-    setChartLegend(elements.observabilityChartLegendSwitches, [{ label: 'SWITCHES', color: warning }]);
+    setChartLegend(elements.observabilityChartLegendSwitches, [
+      { label: 'SWITCHES', color: warning },
+      { label: 'RESTARTS', color: danger },
+    ]);
 
     const bitrateSeries = [
       {
@@ -25359,6 +25370,10 @@ function renderObservabilityCharts(items, scope) {
       {
         color: warning,
         points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints),
+      },
+      {
+        color: danger,
+        points: prepareObservabilityPoints(seriesMap.ffmpeg_restarts || [], fromMs, nowMs, maxPoints),
       },
     ];
 
@@ -25927,12 +25942,6 @@ function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface) {
   // Legacy charts are replaced by sparklines in metric cards (renderSystemMetricsCards).
   chartsEl.hidden = true;
 
-  if (!rollupEnabled) {
-    hintEl.textContent = 'Server history is disabled. Enable it in Settings → Observability → Server metrics.';
-    hintEl.hidden = false;
-    return true;
-  }
-
   const ts = (timeseries && typeof timeseries === 'object') ? timeseries : {};
   const cpuPoints = toTimeseriesPoints(ts.cpu_usage, (v) => v * 100);
   const memPoints = toTimeseriesPoints(ts.mem_used_percent);
@@ -25943,6 +25952,15 @@ function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface) {
   const txPoints = toTimeseriesPoints(txPairs);
 
   const hasData = cpuPoints.length || memPoints.length || diskPoints.length || rxPoints.length || txPoints.length;
+  if (!rollupEnabled) {
+    if (!hasData) {
+      hintEl.textContent = 'Server history collection is disabled. Enable it in Settings → Observability → Server metrics.';
+    } else {
+      hintEl.textContent = 'Server history collection is disabled. Showing stored history.';
+    }
+    hintEl.hidden = false;
+    return true;
+  }
   if (!hasData) {
     hintEl.textContent = 'No server history yet. Wait 1-2 rollup intervals and press Refresh.';
     hintEl.hidden = false;
@@ -25959,11 +25977,6 @@ async function loadSystemMetricsTimeseries(range) {
     state.systemMetricsTimeseries = null;
     state.systemMetricsTimeseriesLastFetchMs = 0;
     state.systemMetricsTimeseriesInFlight = false;
-    renderSystemMetrics();
-    return;
-  }
-  if (!(state.systemMetricsFlags && state.systemMetricsFlags.rollup === true)) {
-    state.systemMetricsTimeseries = null;
     renderSystemMetrics();
     return;
   }
@@ -25989,10 +26002,8 @@ async function loadSystemMetricsTimeseries(range) {
 
 async function loadObservability(showStatus) {
   if (!elements.observabilityRange) return { ok: true };
-  const logsDays = getSettingNumber('ai_logs_retention_days', 0);
-  const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
+  const collectionEnabledSetting = getSettingBool('observability_enabled', false);
   const onDemand = getSettingBool('ai_metrics_on_demand', true);
-  const enabled = logsDays > 0 || (!onDemand && metricsDays > 0);
 
   const setVisibility = (isEnabled) => {
     if (elements.observabilitySummary) elements.observabilitySummary.hidden = !isEnabled;
@@ -26001,30 +26012,19 @@ async function loadObservability(showStatus) {
   };
 
   if (elements.observabilityEmpty) {
-    elements.observabilityEmpty.classList.toggle('active', !enabled);
+    elements.observabilityEmpty.classList.toggle('active', false);
+    elements.observabilityEmpty.textContent = 'No observability data for selected range yet.';
+  }
+  if (elements.observabilityReadOnly) {
+    elements.observabilityReadOnly.hidden = collectionEnabledSetting;
+    elements.observabilityReadOnly.textContent = collectionEnabledSetting
+      ? ''
+      : 'Observability collection is disabled. Showing historical data only.';
   }
   if (elements.observabilityHint) {
     elements.observabilityHint.textContent = onDemand
-      ? 'Metrics are calculated on request (logs + runtime snapshot).'
+      ? 'On-demand analytics enabled; rollups are still available for long-range charts.'
       : '';
-  }
-  if (!enabled) {
-    setVisibility(false);
-    state.systemMetricsSnapshot = null;
-    state.systemMetricsFlags = null;
-    state.systemMetricsTimeseries = null;
-    state.observabilityLastItems = null;
-    state.observabilityLastScope = 'global';
-    state.observabilityLastStreamId = '';
-    state.observabilityLastRange = elements.observabilityRange ? (elements.observabilityRange.value || '24h') : '24h';
-    renderSystemMetrics();
-    if (elements.observabilitySummary) elements.observabilitySummary.innerHTML = '';
-    if (elements.observabilityLogs) elements.observabilityLogs.innerHTML = '';
-    if (elements.observabilityChartsEmpty) elements.observabilityChartsEmpty.hidden = false;
-    setChartCardVisible(elements.observabilityChartCardBitrate, false);
-    setChartCardVisible(elements.observabilityChartCardStreams, false);
-    setChartCardVisible(elements.observabilityChartCardSwitches, false);
-    return { ok: true };
   }
   setVisibility(true);
 
@@ -26033,12 +26033,7 @@ async function loadObservability(showStatus) {
   const streamId = elements.observabilityStream ? elements.observabilityStream.value : '';
   state.observabilityLastRange = range;
   await loadSystemMetricsSnapshot(true);
-  if (state.systemMetricsFlags && state.systemMetricsFlags.rollup === true) {
-    await loadSystemMetricsTimeseries(range);
-  } else {
-    state.systemMetricsTimeseries = null;
-    renderSystemMetrics();
-  }
+  await loadSystemMetricsTimeseries(range);
   if (scope === 'stream' && !streamId) {
     state.observabilityLastItems = [];
     state.observabilityLastScope = 'stream';
@@ -26054,38 +26049,95 @@ async function loadObservability(showStatus) {
   }
 
   try {
-    const metricsUrl = new URL('/api/v1/ai/metrics', window.location.origin);
-    metricsUrl.searchParams.set('range', range);
-    metricsUrl.searchParams.set('scope', scope);
-    if (scope === 'stream' && streamId) {
-      metricsUrl.searchParams.set('id', streamId);
-    }
-    const metrics = await apiJson(metricsUrl.toString());
-    const items = metrics && metrics.items ? metrics.items : [];
-
-    const logsUrl = new URL('/api/v1/ai/logs', window.location.origin);
-    logsUrl.searchParams.set('range', range);
-    logsUrl.searchParams.set('level', 'ERROR');
-    logsUrl.searchParams.set('limit', '20');
-    if (scope === 'stream' && streamId) {
-      logsUrl.searchParams.set('stream_id', streamId);
-    }
-    const logs = await apiJson(logsUrl.toString());
-    const logItems = logs && logs.items ? logs.items : [];
-
+    const items = [];
+    let logItems = [];
     let summary = {};
+    let collectionEnabled = collectionEnabledSetting;
+
+    if (scope === 'stream') {
+      const seriesUrl = new URL('/api/v1/observability/stream-series', window.location.origin);
+      seriesUrl.searchParams.set('stream_id', streamId);
+      seriesUrl.searchParams.set('range', range);
+      seriesUrl.searchParams.set('resolution', 'auto');
+      seriesUrl.searchParams.set(
+        'metrics',
+        [
+          'stream.bitrate_kbps.avg',
+          'stream.cc_errors.delta',
+          'stream.pes_errors.delta',
+          'stream.input_switch.count',
+          'stream.ffmpeg.restart.total',
+          'stream.on_air.state',
+        ].join(','),
+      );
+      seriesUrl.searchParams.set('max_points', '1200');
+      const seriesPayload = await apiJson(seriesUrl.toString());
+      const series = (seriesPayload && seriesPayload.series) || {};
+      const mapSeries = (metricKey, outKey) => {
+        const rows = Array.isArray(series[metricKey]) ? series[metricKey] : [];
+        rows.forEach((row) => {
+          items.push({
+            ts_bucket: Number(row.ts || 0),
+            metric_key: outKey,
+            value: Number(row.value || 0),
+          });
+        });
+      };
+      mapSeries('stream.bitrate_kbps.avg', 'bitrate_kbps');
+      mapSeries('stream.cc_errors.delta', 'cc_errors');
+      mapSeries('stream.pes_errors.delta', 'pes_errors');
+      mapSeries('stream.input_switch.count', 'input_switch');
+      mapSeries('stream.ffmpeg.restart.total', 'ffmpeg_restarts');
+      mapSeries('stream.on_air.state', 'on_air');
+      if (seriesPayload && seriesPayload.meta) {
+        collectionEnabled = !!seriesPayload.meta.collection_enabled;
+      }
+
+      const eventsUrl = new URL('/api/v1/observability/stream-events', window.location.origin);
+      eventsUrl.searchParams.set('stream_id', streamId);
+      eventsUrl.searchParams.set('range', range);
+      eventsUrl.searchParams.set('kinds', 'ffmpeg,input_switch,alerts');
+      eventsUrl.searchParams.set('limit', '20');
+      const eventsPayload = await apiJson(eventsUrl.toString());
+      const eventRows = eventsPayload && Array.isArray(eventsPayload.items) ? eventsPayload.items : [];
+      logItems = eventRows.map((row) => ({
+        ts: row.ts,
+        stream_id: streamId,
+        component: row.code || row.reason_code || 'event',
+        message: row.message || row.code || 'event',
+      }));
+    } else {
+      const metricsUrl = new URL('/api/v1/ai/metrics', window.location.origin);
+      metricsUrl.searchParams.set('range', range);
+      metricsUrl.searchParams.set('scope', scope);
+      const metrics = await apiJson(metricsUrl.toString());
+      const rows = metrics && metrics.items ? metrics.items : [];
+      rows.forEach((row) => items.push(row));
+      collectionEnabled = metrics && metrics.collection_enabled !== undefined
+        ? !!metrics.collection_enabled
+        : collectionEnabled;
+
+      const logsUrl = new URL('/api/v1/ai/logs', window.location.origin);
+      logsUrl.searchParams.set('range', range);
+      logsUrl.searchParams.set('level', 'ERROR');
+      logsUrl.searchParams.set('limit', '20');
+      const logs = await apiJson(logsUrl.toString());
+      logItems = logs && logs.items ? logs.items : [];
+    }
+
     const latest = {};
     let lastBucket = 0;
     items.forEach((row) => {
-      if (row.ts_bucket && row.ts_bucket > lastBucket) {
-        lastBucket = row.ts_bucket;
-      }
+      const ts = Number(row.ts_bucket || 0);
+      if (ts > lastBucket) lastBucket = ts;
     });
     items.forEach((row) => {
-      if (row.ts_bucket === lastBucket) {
+      const ts = Number(row.ts_bucket || 0);
+      if (ts === lastBucket) {
         latest[row.metric_key] = row.value;
       }
     });
+
     if (scope === 'global') {
       const netTotals = getSystemNetTotalsBps(state.systemMetricsSnapshot);
       summary = {
@@ -26109,6 +26161,7 @@ async function loadObservability(showStatus) {
         cc_errors: latest.cc_errors || 0,
         pes_errors: latest.pes_errors || 0,
         input_switch: latest.input_switch || 0,
+        ffmpeg_restarts: latest.ffmpeg_restarts || 0,
       };
     }
 
@@ -26116,6 +26169,12 @@ async function loadObservability(showStatus) {
     state.observabilityLastScope = scope;
     state.observabilityLastStreamId = streamId || '';
     state.observabilityLastRange = range;
+    if (elements.observabilityReadOnly) {
+      elements.observabilityReadOnly.hidden = collectionEnabled;
+      elements.observabilityReadOnly.textContent = collectionEnabled
+        ? ''
+        : 'Observability collection is disabled. Showing historical data only.';
+    }
     renderObservabilitySummary(summary, scope, streamId, state.systemMetricsSnapshot);
     renderObservabilityCharts(items, scope);
     renderObservabilityLogs(logItems);
@@ -27117,12 +27176,13 @@ function applySettingsToUI() {
     const logsDays = getSettingNumber('ai_logs_retention_days', 0);
     const metricsDays = getSettingNumber('ai_metrics_retention_days', 0);
     const rollup = getSettingNumber('ai_rollup_interval_sec', 60);
-    const onDemand = true;
+    const onDemand = getSettingBool('ai_metrics_on_demand', true);
+    const collectionEnabled = getSettingBool('observability_enabled', false);
     if (elements.settingsObservabilityOnDemand) {
-      elements.settingsObservabilityOnDemand.checked = true;
-      elements.settingsObservabilityOnDemand.disabled = true;
+      elements.settingsObservabilityOnDemand.checked = onDemand;
+      elements.settingsObservabilityOnDemand.disabled = false;
     }
-    elements.settingsObservabilityEnabled.checked = (logsDays > 0) || (!onDemand && metricsDays > 0);
+    elements.settingsObservabilityEnabled.checked = collectionEnabled;
     setSelectValue(elements.settingsObservabilityLogsDays, logsDays > 0 ? logsDays : 7, 7);
     setSelectValue(elements.settingsObservabilityMetricsDays, metricsDays > 0 ? metricsDays : 30, 30);
     setSelectValue(elements.settingsObservabilityRollup, rollup || 60, 60);
@@ -27141,8 +27201,8 @@ function applySettingsToUI() {
   if (elements.settingsSystemMetricsRetention) {
     setSelectValue(
       elements.settingsSystemMetricsRetention,
-      getSettingNumber('observability_system_retention_sec', 3600),
-      3600
+      getSettingNumber('observability_system_retention_sec', 0),
+      0
     );
   }
   if (elements.settingsSystemMetricsIncludeVirtual) {
@@ -27944,7 +28004,7 @@ function collectGeneralSettings() {
   const observabilityLogsDays = toNumber(elements.settingsObservabilityLogsDays && elements.settingsObservabilityLogsDays.value);
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
-  const observabilityOnDemand = true;
+  const observabilityOnDemand = !!(elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked);
   const systemMetricsRollupEnabled = elements.settingsSystemMetricsRollupEnabled && elements.settingsSystemMetricsRollupEnabled.checked;
   const systemMetricsRollupInterval = toNumber(elements.settingsSystemMetricsRollupInterval && elements.settingsSystemMetricsRollupInterval.value);
   const systemMetricsRetention = toNumber(elements.settingsSystemMetricsRetention && elements.settingsSystemMetricsRetention.value);
@@ -27953,10 +28013,8 @@ function collectGeneralSettings() {
     if (observabilityLogsDays !== undefined && observabilityLogsDays < 1) {
       throw new Error('Log retention days must be >= 1');
     }
-    if (!observabilityOnDemand) {
-      if (observabilityMetricsDays !== undefined && observabilityMetricsDays < 1) {
-        throw new Error('Metrics retention days must be >= 1');
-      }
+    if (observabilityMetricsDays !== undefined && observabilityMetricsDays < 1) {
+      throw new Error('Metrics retention days must be >= 1');
     }
     if (observabilityRollup !== undefined && observabilityRollup < 30) {
       throw new Error('Rollup interval must be >= 30 sec');
@@ -27966,8 +28024,8 @@ function collectGeneralSettings() {
     if (systemMetricsRollupInterval !== undefined && (systemMetricsRollupInterval < 1 || systemMetricsRollupInterval > 3600)) {
       throw new Error('System metrics rollup interval must be 1..3600 sec');
     }
-    if (systemMetricsRetention !== undefined && (systemMetricsRetention < 1 || systemMetricsRetention > 86400)) {
-      throw new Error('System metrics retention must be 1..86400 sec');
+    if (systemMetricsRetention !== undefined && (systemMetricsRetention < 0 || systemMetricsRetention > 31536000)) {
+      throw new Error('System metrics retention must be 0..31536000 sec');
     }
   }
   const telegramEnabled = elements.settingsTelegramEnabled && elements.settingsTelegramEnabled.checked;
@@ -28406,14 +28464,10 @@ function collectGeneralSettings() {
     }
   }
   if (elements.settingsObservabilityEnabled) {
-    if (observabilityEnabled) {
-      payload.ai_logs_retention_days = observabilityLogsDays || 7;
-      payload.ai_metrics_retention_days = observabilityOnDemand ? 0 : (observabilityMetricsDays || 30);
-      payload.ai_rollup_interval_sec = observabilityRollup || 60;
-    } else {
-      payload.ai_logs_retention_days = 0;
-      payload.ai_metrics_retention_days = 0;
-    }
+    payload.observability_enabled = !!observabilityEnabled;
+    payload.ai_logs_retention_days = observabilityLogsDays || 7;
+    payload.ai_metrics_retention_days = observabilityMetricsDays || 30;
+    payload.ai_rollup_interval_sec = observabilityRollup || 60;
     if (elements.settingsSystemMetricsRollupEnabled) {
       payload.observability_system_rollup_enabled = !!systemMetricsRollupEnabled;
     }
@@ -32214,6 +32268,9 @@ function bindEvents() {
   }
   if (elements.observabilityRange) {
     elements.observabilityRange.addEventListener('change', () => {
+      if (state.currentView === 'observability') {
+        startObservabilityPolling();
+      }
       loadObservability(true);
     });
   }

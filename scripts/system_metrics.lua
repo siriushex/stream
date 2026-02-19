@@ -3,10 +3,13 @@
 system_metrics = system_metrics or {}
 
 system_metrics.state = system_metrics.state or {
-    enabled = false,
+    enabled = true,
+    collection_enabled = false,
     rollup_enabled = false,
     rollup_interval_sec = 60,
     retention_sec = 3600,
+    logs_retention_days = 0,
+    retention_source = "setting",
     include_virtual_ifaces = false,
 }
 
@@ -16,11 +19,19 @@ system_metrics.cache = system_metrics.cache or {
 }
 
 system_metrics.timer_rollup = system_metrics.timer_rollup or nil
-system_metrics.ring = system_metrics.ring or nil
+system_metrics.timer_prune = system_metrics.timer_prune or nil
+system_metrics.last_prune_ts = system_metrics.last_prune_ts or 0
+
+local function setting_raw(key)
+    if config and config.get_setting then
+        return config.get_setting(key)
+    end
+    return nil
+end
 
 local function setting_number(key, fallback)
     if config and config.get_setting then
-        local value = config.get_setting(key)
+        local value = setting_raw(key)
         if value == nil or value == "" then
             return fallback
         end
@@ -48,15 +59,12 @@ local function setting_bool(key, fallback)
     return fallback
 end
 
-local function observability_enabled()
-    -- Keep in sync with web/app.js isViewEnabled('observability')
-    local on_demand = setting_bool("ai_metrics_on_demand", true)
-    local logs_days = setting_number("ai_logs_retention_days", 0)
-    local metrics_days = setting_number("ai_metrics_retention_days", 0)
-    if on_demand then
-        metrics_days = 0
-    end
-    return (logs_days or 0) > 0 or (metrics_days or 0) > 0
+local function observability_collection_enabled()
+    return setting_bool("observability_enabled", false) == true
+end
+
+local function observability_read_enabled()
+    return true
 end
 
 local function sanitize_interval(value)
@@ -69,7 +77,7 @@ end
 local function sanitize_retention(value)
     local num = tonumber(value) or 3600
     if num < 0 then num = 0 end
-    if num > 86400 then num = 86400 end
+    if num > 31536000 then num = 31536000 end -- 365 days
     return math.floor(num)
 end
 
@@ -296,41 +304,79 @@ local function build_disk_snapshot()
     return disks
 end
 
-local function ring_new(capacity)
-    return { cap = capacity, idx = 0, size = 0, points = {} }
+local function resolve_retention_sec()
+    local logs_days = setting_number("ai_logs_retention_days", 0)
+    local raw = setting_raw("observability_system_retention_sec")
+    local value = tonumber(raw)
+    if value ~= nil and value > 0 then
+        return sanitize_retention(value), "setting", logs_days
+    end
+    if logs_days > 0 then
+        return sanitize_retention(logs_days * 86400), "logs_days", logs_days
+    end
+    return sanitize_retention(86400), "default", logs_days
 end
 
-local function ring_push(ring, point)
-    if not ring or not ring.cap or ring.cap <= 0 then
+local function to_rollup_point(snap)
+    if not snap then
+        return nil
+    end
+    local root_disk_used = nil
+    if snap.disk and snap.disk[1] and snap.disk[1].used_percent ~= nil then
+        root_disk_used = tonumber(snap.disk[1].used_percent)
+    end
+    local net_map = {}
+    for _, item in ipairs(snap.net or {}) do
+        net_map[item.iface] = { rx_bps = item.rx_bps, tx_bps = item.tx_bps }
+    end
+    return {
+        ts_bucket = tonumber(snap.ts) or os.time(),
+        t_ms = (tonumber(snap.ts) or os.time()) * 1000,
+        cpu_usage = snap.cpu and snap.cpu.usage or nil,
+        mem_used_percent = snap.mem and snap.mem.used_percent or nil,
+        disk_used_percent = root_disk_used,
+        net = net_map,
+    }
+end
+
+local function row_to_point(row)
+    if not row then
+        return nil
+    end
+    local ts_bucket = tonumber(row.ts_bucket)
+    if not ts_bucket then
+        return nil
+    end
+    return {
+        t_ms = ts_bucket * 1000,
+        cpu_usage = tonumber(row.cpu_usage),
+        mem_used_percent = tonumber(row.mem_used_percent),
+        disk_used_percent = tonumber(row.disk_used_percent),
+        net = row.net,
+    }
+end
+
+local function prune_rollup()
+    if not config or not config.prune_system_metric_rollup then
         return
     end
-    ring.idx = (ring.idx % ring.cap) + 1
-    ring.points[ring.idx] = point
-    ring.size = math.min((ring.size or 0) + 1, ring.cap)
-end
-
-local function ring_iter_since(ring, since_ms)
-    local out = {}
-    if not ring or not ring.points or not ring.size or ring.size <= 0 then
-        return out
+    local now = os.time()
+    local retention_sec = tonumber(system_metrics.state.retention_sec) or 0
+    if retention_sec <= 0 then
+        return
     end
-    local start = ring.idx - ring.size + 1
-    for i = 0, ring.size - 1 do
-        local pos = start + i
-        local idx = ((pos - 1) % ring.cap) + 1
-        local pt = ring.points[idx]
-        if pt and pt.t_ms and (since_ms == nil or pt.t_ms >= since_ms) then
-            table.insert(out, pt)
-        end
+    local cutoff = now - retention_sec
+    if cutoff <= 0 then
+        return
     end
-    return out
+    config.prune_system_metric_rollup(cutoff)
+    system_metrics.last_prune_ts = now
 end
 
 function system_metrics.snapshot()
     local now = os.time()
-    local enabled = observability_enabled()
-    if not enabled then
-        return { enabled = false, ts = now }
+    if not observability_read_enabled() then
+        return { enabled = false, ts = now, collection_enabled = false }
     end
 
     local cpu_cur = sample_cpu(now)
@@ -375,6 +421,7 @@ function system_metrics.snapshot()
 
     return {
         enabled = true,
+        collection_enabled = observability_collection_enabled(),
         ts = now,
         cpu = { usage = cpu_usage, la1 = loadavg.la1, la5 = loadavg.la5, la15 = loadavg.la15 },
         mem = mem,
@@ -385,71 +432,113 @@ function system_metrics.snapshot()
 end
 
 function system_metrics.get_timeseries(range_sec)
-    local enabled = observability_enabled()
-    if not enabled then
-        return { enabled = false, rollup = false, items = {} }
+    if not observability_read_enabled() then
+        return { enabled = false, collection_enabled = false, rollup = false, items = {} }
     end
-    if not system_metrics.state.rollup_enabled or not system_metrics.ring then
-        return { enabled = true, rollup = false, items = {} }
+    if not config or not config.list_system_metric_rollup then
+        return { enabled = true, collection_enabled = observability_collection_enabled(), rollup = false, items = {} }
     end
-    local now_ms = os.time() * 1000
-    local since_ms = nil
+    local now = os.time()
+    local since = 0
     if range_sec and tonumber(range_sec) and tonumber(range_sec) > 0 then
-        since_ms = now_ms - (tonumber(range_sec) * 1000)
+        since = now - tonumber(range_sec)
     end
-    local pts = ring_iter_since(system_metrics.ring, since_ms)
-    return { enabled = true, rollup = true, items = pts }
+    local rows = config.list_system_metric_rollup({
+        since = since,
+        ["until"] = now + 1,
+        limit = 300000,
+    }) or {}
+    local max_points = 6000
+    if #rows > max_points then
+        local sampled = {}
+        local step = math.max(1, math.floor(#rows / max_points))
+        local idx = 1
+        while idx <= #rows do
+            table.insert(sampled, rows[idx])
+            idx = idx + step
+        end
+        if sampled[#sampled] ~= rows[#rows] then
+            table.insert(sampled, rows[#rows])
+        end
+        rows = sampled
+    end
+    local points = {}
+    for _, row in ipairs(rows) do
+        local pt = row_to_point(row)
+        if pt then
+            table.insert(points, pt)
+        end
+    end
+    return {
+        enabled = true,
+        collection_enabled = observability_collection_enabled(),
+        rollup = (#points > 0) or (system_metrics.state.rollup_enabled == true),
+        items = points,
+    }
 end
 
 local function rollup_tick()
+    if system_metrics.state.collection_enabled ~= true then
+        return
+    end
+    if system_metrics.state.rollup_enabled ~= true then
+        return
+    end
     local snap = system_metrics.snapshot()
     if not snap or not snap.enabled then
         return
     end
-    local t_ms = (snap.ts or os.time()) * 1000
-    local root_disk_used = nil
-    if snap.disk and snap.disk[1] and snap.disk[1].used_percent ~= nil then
-        root_disk_used = tonumber(snap.disk[1].used_percent)
+    if not config or not config.upsert_system_metric_rollup then
+        return
     end
-    local net_map = {}
-    for _, item in ipairs(snap.net or {}) do
-        net_map[item.iface] = { rx_bps = item.rx_bps, tx_bps = item.tx_bps }
+    local point = to_rollup_point(snap)
+    if not point then
+        return
     end
-    ring_push(system_metrics.ring, {
-        t_ms = t_ms,
-        cpu_usage = snap.cpu and snap.cpu.usage or nil,
-        mem_used_percent = snap.mem and snap.mem.used_percent or nil,
-        disk_used_percent = root_disk_used,
-        net = net_map,
+    config.upsert_system_metric_rollup({
+        ts_bucket = point.ts_bucket,
+        cpu_usage = point.cpu_usage,
+        mem_used_percent = point.mem_used_percent,
+        disk_used_percent = point.disk_used_percent,
+        net = point.net,
     })
 end
 
 function system_metrics.configure()
-    system_metrics.state.enabled = observability_enabled()
+    system_metrics.state.enabled = true
+    system_metrics.state.collection_enabled = observability_collection_enabled()
     system_metrics.state.rollup_enabled = setting_bool("observability_system_rollup_enabled", false)
     system_metrics.state.rollup_interval_sec = sanitize_interval(setting_number("observability_system_rollup_interval_sec", 60))
-    system_metrics.state.retention_sec = sanitize_retention(setting_number("observability_system_retention_sec", 3600))
+    local retention_sec, retention_source, logs_days = resolve_retention_sec()
+    system_metrics.state.retention_sec = retention_sec
+    system_metrics.state.retention_source = retention_source
+    system_metrics.state.logs_retention_days = logs_days or 0
     system_metrics.state.include_virtual_ifaces = setting_bool("observability_system_include_virtual_ifaces", false)
 
     if system_metrics.timer_rollup then
         system_metrics.timer_rollup:close()
         system_metrics.timer_rollup = nil
     end
-    system_metrics.ring = nil
+    if system_metrics.timer_prune then
+        system_metrics.timer_prune:close()
+        system_metrics.timer_prune = nil
+    end
 
-    if system_metrics.state.enabled and system_metrics.state.rollup_enabled and system_metrics.state.retention_sec > 0 then
-        local cap = math.floor(system_metrics.state.retention_sec / math.max(1, system_metrics.state.rollup_interval_sec))
-        if cap < 10 then cap = 10 end
-        if cap > 20000 then cap = 20000 end
-        system_metrics.ring = ring_new(cap)
+    if system_metrics.state.collection_enabled and system_metrics.state.rollup_enabled then
         system_metrics.timer_rollup = timer({
             interval = system_metrics.state.rollup_interval_sec,
             callback = function()
                 rollup_tick()
             end,
         })
-        -- Prime baseline; first tick may not have deltas.
+        system_metrics.timer_prune = timer({
+            interval = 3600,
+            callback = function()
+                prune_rollup()
+            end,
+        })
+        -- Prime baseline; first tick may not have deltas. Also trim old points on start.
         rollup_tick()
+        prune_rollup()
     end
 end
-

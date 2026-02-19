@@ -28,9 +28,10 @@ end
 config = {
     get_setting = function(key)
         if key == "observability_enabled" then return true end
-        if key == "ai_metrics_on_demand" then return true end
+        if key == "ai_metrics_on_demand" then return false end
         if key == "ai_logs_retention_days" then return 7 end
-        if key == "ai_metrics_retention_days" then return 30 end
+        if key == "ai_metrics_retention_days" then return 14 end
+        if key == "ai_rollup_interval_sec" then return 60 end
         return nil
     end,
     upsert_ai_metrics_batch = function(_rows)
@@ -40,11 +41,12 @@ config = {
 
 ai_observability.configure()
 
-assert_true(ai_observability.state.metrics_on_demand == true, "expected on-demand enabled")
+assert_true(ai_observability.state.metrics_on_demand == false, "expected on-demand disabled")
+assert_true(ai_observability.state.metrics_retention_days == 14, "expected metrics retention preserved")
 assert_true(ai_observability.state.collection_enabled == true, "expected collection enabled")
 assert_true(created.base == 1, "expected base rollup timer")
-assert_true(created.highres == 1, "expected highres rollup timer")
+assert_true(created.highres == 1, "expected highres timer")
 assert_true(created.cleanup == 1, "expected cleanup timer")
 
-print("ai_observability_on_demand_config_unit: ok")
+print("ai_observability_rollup_config_unit: ok")
 astra.exit()

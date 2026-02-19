@@ -5587,10 +5587,14 @@ local function ai_logs(server, client, request)
         stream_id = stream_id,
         limit = limit,
     })
+    local collection_enabled = ai_observability and ai_observability.is_collection_enabled
+        and ai_observability.is_collection_enabled() or false
     json_response(server, client, 200, {
         since = since_ts,
         range = range,
         items = rows,
+        collection_enabled = collection_enabled,
+        read_only_mode = not collection_enabled,
     })
 end
 
@@ -5608,6 +5612,8 @@ local function ai_metrics(server, client, request)
     local scope_id = query.id or query.stream_id or ""
     local metric_key = query.metric or ""
     local limit = tonumber(query.limit) or 2000
+    local collection_enabled = ai_observability and ai_observability.is_collection_enabled
+        and ai_observability.is_collection_enabled() or false
     local on_demand = setting_bool("ai_metrics_on_demand", true)
     if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
         on_demand = true
@@ -5641,6 +5647,8 @@ local function ai_metrics(server, client, request)
             range = range,
             items = items,
             mode = result.mode or "on_demand",
+            collection_enabled = collection_enabled,
+            read_only_mode = not collection_enabled,
         })
         return
     end
@@ -5657,26 +5665,35 @@ local function ai_metrics(server, client, request)
         range = range,
         items = rows,
         mode = "rollup",
+        collection_enabled = collection_enabled,
+        read_only_mode = not collection_enabled,
     })
 end
 
-local function observability_enabled()
-    -- Keep in sync with web/app.js isViewEnabled('observability')
-    local on_demand = setting_bool("ai_metrics_on_demand", true)
-    local logs_days = setting_number("ai_logs_retention_days", 0)
-    local metrics_days = setting_number("ai_metrics_retention_days", 0)
-    if on_demand then
-        metrics_days = 0
+local function observability_collection_enabled()
+    return setting_bool("observability_enabled", false) == true
+end
+
+local function parse_csv_list(text)
+    local out = {}
+    local seen = {}
+    local raw = tostring(text or "")
+    if raw == "" then
+        return out
     end
-    return (logs_days or 0) > 0 or (metrics_days or 0) > 0
+    for token in raw:gmatch("([^,]+)") do
+        local item = tostring(token):gsub("^%s+", ""):gsub("%s+$", "")
+        if item ~= "" and not seen[item] then
+            seen[item] = true
+            out[#out + 1] = item
+        end
+    end
+    return out
 end
 
 local function system_metrics_snapshot(server, client, request)
     if not require_admin(request) then
         return error_response(server, client, 403, "forbidden")
-    end
-    if not observability_enabled() then
-        return error_response(server, client, 403, "observability disabled")
     end
     if not system_metrics or not system_metrics.snapshot then
         return error_response(server, client, 400, "system metrics unavailable")
@@ -5685,13 +5702,19 @@ local function system_metrics_snapshot(server, client, request)
     local snap = system_metrics.snapshot() or {}
     local now_ms = (snap.ts or os.time()) * 1000
     snap.ts_ms = now_ms
+    local collection_enabled = observability_collection_enabled()
 
     json_response(server, client, 200, {
         now = now_ms,
         snapshot = snap,
         flags = {
             enabled = true,
+            collection_enabled = collection_enabled,
+            read_only_mode = not collection_enabled,
             rollup = (system_metrics.state and system_metrics.state.rollup_enabled) == true,
+            rollup_interval_sec = system_metrics.state and system_metrics.state.rollup_interval_sec or nil,
+            retention_sec = system_metrics.state and system_metrics.state.retention_sec or nil,
+            retention_source = system_metrics.state and system_metrics.state.retention_source or nil,
         },
     })
 end
@@ -5699,9 +5722,6 @@ end
 local function system_metrics_timeseries(server, client, request)
     if not require_admin(request) then
         return error_response(server, client, 403, "forbidden")
-    end
-    if not observability_enabled() then
-        return error_response(server, client, 403, "observability disabled")
     end
     if not system_metrics or not system_metrics.get_timeseries then
         return error_response(server, client, 400, "system metrics unavailable")
@@ -5748,15 +5768,77 @@ local function system_metrics_timeseries(server, client, request)
     end
 
     local now_ms = os.time() * 1000
+    local collection_enabled = observability_collection_enabled()
     json_response(server, client, 200, {
         now = now_ms,
         timeseries = series,
         flags = {
             enabled = true,
+            collection_enabled = collection_enabled,
+            read_only_mode = not collection_enabled,
             rollup = result.rollup == true,
             rollup_enabled = (system_metrics.state and system_metrics.state.rollup_enabled) == true,
+            rollup_interval_sec = system_metrics.state and system_metrics.state.rollup_interval_sec or nil,
+            retention_sec = system_metrics.state and system_metrics.state.retention_sec or nil,
+            retention_source = system_metrics.state and system_metrics.state.retention_source or nil,
         },
     })
+end
+
+local function observability_stream_series(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ai_observability or not ai_observability.get_stream_series then
+        return error_response(server, client, 400, "observability stream series unavailable")
+    end
+    local query = request and request.query or {}
+    local stream_id = query.stream_id or query.id
+    if not stream_id or tostring(stream_id) == "" then
+        return error_response(server, client, 400, "stream_id required")
+    end
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local metrics = parse_csv_list(query.metrics or "")
+    local result, err = ai_observability.get_stream_series({
+        stream_id = tostring(stream_id),
+        range_sec = range,
+        resolution = query.resolution or "auto",
+        metrics = metrics,
+        max_points = tonumber(query.max_points) or 1200,
+    })
+    if not result then
+        return error_response(server, client, 400, err or "failed to load stream series")
+    end
+    json_response(server, client, 200, result)
+end
+
+local function observability_stream_events(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ai_observability or not ai_observability.get_stream_events then
+        return error_response(server, client, 400, "observability stream events unavailable")
+    end
+    local query = request and request.query or {}
+    local stream_id = query.stream_id or query.id
+    if not stream_id or tostring(stream_id) == "" then
+        return error_response(server, client, 400, "stream_id required")
+    end
+    local kinds = parse_csv_list(query.kinds or "")
+    if #kinds == 0 then
+        kinds = { "ffmpeg", "input_switch", "alerts" }
+    end
+    local range = parse_range_seconds(query.range, 24 * 3600)
+    local result, err = ai_observability.get_stream_events({
+        stream_id = tostring(stream_id),
+        range_sec = range,
+        kinds = kinds,
+        limit = tonumber(query.limit) or 300,
+    })
+    if not result then
+        return error_response(server, client, 400, err or "failed to load stream events")
+    end
+    json_response(server, client, 200, result)
 end
 
 local function ai_summary(server, client, request)
@@ -8299,6 +8381,12 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/observability/system/timeseries" and method == "GET" then
         return system_metrics_timeseries(server, client, request)
+    end
+    if path == "/api/v1/observability/stream-series" and method == "GET" then
+        return observability_stream_series(server, client, request)
+    end
+    if path == "/api/v1/observability/stream-events" and method == "GET" then
+        return observability_stream_events(server, client, request)
     end
     if path == "/api/v1/ai/summary" and method == "GET" then
         return ai_summary(server, client, request)

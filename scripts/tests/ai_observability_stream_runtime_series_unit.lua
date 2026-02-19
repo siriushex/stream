@@ -44,10 +44,18 @@ assert_true(by_key.pes_errors and #by_key.pes_errors > 1, "pes_errors should pro
 assert_true(by_key.on_air and #by_key.on_air > 1, "on_air should produce a series")
 
 config = {
+    get_setting = function(key)
+        if key == "observability_enabled" then
+            return true
+        end
+        return nil
+    end,
     list_ai_log_events = function(_)
         return {}
     end,
 }
+ai_observability.state.collection_enabled = true
+ai_observability.state.read_only_mode = false
 
 local result = ai_observability.get_on_demand_metrics(24 * 3600, 60, "stream", "s1")
 assert_true(result and type(result.items) == "table", "expected on-demand metrics")
