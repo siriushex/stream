@@ -24693,6 +24693,68 @@ function formatObservabilityTimeTick(tsMs, range) {
   return `${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 }
 
+function pickTimeTickStepMs(minX, maxX, range, desiredCount) {
+  const span = Math.max(1, Number(maxX) - Number(minX));
+  const target = Math.max(2, Math.min(12, Number(desiredCount) || 6));
+  if (range === '15m') return 5 * 60 * 1000;
+  if (range === '1h') return 10 * 60 * 1000;
+  if (range === '6h') return 60 * 60 * 1000;
+  if (range === '24h') return 4 * 60 * 60 * 1000;
+  if (range === '7d') return 24 * 60 * 60 * 1000;
+  if (range === '30d') return 5 * 24 * 60 * 60 * 1000;
+
+  const targetStep = span / Math.max(1, target - 1);
+  const candidates = [
+    60 * 1000,
+    2 * 60 * 1000,
+    5 * 60 * 1000,
+    10 * 60 * 1000,
+    15 * 60 * 1000,
+    30 * 60 * 1000,
+    60 * 60 * 1000,
+    2 * 60 * 60 * 1000,
+    3 * 60 * 60 * 1000,
+    6 * 60 * 60 * 1000,
+    12 * 60 * 60 * 1000,
+    24 * 60 * 60 * 1000,
+    2 * 24 * 60 * 60 * 1000,
+    5 * 24 * 60 * 60 * 1000,
+    7 * 24 * 60 * 60 * 1000,
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    if (targetStep <= candidates[i]) return candidates[i];
+  }
+  return candidates[candidates.length - 1];
+}
+
+function computeTimeTicks(minX, maxX, range, desiredCount) {
+  if (!Number.isFinite(minX) || !Number.isFinite(maxX) || maxX <= minX) {
+    return [];
+  }
+  const stepMs = Math.max(1, pickTimeTickStepMs(minX, maxX, range, desiredCount));
+  let start;
+  if (stepMs >= 24 * 60 * 60 * 1000) {
+    const date = new Date(minX);
+    date.setHours(0, 0, 0, 0);
+    start = date.getTime();
+    while (start < minX) {
+      start += stepMs;
+    }
+  } else {
+    start = Math.ceil(minX / stepMs) * stepMs;
+  }
+
+  const ticks = [];
+  for (let x = start; x <= maxX + 1; x += stepMs) {
+    ticks.push(x);
+    if (ticks.length > 16) break;
+  }
+  if (!ticks.length) {
+    ticks.push(minX, maxX);
+  }
+  return ticks;
+}
+
 function computeLinearTicks(min, max, count, opts) {
   if (!Number.isFinite(min) || !Number.isFinite(max)) return [];
   if (min === max) return [min];
@@ -24821,7 +24883,9 @@ function drawLineChart(canvas, series, opts) {
     ? computeLinearTicks(minY, maxY, options.yTickCount || 5, { integer: options.yInteger === true })
     : [];
   const xTicks = showAxes
-    ? computeLinearTicks(minX, maxX, options.xTickCount || 5)
+    ? (options.xTimeAxis === true
+      ? computeTimeTicks(minX, maxX, options.range || '24h', options.xTickCount || 5)
+      : computeLinearTicks(minX, maxX, options.xTickCount || 5))
     : [];
   const yFormatter = typeof options.yFormatter === 'function' ? options.yFormatter : formatCountAxisLabel;
   const xFormatter = typeof options.xFormatter === 'function'
@@ -25323,13 +25387,25 @@ function renderObservabilityCharts(items, scope) {
   const seriesMap = groupMetrics(items || []);
   const maxPoints = 240;
   const range = state.observabilityLastRange || (elements.observabilityRange && elements.observabilityRange.value) || '24h';
+  const rangeMs = parseObservabilityRangeMs(range);
   const nowMs = Date.now();
-  const fromMs = nowMs - parseObservabilityRangeMs(range);
+  let dataMaxMs = 0;
+  Object.keys(seriesMap).forEach((key) => {
+    const rows = Array.isArray(seriesMap[key]) ? seriesMap[key] : [];
+    if (!rows.length) return;
+    const last = rows[rows.length - 1];
+    const ts = Number(last && last.x);
+    if (Number.isFinite(ts) && ts > dataMaxMs) {
+      dataMaxMs = ts;
+    }
+  });
+  const domainToMs = dataMaxMs > 0 ? dataMaxMs : nowMs;
+  const fromMs = domainToMs - rangeMs;
   const accent = getThemeColor('--accent', '#5aaae5');
   const warning = getThemeColor('--warning', '#f0b54d');
   const danger = getThemeColor('--danger', '#e06666');
   const success = getThemeColor('--success', '#5bc377');
-  const xDomain = [fromMs, nowMs];
+  const xDomain = [fromMs, domainToMs];
 
   if (window && window.location && window.location.search.includes('obs_debug=1')) {
     const metrics = Object.keys(seriesMap);
@@ -25376,27 +25452,27 @@ function renderObservabilityCharts(items, scope) {
     const bitrateSeries = [
       {
         color: accent,
-        points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, nowMs, maxPoints),
+        points: prepareObservabilityPoints(seriesMap.bitrate_kbps || [], fromMs, domainToMs, maxPoints),
       },
     ];
     const streamsSeries = [
       {
         color: warning,
-        points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, nowMs, maxPoints),
+        points: prepareObservabilityPoints(seriesMap.cc_errors || [], fromMs, domainToMs, maxPoints),
       },
       {
         color: danger,
-        points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, nowMs, maxPoints),
+        points: prepareObservabilityPoints(seriesMap.pes_errors || [], fromMs, domainToMs, maxPoints),
       },
     ];
     const switchesSeries = [
       {
         color: warning,
-        points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints),
+        points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, domainToMs, maxPoints),
       },
       {
         color: danger,
-        points: prepareObservabilityPoints(seriesMap.ffmpeg_restarts || [], fromMs, nowMs, maxPoints),
+        points: prepareObservabilityPoints(seriesMap.ffmpeg_restarts || [], fromMs, domainToMs, maxPoints),
       },
     ];
 
@@ -25407,6 +25483,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatBitrateAxisLabel,
         yTickCount: 5,
@@ -25421,6 +25498,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatCountAxisLabel,
         yTickCount: 5,
@@ -25437,6 +25515,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatCountAxisLabel,
         yTickCount: 5,
@@ -25500,7 +25579,7 @@ function renderObservabilityCharts(items, scope) {
       if (!Number.isFinite(mbitValue)) return [];
       return [
         { x: fromMs, y: mbitValue },
-        { x: nowMs, y: mbitValue },
+        { x: domainToMs, y: mbitValue },
       ];
     };
     const rxMetricPoints = toMbitPointsFromKbps(seriesMap.total_rx_kbps || []);
@@ -25516,7 +25595,7 @@ function renderObservabilityCharts(items, scope) {
         points: prepareObservabilityPoints(
           rxMetricPoints.length ? rxMetricPoints : (rxSystemPoints.length ? rxSystemPoints : rxFlat),
           fromMs,
-          nowMs,
+          domainToMs,
           maxPoints,
         ),
       },
@@ -25525,18 +25604,18 @@ function renderObservabilityCharts(items, scope) {
         points: prepareObservabilityPoints(
           txMetricPoints.length ? txMetricPoints : (txSystemPoints.length ? txSystemPoints : txFlat),
           fromMs,
-          nowMs,
+          domainToMs,
           maxPoints,
         ),
       },
     ];
     const streamsSeries = [
-      { color: success, points: prepareObservabilityPoints(seriesMap.streams_on_air || [], fromMs, nowMs, maxPoints) },
-      { color: danger, points: prepareObservabilityPoints(seriesMap.streams_down || [], fromMs, nowMs, maxPoints) },
+      { color: success, points: prepareObservabilityPoints(seriesMap.streams_on_air || [], fromMs, domainToMs, maxPoints) },
+      { color: danger, points: prepareObservabilityPoints(seriesMap.streams_down || [], fromMs, domainToMs, maxPoints) },
     ];
     const switchesSeries = [
-      { color: warning, points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, nowMs, maxPoints) },
-      { color: danger, points: prepareObservabilityPoints(seriesMap.alerts_error || [], fromMs, nowMs, maxPoints) },
+      { color: warning, points: prepareObservabilityPoints(seriesMap.input_switch || [], fromMs, domainToMs, maxPoints) },
+      { color: danger, points: prepareObservabilityPoints(seriesMap.alerts_error || [], fromMs, domainToMs, maxPoints) },
     ];
 
     if (drawIfData(
@@ -25546,6 +25625,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatMbitAxisLabel,
         yTickCount: 5,
@@ -25560,6 +25640,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatCountAxisLabel,
         yTickCount: 5,
@@ -25577,6 +25658,7 @@ function renderObservabilityCharts(items, scope) {
       {
         showAxes: true,
         xDomain,
+        xTimeAxis: true,
         range,
         yFormatter: formatCountAxisLabel,
         yTickCount: 5,
