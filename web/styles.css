@@ -431,6 +431,18 @@ select {
   cursor: pointer;
 }
 
+.stream-table-sort-cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.stream-table-sort-btn.mini {
+  font-size: 11px;
+  opacity: 0.9;
+}
+
 .stream-table-sort-btn::after {
   content: "<>";
   color: var(--muted);

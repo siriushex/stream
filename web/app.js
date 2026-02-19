@@ -16,7 +16,7 @@ const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
-const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'transcode', 'dvr', 'clients']);
+const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'input_bitrate', 'transcode', 'dvr', 'clients']);
 const SIDEBAR_HELP_KEYS = {
   hlssplitter: 'sidebarHelp.hlssplitter',
   buffer: 'sidebarHelp.buffer',
@@ -987,6 +987,7 @@ const elements = {
   settingsActionCancel: $('#settings-action-cancel'),
   settingsActionReset: $('#settings-action-reset'),
   settingsActionStatus: $('#settings-action-status'),
+  settingsShowAdapters: $('#settings-show-adapters'),
   settingsShowSplitter: $('#settings-show-splitter'),
   settingsShowBuffer: $('#settings-show-buffer'),
   settingsShowAccess: $('#settings-show-access'),
@@ -2262,6 +2263,13 @@ const SETTINGS_GENERAL_SECTIONS = [
         level: 'basic',
         collapsible: false,
         fields: [
+          {
+            id: 'settings-show-adapters',
+            label: 'Показывать Adapters (принудительно)',
+            type: 'switch',
+            key: 'ui_adapters_force_show',
+            level: 'basic',
+          },
           {
             id: 'settings-show-splitter',
             label: 'Показывать HLSSplitter',
@@ -4602,6 +4610,7 @@ function bindGeneralElements() {
     settingsActionCancel: 'settings-action-cancel',
     settingsActionReset: 'settings-action-reset',
     settingsActionStatus: 'settings-action-status',
+    settingsShowAdapters: 'settings-show-adapters',
     settingsShowSplitter: 'settings-show-splitter',
     settingsShowBuffer: 'settings-show-buffer',
     settingsShowAccess: 'settings-show-access',
@@ -5439,28 +5448,36 @@ function setSettingsSection(section) {
 }
 
 function applyFeatureVisibility() {
+  const showAdapters = isViewEnabled('adapters');
   const showSplitter = isViewEnabled('splitters');
   const showBuffer = isViewEnabled('buffers');
   const showAccess = isViewEnabled('access');
   const helpEnabled = isViewEnabled('help');
   const showObservability = isViewEnabled('observability');
 
+  const adaptersNav = document.querySelector('.nav-link[data-view="adapters"]');
   const splitterNav = document.querySelector('.nav-link[data-view="splitters"]');
   const bufferNav = document.querySelector('.nav-link[data-view="buffers"]');
   const accessNav = document.querySelector('.nav-link[data-view="access"]');
   const helpNav = document.querySelector('.nav-link[data-view="help"]');
   const observabilityNav = document.querySelector('.nav-link[data-view="observability"]');
+  if (adaptersNav) adaptersNav.hidden = !showAdapters;
   if (splitterNav) splitterNav.hidden = !showSplitter;
   if (bufferNav) bufferNav.hidden = !showBuffer;
   if (accessNav) accessNav.hidden = !showAccess;
   if (helpNav) helpNav.hidden = !helpEnabled;
   if (observabilityNav) observabilityNav.hidden = !showObservability;
+  if (elements.btnNewAdapter) {
+    elements.btnNewAdapter.hidden = !showAdapters;
+  }
 
+  const adaptersView = document.querySelector('#view-adapters');
   const splitterView = document.querySelector('#view-splitters');
   const bufferView = document.querySelector('#view-buffers');
   const accessView = document.querySelector('#view-access');
   const helpView = document.querySelector('#view-help');
   const observabilityView = document.querySelector('#view-observability');
+  if (adaptersView) adaptersView.hidden = !showAdapters;
   if (splitterView) splitterView.hidden = !showSplitter;
   if (bufferView) bufferView.hidden = !showBuffer;
   if (accessView) accessView.hidden = !showAccess;
@@ -5478,6 +5495,8 @@ function applyFeatureVisibility() {
   if (activeView) {
     const activeId = activeView.id || '';
     if (
+      (!showAdapters && activeId === 'view-adapters')
+      ||
       (!showSplitter && activeId === 'view-splitters')
       || (!showBuffer && activeId === 'view-buffers')
       || (!showAccess && activeId === 'view-access')
@@ -5489,7 +5508,15 @@ function applyFeatureVisibility() {
   }
 }
 
+function hasDvbAdaptersAvailable() {
+  return Array.isArray(state.dvbAdapters) && state.dvbAdapters.length > 0;
+}
+
 function isViewEnabled(name) {
+  if (name === 'adapters') {
+    if (getSettingBool('ui_adapters_force_show', false)) return true;
+    return hasDvbAdaptersAvailable();
+  }
   if (name === 'splitters') return getSettingBool('ui_splitter_enabled', false);
   if (name === 'buffers') return getSettingBool('ui_buffer_enabled', false);
   if (name === 'access') return getSettingBool('ui_access_enabled', true);
@@ -18223,6 +18250,7 @@ async function loadDvbAdapters() {
   }
   renderAdapterList();
   renderDvbDetectedSelect();
+  applyFeatureVisibility();
   return { ok, error };
 }
 
@@ -23190,7 +23218,7 @@ function setStreamTableSort(key) {
     state.streamTableSortDir = state.streamTableSortDir === 'desc' ? 'asc' : 'desc';
   } else {
     state.streamTableSortKey = nextKey;
-    state.streamTableSortDir = (nextKey === 'clients' || nextKey === 'transcode' || nextKey === 'dvr') ? 'desc' : 'asc';
+    state.streamTableSortDir = (nextKey === 'clients' || nextKey === 'input_bitrate' || nextKey === 'transcode' || nextKey === 'dvr') ? 'desc' : 'asc';
   }
   state.streamTablePage = 1;
   updateStreamTableSortUi();
@@ -23208,6 +23236,11 @@ function compareStreamTableModels(left, right) {
       const labelDiff = compareTextNatural(left.inputLabel, right.inputLabel);
       if (labelDiff !== 0) return labelDiff;
       return compareTextNatural(left.inputUrl, right.inputUrl);
+    }
+    case 'input_bitrate': {
+      const rateDiff = compareMaybeNumber(left.inputBitrateKbps, right.inputBitrateKbps);
+      if (rateDiff !== 0) return rateDiff;
+      return compareTextNatural(left.name, right.name);
     }
     case 'transcode': {
       const rankDiff = compareMaybeNumber(left.transcodeSortRank, right.transcodeSortRank);
@@ -23558,6 +23591,7 @@ function buildStreamModel(stream) {
       inputBitrateValue = statsIn;
     }
   }
+  const inputBitrateKbps = Number.isFinite(Number(inputBitrateValue)) ? Number(inputBitrateValue) : null;
   const inputBitrate = formatMaybeBitrate(inputBitrateValue);
   const uptime = resolveModelInputUptime(stats, activeInput);
   const inputUptime = uptime.text;
@@ -23590,6 +23624,7 @@ function buildStreamModel(stream) {
     inputUrl,
     inputLabel,
     activeInputId,
+    inputBitrateKbps,
     inputBitrate,
     inputUptime,
     inputUptimeBaseSec: uptime.baseSec,
@@ -27211,6 +27246,9 @@ function applySettingsToUI() {
   if (elements.settingsShowSplitter) {
     elements.settingsShowSplitter.checked = getSettingBool('ui_splitter_enabled', false);
   }
+  if (elements.settingsShowAdapters) {
+    elements.settingsShowAdapters.checked = getSettingBool('ui_adapters_force_show', false);
+  }
   if (elements.settingsShowBuffer) {
     elements.settingsShowBuffer.checked = getSettingBool('ui_buffer_enabled', false);
   }
@@ -28600,6 +28638,7 @@ function collectGeneralSettings() {
     throw new Error('Watchdog min uptime must be >= 0');
   }
   const payload = {
+    ui_adapters_force_show: elements.settingsShowAdapters ? elements.settingsShowAdapters.checked : false,
     ui_splitter_enabled: elements.settingsShowSplitter ? elements.settingsShowSplitter.checked : false,
     ui_buffer_enabled: elements.settingsShowBuffer ? elements.settingsShowBuffer.checked : false,
     ui_access_enabled: elements.settingsShowAccess ? elements.settingsShowAccess.checked : true,
@@ -32776,6 +32815,10 @@ function bindEvents() {
   });
 
   elements.btnNewAdapter.addEventListener('click', () => {
+    if (!isViewEnabled('adapters')) {
+      setStatus('Adapters hidden: no DVB adapters detected. Enable "Показывать Adapters (принудительно)" in Settings.');
+      return;
+    }
     setView('adapters');
     openAdapterEditor({ id: '', enabled: true, config: {} }, true);
   });
