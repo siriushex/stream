@@ -25450,13 +25450,23 @@ function renderObservabilityCharts(items, scope) {
   });
   let domainToMs;
   let fromMs;
-  if (Number.isFinite(hintFromMs) && Number.isFinite(hintToMs) && hintToMs > hintFromMs) {
-    // Prefer backend-provided window to avoid client clock skew issues.
+  const shortRange = range === '15m' || range === '1h' || range === '6h';
+  const hintSpanMs = Number(hintToMs) - Number(hintFromMs);
+  const hintLooksValid = Number.isFinite(hintFromMs)
+    && Number.isFinite(hintToMs)
+    && hintToMs > hintFromMs
+    && hintSpanMs >= Math.max(1000, rangeMs * 0.5)
+    && hintSpanMs <= Math.max(rangeMs * 1.5, rangeMs + 10 * 60 * 1000);
+  if (shortRange) {
+    // For short windows always render a strict sliding range to prevent stale domains.
+    domainToMs = Math.max(nowMs, dataMaxMs || 0);
+    fromMs = domainToMs - rangeMs;
+  } else if (hintLooksValid) {
+    // Prefer backend-provided window for long ranges.
     fromMs = hintFromMs;
     domainToMs = hintToMs;
   } else {
-    // Keep short-range charts anchored to "now" so selected windows (15m/1h/6h) match operator expectation.
-    // Use data max only when it is noticeably ahead of local wall clock (server/client skew).
+    // Fallback to a deterministic sliding window.
     domainToMs = (dataMaxMs > (nowMs + 120000)) ? dataMaxMs : nowMs;
     fromMs = domainToMs - rangeMs;
   }
