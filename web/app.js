@@ -24685,10 +24685,17 @@ function parseObservabilityRangeMs(range) {
   return 24 * 3600 * 1000;
 }
 
-function formatObservabilityTimeTick(tsMs, range) {
+function formatObservabilityTimeTick(tsMs, range, spanMs) {
   const date = new Date(Number(tsMs) || 0);
   if (Number.isNaN(date.getTime())) return '-';
   const two = (v) => String(v).padStart(2, '0');
+  const span = Number(spanMs);
+  if (Number.isFinite(span) && span <= (24 * 60 * 60 * 1000)) {
+    return `${two(date.getHours())}:${two(date.getMinutes())}`;
+  }
+  if (Number.isFinite(span) && span <= (7 * 24 * 60 * 60 * 1000)) {
+    return `${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+  }
   if (range === '15m' || range === '1h' || range === '6h' || range === '24h') {
     return `${two(date.getHours())}:${two(date.getMinutes())}`;
   }
@@ -24918,9 +24925,10 @@ function drawLineChart(canvas, series, opts) {
       : computeLinearTicks(minX, maxX, options.xTickCount || 5))
     : [];
   const yFormatter = typeof options.yFormatter === 'function' ? options.yFormatter : formatCountAxisLabel;
+  const xSpanMs = Math.max(1, Number(maxX) - Number(minX));
   const xFormatter = typeof options.xFormatter === 'function'
     ? options.xFormatter
-    : (value) => formatObservabilityTimeTick(value, options.range || '24h');
+    : (value) => formatObservabilityTimeTick(value, options.range || '24h', xSpanMs);
   let xLabels = [];
   if (showAxes) {
     xLabels = xTicks.map((tick) => xFormatter(tick));
@@ -26079,7 +26087,8 @@ function toTimeseriesPoints(pairs, transform) {
   const out = [];
   pairs.forEach((row) => {
     if (!Array.isArray(row) || row.length < 2) return;
-    const x = Number(row[0]);
+    const tsRaw = Number(row[0]);
+    const x = tsRaw > 1e12 ? tsRaw : tsRaw * 1000;
     const raw = Number(row[1]);
     if (!Number.isFinite(x) || !Number.isFinite(raw)) return;
     const y = transform ? transform(raw) : raw;
@@ -26133,17 +26142,24 @@ async function loadSystemMetricsTimeseries(range) {
     state.systemMetricsTimeseries = null;
     state.systemMetricsTimeseriesLastFetchMs = 0;
     state.systemMetricsTimeseriesInFlight = false;
+    state.systemMetricsTimeseriesPendingRange = '';
+    state.systemMetricsTimeseriesRequestedRange = '';
     renderSystemMetrics();
     return;
   }
   if (state.currentView !== 'observability') {
     return;
   }
-  if (state.systemMetricsTimeseriesInFlight) return;
+  const requestedRange = range || state.observabilityLastRange || '24h';
+  if (state.systemMetricsTimeseriesInFlight) {
+    state.systemMetricsTimeseriesPendingRange = requestedRange;
+    return;
+  }
   state.systemMetricsTimeseriesInFlight = true;
+  state.systemMetricsTimeseriesRequestedRange = requestedRange;
   try {
     const url = new URL('/api/v1/observability/system/timeseries', window.location.origin);
-    if (range) url.searchParams.set('range', range);
+    if (requestedRange) url.searchParams.set('range', requestedRange);
     const payload = await apiJson(url.toString());
     state.systemMetricsTimeseries = payload && payload.timeseries ? payload.timeseries : null;
     state.systemMetricsTimeseriesLastFetchMs = Date.now();
@@ -26152,11 +26168,25 @@ async function loadSystemMetricsTimeseries(range) {
     renderSystemMetrics();
   } finally {
     state.systemMetricsTimeseriesInFlight = false;
+    const pendingRange = state.systemMetricsTimeseriesPendingRange || '';
+    state.systemMetricsTimeseriesPendingRange = '';
+    if (
+      pendingRange
+      && pendingRange !== requestedRange
+      && state.currentView === 'observability'
+      && isViewEnabled('observability')
+    ) {
+      loadSystemMetricsTimeseries(pendingRange);
+    }
   }
 }
 
 
 async function loadObservability(showStatus) {
+  const requestId = Number(state.observabilityRequestSeq || 0) + 1;
+  state.observabilityRequestSeq = requestId;
+  state.observabilityActiveRequest = requestId;
+  const isStale = () => state.observabilityActiveRequest !== requestId;
   if (!elements.observabilityRange) return { ok: true };
   const collectionEnabledSetting = getSettingBool('observability_enabled', false);
   const onDemand = getSettingBool('ai_metrics_on_demand', true);
@@ -26191,7 +26221,9 @@ async function loadObservability(showStatus) {
   state.observabilityDomainFromMs = 0;
   state.observabilityDomainToMs = 0;
   await loadSystemMetricsSnapshot(true);
+  if (isStale()) return { ok: true, stale: true };
   await loadSystemMetricsTimeseries(range);
+  if (isStale()) return { ok: true, stale: true };
   if (scope === 'stream' && !streamId) {
     state.observabilityLastItems = [];
     state.observabilityLastScope = 'stream';
@@ -26230,6 +26262,7 @@ async function loadObservability(showStatus) {
       );
       seriesUrl.searchParams.set('max_points', '1200');
       const seriesPayload = await apiJson(seriesUrl.toString());
+      if (isStale()) return { ok: true, stale: true };
       const series = (seriesPayload && seriesPayload.series) || {};
       const mapSeries = (metricKey, outKey) => {
         const rows = Array.isArray(series[metricKey]) ? series[metricKey] : [];
@@ -26263,6 +26296,7 @@ async function loadObservability(showStatus) {
       eventsUrl.searchParams.set('kinds', 'ffmpeg,input_switch,alerts');
       eventsUrl.searchParams.set('limit', '20');
       const eventsPayload = await apiJson(eventsUrl.toString());
+      if (isStale()) return { ok: true, stale: true };
       const eventRows = eventsPayload && Array.isArray(eventsPayload.items) ? eventsPayload.items : [];
       logItems = eventRows.map((row) => ({
         ts: row.ts,
@@ -26275,6 +26309,7 @@ async function loadObservability(showStatus) {
       metricsUrl.searchParams.set('range', range);
       metricsUrl.searchParams.set('scope', scope);
       const metrics = await apiJson(metricsUrl.toString());
+      if (isStale()) return { ok: true, stale: true };
       const rows = metrics && metrics.items ? metrics.items : [];
       rows.forEach((row) => items.push(row));
       collectionEnabled = metrics && metrics.collection_enabled !== undefined
@@ -26296,6 +26331,7 @@ async function loadObservability(showStatus) {
       logsUrl.searchParams.set('level', 'ERROR');
       logsUrl.searchParams.set('limit', '20');
       const logs = await apiJson(logsUrl.toString());
+      if (isStale()) return { ok: true, stale: true };
       logItems = logs && logs.items ? logs.items : [];
     }
 
@@ -26339,6 +26375,7 @@ async function loadObservability(showStatus) {
       };
     }
 
+    if (isStale()) return { ok: true, stale: true };
     state.observabilityLastItems = items;
     state.observabilityLastScope = scope;
     state.observabilityLastStreamId = streamId || '';
@@ -26354,6 +26391,9 @@ async function loadObservability(showStatus) {
     renderObservabilityLogs(logItems);
     return { ok: true };
   } catch (err) {
+    if (isStale()) {
+      return { ok: true, stale: true };
+    }
     const message = formatNetworkError(err) || 'Failed to load observability';
     setStatus(message);
     return { ok: false, error: err };
