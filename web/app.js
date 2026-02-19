@@ -14,7 +14,6 @@ const AUTH_TOKEN_KEY_LEGACY = 'astra_token';
 const SHOW_DISABLED_KEY = 'stream.showDisabledStreams';
 const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
-const HELP_GUIDE_STATE_KEY = 'helpGuide.expanded';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const SIDEBAR_HELP_KEYS = {
@@ -128,143 +127,16 @@ const SIDEBAR_HELP_TEXTS = {
 };
 
 const HELP_GUIDE_SHORT = {
-  intro: 'Stream Hub — это панель для запуска и контроля ТВ‑потоков. Вы задаёте вход, задаёте выход и сразу видите, что происходит с каналом.',
-  goals: [
-    'Собирать поток из разных источников.',
-    'Держать резервный вход и быстро переключаться при проблеме.',
-    'Отдавать поток в HLS, HTTP‑TS, UDP/RTP и другие форматы.',
-    'Следить за состоянием, ошибками и клиентами.',
+  lines: [
+    'Help в интерфейсе показывает только краткую ориентацию по работе Stream Hub.',
+    'Полная документация, сценарии настройки и диагностика находятся в отдельном Manual.',
   ],
-  menu: [
-    'Dashboard — список каналов, быстрые действия, Player и Analyze.',
-    'Adapters — настройка DVB‑адаптеров.',
-    'HLSSplitter — отдельные splitter‑инстансы, links и allow‑правила.',
-    'Buffer — буфер‑ресурсы, входы, smart start и allow‑правила.',
-    'Sessions — активные клиенты по потокам.',
-    'Access — журнал доступа и событий.',
-    'Settings — системные параметры сервера и UI.',
-    'Log — живой лог процесса.',
-    'Observability — метрики сервера и потоков.',
-    'Help — эта справка и StreamAI Chat.',
-  ],
-  quickStart: [
-    'Нажмите New Stream.',
-    'В General добавьте Input (NEW INPUT).',
-    'Добавьте Output (NEW OUTPUT).',
-    'Сохраните и откройте Play или Analyze.',
-    'Если нужен запасной источник — включите Backup.',
-  ],
-  important: [
-    'ONLINE значит поток идёт. OFFLINE значит данных нет.',
-    'Клиентов смотрите во вкладке Sessions.',
-    'Ошибки смотрите в Log и Observability.',
-    'Transcoding даёт новые профили качества, но грузит CPU/GPU.',
-    'Часть выходов работает только при включённом транскоде.',
+  bullets: [
+    'Создайте канал, добавьте Input и Output, затем сохраните изменения.',
+    'Проверяйте состояние канала через Analyze, Log и Observability.',
+    'Для пошаговых инструкций и best practices используйте внешний Manual.',
   ],
 };
-
-const HELP_GUIDE_EXTENDED_SECTIONS = [
-  {
-    title: 'Что есть в Stream Hub',
-    lines: [
-      'Stream Hub управляет входами, выходами и логикой доставки ТВ‑потока.',
-      'Вы настраиваете каналы через Edit stream. Каждый канал можно включать, выключать и анализировать.',
-      'Есть режимы списка: карточки, компактный список и таблица.',
-    ],
-  },
-  {
-    title: 'Основные разделы',
-    bullets: [
-      'Dashboard: общий экран каналов, статус ON/OFF, битрейт, быстрый Play/Analyze.',
-      'Adapters: DVB‑карты, LNB, частоты, параметры приёма.',
-      'HLSSplitter: отдельные инстансы, правила доступа, links и runtime‑статус.',
-      'Buffer: HTTP‑TS буфер‑ресурсы, backup, buffering, smart start, diagnostics.',
-      'Sessions: кто сейчас смотрит поток, IP, URL, время.',
-      'Access: лента авторизаций и событий доступа.',
-      'Settings: пользователи, HLS/HTTP Play, Public URLs, Buffer, Auth, Softcam/CAS, импорт/история.',
-      'Log: логи runtime и ошибки модулей.',
-      'Observability: графики нагрузки сервера и метрики потоков.',
-      'Help: краткая и полная справка + StreamAI Chat.',
-    ],
-  },
-  {
-    title: 'Что можно сделать со Stream',
-    bullets: [
-      'General: включение, имя/ID, INPUT LIST, OUTPUT LIST.',
-      'Groups: привязка к группам.',
-      'Service: service_id, provider, service name и сопутствующие поля.',
-      'Remap: карта PID и фильтры программ.',
-      'Backup: политика failover между входами.',
-      'Transcode: профили качества, engine (CPU/NVIDIA), publish.',
-      'EPG: экспорт EPG для канала.',
-      'Advanced: таймауты, probe, расширенные параметры.',
-    ],
-  },
-  {
-    title: 'Входы (Input)',
-    bullets: [
-      'Поддерживаются шаблоны: UDP, RTP, HTTP‑TS, HLS, SRT, RTSP, File.',
-      'В Input settings есть Preset, Type, Raw URL и Advanced параметры.',
-      'Дополнительные hash‑опции (например #pnr, #cam, #cc_limit) сохраняются в строке входа.',
-      'Для нестабильных источников используйте Backup и сетевые профили устойчивости.',
-    ],
-  },
-  {
-    title: 'Выходы (Output)',
-    bullets: [
-      'Единый OUTPUT LIST работает для transcode и non‑transcode.',
-      'Поддерживаются preset‑типы: HLS, DASH, HTTP‑TS, Embed, UDP, RTP, SRT, RTMP, RTSP, File, Custom.',
-      'URL можно генерировать автоматически или задать вручную.',
-      'Для ladder‑режима используются Variants (профили качества).',
-    ],
-  },
-  {
-    title: 'HLSSplitter и Buffer',
-    bullets: [
-      'HLSSplitter: создаёт отдельный сервис с собственным портом, links и allow‑правилами.',
-      'Buffer: публикует стабильный HTTP‑TS URL, держит backup‑входы и буферизацию.',
-      'Оба модуля имеют статус, uptime и быстрые действия Start/Stop/Restart/Reload.',
-      'Подсказки по первичной настройке доступны в левой колонке этих вкладок.',
-    ],
-  },
-  {
-    title: 'Transcoding',
-    bullets: [
-      'Включается тумблером Enable transcoding.',
-      'Можно выбрать готовый preset и применить профили.',
-      'Один профиль = single mode, несколько профилей = ladder mode.',
-      'Статус, логи и команды ffmpeg видны в Transcode monitor.',
-    ],
-  },
-  {
-    title: 'Мониторинг и диагностика',
-    bullets: [
-      'Analyze показывает детали входа и ошибок транспорта.',
-      'Log даёт живой поток событий сервера.',
-      'Observability показывает CPU, память, диск, сеть и метрики каналов по диапазону.',
-      'Sessions показывает реальных клиентов по stream_id.',
-    ],
-  },
-  {
-    title: 'Быстрый старт',
-    bullets: [
-      '1) Создайте Stream.',
-      '2) Добавьте хотя бы один Input.',
-      '3) Добавьте Output для публикации.',
-      '4) Сохраните и проверьте статус ONLINE.',
-      '5) При проблеме откройте Analyze, затем Log.',
-    ],
-  },
-  {
-    title: 'Важные ограничения',
-    bullets: [
-      'Транскод и много профилей увеличивают нагрузку.',
-      'Если выход не запущен, проверяйте сначала Input и Backup.',
-      'HTTP авторизация и Access‑правила могут блокировать клиентов.',
-      'При смене важных системных настроек иногда нужен reload.',
-    ],
-  },
-];
 
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
@@ -1109,8 +981,6 @@ const elements = {
   aiChatAnalyzeUrl: $('#ai-chat-analyze-url'),
   aiChatFemonUrl: $('#ai-chat-femon-url'),
   helpGuideShort: $('#help-guide-short'),
-  helpGuideLong: $('#help-guide-long'),
-  helpGuideToggle: $('#help-guide-toggle'),
   helpAiDetails: $('#help-ai-details'),
   helpAiDisabled: $('#help-ai-disabled'),
   settingsGeneralRoot: $('#settings-general-root'),
@@ -18612,15 +18482,6 @@ function renderSidebarHelpCard(kind, mount, hasItems) {
   applySidebarHelpOpenState(card, shouldOpen);
 }
 
-function getHelpGuideExpandedState() {
-  const raw = localStorage.getItem(HELP_GUIDE_STATE_KEY);
-  return raw === '1' || raw === 'true';
-}
-
-function setHelpGuideExpandedState(expanded) {
-  localStorage.setItem(HELP_GUIDE_STATE_KEY, expanded ? '1' : '0');
-}
-
 function clearNode(node) {
   if (!node) return;
   while (node.firstChild) node.removeChild(node.firstChild);
@@ -18644,16 +18505,6 @@ function buildHelpGuideSection(title, lines, bullets) {
   return section;
 }
 
-function setHelpGuideExpanded(expanded) {
-  if (elements.helpGuideLong) {
-    elements.helpGuideLong.hidden = !expanded;
-  }
-  if (elements.helpGuideToggle) {
-    elements.helpGuideToggle.textContent = expanded ? 'Скрыть полную справку' : 'Показать полную справку';
-    elements.helpGuideToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-  }
-}
-
 function updateHelpAiAvailability() {
   const aiEnabled = getSettingBool('ai_enabled', false);
   if (elements.aiChat) {
@@ -18671,37 +18522,12 @@ function updateHelpAiAvailability() {
 
 function renderHelpGuide() {
   if (state.helpGuideRendered) return;
-  if (!elements.helpGuideShort || !elements.helpGuideLong) return;
+  if (!elements.helpGuideShort) return;
 
+  // Cleanup legacy UI state from the old expandable Help guide.
+  localStorage.removeItem('helpGuide.expanded');
   clearNode(elements.helpGuideShort);
-  clearNode(elements.helpGuideLong);
-
-  elements.helpGuideShort.appendChild(
-    buildHelpGuideSection('Коротко', [HELP_GUIDE_SHORT.intro], HELP_GUIDE_SHORT.goals)
-  );
-  elements.helpGuideShort.appendChild(
-    buildHelpGuideSection('Разделы меню', [], HELP_GUIDE_SHORT.menu)
-  );
-  elements.helpGuideShort.appendChild(
-    buildHelpGuideSection('Быстрый старт', [], HELP_GUIDE_SHORT.quickStart)
-  );
-  elements.helpGuideShort.appendChild(
-    buildHelpGuideSection('Важно', [], HELP_GUIDE_SHORT.important)
-  );
-
-  HELP_GUIDE_EXTENDED_SECTIONS.forEach((section) => {
-    elements.helpGuideLong.appendChild(buildHelpGuideSection(section.title, section.lines || [], section.bullets || []));
-  });
-
-  if (elements.helpGuideToggle) {
-    elements.helpGuideToggle.addEventListener('click', () => {
-      const next = elements.helpGuideLong ? elements.helpGuideLong.hidden : true;
-      setHelpGuideExpanded(next);
-      setHelpGuideExpandedState(next);
-    });
-  }
-
-  setHelpGuideExpanded(getHelpGuideExpandedState());
+  elements.helpGuideShort.appendChild(buildHelpGuideSection('Коротко', HELP_GUIDE_SHORT.lines, HELP_GUIDE_SHORT.bullets));
   state.helpGuideRendered = true;
 }
 

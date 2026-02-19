@@ -5313,32 +5313,30 @@ button.stream-audio-fix-toggle:disabled {
   line-height: 1.45;
 }
 
-.help-guide-short p,
-.help-guide-long p {
+.help-guide-short p {
   margin: 0 0 8px;
 }
 
-.help-guide-short ul,
-.help-guide-long ul {
+.help-guide-short ul {
   margin: 0 0 10px;
   padding-left: 18px;
 }
 
-.help-guide-actions {
+.help-guide-manual-wrap {
   margin-top: 10px;
 }
 
-.help-guide-long {
-  margin-top: 10px;
-  border-top: 1px dashed var(--border);
-  padding-top: 10px;
-  font-size: 13px;
-  line-height: 1.4;
+.help-manual-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  border-color: var(--accent);
 }
 
-.help-guide-long h4 {
-  margin: 0 0 8px;
-  font-size: 14px;
+.help-manual-link:hover {
+  border-color: var(--accent);
+  color: var(--text);
 }
 
 .help-guide-footer {

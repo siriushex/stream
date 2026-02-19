@@ -1577,17 +1577,23 @@
         <div class="panel">
           <div class="panel-title">Help</div>
           <div class="panel-body">
-	            <div class="help-guide-card" id="help-guide-card">
-	              <div class="help-guide-title">Что такое Stream Hub</div>
+            <div class="help-guide-card" id="help-guide-card">
+              <div class="help-guide-title">Справка Stream Hub</div>
               <div class="help-guide-short" id="help-guide-short"></div>
-              <div class="help-guide-actions">
-                <button class="btn ghost" type="button" id="help-guide-toggle">Показать полную справку</button>
+              <div class="help-guide-manual-wrap">
+                <a
+                  class="btn help-manual-link"
+                  href="https://stream.centv.ru/manual/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Открыть полный Manual
+                </a>
               </div>
-              <div class="help-guide-long" id="help-guide-long" hidden></div>
             </div>
 
-	            <details class="help-ai-details" id="help-ai-details">
-	              <summary>StreamAI Chat (опционально)</summary>
+            <details class="help-ai-details" id="help-ai-details">
+              <summary>StreamAI Chat (опционально)</summary>
               <div class="help-intro">
                 <p class="muted">Нажмите на подсказку или напишите запрос. Справка: <code>/help</code>.</p>
               </div>
@@ -1618,13 +1624,13 @@
                 </div>
                 <div class="form-note" id="ai-chat-status"></div>
               </div>
-	              <div class="help-ai-disabled" id="help-ai-disabled" hidden>
-	                StreamAI выключен в Settings → General. Блок чата недоступен.
-	              </div>
+              <div class="help-ai-disabled" id="help-ai-disabled" hidden>
+                StreamAI выключен в Settings → General. Блок чата недоступен.
+              </div>
             </details>
 
             <div class="help-guide-footer">
-              Если вы только начинаете: создайте Stream, добавьте Input, включите Output, нажмите Analyze.
+              Подробные инструкции, сценарии и диагностика доступны в Manual.
             </div>
           </div>
         </div>
