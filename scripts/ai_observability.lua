@@ -1042,16 +1042,29 @@ function ai_observability.get_stream_series(opts)
         end
     end
     local rows = {}
-    if config and config.list_ai_metrics then
-        rows = config.list_ai_metrics({
+    local function load_rows(resolution_sec)
+        if not config or not config.list_ai_metrics then
+            return {}
+        end
+        return config.list_ai_metrics({
             since = since_ts,
             ["until"] = now + 1,
             scope = "stream",
             scope_id = stream_id,
             metric_keys = query_keys,
-            resolution_sec = resolution,
+            resolution_sec = resolution_sec,
             limit = 200000,
         }) or {}
+    end
+    rows = load_rows(resolution)
+    -- Auto mode defaults to 10s for short ranges, but stable streams can have only base 60s rollup.
+    -- In that case fallback to 60s so charts are not empty.
+    if requested == "auto" and resolution == 10 and #rows == 0 then
+        local fallback_rows = load_rows(60)
+        if #fallback_rows > 0 then
+            rows = fallback_rows
+            resolution = 60
+        end
     end
     local series = {}
     for _, key in ipairs(metrics) do
