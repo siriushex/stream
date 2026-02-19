@@ -731,6 +731,8 @@ const API_GET_TIMEOUT_MS = 10000;
 const API_MUTATION_TIMEOUT_MS = 18000;
 const API_GET_RETRY_COUNT = 1;
 const API_MUTATION_RETRY_COUNT = 0;
+const API_POLL_TIMEOUT_MS = 3500;
+const API_POLL_RETRY_COUNT = 0;
 const AUTH_BLOCK_WINDOW_MS = 5000;
 const POLL_BACKOFF_START_MS = 1000;
 const POLL_BACKOFF_MAX_MS = 60000;
@@ -18317,7 +18319,10 @@ async function loadAdapterStatus() {
   let ok = true;
   let error = null;
   try {
-    const data = await apiJson('/api/v1/adapter-status');
+    const data = await apiJson('/api/v1/adapter-status', {
+      timeout_ms: API_POLL_TIMEOUT_MS,
+      retry: API_POLL_RETRY_COUNT,
+    });
     state.adapterStatus = data || {};
   } catch (err) {
     ok = false;
@@ -18966,12 +18971,18 @@ async function loadSplitters(options = {}) {
     if (fullRefresh) {
       const [list, status] = await Promise.all([
         apiJson('/api/v1/splitters'),
-        apiJson('/api/v1/splitter-status'),
+        apiJson('/api/v1/splitter-status', {
+          timeout_ms: API_POLL_TIMEOUT_MS,
+          retry: API_POLL_RETRY_COUNT,
+        }),
       ]);
       state.splitters = Array.isArray(list) ? list : [];
       state.splitterStatus = toStatusMap(status);
     } else {
-      const status = await apiJson('/api/v1/splitter-status');
+      const status = await apiJson('/api/v1/splitter-status', {
+        timeout_ms: API_POLL_TIMEOUT_MS,
+        retry: API_POLL_RETRY_COUNT,
+      });
       state.splitterStatus = toStatusMap(status);
     }
   } catch (err) {
@@ -20045,12 +20056,18 @@ async function loadBuffers(options = {}) {
     if (fullRefresh) {
       const [list, status] = await Promise.all([
         apiJson('/api/v1/buffers/resources'),
-        apiJson('/api/v1/buffer-status'),
+        apiJson('/api/v1/buffer-status', {
+          timeout_ms: API_POLL_TIMEOUT_MS,
+          retry: API_POLL_RETRY_COUNT,
+        }),
       ]);
       state.buffers = Array.isArray(list) ? list : [];
       state.bufferStatus = toStatusMap(status);
     } else {
-      const status = await apiJson('/api/v1/buffer-status');
+      const status = await apiJson('/api/v1/buffer-status', {
+        timeout_ms: API_POLL_TIMEOUT_MS,
+        retry: API_POLL_RETRY_COUNT,
+      });
       state.bufferStatus = toStatusMap(status);
     }
   } catch (err) {
@@ -23016,7 +23033,10 @@ async function loadStreamStatus() {
     const endpoint = params.length > 0
       ? `/api/v1/stream-status?${params.join('&')}`
       : '/api/v1/stream-status';
-    const data = await apiJson(endpoint);
+    const data = await apiJson(endpoint, {
+      timeout_ms: API_POLL_TIMEOUT_MS,
+      retry: API_POLL_RETRY_COUNT,
+    });
     if (statusIds && statusIds.length > 0) {
       const changed = mergePartialStreamStatus(statusIds, data);
       if (!changed) return { ok: true };
