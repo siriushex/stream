@@ -727,8 +727,10 @@ const POLL_SERVER_STREAMS_ACTIVE_MS = 5000;
 const POLL_SERVER_STREAMS_FOCUSED_MS = 1000;
 const POLL_SERVER_STREAMS_BACKGROUND_MS = 120000;
 const POLL_OBSERVABILITY_MS = 60000;
-const API_GET_TIMEOUT_MS = 12000;
-const API_MUTATION_TIMEOUT_MS = 45000;
+const API_GET_TIMEOUT_MS = 10000;
+const API_MUTATION_TIMEOUT_MS = 18000;
+const API_GET_RETRY_COUNT = 1;
+const API_MUTATION_RETRY_COUNT = 0;
 const AUTH_BLOCK_WINDOW_MS = 5000;
 const POLL_BACKOFF_START_MS = 1000;
 const POLL_BACKOFF_MAX_MS = 60000;
@@ -26681,7 +26683,9 @@ async function apiFetch(path, options = {}) {
     headers['X-Request-Id'] = nextUiRequestId();
   }
 
-  const retries = Number.isFinite(options.retry) ? options.retry : 1;
+  const retries = Number.isFinite(options.retry)
+    ? options.retry
+    : (method === 'GET' ? API_GET_RETRY_COUNT : API_MUTATION_RETRY_COUNT);
   const timeoutMs = resolveApiTimeoutMs(method, options);
   const useDedupe = method === 'GET' && options.no_dedupe !== true && options.noDedupe !== true;
   const dedupeKey = useDedupe ? `${method}:${path}:token:${state.token || ''}` : '';
