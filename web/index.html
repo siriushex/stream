@@ -96,14 +96,49 @@
         <div class="stream-views" id="stream-views" data-view-mode="cards">
           <div class="tile-grid stream-view stream-view-cards" id="dashboard-streams"></div>
           <div class="stream-table stream-view stream-view-table" id="stream-table">
+            <div class="stream-table-toolbar">
+              <div class="stream-table-bulk-state" id="stream-table-selection-count">Selected: 0</div>
+              <div class="stream-table-bulk-actions">
+                <button class="btn ghost tiny" type="button" id="stream-table-select-all-btn">Select all</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-clear-btn">Clear</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-enable">Enable</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-disable">Disable</button>
+                <button class="btn danger tiny" type="button" id="stream-table-bulk-delete">Delete</button>
+              </div>
+            </div>
             <table class="stream-table-grid">
               <thead>
                 <tr>
-                  <th class="col-stream">Stream</th>
-                  <th class="col-input">Input</th>
-                  <th class="col-transcode">Transcode</th>
-                  <th class="col-dvr">DVR</th>
-                  <th class="col-output">Output</th>
+                  <th class="col-select">
+                    <label class="table-check" title="Select all visible streams">
+                      <input type="checkbox" id="stream-table-select-all" aria-label="Select all streams">
+                    </label>
+                  </th>
+                  <th class="col-stream">
+                    <button class="stream-table-sort-btn" type="button" data-sort-key="stream" title="Sort by stream name">
+                      Stream
+                    </button>
+                  </th>
+                  <th class="col-input">
+                    <button class="stream-table-sort-btn" type="button" data-sort-key="input" title="Sort by active input">
+                      Input
+                    </button>
+                  </th>
+                  <th class="col-transcode">
+                    <button class="stream-table-sort-btn" type="button" data-sort-key="transcode" title="Sort by transcode state">
+                      Transcode
+                    </button>
+                  </th>
+                  <th class="col-dvr">
+                    <button class="stream-table-sort-btn" type="button" data-sort-key="dvr" title="Sort by DVR state">
+                      DVR
+                    </button>
+                  </th>
+                  <th class="col-output">
+                    <button class="stream-table-sort-btn" type="button" data-sort-key="clients" title="Sort by clients">
+                      Output
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody id="stream-table-body"></tbody>

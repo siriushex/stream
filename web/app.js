@@ -16,6 +16,7 @@ const SHOW_DISABLED_KEY_LEGACY = 'astra.showDisabledStreams';
 const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
+const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'transcode', 'dvr', 'clients']);
 const SIDEBAR_HELP_KEYS = {
   hlssplitter: 'sidebarHelp.hlssplitter',
   buffer: 'sidebarHelp.buffer',
@@ -553,6 +554,11 @@ const state = {
   streamTablePage: 1,
   streamTablePageSize: loadStreamTablePageSize(),
   streamTableTotal: 0,
+  streamTableSortKey: 'stream',
+  streamTableSortDir: 'asc',
+  streamTableSelected: new Set(),
+  streamTableFilteredIds: [],
+  streamTableBulkBusy: false,
   streamCompactRows: {},
   streamUptimeTimer: null,
   statusFastUntilTs: 0,
@@ -1007,6 +1013,14 @@ const elements = {
   streamViews: $('#stream-views'),
   streamTable: $('#stream-table'),
   streamTableBody: $('#stream-table-body'),
+  streamTableSelectAll: $('#stream-table-select-all'),
+  streamTableSelectAllBtn: $('#stream-table-select-all-btn'),
+  streamTableClearBtn: $('#stream-table-clear-btn'),
+  streamTableSelectionCount: $('#stream-table-selection-count'),
+  streamTableBulkEnable: $('#stream-table-bulk-enable'),
+  streamTableBulkDisable: $('#stream-table-bulk-disable'),
+  streamTableBulkDelete: $('#stream-table-bulk-delete'),
+  streamTableSortButtons: $$('#stream-table [data-sort-key]'),
   streamTablePager: $('#stream-table-pager'),
   streamTablePageInfo: $('#stream-table-page-info'),
   streamTablePagePrev: $('#stream-table-page-prev'),
@@ -23126,6 +23140,230 @@ function resolveStreamHealthSummary(stream, stats, activeInput) {
   return '';
 }
 
+function normalizeStreamTableSortKey(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return STREAM_TABLE_SORT_KEYS.has(key) ? key : 'stream';
+}
+
+function compareTextNatural(a, b) {
+  return String(a || '').localeCompare(String(b || ''), undefined, {
+    sensitivity: 'base',
+    numeric: true,
+  });
+}
+
+function compareMaybeNumber(a, b) {
+  const left = Number(a);
+  const right = Number(b);
+  const leftOk = Number.isFinite(left);
+  const rightOk = Number.isFinite(right);
+  if (leftOk && rightOk) return left - right;
+  if (leftOk) return -1;
+  if (rightOk) return 1;
+  return 0;
+}
+
+function updateStreamTableSortUi() {
+  if (!elements.streamTableSortButtons || !elements.streamTableSortButtons.length) return;
+  const activeKey = normalizeStreamTableSortKey(state.streamTableSortKey);
+  const activeDir = state.streamTableSortDir === 'desc' ? 'desc' : 'asc';
+  elements.streamTableSortButtons.forEach((btn) => {
+    const key = normalizeStreamTableSortKey(btn.dataset.sortKey);
+    const active = key === activeKey;
+    btn.classList.toggle('active', active);
+    btn.dataset.dir = active ? activeDir : '';
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    const th = btn.closest('th');
+    if (th) {
+      if (!active) {
+        th.removeAttribute('aria-sort');
+      } else {
+        th.setAttribute('aria-sort', activeDir === 'asc' ? 'ascending' : 'descending');
+      }
+    }
+  });
+}
+
+function setStreamTableSort(key) {
+  const nextKey = normalizeStreamTableSortKey(key);
+  if (state.streamTableSortKey === nextKey) {
+    state.streamTableSortDir = state.streamTableSortDir === 'desc' ? 'asc' : 'desc';
+  } else {
+    state.streamTableSortKey = nextKey;
+    state.streamTableSortDir = (nextKey === 'clients' || nextKey === 'transcode' || nextKey === 'dvr') ? 'desc' : 'asc';
+  }
+  state.streamTablePage = 1;
+  updateStreamTableSortUi();
+  renderStreams();
+}
+
+function compareStreamTableModels(left, right) {
+  const key = normalizeStreamTableSortKey(state.streamTableSortKey);
+  switch (key) {
+    case 'stream':
+      return compareTextNatural(left.name, right.name);
+    case 'input': {
+      const inputIdDiff = compareMaybeNumber(left.activeInputId, right.activeInputId);
+      if (inputIdDiff !== 0) return inputIdDiff;
+      const labelDiff = compareTextNatural(left.inputLabel, right.inputLabel);
+      if (labelDiff !== 0) return labelDiff;
+      return compareTextNatural(left.inputUrl, right.inputUrl);
+    }
+    case 'transcode': {
+      const rankDiff = compareMaybeNumber(left.transcodeSortRank, right.transcodeSortRank);
+      if (rankDiff !== 0) return rankDiff;
+      return compareTextNatural(left.transcodeStatus, right.transcodeStatus);
+    }
+    case 'dvr': {
+      const rankDiff = compareMaybeNumber(left.dvrSortRank, right.dvrSortRank);
+      if (rankDiff !== 0) return rankDiff;
+      return compareTextNatural(left.name, right.name);
+    }
+    case 'clients': {
+      const clientsDiff = compareMaybeNumber(left.clients, right.clients);
+      if (clientsDiff !== 0) return clientsDiff;
+      return compareTextNatural(left.name, right.name);
+    }
+    default:
+      return compareTextNatural(left.name, right.name);
+  }
+}
+
+function sortStreamTableItems(streams) {
+  const rows = (streams || []).map((stream, index) => {
+    return { stream, model: buildStreamModel(stream), index };
+  });
+  const direction = state.streamTableSortDir === 'desc' ? -1 : 1;
+  rows.sort((a, b) => {
+    const diff = compareStreamTableModels(a.model, b.model);
+    if (diff !== 0) return diff * direction;
+    return a.index - b.index;
+  });
+  return rows;
+}
+
+function pruneStreamTableSelection() {
+  const visibleIds = new Set(state.streamTableFilteredIds || []);
+  const next = new Set();
+  state.streamTableSelected.forEach((id) => {
+    if (visibleIds.has(id)) {
+      next.add(id);
+    }
+  });
+  state.streamTableSelected = next;
+}
+
+function syncStreamTableSelectionUi() {
+  const total = Number.isFinite(state.streamTableTotal) ? state.streamTableTotal : 0;
+  const selectedCount = state.streamTableSelected ? state.streamTableSelected.size : 0;
+  if (elements.streamTableSelectionCount) {
+    elements.streamTableSelectionCount.textContent = `Selected: ${selectedCount} / ${total}`;
+  }
+  const selectable = total > 0 && !state.streamTableBulkBusy;
+  const hasSelection = selectedCount > 0;
+  if (elements.streamTableBulkEnable) elements.streamTableBulkEnable.disabled = !hasSelection || state.streamTableBulkBusy;
+  if (elements.streamTableBulkDisable) elements.streamTableBulkDisable.disabled = !hasSelection || state.streamTableBulkBusy;
+  if (elements.streamTableBulkDelete) elements.streamTableBulkDelete.disabled = !hasSelection || state.streamTableBulkBusy;
+  if (elements.streamTableClearBtn) elements.streamTableClearBtn.disabled = !hasSelection || state.streamTableBulkBusy;
+  if (elements.streamTableSelectAllBtn) elements.streamTableSelectAllBtn.disabled = !selectable;
+  if (elements.streamTableSelectAll) {
+    elements.streamTableSelectAll.disabled = !selectable;
+    elements.streamTableSelectAll.checked = selectable && selectedCount > 0 && selectedCount === total;
+    elements.streamTableSelectAll.indeterminate = selectable && selectedCount > 0 && selectedCount < total;
+  }
+  Object.keys(state.streamTableRows || {}).forEach((id) => {
+    const row = state.streamTableRows[id];
+    if (!row) return;
+    const selected = state.streamTableSelected.has(id);
+    row.classList.toggle('is-selected', selected);
+    const check = row.querySelector('[data-action="select"]');
+    if (check) check.checked = selected;
+  });
+}
+
+function setStreamTableSelectionForAll(selectAll) {
+  if (!Array.isArray(state.streamTableFilteredIds)) return;
+  if (selectAll) {
+    state.streamTableSelected = new Set(state.streamTableFilteredIds);
+  } else {
+    state.streamTableSelected = new Set();
+  }
+  syncStreamTableSelectionUi();
+}
+
+function setStreamTableBulkBusy(busy) {
+  state.streamTableBulkBusy = Boolean(busy);
+  syncStreamTableSelectionUi();
+}
+
+async function setStreamEnabled(stream, enabled) {
+  const nextEnabled = Boolean(enabled);
+  await apiJson(`/api/v1/streams/${stream.id}`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled: nextEnabled }),
+  });
+  const updated = {
+    id: stream.id,
+    enabled: nextEnabled,
+    config: stream.config || {},
+  };
+  upsertStreamInState(updated);
+}
+
+async function runStreamTableBulkAction(action) {
+  const selectedIds = Array.from(state.streamTableSelected || []);
+  if (!selectedIds.length) {
+    setStatus('Select at least one stream');
+    return;
+  }
+  if (action === 'delete') {
+    const confirmed = window.confirm(`Delete ${selectedIds.length} selected stream(s)?`);
+    if (!confirmed) return;
+  }
+  const failures = [];
+  let changed = 0;
+  setStreamTableBulkBusy(true);
+  try {
+    for (const streamId of selectedIds) {
+      const stream = state.streamIndex[streamId] || state.streams.find((item) => item && item.id === streamId);
+      if (!stream) continue;
+      try {
+        if (action === 'enable') {
+          if (stream.enabled !== false) continue;
+          await setStreamEnabled(stream, true);
+          changed += 1;
+          continue;
+        }
+        if (action === 'disable') {
+          if (stream.enabled === false) continue;
+          await setStreamEnabled(stream, false);
+          changed += 1;
+          continue;
+        }
+        if (action === 'delete') {
+          await apiJson(`/api/v1/streams/${stream.id}`, { method: 'DELETE' });
+          removeStreamFromState(stream.id);
+          state.streamTableSelected.delete(stream.id);
+          changed += 1;
+        }
+      } catch (err) {
+        failures.push(`${stream.id}: ${formatNetworkError(err) || err.message || 'request failed'}`);
+      }
+    }
+  } finally {
+    setStreamTableBulkBusy(false);
+  }
+  renderStreams();
+  boostStatusPolling();
+  scheduleStreamSync();
+  if (failures.length) {
+    const head = failures.slice(0, 3).join('; ');
+    setStatus(`${action} finished: ok=${changed}, failed=${failures.length}. ${head}`);
+    return;
+  }
+  setStatus(`${action} finished: ${changed} stream(s) updated`);
+}
+
 function getStreamTablePageMeta(list) {
   const total = Array.isArray(list) ? list.length : 0;
   const size = normalizeStreamTablePageSize(state.streamTablePageSize);
@@ -23287,6 +23525,14 @@ function buildStreamModel(stream) {
   const name = (stream.config && stream.config.name) || stream.id;
   const statusInfo = getStreamStatusInfo(stream, stats);
   const { activeInput, activeIndex } = getActiveInputStats(stats);
+  const activeInputIdRaw = activeInput && activeInput.input_id;
+  let activeInputId = Number(activeInputIdRaw);
+  if (!Number.isFinite(activeInputId) && Number.isFinite(activeIndex)) {
+    activeInputId = Number(activeIndex) + 1;
+  }
+  if (!Number.isFinite(activeInputId)) {
+    activeInputId = null;
+  }
   const configInputs = normalizeOutputList(stream.config && stream.config.input);
   const fallbackInputUrl = configInputs.length ? String(configInputs[0]) : '';
   const inputUrl = (activeInput && activeInput.url) || fallbackInputUrl;
@@ -23318,11 +23564,17 @@ function buildStreamModel(stream) {
 
   const transcodeState = stats.transcode_state || '';
   const transcodeStatus = transcodeState ? transcodeState : 'OFF';
+  const transcodeSortRank = transcodeStatus === 'OFF' ? 0 : 1;
   const transcodeRates = transcodeState ? formatTranscodeBitrates(transcode) : '';
   const transcodeError = transcodeState === 'ERROR'
     ? (formatTranscodeAlert(transcode.last_alert) || transcode.last_error || '')
     : '';
   const healthSummary = resolveStreamHealthSummary(stream, stats, activeInput);
+
+  const dvrConfig = stream && stream.config && stream.config.dvr;
+  const dvrEnabled = Boolean(dvrConfig && dvrConfig.enabled !== false);
+  const dvrStatus = dvrEnabled ? 'on' : 'off';
+  const dvrSortRank = dvrEnabled ? 1 : 0;
 
   const outputSummary = getOutputSummary(stream);
   const clients = Number.isFinite(stats.clients_count)
@@ -23337,14 +23589,19 @@ function buildStreamModel(stream) {
     statusInfo,
     inputUrl,
     inputLabel,
+    activeInputId,
     inputBitrate,
     inputUptime,
     inputUptimeBaseSec: uptime.baseSec,
     inputUptimeUpdatedAtSec: uptime.updatedAtSec,
     inputUptimeLive: uptime.live,
     transcodeStatus,
+    transcodeSortRank,
     transcodeRates,
     transcodeError,
+    dvrEnabled,
+    dvrStatus,
+    dvrSortRank,
     healthSummary,
     outputSummary,
     clients,
@@ -23357,21 +23614,24 @@ function buildStreamModel(stream) {
   };
 }
 
-function buildStreamTableRow(stream) {
-  const model = buildStreamModel(stream);
+function buildStreamTableRow(stream, modelOverride) {
+  const model = modelOverride || buildStreamModel(stream);
   const row = document.createElement('tr');
   row.className = 'stream-row';
   row.dataset.streamId = stream.id;
 
-  const streamCell = createEl('td', 'col-stream');
-  const streamWrap = createEl('div', 'stream-cell');
+  const selectCell = createEl('td', 'col-select');
+  const selectWrap = createEl('label', 'table-check');
   const check = createEl('input');
   check.type = 'checkbox';
   check.dataset.action = 'select';
   check.dataset.streamId = stream.id;
-  const checkWrap = createEl('label', 'table-check');
-  checkWrap.appendChild(check);
+  check.checked = state.streamTableSelected.has(stream.id);
+  selectWrap.appendChild(check);
+  selectCell.appendChild(selectWrap);
 
+  const streamCell = createEl('td', 'col-stream');
+  const streamWrap = createEl('div', 'stream-cell');
   const info = createEl('div', 'stream-info');
   const nameBtn = createEl('button', 'stream-cell-title text-link', model.name);
   nameBtn.dataset.action = 'edit';
@@ -23401,7 +23661,6 @@ function buildStreamTableRow(stream) {
   health.title = model.healthSummary || '';
   info.appendChild(health);
 
-  streamWrap.appendChild(checkWrap);
   streamWrap.appendChild(info);
   streamCell.appendChild(streamWrap);
 
@@ -23431,7 +23690,8 @@ function buildStreamTableRow(stream) {
   tcCell.appendChild(tcMeta);
 
   const dvrCell = createEl('td', 'col-dvr');
-  const dvrMeta = createEl('div', 'stream-cell-sub', 'DVR: off');
+  const dvrMeta = createEl('div', 'stream-cell-sub', `DVR: ${model.dvrStatus}`);
+  dvrMeta.dataset.role = 'stream-dvr-meta';
   dvrCell.appendChild(dvrMeta);
 
   const outputCell = createEl('td', 'col-output');
@@ -23464,12 +23724,15 @@ function buildStreamTableRow(stream) {
   outputTop.appendChild(actions);
   outputCell.appendChild(outputTop);
 
+  row.appendChild(selectCell);
   row.appendChild(streamCell);
   row.appendChild(inputCell);
   row.appendChild(tcCell);
   row.appendChild(dvrCell);
   row.appendChild(outputCell);
+  row.classList.toggle('is-selected', check.checked);
   row._refs = {
+    check,
     nameBtn,
     status,
     shardBadge,
@@ -23478,6 +23741,7 @@ function buildStreamTableRow(stream) {
     inputMeta,
     tcSummary,
     tcMeta,
+    dvrMeta,
     outputMeta,
     previewBtn,
     toggleBtn,
@@ -23531,6 +23795,10 @@ function updateStreamTableRow(row, stream) {
     tcMeta.hidden = !model.transcodeRates;
     tcMeta.title = model.transcodeError || '';
   }
+  const dvrMeta = refs.dvrMeta || row.querySelector('[data-role="stream-dvr-meta"]');
+  if (dvrMeta) {
+    dvrMeta.textContent = `DVR: ${model.dvrStatus}`;
+  }
   const outputMeta = refs.outputMeta || row.querySelector('[data-role="stream-output-meta"]');
   if (outputMeta) {
     outputMeta.textContent = formatTableOutputMetaLine(model.outputSummary, model.clients);
@@ -23544,6 +23812,11 @@ function updateStreamTableRow(row, stream) {
     toggleBtn.title = model.enabled ? 'Disable stream' : 'Enable stream';
     toggleBtn.setAttribute('aria-label', model.enabled ? 'Disable stream' : 'Enable stream');
   }
+  const check = refs.check || row.querySelector('[data-action="select"]');
+  if (check) {
+    check.checked = state.streamTableSelected.has(stream.id);
+  }
+  row.classList.toggle('is-selected', state.streamTableSelected.has(stream.id));
   applyTableRowUptimeDataset(row, model);
   updateTableRowUptimeText(row);
 }
@@ -23556,18 +23829,22 @@ function renderStreamTable(list) {
   if (list.length === 0) {
     const row = document.createElement('tr');
     const cell = createEl('td', 'muted', 'No streams yet. Create the first one.');
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     row.appendChild(cell);
     fragment.appendChild(row);
     elements.streamTableBody.appendChild(fragment);
+    syncStreamTableSelectionUi();
     return;
   }
-  list.forEach((stream) => {
-    const row = buildStreamTableRow(stream);
+  list.forEach((item) => {
+    const stream = item && item.stream ? item.stream : item;
+    const model = item && item.model ? item.model : null;
+    const row = buildStreamTableRow(stream, model);
     fragment.appendChild(row);
     state.streamTableRows[stream.id] = row;
   });
   elements.streamTableBody.appendChild(fragment);
+  syncStreamTableSelectionUi();
 }
 
 function updateStreamTableRows() {
@@ -23674,15 +23951,22 @@ function renderStreams() {
   state.streamTableTotal = filtered.length;
 
   rebuildStreamIndex(filtered);
+  updateStreamTableSortUi();
 
   if (state.viewMode === 'table') {
-    const meta = getStreamTablePageMeta(filtered);
+    const sortedRows = sortStreamTableItems(filtered);
+    state.streamTableFilteredIds = sortedRows.map((item) => item.stream.id);
+    pruneStreamTableSelection();
+    const meta = getStreamTablePageMeta(sortedRows);
     renderStreamTable(meta.items);
     renderStreamTablePagination(meta);
     startStreamUptimeTicker();
     updateStreamTableUptimeRows();
     return;
   }
+  state.streamTableFilteredIds = [];
+  state.streamTableSelected = new Set();
+  syncStreamTableSelectionUi();
   renderStreamTablePagination(null);
   stopStreamUptimeTicker();
   if (state.viewMode === 'compact') {
@@ -33378,8 +33662,16 @@ function bindEvents() {
 
   if (elements.streamTable) {
     elements.streamTable.addEventListener('click', (event) => {
+      const sortBtn = event.target.closest('[data-sort-key]');
+      if (sortBtn) {
+        setStreamTableSort(sortBtn.dataset.sortKey);
+        return;
+      }
       const row = event.target.closest('tr[data-stream-id]');
       const action = event.target.closest('[data-action]');
+      if (action && action.dataset.action === 'select') {
+        return;
+      }
       const streamId = (action && action.dataset.streamId)
         || (row && row.dataset && row.dataset.streamId)
         || '';
@@ -33392,6 +33684,49 @@ function bindEvents() {
       if (action) return;
       if (!row) return;
       openEditor(stream, false);
+    });
+    elements.streamTable.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement)) return;
+      if (target.id === 'stream-table-select-all') {
+        setStreamTableSelectionForAll(target.checked);
+        return;
+      }
+      if (target.dataset.action === 'select') {
+        const streamId = String(target.dataset.streamId || '');
+        if (!streamId) return;
+        if (target.checked) {
+          state.streamTableSelected.add(streamId);
+        } else {
+          state.streamTableSelected.delete(streamId);
+        }
+        syncStreamTableSelectionUi();
+      }
+    });
+  }
+  if (elements.streamTableSelectAllBtn) {
+    elements.streamTableSelectAllBtn.addEventListener('click', () => {
+      setStreamTableSelectionForAll(true);
+    });
+  }
+  if (elements.streamTableClearBtn) {
+    elements.streamTableClearBtn.addEventListener('click', () => {
+      setStreamTableSelectionForAll(false);
+    });
+  }
+  if (elements.streamTableBulkEnable) {
+    elements.streamTableBulkEnable.addEventListener('click', () => {
+      runStreamTableBulkAction('enable').catch((err) => setStatus(err.message || 'Bulk enable failed'));
+    });
+  }
+  if (elements.streamTableBulkDisable) {
+    elements.streamTableBulkDisable.addEventListener('click', () => {
+      runStreamTableBulkAction('disable').catch((err) => setStatus(err.message || 'Bulk disable failed'));
+    });
+  }
+  if (elements.streamTableBulkDelete) {
+    elements.streamTableBulkDelete.addEventListener('click', () => {
+      runStreamTableBulkAction('delete').catch((err) => setStatus(err.message || 'Bulk delete failed'));
     });
   }
   if (elements.streamTablePagePrev) {
