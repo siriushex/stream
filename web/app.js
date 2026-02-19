@@ -24696,10 +24696,10 @@ function formatObservabilityTimeTick(tsMs, range) {
 function pickTimeTickStepMs(minX, maxX, range, desiredCount) {
   const span = Math.max(1, Number(maxX) - Number(minX));
   const target = Math.max(2, Math.min(12, Number(desiredCount) || 6));
-  if (range === '15m') return 5 * 60 * 1000;
+  if (range === '15m') return 3 * 60 * 1000;
   if (range === '1h') return 10 * 60 * 1000;
   if (range === '6h') return 60 * 60 * 1000;
-  if (range === '24h') return 4 * 60 * 60 * 1000;
+  if (range === '24h') return 6 * 60 * 60 * 1000;
   if (range === '7d') return 24 * 60 * 60 * 1000;
   if (range === '30d') return 5 * 24 * 60 * 60 * 1000;
 
@@ -25399,7 +25399,9 @@ function renderObservabilityCharts(items, scope) {
       dataMaxMs = ts;
     }
   });
-  const domainToMs = dataMaxMs > 0 ? dataMaxMs : nowMs;
+  // Keep short-range charts anchored to "now" so selected windows (15m/1h/6h) match operator expectation.
+  // Use data max only when it is noticeably ahead of local wall clock (server/client skew).
+  const domainToMs = (dataMaxMs > (nowMs + 120000)) ? dataMaxMs : nowMs;
   const fromMs = domainToMs - rangeMs;
   const accent = getThemeColor('--accent', '#5aaae5');
   const warning = getThemeColor('--warning', '#f0b54d');
