@@ -24695,6 +24695,13 @@ function formatObservabilityTimeTick(tsMs, range) {
   return `${two(date.getMonth() + 1)}-${two(date.getDate())}`;
 }
 
+function formatObservabilityDateTimeTick(tsMs) {
+  const date = new Date(Number(tsMs) || 0);
+  if (Number.isNaN(date.getTime())) return '-';
+  const two = (v) => String(v).padStart(2, '0');
+  return `${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+
 function pickTimeTickStepMs(minX, maxX, range, desiredCount) {
   const span = Math.max(1, Number(maxX) - Number(minX));
   const target = Math.max(2, Math.min(12, Number(desiredCount) || 6));
@@ -24914,6 +24921,14 @@ function drawLineChart(canvas, series, opts) {
   const xFormatter = typeof options.xFormatter === 'function'
     ? options.xFormatter
     : (value) => formatObservabilityTimeTick(value, options.range || '24h');
+  let xLabels = [];
+  if (showAxes) {
+    xLabels = xTicks.map((tick) => xFormatter(tick));
+    const uniq = new Set(xLabels);
+    if (xLabels.length > 1 && uniq.size <= Math.ceil(xLabels.length / 2)) {
+      xLabels = xTicks.map((tick) => formatObservabilityDateTimeTick(tick));
+    }
+  }
 
   if (showAxes) {
     ctx.font = '11px "IBM Plex Sans", sans-serif';
@@ -24956,9 +24971,10 @@ function drawLineChart(canvas, series, opts) {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    xTicks.forEach((tick) => {
+    xTicks.forEach((tick, idx) => {
       const x = xScale(tick);
-      ctx.fillText(xFormatter(tick), x, rect.height - padding.bottom + 5);
+      const label = xLabels[idx] || xFormatter(tick);
+      ctx.fillText(label, x, rect.height - padding.bottom + 5);
     });
   }
 
@@ -26264,6 +26280,16 @@ async function loadObservability(showStatus) {
       collectionEnabled = metrics && metrics.collection_enabled !== undefined
         ? !!metrics.collection_enabled
         : collectionEnabled;
+      const metricsSinceSec = Number(metrics && metrics.since);
+      const metricsRangeSec = Number(metrics && metrics.range);
+      if (Number.isFinite(metricsSinceSec) && Number.isFinite(metricsRangeSec) && metricsRangeSec > 0) {
+        state.observabilityDomainFromMs = metricsSinceSec * 1000;
+        state.observabilityDomainToMs = (metricsSinceSec + metricsRangeSec) * 1000;
+      } else {
+        const nowMs = Date.now();
+        state.observabilityDomainToMs = nowMs;
+        state.observabilityDomainFromMs = nowMs - parseObservabilityRangeMs(range);
+      }
 
       const logsUrl = new URL('/api/v1/ai/logs', window.location.origin);
       logsUrl.searchParams.set('range', range);
@@ -26271,9 +26297,6 @@ async function loadObservability(showStatus) {
       logsUrl.searchParams.set('limit', '20');
       const logs = await apiJson(logsUrl.toString());
       logItems = logs && logs.items ? logs.items : [];
-      const nowMs = Date.now();
-      state.observabilityDomainToMs = nowMs;
-      state.observabilityDomainFromMs = nowMs - parseObservabilityRangeMs(range);
     }
 
     const latest = {};
