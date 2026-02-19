@@ -24751,9 +24751,30 @@ function computeTimeTicks(minX, maxX, range, desiredCount) {
     ticks.push(x);
     if (ticks.length > 16) break;
   }
-  if (!ticks.length) {
-    ticks.push(minX, maxX);
+  if (!ticks.length || ticks[0] > (minX + 1)) {
+    ticks.unshift(minX);
   }
+  if (ticks[ticks.length - 1] < (maxX - 1)) {
+    ticks.push(maxX);
+  }
+
+  // Keep chart labels readable while preserving exact range boundaries.
+  if (ticks.length > 16) {
+    const compact = [ticks[0]];
+    const interior = ticks.slice(1, -1);
+    const keep = Math.max(0, 14); // 16 total with boundaries
+    if (interior.length <= keep) {
+      compact.push(...interior);
+    } else {
+      const stride = interior.length / keep;
+      for (let i = 0; i < keep; i += 1) {
+        compact.push(interior[Math.floor(i * stride)]);
+      }
+    }
+    compact.push(ticks[ticks.length - 1]);
+    return compact;
+  }
+
   return ticks;
 }
 
