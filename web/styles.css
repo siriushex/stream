@@ -5305,37 +5305,19 @@ button.stream-audio-fix-toggle:disabled {
 .help-guide-title {
   font-size: 18px;
   font-weight: 700;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
-.help-guide-short {
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-.help-guide-short p {
-  margin: 0 0 8px;
-}
-
-.help-guide-short ul {
-  margin: 0 0 10px;
-  padding-left: 18px;
-}
-
-.help-guide-manual-wrap {
-  margin-top: 10px;
-}
-
-.help-manual-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.help-guide-title-link {
+  display: inline-block;
   text-decoration: none;
-  border-color: var(--accent);
+  color: var(--text);
 }
 
-.help-manual-link:hover {
-  border-color: var(--accent);
+.help-guide-title-link:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
   color: var(--text);
 }
 

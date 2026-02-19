@@ -126,18 +126,6 @@ const SIDEBAR_HELP_TEXTS = {
   },
 };
 
-const HELP_GUIDE_SHORT = {
-  lines: [
-    'Help в интерфейсе показывает только краткую ориентацию по работе Stream Hub.',
-    'Полная документация, сценарии настройки и диагностика находятся в отдельном Manual.',
-  ],
-  bullets: [
-    'Создайте канал, добавьте Input и Output, затем сохраните изменения.',
-    'Проверяйте состояние канала через Analyze, Log и Observability.',
-    'Для пошаговых инструкций и best practices используйте внешний Manual.',
-  ],
-};
-
 function getStoredBool(key, fallback) {
   const value = localStorage.getItem(key);
   if (value === null || value === undefined || value === '') return fallback;
@@ -980,7 +968,6 @@ const elements = {
   aiChatStreamId: $('#ai-chat-stream-id'),
   aiChatAnalyzeUrl: $('#ai-chat-analyze-url'),
   aiChatFemonUrl: $('#ai-chat-femon-url'),
-  helpGuideShort: $('#help-guide-short'),
   helpAiDetails: $('#help-ai-details'),
   helpAiDisabled: $('#help-ai-disabled'),
   settingsGeneralRoot: $('#settings-general-root'),
@@ -18487,24 +18474,6 @@ function clearNode(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
 }
 
-function buildHelpGuideSection(title, lines, bullets) {
-  const section = createEl('section', 'help-guide-section');
-  if (title) {
-    section.appendChild(createEl('h4', '', title));
-  }
-  (lines || []).forEach((line) => {
-    section.appendChild(createEl('p', '', line));
-  });
-  if (Array.isArray(bullets) && bullets.length) {
-    const list = createEl('ul');
-    bullets.forEach((line) => {
-      list.appendChild(createEl('li', '', line));
-    });
-    section.appendChild(list);
-  }
-  return section;
-}
-
 function updateHelpAiAvailability() {
   const aiEnabled = getSettingBool('ai_enabled', false);
   if (elements.aiChat) {
@@ -18516,18 +18485,16 @@ function updateHelpAiAvailability() {
   if (elements.helpAiDetails) {
     if (!aiEnabled) {
       elements.helpAiDetails.open = false;
+    } else if (!elements.helpAiDetails.open) {
+      // Keep the help chat expanded by default when AI is enabled.
+      elements.helpAiDetails.open = true;
     }
   }
 }
 
 function renderHelpGuide() {
   if (state.helpGuideRendered) return;
-  if (!elements.helpGuideShort) return;
-
-  // Cleanup legacy UI state from the old expandable Help guide.
   localStorage.removeItem('helpGuide.expanded');
-  clearNode(elements.helpGuideShort);
-  elements.helpGuideShort.appendChild(buildHelpGuideSection('Коротко', HELP_GUIDE_SHORT.lines, HELP_GUIDE_SHORT.bullets));
   state.helpGuideRendered = true;
 }
 
