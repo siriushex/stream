@@ -1067,17 +1067,41 @@ function ai_observability.get_stream_series(opts)
         end
     end
     local series = {}
+    local series_by_ts = {}
     for _, key in ipairs(metrics) do
         series[key] = {}
+        series_by_ts[key] = {}
     end
     for _, row in ipairs(rows) do
-        local key = tostring(row.metric_key or "")
-        local target_key = series[key] and key or fallback_map[key]
+        local source_key = tostring(row.metric_key or "")
+        local target_key = series[source_key] and source_key or fallback_map[source_key]
         if target_key and series[target_key] then
-            series[target_key][#series[target_key] + 1] = {
-                ts = tonumber(row.ts_bucket) or 0,
-                value = tonumber(row.value) or 0,
-                tags = row.tags,
+            local ts = tonumber(row.ts_bucket) or 0
+            local value = tonumber(row.value) or 0
+            local priority = (source_key == target_key) and 2 or 1
+            local bucket = series_by_ts[target_key]
+            local current = bucket[ts]
+            if not current or priority > (current.priority or 0) then
+                bucket[ts] = {
+                    ts = ts,
+                    value = value,
+                    tags = row.tags,
+                    priority = priority,
+                }
+            elseif priority == (current.priority or 0) then
+                if math.abs(value) >= math.abs(tonumber(current.value) or 0) then
+                    current.value = value
+                    current.tags = row.tags or current.tags
+                end
+            end
+        end
+    end
+    for key, bucket in pairs(series_by_ts) do
+        for _, point in pairs(bucket) do
+            series[key][#series[key] + 1] = {
+                ts = tonumber(point.ts) or 0,
+                value = tonumber(point.value) or 0,
+                tags = point.tags,
             }
         end
     end
