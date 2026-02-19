@@ -733,6 +733,7 @@ const API_GET_RETRY_COUNT = 1;
 const API_MUTATION_RETRY_COUNT = 0;
 const API_POLL_TIMEOUT_MS = 3500;
 const API_POLL_RETRY_COUNT = 0;
+const SETTINGS_POST_SAVE_RELOAD_TIMEOUT_MS = 4000;
 const AUTH_BLOCK_WINDOW_MS = 5000;
 const POLL_BACKOFF_START_MS = 1000;
 const POLL_BACKOFF_MAX_MS = 60000;
@@ -28724,6 +28725,7 @@ async function saveSettings(update, opts = {}) {
   }
   const requestStartedMs = uiNowMs();
   const shouldReload = opts.reload !== false;
+  let reloadFailed = false;
   let requestDoneMs = requestStartedMs;
   try {
     await apiJson(path, {
@@ -28733,9 +28735,19 @@ async function saveSettings(update, opts = {}) {
     });
     requestDoneMs = uiNowMs();
     if (shouldReload) {
-      await loadSettings();
-    } else {
+      try {
+        await loadSettings({
+          timeout_ms: Number(opts.reload_timeout_ms) || SETTINGS_POST_SAVE_RELOAD_TIMEOUT_MS,
+          retry: 0,
+        });
+      } catch (reloadErr) {
+        reloadFailed = true;
+        console.warn(`[save-flow] post-save settings reload failed: ${reloadErr && reloadErr.message ? reloadErr.message : reloadErr}`);
+      }
+    }
+    if (!shouldReload || reloadFailed) {
       // Не перерисовываем все поля (иначе можно потерять несохранённый ввод в форме).
+      // Также используем локальный merge как fallback, если post-save reload не удался.
       state.settings = state.settings || {};
       Object.keys(update || {}).forEach((key) => {
         state.settings[key] = update[key];
@@ -28755,7 +28767,11 @@ async function saveSettings(update, opts = {}) {
       console.warn(`[save-flow] slow settings save: total=${totalMs}ms request=${reqMs}ms reload=${shouldReload ? 1 : 0}`);
     }
     if (!opts.silent) {
-      setStatus(opts.status || 'Settings saved');
+      if (reloadFailed) {
+        setStatus('Settings saved (refresh delayed by network)');
+      } else {
+        setStatus(opts.status || 'Settings saved');
+      }
     }
   } catch (err) {
     const failedMs = uiNowMs();
@@ -28809,9 +28825,12 @@ async function requestRestart() {
   }
 }
 
-async function loadSettings() {
+async function loadSettings(options = {}) {
   try {
-    const data = await apiJson('/api/v1/settings');
+    const data = await apiJson('/api/v1/settings', {
+      timeout_ms: Number(options.timeout_ms) || undefined,
+      retry: Number.isFinite(Number(options.retry)) ? Number(options.retry) : undefined,
+    });
     state.settings = data || {};
   } catch (err) {
     state.settings = {};
