@@ -4074,12 +4074,17 @@ local function get_log_to_main_mode(tc)
     end
     local mode = tc.log_to_main
     if mode == true then
-        return "all"
+        -- Backward compatibility: legacy boolean used to mean "log ffmpeg to main log".
+        -- Treat it as "errors" to avoid high CPU/disk load on noisy inputs.
+        return "errors"
     end
     if type(mode) == "string" then
         mode = mode:lower()
-        if mode == "all" or mode == "true" then
+        if mode == "all" then
             return "all"
+        end
+        if mode == "true" then
+            return "errors"
         end
         if mode == "error" or mode == "errors" then
             return "errors"

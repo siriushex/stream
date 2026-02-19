@@ -20990,7 +20990,9 @@ function openEditor(stream, isNew, opts) {
     elements.streamTranscodeLogFile.value = tc.log_file || '';
     if (elements.streamTranscodeLogMain) {
       const logToMain = tc.log_to_main;
-      elements.streamTranscodeLogMain.checked = logToMain === true || logToMain === 'all' || logToMain === 'true';
+      elements.streamTranscodeLogMain.checked =
+        logToMain === true || logToMain === 'all' || logToMain === 'true' ||
+        logToMain === 'error' || logToMain === 'errors';
     }
     elements.streamTranscodeGlobalArgs.value = argsToLines(tc.ffmpeg_global_args);
     elements.streamTranscodeDecoderArgs.value = argsToLines(tc.decoder_args);
@@ -21692,7 +21694,7 @@ function readStreamForm() {
     const logFile = (elements.streamTranscodeLogFile && elements.streamTranscodeLogFile.value || '').trim();
     if (logFile) transcode.log_file = logFile;
     if (elements.streamTranscodeLogMain && elements.streamTranscodeLogMain.checked) {
-      transcode.log_to_main = true;
+      transcode.log_to_main = 'errors';
     }
     const inputProbeUdp = Boolean(elements.streamTranscodeInputProbeUdp && elements.streamTranscodeInputProbeUdp.checked);
     if (inputProbeUdp) {
