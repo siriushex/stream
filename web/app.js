@@ -6991,12 +6991,51 @@ function getDashboardRemoteServers() {
   });
 }
 
+function parseRemoteBitrateKbps(value) {
+  if (value === null || value === undefined) return null;
+  if (Number.isFinite(Number(value))) {
+    const direct = Number(value);
+    return direct >= 0 ? direct : null;
+  }
+  const text = String(value).trim().toLowerCase();
+  if (!text) return null;
+  const normalized = text.replace(',', '.');
+  const match = normalized.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  if (normalized.includes('mbit') || normalized.includes('mbps')) {
+    return parsed * 1000;
+  }
+  if (normalized.includes('kbit') || normalized.includes('kbps')) {
+    return parsed;
+  }
+  if (normalized.includes('bit')) {
+    return parsed / 1000;
+  }
+  return parsed;
+}
+
+function hasRemoteRuntimeStats(stats) {
+  if (!stats || typeof stats !== 'object') return false;
+  if (stats.on_air !== undefined) return true;
+  if (Number.isFinite(Number(stats.bitrate)) || Number.isFinite(Number(stats.bitrate_kbps))) return true;
+  if (Number.isFinite(Number(stats.uptime)) || Number.isFinite(Number(stats.uptime_sec))) return true;
+  if (Number.isFinite(Number(stats.active_input_id)) || Number.isFinite(Number(stats.active_input_index))) return true;
+  if (Array.isArray(stats.inputs) && stats.inputs.length > 0) return true;
+  return false;
+}
+
 function normalizeRemoteDashboardStats(item, stream) {
   const stats = {};
   if (item && item.on_air !== undefined) {
     stats.on_air = item.on_air === true;
   }
-  const bitrateKbps = Number(item && item.bitrate_kbps);
+  const bitrateKbps = parseRemoteBitrateKbps(item && (
+    item.bitrate_kbps !== undefined
+      ? item.bitrate_kbps
+      : (item.bitrate !== undefined ? item.bitrate : item.rate)
+  ));
   if (Number.isFinite(bitrateKbps) && bitrateKbps >= 0) {
     stats.bitrate = bitrateKbps;
     stats.bitrate_kbps = bitrateKbps;
@@ -7111,6 +7150,7 @@ async function fetchRemoteDashboardServerStreams(serverId) {
 
   let payload = await requestList(false, API_REMOTE_DASHBOARD_LIST_TIMEOUT_MS);
   let items = Array.isArray(payload && payload.items) ? payload.items : [];
+  let statusEnriched = false;
   if (items.length === 0) {
     // Astra legacy endpoints can intermittently return an empty 2xx body.
     // One extra attempt improves reliability without increasing steady-state load.
@@ -7124,13 +7164,14 @@ async function fetchRemoteDashboardServerStreams(serverId) {
       const statusItems = Array.isArray(statusPayload && statusPayload.items) ? statusPayload.items : [];
       if (statusItems.length > 0) {
         payload = statusPayload;
+        statusEnriched = true;
       }
     } catch (err) {
       // Keep fast list payload; dashboard still shows streams even when status enrichment fails.
     }
   }
 
-  return payload;
+  return { payload, statusEnriched };
 }
 
 async function loadDashboardRemoteStreams(opts = {}) {
@@ -7173,7 +7214,9 @@ async function loadDashboardRemoteStreams(opts = {}) {
       const serverId = String(server && server.id || '').trim();
       if (!serverId) continue;
       try {
-        const payload = await fetchRemoteDashboardServerStreams(serverId);
+        const fetched = await fetchRemoteDashboardServerStreams(serverId);
+        const payload = fetched && fetched.payload ? fetched.payload : fetched;
+        const statusEnriched = fetched && fetched.statusEnriched === true;
         const items = Array.isArray(payload && payload.items) ? payload.items : [];
         byServer[serverId] = [];
         items.forEach((item) => {
@@ -7181,7 +7224,16 @@ async function loadDashboardRemoteStreams(opts = {}) {
           if (!normalized || !normalized.stream) return;
           nextStreams.push(normalized.stream);
           byServer[serverId].push(normalized.stream.id);
-          nextStats[normalized.stream.id] = normalized.stats || {};
+          const freshStats = (normalized.stats && typeof normalized.stats === 'object') ? normalized.stats : {};
+          if (hasRemoteRuntimeStats(freshStats)) {
+            nextStats[normalized.stream.id] = freshStats;
+            return;
+          }
+          if (!statusEnriched && previousStats[normalized.stream.id] && typeof previousStats[normalized.stream.id] === 'object') {
+            nextStats[normalized.stream.id] = previousStats[normalized.stream.id];
+            return;
+          }
+          nextStats[normalized.stream.id] = freshStats;
         });
       } catch (err) {
         const prevIds = (state.remoteDashboardByServer && Array.isArray(state.remoteDashboardByServer[serverId]))
