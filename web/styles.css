@@ -1313,7 +1313,21 @@ select {
   grid-template-columns: 1.2fr 0.8fr 0.8fr 1fr 1fr auto;
 }
 
+#server-streams-overlay .server-streams-modal {
+  width: min(1380px, 96vw);
+}
+
+#server-streams-table {
+  display: block;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  max-height: 62vh;
+}
+
 #server-streams-table .table-row {
+  min-width: 1360px;
   grid-template-columns:
     minmax(120px, 1fr)
     minmax(160px, 1.3fr)
@@ -1326,17 +1340,22 @@ select {
     minmax(180px, 1.4fr)
     minmax(180px, 1.4fr)
     auto;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  padding: 8px 10px;
 }
 
 .server-stream-actions {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
 }
 
 .server-cap-list {
   display: inline-flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 4px;
 }
 
@@ -1370,6 +1389,42 @@ select {
 
 .server-stream-onair.no {
   color: var(--warning);
+}
+
+#server-streams-table .table-row:last-child {
+  border-bottom: none;
+}
+
+#server-streams-table .table-row.header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+
+#server-streams-table .table-row > div {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#server-streams-table .table-row > div:nth-child(2),
+#server-streams-table .table-row > div:nth-child(9) {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+#server-streams-table .table-row > div:nth-child(10),
+#server-streams-table .table-row > div:nth-child(11) {
+  overflow: visible;
+}
+
+.server-stream-actions .btn {
+  white-space: nowrap;
 }
 
 .access-table .table-row {
