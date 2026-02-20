@@ -162,5 +162,36 @@ do
     assert_eq(#requests, 1, "no retry on 4xx")
 end
 
+-- 5) Explicit http_request_fn works when global http_request is unavailable
+do
+    local global_http_request = http_request
+    http_request = nil
+
+    local injected_requests = {}
+    local injected_http_request = function(req)
+        table.insert(injected_requests, req)
+        if type(req.callback) == "function" then
+            req.callback(req, { code = 200, headers = {}, content = "{\"ok\":true}" })
+        end
+    end
+
+    local client, err = CesboApiClient.new({
+        baseUrl = "http://127.0.0.1:8000",
+        login = "u",
+        password = "p",
+        max_attempts = 1,
+        http_request_fn = injected_http_request,
+    })
+    assert_true(client ~= nil, err)
+
+    client:GetVersion(function(ok, data)
+        assert_eq(ok, true, "injected request function ok")
+        assert_true(type(data) == "table" and data.ok == true, "injected request function data")
+    end)
+
+    assert_eq(#injected_requests, 1, "injected request called once")
+    http_request = global_http_request
+end
+
 print("cesbo_api_client_unit: ok")
 astra.exit()

@@ -540,6 +540,7 @@ local function new_cesbo_client(cfg)
         baseUrl = url,
         login = cfg.login,
         password = cfg.password,
+        http_request_fn = http_request,
         connect_timeout_ms = cfg.connect_timeout_ms,
         read_timeout_ms = cfg.read_timeout_ms,
         timeout_ms = cfg.timeout_ms,

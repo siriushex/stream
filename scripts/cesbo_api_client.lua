@@ -171,6 +171,9 @@ function CesboApiClient.new(opts)
     self.retry_jitter_pct = tonumber(opts.retry_jitter_pct) or 20
 
     self.debug = opts.debug == true
+    -- Explicit request function injection keeps compatibility in environments
+    -- where global http_request is not visible inside this module chunk.
+    self.http_request_fn = opts.http_request_fn or http_request
     return self, nil
 end
 
@@ -209,7 +212,11 @@ function CesboApiClient:_build_headers(extra, body_len)
 end
 
 function CesboApiClient:_request(method, path, query, body_obj, callback)
-    if type(http_request) ~= "function" then
+    local http_req = self.http_request_fn
+    if type(http_req) ~= "function" then
+        http_req = http_request
+    end
+    if type(http_req) ~= "function" then
         callback(false, "http_request unavailable")
         return
     end
@@ -241,7 +248,7 @@ function CesboApiClient:_request(method, path, query, body_obj, callback)
         local headers = self:_build_headers(nil, body and #body or 0)
         self:_debug(method .. " " .. full_path .. " attempt=" .. tostring(attempt))
 
-        http_request({
+        http_req({
             host = self.host,
             port = self.port,
             path = full_path,
