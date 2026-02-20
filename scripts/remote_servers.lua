@@ -1331,8 +1331,9 @@ local function astra_list_streams(cfg, adapter_ctx, include_status, callback)
                     return done(false, nil, err_s, code_s)
                 end)
             end
-            local function enrich_per_stream_status(probe_items)
+            local function enrich_per_stream_status(probe_items, opts)
                 local targets = type(probe_items) == "table" and probe_items or {}
+                local tolerate_auth = type(opts) == "table" and opts.tolerate_auth == true
                 local pending = #targets
                 if pending == 0 then
                     return callback(true, stream_items)
@@ -1371,7 +1372,9 @@ local function astra_list_streams(cfg, adapter_ctx, include_status, callback)
                                 if ok_s and type(status_item) == "table" then
                                     apply_stream_status(item, status_item)
                                 elseif is_auth_error(code_s or err_s) then
-                                    return finish_with_error("login/password incorrect", code_s or 401)
+                                    if not tolerate_auth then
+                                        return finish_with_error("login/password incorrect", code_s or 401)
+                                    end
                                 end
                                 if pending <= 0 then
                                     return finish_ok()
@@ -1403,7 +1406,7 @@ local function astra_list_streams(cfg, adapter_ctx, include_status, callback)
                 end
                 -- Older Astra variants expose only per-stream status endpoints.
                 if is_auth_error(status_code or status_err) then
-                    return callback(false, nil, "login/password incorrect", status_code or 401)
+                    return enrich_per_stream_status(build_probe_list(), { tolerate_auth = true })
                 end
                 return enrich_per_stream_status(build_probe_list())
             end)
