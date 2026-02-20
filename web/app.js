@@ -17,6 +17,9 @@ const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'input_bitrate', 'transcode', 'dvr', 'clients']);
+const BITRATE_DISPLAY_HOLD_MS = 15000;
+const BITRATE_DISPLAY_CACHE_TTL_MS = 120000;
+const BITRATE_DISPLAY_CACHE_MAX = 4096;
 const REMOTE_DASHBOARD_ID_PREFIX = 'remote:';
 const STREAM_COMPACT_SORT_LABELS = {
   stream: 'Stream',
@@ -493,6 +496,7 @@ const state = {
   adapterFullScanPoll: null,
   adapterFullScanPresets: null,
   adapterFullScanSelectedRows: new Set(),
+  bitrateDisplayCache: {},
   currentView: 'dashboard',
   sessionTimer: null,
   accessLogTimer: null,
@@ -8279,6 +8283,54 @@ function formatMaybeBitrate(value) {
   return formatBitrate(rate);
 }
 
+function resolveStableBitrateKbps(cacheKey, rawValue, isLive, holdMs = BITRATE_DISPLAY_HOLD_MS) {
+  const key = String(cacheKey || '').trim();
+  const rate = Number(rawValue);
+  if (!key) {
+    if (!Number.isFinite(rate)) return null;
+    return Math.max(0, rate);
+  }
+  const now = Date.now();
+  const cache = state.bitrateDisplayCache || (state.bitrateDisplayCache = {});
+  const prev = cache[key];
+  if (Number.isFinite(rate) && rate > 0) {
+    cache[key] = { value: Math.max(0, rate), ts: now };
+    return Math.max(0, rate);
+  }
+  if (isLive === true && prev && Number.isFinite(prev.value) && (now - Number(prev.ts || 0)) <= holdMs) {
+    return Math.max(0, Number(prev.value));
+  }
+  if (!Number.isFinite(rate)) {
+    return (prev && Number.isFinite(prev.value) && (now - Number(prev.ts || 0)) <= holdMs)
+      ? Math.max(0, Number(prev.value))
+      : null;
+  }
+  return Math.max(0, rate);
+}
+
+function pruneBitrateDisplayCache(activeStreamIds) {
+  const cache = state.bitrateDisplayCache;
+  if (!cache || typeof cache !== 'object') return;
+  const keys = Object.keys(cache);
+  if (!keys.length) return;
+  const now = Date.now();
+  const active = new Set((activeStreamIds || []).map((id) => String(id || '').trim()).filter(Boolean));
+  keys.forEach((key) => {
+    const streamId = String(key).split('|')[0];
+    const row = cache[key];
+    const stale = !row || !Number.isFinite(Number(row.ts)) || (now - Number(row.ts)) > BITRATE_DISPLAY_CACHE_TTL_MS;
+    if (stale || !active.has(streamId)) {
+      delete cache[key];
+    }
+  });
+  const remain = Object.keys(cache);
+  if (remain.length <= BITRATE_DISPLAY_CACHE_MAX) return;
+  remain.sort((a, b) => Number(cache[b] && cache[b].ts || 0) - Number(cache[a] && cache[a].ts || 0));
+  for (let i = BITRATE_DISPLAY_CACHE_MAX; i < remain.length; i += 1) {
+    delete cache[remain[i]];
+  }
+}
+
 function formatTranscodeBitrates(transcode) {
   const inputRate = transcode && transcode.input_bitrate_kbps;
   const outputRate = transcode && transcode.output_bitrate_kbps;
@@ -9000,6 +9052,7 @@ function rebuildStreamIndex(list) {
   list.forEach((stream) => {
     state.streamIndex[stream.id] = stream;
   });
+  pruneBitrateDisplayCache(Object.keys(state.streamIndex));
 }
 
 function findTileById(id) {
@@ -9126,6 +9179,13 @@ function removeStreamFromState(streamId) {
   if (state.localStats && typeof state.localStats === 'object') {
     delete state.localStats[id];
   }
+  if (state.bitrateDisplayCache && typeof state.bitrateDisplayCache === 'object') {
+    Object.keys(state.bitrateDisplayCache).forEach((key) => {
+      if (String(key).startsWith(`${id}|`)) {
+        delete state.bitrateDisplayCache[key];
+      }
+    });
+  }
   rebuildDashboardStats();
 }
 
@@ -9138,6 +9198,13 @@ function removeRemoteDashboardStreamFromState(streamId) {
   delete state.streamIndex[id];
   if (state.remoteStats && typeof state.remoteStats === 'object') {
     delete state.remoteStats[id];
+  }
+  if (state.bitrateDisplayCache && typeof state.bitrateDisplayCache === 'object') {
+    Object.keys(state.bitrateDisplayCache).forEach((key) => {
+      if (String(key).startsWith(`${id}|`)) {
+        delete state.bitrateDisplayCache[key];
+      }
+    });
   }
   rebuildDashboardStats();
 }
@@ -23172,8 +23239,10 @@ function updateTiles() {
         const outputKbps = Number.isFinite(Number(transcode.output_bitrate_kbps))
           ? Number(transcode.output_bitrate_kbps)
           : statsBitrateKbps;
-        const inputLabel = formatMaybeBitrate(inputKbps);
-        const outputLabel = formatMaybeBitrate(outputKbps);
+        const stableInputKbps = resolveStableBitrateKbps(`${id}|tile-in`, inputKbps, onAir);
+        const stableOutputKbps = resolveStableBitrateKbps(`${id}|tile-out`, outputKbps, onAir);
+        const inputLabel = formatMaybeBitrate(stableInputKbps);
+        const outputLabel = formatMaybeBitrate(stableOutputKbps);
         const compactLine = `In ${inputLabel} | Out ${outputLabel}`;
         if (tile.classList.contains('is-compact')) {
           if (refs.rateEl.dataset.mode !== 'transcode-compact') {
@@ -23211,7 +23280,8 @@ function updateTiles() {
           refs.rateEl.__rateLines = null;
           refs.rateEl.classList.remove('is-transcode');
         }
-        const text = formatBitrate(stats.bitrate || 0);
+        const stableMainKbps = resolveStableBitrateKbps(`${id}|tile-main`, stats.bitrate, onAir);
+        const text = formatBitrate(Number(stableMainKbps) || 0);
         if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       }
       const pendingTranscode = transcodeStateUpper === 'STARTING' || transcodeStateUpper === 'RESTARTING';
@@ -24817,8 +24887,10 @@ function buildStreamModel(stream) {
       inputBitrateValue = statsIn;
     }
   }
-  const inputBitrateKbps = Number.isFinite(Number(inputBitrateValue)) ? Number(inputBitrateValue) : null;
-  const inputBitrate = formatMaybeBitrate(inputBitrateValue);
+  const streamLive = (activeInput && activeInput.on_air === true) || (stats && stats.on_air === true);
+  const stableInputBitrateValue = resolveStableBitrateKbps(`${stream.id}|table-input`, inputBitrateValue, streamLive);
+  const inputBitrateKbps = Number.isFinite(Number(stableInputBitrateValue)) ? Number(stableInputBitrateValue) : null;
+  const inputBitrate = formatMaybeBitrate(stableInputBitrateValue);
   const uptime = resolveModelInputUptime(stats, activeInput);
   const inputUptime = uptime.text;
 
