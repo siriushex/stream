@@ -120,6 +120,18 @@ local function mk_timer(delay_sec, fn)
     })
 end
 
+local function is_callable(value)
+    local t = type(value)
+    if t == "function" then
+        return true
+    end
+    if t == "table" then
+        local mt = getmetatable(value)
+        return mt ~= nil and type(mt.__call) == "function"
+    end
+    return false
+end
+
 local function deep_copy_table(t)
     if type(t) ~= "table" then return t end
     local out = {}
@@ -213,10 +225,10 @@ end
 
 function CesboApiClient:_request(method, path, query, body_obj, callback)
     local http_req = self.http_request_fn
-    if type(http_req) ~= "function" then
+    if not is_callable(http_req) then
         http_req = http_request
     end
-    if type(http_req) ~= "function" then
+    if not is_callable(http_req) then
         callback(false, "http_request unavailable")
         return
     end

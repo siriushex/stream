@@ -193,5 +193,36 @@ do
     http_request = global_http_request
 end
 
+-- 6) Callable table http_request is supported
+do
+    local requests_callable = {}
+    local callable = setmetatable({}, {
+        __call = function(_, req)
+            table.insert(requests_callable, req)
+            if type(req.callback) == "function" then
+                req.callback(req, { code = 200, headers = {}, content = "{\"ok\":true}" })
+            end
+        end,
+    })
+    local global_http_request = http_request
+    http_request = callable
+
+    local client, err = CesboApiClient.new({
+        baseUrl = "http://127.0.0.1:8000",
+        login = "u",
+        password = "p",
+        max_attempts = 1,
+    })
+    assert_true(client ~= nil, err)
+
+    client:GetVersion(function(ok, data)
+        assert_eq(ok, true, "callable table request ok")
+        assert_true(type(data) == "table" and data.ok == true, "callable table request data")
+    end)
+
+    assert_eq(#requests_callable, 1, "callable table request called once")
+    http_request = global_http_request
+end
+
 print("cesbo_api_client_unit: ok")
 astra.exit()
