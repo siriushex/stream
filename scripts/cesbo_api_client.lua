@@ -169,6 +169,9 @@ function CesboApiClient.new(opts)
     -- Basic Auth. Можно передать в opts или указать в baseUrl как login:pass@host.
     self.login = safe_tostring(opts.login or parsed.login or "")
     self.password = safe_tostring(opts.password or parsed.password or "")
+    -- Optional alternative auth transport for legacy Astra variants.
+    self.cookie = safe_tostring(opts.cookie or "")
+    self.bearer_token = safe_tostring(opts.bearer_token or "")
 
     -- Таймауты (ms)
     self.connect_timeout_ms = tonumber(opts.connect_timeout_ms) or 800
@@ -203,9 +206,15 @@ function CesboApiClient:_build_headers(extra, body_len)
         "Accept: application/json",
     }
 
-    if self.login ~= "" or self.password ~= "" then
+    if self.bearer_token ~= "" then
+        headers[#headers + 1] = "Authorization: Bearer " .. self.bearer_token
+    elseif self.login ~= "" or self.password ~= "" then
         local auth = base64.encode(self.login .. ":" .. self.password)
         headers[#headers + 1] = "Authorization: Basic " .. auth
+    end
+
+    if self.cookie ~= "" then
+        headers[#headers + 1] = "Cookie: " .. self.cookie
     end
 
     if body_len and body_len > 0 then

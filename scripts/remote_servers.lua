@@ -41,15 +41,106 @@ local function boolish(value, fallback)
     return fallback
 end
 
+local function table_is_array(value)
+    if type(value) ~= "table" then
+        return false
+    end
+    local count = 0
+    local max_index = 0
+    for k, _ in pairs(value) do
+        if type(k) ~= "number" then
+            return false
+        end
+        if k <= 0 or math.floor(k) ~= k then
+            return false
+        end
+        count = count + 1
+        if k > max_index then
+            max_index = k
+        end
+    end
+    return count == max_index
+end
+
+local function deep_copy(value)
+    if type(value) ~= "table" then
+        return value
+    end
+    local out = {}
+    for k, v in pairs(value) do
+        out[k] = deep_copy(v)
+    end
+    return out
+end
+
+local function merge_object_preserving_unknown(base_value, override_value)
+    if type(override_value) ~= "table" then
+        return deep_copy(override_value)
+    end
+    if type(base_value) ~= "table" then
+        return deep_copy(override_value)
+    end
+    if table_is_array(base_value) or table_is_array(override_value) then
+        return deep_copy(override_value)
+    end
+    local out = deep_copy(base_value)
+    for key, next_value in pairs(override_value) do
+        local prev_value = out[key]
+        if type(prev_value) == "table"
+            and type(next_value) == "table"
+            and not table_is_array(prev_value)
+            and not table_is_array(next_value)
+        then
+            out[key] = merge_object_preserving_unknown(prev_value, next_value)
+        else
+            out[key] = deep_copy(next_value)
+        end
+    end
+    return out
+end
+
+local ASTRA_STRIP_TOP_LEVEL_KEYS = {
+    audio_fix = true,
+    transcode = true,
+    radio = true,
+    mpts_config = true,
+    mpts_services = true,
+    backup_type = true,
+    backup_initial_delay = true,
+    backup_initial_delay_sec = true,
+    backup_start_delay = true,
+    backup_start_delay_sec = true,
+    backup_return_delay = true,
+    backup_return_delay_sec = true,
+    backup_stop_if_all_inactive_sec = true,
+    backup_stall_switch_cooldown_sec = true,
+    stop_if_all_inactive_sec = true,
+    epg = true,
+    http_keep_active = true,
+    auth_enabled = true,
+    auth_token_source = true,
+    auth_token_param = true,
+    auth_allow_default = true,
+    group = true,
+}
+
+local function sanitize_stream_cfg_for_astra(stream_cfg)
+    local out = type(stream_cfg) == "table" and deep_copy(stream_cfg) or {}
+    for key, _ in pairs(ASTRA_STRIP_TOP_LEVEL_KEYS) do
+        out[key] = nil
+    end
+    return out
+end
+
 local function decode_json_safe(text)
     if not text or text == "" then
-        return nil
+        return true, nil
     end
     local ok, data = pcall(json.decode, text)
     if not ok then
-        return nil
+        return false, nil
     end
-    return data
+    return true, data
 end
 
 local function extract_error_text(payload)
@@ -271,9 +362,9 @@ function remote_servers.normalize(entry)
         base_path = base_path,
         insecure = insecure == true,
         api_type = api_type,
-        connect_timeout_ms = tonumber(entry.connect_timeout_ms) or 1500,
-        read_timeout_ms = tonumber(entry.read_timeout_ms) or 5000,
-        timeout_ms = tonumber(entry.timeout_ms) or 8000,
+        connect_timeout_ms = tonumber(entry.connect_timeout_ms) or 2000,
+        read_timeout_ms = tonumber(entry.read_timeout_ms) or 15000,
+        timeout_ms = tonumber(entry.timeout_ms) or 20000,
     }
     cfg.cache_key = table.concat({
         cfg.scheme,
@@ -313,47 +404,72 @@ local function request_json(cfg, request, callback)
         table.insert(headers, "Content-Length: " .. tostring(#payload))
     end
 
-    local ok, err = pcall(http_request, {
-        host = cfg.host,
-        port = cfg.port,
-        path = build_path(cfg, request.path),
-        method = method,
-        ssl = cfg.scheme == "https",
-        tls = cfg.scheme == "https",
-        tls_verify = cfg.insecure and false or true,
-        timeout = cfg.timeout_ms,
-        connect_timeout_ms = cfg.connect_timeout_ms,
-        read_timeout_ms = cfg.read_timeout_ms,
-        headers = headers,
-        content = payload,
-        callback = function(_, response)
-            if not response then
-                return callback(false, nil, "no response", 502)
-            end
-            local code = tonumber(response.code) or 0
-            local decoded = decode_json_safe(response.content or "")
-            if code < 200 or code >= 300 then
-                local detail = extract_error_text(decoded)
-                local text = "http " .. tostring(code)
-                if detail ~= "" then
-                    text = text .. ": " .. detail
+    local empty_retries = tonumber(request.empty_retries)
+    if empty_retries == nil then
+        empty_retries = 2
+    end
+    if empty_retries < 0 then
+        empty_retries = 0
+    end
+    local empty_attempt = 0
+
+    local function do_request()
+        local ok, err = pcall(http_request, {
+            host = cfg.host,
+            port = cfg.port,
+            path = build_path(cfg, request.path),
+            method = method,
+            ssl = cfg.scheme == "https",
+            tls = cfg.scheme == "https",
+            tls_verify = cfg.insecure and false or true,
+            timeout = cfg.timeout_ms,
+            connect_timeout_ms = cfg.connect_timeout_ms,
+            read_timeout_ms = cfg.read_timeout_ms,
+            headers = headers,
+            content = payload,
+            callback = function(_, response)
+                if not response then
+                    return callback(false, nil, "no response", 502)
                 end
-                return callback(false, nil, text, code, {
+                local code = tonumber(response.code) or 0
+                local content = response.content or ""
+                if code >= 200 and code < 300 and content == "" and empty_attempt < empty_retries then
+                    empty_attempt = empty_attempt + 1
+                    return do_request()
+                end
+                local decode_ok, decoded = decode_json_safe(content)
+                if code < 200 or code >= 300 then
+                    local detail = extract_error_text(decoded)
+                    local text = "http " .. tostring(code)
+                    if detail ~= "" then
+                        text = text .. ": " .. detail
+                    end
+                    return callback(false, nil, text, code, {
+                        code = code,
+                        data = decoded,
+                        headers = response.headers,
+                    })
+                end
+                if not decode_ok then
+                    return callback(false, nil, "invalid json response", 502, {
+                        code = code,
+                        data = nil,
+                        headers = response.headers,
+                    })
+                end
+                return callback(true, decoded, nil, code, {
                     code = code,
                     data = decoded,
                     headers = response.headers,
                 })
-            end
-            return callback(true, decoded, nil, code, {
-                code = code,
-                data = decoded,
-                headers = response.headers,
-            })
-        end,
-    })
-    if not ok then
-        callback(false, nil, "request failed: " .. tostring(err), 502)
+            end,
+        })
+        if not ok then
+            callback(false, nil, "request failed: " .. tostring(err), 502)
+        end
     end
+
+    do_request()
 end
 
 local STREAM_V1_CAPABILITIES = {
@@ -381,6 +497,7 @@ local ASTRA_LEGACY_CAPABILITIES = {
 }
 
 local session_cache = {}
+local streams_cache = {}
 
 local function cache_read(cfg)
     return session_cache[cfg.cache_key]
@@ -392,6 +509,32 @@ end
 
 local function cache_clear(cfg)
     session_cache[cfg.cache_key] = nil
+end
+
+local function streams_cache_read(cfg)
+    local row = streams_cache[cfg.cache_key]
+    if type(row) ~= "table" then
+        return nil
+    end
+    local items = type(row.items) == "table" and row.items or nil
+    if not items or #items == 0 then
+        return nil
+    end
+    return items
+end
+
+local function streams_cache_write(cfg, items)
+    if type(items) ~= "table" or #items == 0 then
+        return
+    end
+    local copy = {}
+    for i, item in ipairs(items) do
+        copy[i] = item
+    end
+    streams_cache[cfg.cache_key] = {
+        ts = os.time(),
+        items = copy,
+    }
 end
 
 local function stream_v1_login(cfg, callback)
@@ -464,7 +607,8 @@ local function stream_v1_request(cfg, auth, request, callback)
     local headers = {}
     if auth and auth.token then
         table.insert(headers, "Authorization: Bearer " .. tostring(auth.token))
-    elseif auth and auth.cookie then
+    end
+    if auth and auth.cookie then
         table.insert(headers, "Cookie: " .. tostring(auth.cookie))
     end
     request.headers = request.headers or {}
@@ -472,6 +616,65 @@ local function stream_v1_request(cfg, auth, request, callback)
         table.insert(request.headers, h)
     end
     request_json(cfg, request, callback)
+end
+
+local function build_auth_headers(auth, cfg)
+    local headers = {}
+    if type(auth) ~= "table" then
+        auth = nil
+    end
+    local has_token = auth and auth.token and tostring(auth.token) ~= ""
+    local has_cookie = auth and auth.cookie and tostring(auth.cookie) ~= ""
+    if has_token then
+        table.insert(headers, "Authorization: Bearer " .. tostring(auth.token))
+    end
+    if has_cookie then
+        table.insert(headers, "Cookie: " .. tostring(auth.cookie))
+    end
+    if not has_token and not has_cookie then
+        local login = trim(cfg and cfg.login or "")
+        local password = safe_tostring(cfg and cfg.password or "")
+        if login ~= "" or password ~= "" then
+            table.insert(headers, "Authorization: Basic " .. base64.encode(login .. ":" .. password))
+        end
+    end
+    return headers
+end
+
+local function astra_request(cfg, adapter_ctx, request, callback)
+    request = request or {}
+    request.headers = request.headers or {}
+    local auth = adapter_ctx and adapter_ctx.auth or nil
+    local auth_headers = build_auth_headers(auth, cfg)
+    for _, h in ipairs(auth_headers) do
+        table.insert(request.headers, h)
+    end
+    request_json(cfg, request, callback)
+end
+
+local function astra_try_paths(cfg, adapter_ctx, request, callback)
+    local paths = (type(request) == "table" and type(request.paths) == "table") and request.paths or {}
+    local method = (type(request) == "table" and request.method) or "GET"
+    local body = type(request) == "table" and request.body or nil
+    if #paths == 0 then
+        return callback(false, nil, "invalid astra request paths", 400)
+    end
+    local index = 1
+    local function attempt()
+        local path = paths[index]
+        astra_request(cfg, adapter_ctx, {
+            method = method,
+            path = path,
+            body = body,
+        }, function(ok, data, err, code)
+            if not ok and code == 404 and index < #paths then
+                index = index + 1
+                return attempt()
+            end
+            return callback(ok, data, err, code)
+        end)
+    end
+    attempt()
 end
 
 local function detect_stream_v1(cfg, callback)
@@ -528,7 +731,7 @@ local function ensure_cesbo_client_loaded()
     return ok and type(CesboApiClient) == "table" and type(CesboApiClient.new) == "function"
 end
 
-local function new_cesbo_client(cfg)
+local function new_cesbo_client(cfg, auth)
     if not ensure_cesbo_client_loaded() then
         return nil, "cesbo api client unavailable"
     end
@@ -536,10 +739,14 @@ local function new_cesbo_client(cfg)
     if cfg.base_path and cfg.base_path ~= "" then
         url = url .. cfg.base_path
     end
+    local use_auth_headers = type(auth) == "table"
+        and ((auth.cookie and tostring(auth.cookie) ~= "") or (auth.token and tostring(auth.token) ~= ""))
     local client, err = CesboApiClient.new({
         baseUrl = url,
-        login = cfg.login,
-        password = cfg.password,
+        login = use_auth_headers and "" or cfg.login,
+        password = use_auth_headers and "" or cfg.password,
+        cookie = use_auth_headers and tostring(auth.cookie or "") or "",
+        bearer_token = use_auth_headers and tostring(auth.token or "") or "",
         http_request_fn = http_request,
         connect_timeout_ms = cfg.connect_timeout_ms,
         read_timeout_ms = cfg.read_timeout_ms,
@@ -553,60 +760,97 @@ local function new_cesbo_client(cfg)
 end
 
 local function detect_astra_legacy(cfg, callback)
-    local client, err = new_cesbo_client(cfg)
-    if not client then
-        return callback(false, nil, err, 502)
+    local function build_ctx(client, auth_mode, auth, version)
+        return {
+            api_type_effective = "astra_legacy",
+            remote_version = version or "",
+            auth_mode = auth_mode or "none",
+            capabilities = ASTRA_LEGACY_CAPABILITIES,
+            client = client,
+            auth = auth,
+        }
     end
 
-    client:GetVersion(function(ok, data, resp)
-        if ok then
-            local version = ""
-            if type(data) == "table" then
-                version = trim(data.version or data.stream_version or data.result or "")
-            else
-                version = trim(data)
-            end
-            return callback(true, {
-                api_type_effective = "astra_legacy",
-                remote_version = version,
-                auth_mode = (cfg.login ~= "" or cfg.password ~= "") and "basic" or "none",
-                capabilities = ASTRA_LEGACY_CAPABILITIES,
-                client = client,
-            })
-        end
-
-        local code = resp and resp.code or nil
-        local msg = trim(data or err or "astra probe failed")
-        if is_auth_error(code or msg) then
-            return callback(false, nil, "login/password incorrect", code or 401)
-        end
-
-        -- Fallback to system-status if version command not supported.
-        client:GetSystemStatus(1, function(ok2, data2, resp2)
-            if ok2 then
+    local function probe_client(client, auth_mode, auth, done)
+        client:GetVersion(function(ok, data, resp)
+            if ok then
                 local version = ""
-                if type(data2) == "table" then
-                    version = trim(data2.version or data2.stream_version or "")
+                if type(data) == "table" then
+                    version = trim(data.version or data.stream_version or data.result or "")
+                else
+                    version = trim(data)
                 end
-                return callback(true, {
-                    api_type_effective = "astra_legacy",
-                    remote_version = version,
-                    auth_mode = (cfg.login ~= "" or cfg.password ~= "") and "basic" or "none",
-                    capabilities = ASTRA_LEGACY_CAPABILITIES,
-                    client = client,
-                })
+                return done(true, build_ctx(client, auth_mode, auth, version))
             end
-            local msg2 = trim(data2 or msg or "astra probe failed")
-            local code2 = resp2 and resp2.code or code
-            if is_auth_error(code2 or msg2) then
-                return callback(false, nil, "login/password incorrect", code2 or 401)
+            local code = resp and resp.code or nil
+            local msg = trim(data or "astra probe failed")
+            client:GetSystemStatus(1, function(ok2, data2, resp2)
+                if ok2 then
+                    local version = ""
+                    if type(data2) == "table" then
+                        version = trim(data2.version or data2.stream_version or "")
+                    end
+                    return done(true, build_ctx(client, auth_mode, auth, version))
+                end
+                local msg2 = trim(data2 or msg or "astra probe failed")
+                local code2 = resp2 and resp2.code or code
+                return done(false, nil, msg2, code2)
+            end)
+        end)
+    end
+
+    local primary_mode = (cfg.login ~= "" or cfg.password ~= "") and "basic" or "none"
+    local primary_client, init_err = new_cesbo_client(cfg, nil)
+    if not primary_client then
+        return callback(false, nil, init_err, 502)
+    end
+
+    probe_client(primary_client, primary_mode, nil, function(ok, ctx, probe_err, probe_code)
+        if ok then
+            return callback(true, ctx)
+        end
+
+        if not is_auth_error(probe_code or probe_err) then
+            return callback(false, nil, probe_err, probe_code)
+        end
+
+        if cfg.login == "" and cfg.password == "" then
+            return callback(false, nil, "login/password incorrect", probe_code or 401)
+        end
+
+        -- Some Astra deployments require cookie/bearer auth and deny pure Basic Auth.
+        stream_v1_login(cfg, function(ok_login, auth, login_err, login_code)
+            if not ok_login then
+                return callback(false, nil, "login/password incorrect", login_code or 401)
             end
-            return callback(false, nil, msg2, code2)
+            local has_auth = type(auth) == "table"
+                and ((auth.token and tostring(auth.token) ~= "") or (auth.cookie and tostring(auth.cookie) ~= ""))
+            if not has_auth then
+                return callback(false, nil, "login/password incorrect", probe_code or 401)
+            end
+
+            local fallback_client, fallback_err = new_cesbo_client(cfg, auth)
+            if not fallback_client then
+                return callback(false, nil, fallback_err, 502)
+            end
+            local fallback_mode = auth.auth_mode or ((auth.token and "bearer") or "cookie")
+            probe_client(fallback_client, fallback_mode, auth, function(ok2, ctx2, err2, code2)
+                if ok2 then
+                    return callback(true, ctx2)
+                end
+                if is_auth_error(code2 or err2) then
+                    return callback(false, nil, "login/password incorrect", code2 or 401)
+                end
+                return callback(false, nil, err2, code2)
+            end)
         end)
     end)
 end
 
-local function detect_adapter(cfg, callback)
+local function detect_adapter(cfg, callback, opts)
+    if type(opts) == "table" and opts.force == true then
+        cache_clear(cfg)
+    end
     local cached = cache_read(cfg)
     if cached and cached.api_type_effective and cached.adapter_ctx then
         return callback(true, cached)
@@ -721,6 +965,10 @@ local function normalize_streams_payload(data)
         for _, item in ipairs(data.items) do
             push(item)
         end
+    elseif type(data) == "table" and type(data.streams) == "table" then
+        for _, item in ipairs(data.streams) do
+            push(item)
+        end
     elseif type(data) == "table" then
         local as_array = false
         for k, _ in pairs(data) do
@@ -742,20 +990,75 @@ local function normalize_streams_payload(data)
     return out
 end
 
-local function merge_stream_status(items, status_map)
-    if type(status_map) ~= "table" then
+local function apply_stream_status(item, st)
+    if type(item) ~= "table" or type(st) ~= "table" then
         return
     end
+    item.on_air = boolish(st.on_air, boolish(st.onair, boolish(st.active, boolish(st.alive, nil))))
+    item.bitrate_kbps = nil
+    local bitrate_value = st.bitrate or st.bitrate_kbps or st.rate
+    local bitrate_num = tonumber(bitrate_value)
+    if bitrate_num == nil and bitrate_value ~= nil then
+        local text = trim(tostring(bitrate_value)):lower()
+        local parsed = tonumber(text:match("([%d%.]+)"))
+        if parsed ~= nil then
+            if text:find("mbit", 1, true) or text:find("mbps", 1, true) then
+                bitrate_num = parsed * 1000
+            elseif text:find("kbit", 1, true) or text:find("kbps", 1, true) then
+                bitrate_num = parsed
+            elseif text:find("bit", 1, true) then
+                bitrate_num = parsed / 1000
+            else
+                bitrate_num = parsed
+            end
+        end
+    end
+    if bitrate_num ~= nil then
+        item.bitrate_kbps = bitrate_num
+    end
+    item.uptime_sec = tonumber(st.uptime or st.uptime_sec)
+    item.active_input = st.input_id or st.active_input or st.input or nil
+    if item.active_input ~= nil and tonumber(item.active_input) == nil then
+        local parsed_input = tonumber(tostring(item.active_input):match("(%d+)"))
+        if parsed_input ~= nil then
+            item.active_input = parsed_input
+        end
+    end
+    item.last_error = trim(st.last_error or st.error or "")
+end
+
+local function merge_stream_status(items, status_map)
+    if type(status_map) ~= "table" then
+        return 0
+    end
+    local merged = 0
     for _, item in ipairs(items) do
         local st = status_map[item.id]
         if type(st) == "table" then
-            item.on_air = boolish(st.on_air, boolish(st.alive, nil))
-            item.bitrate_kbps = tonumber(st.bitrate or st.bitrate_kbps or st.rate)
-            item.uptime_sec = tonumber(st.uptime or st.uptime_sec)
-            item.active_input = st.input_id or st.active_input or st.input or nil
-            item.last_error = trim(st.last_error or st.error or "")
+            merged = merged + 1
         end
+        apply_stream_status(item, st)
     end
+    return merged
+end
+
+local function astra_load_streams_from_control(adapter_ctx, callback)
+    local client = adapter_ctx and adapter_ctx.client or nil
+    if not client or type(client.LoadConfiguration) ~= "function" then
+        return callback(false, nil, "control load unavailable", 404)
+    end
+    client:LoadConfiguration(function(ok, data, resp)
+        if not ok then
+            local code = resp and resp.code or nil
+            local msg = trim(data or "load config failed")
+            if is_auth_error(code or msg) then
+                return callback(false, nil, "login/password incorrect", code or 401)
+            end
+            return callback(false, nil, msg, code)
+        end
+        local items = normalize_streams_payload(data)
+        callback(true, items)
+    end)
 end
 
 local function stream_v1_list_streams(cfg, adapter_ctx, include_status, callback)
@@ -947,48 +1250,229 @@ local function stream_v1_action(cfg, adapter_ctx, stream_id, action, input_index
 end
 
 local function astra_list_streams(cfg, adapter_ctx, include_status, callback)
-    local client = adapter_ctx.client
-    client:GetApi("/streams", nil, function(ok, data, resp)
+    astra_try_paths(cfg, adapter_ctx, {
+        method = "GET",
+        paths = {
+            "/api/streams",
+            "/api/v1/streams",
+            "/api/stream-info",
+        },
+    }, function(ok, data, err, code)
+        if not ok and code == 404 and adapter_ctx and adapter_ctx.client and adapter_ctx.client.LoadConfiguration then
+            return adapter_ctx.client:LoadConfiguration(function(ok_load, data_load, resp_load)
+                if not ok_load then
+                    local load_code = resp_load and resp_load.code or code
+                    local msg = trim(data_load or err or "fetch failed")
+                    if is_auth_error(load_code or msg) then
+                        return callback(false, nil, "login/password incorrect", load_code or 401)
+                    end
+                    return callback(false, nil, msg, load_code)
+                end
+                local items = normalize_streams_payload(data_load)
+                if not include_status then
+                    return callback(true, items)
+                end
+                callback(true, items)
+            end)
+        end
         if not ok then
-            local code = resp and resp.code or nil
-            local msg = trim(data or "fetch failed")
+            local msg = trim(err or "fetch failed")
             if is_auth_error(code or msg) then
                 return callback(false, nil, "login/password incorrect", code or 401)
             end
             return callback(false, nil, msg, code)
         end
         local items = normalize_streams_payload(data)
-        if not include_status then
-            return callback(true, items)
-        end
-        client:GetApi("/stream-status", { t = "1" }, function(ok2, status_data)
-            if ok2 and type(status_data) == "table" then
-                merge_stream_status(items, status_data)
+        local function continue_with_items(items_final)
+            local stream_items = items_final or {}
+            if not include_status then
+                return callback(true, stream_items)
             end
-            callback(true, items)
-        end)
+            local function needs_status_probe(item)
+                if type(item) ~= "table" then
+                    return false
+                end
+                local has_on_air = item.on_air ~= nil
+                local has_bitrate = tonumber(item.bitrate_kbps) ~= nil
+                local has_active_input = item.active_input ~= nil
+                return not (has_on_air and has_bitrate and has_active_input)
+            end
+            local function build_probe_list()
+                local out = {}
+                for _, item in ipairs(stream_items) do
+                    if needs_status_probe(item) then
+                        out[#out + 1] = item
+                    end
+                end
+                return out
+            end
+            local function request_stream_status(sid, done)
+                local client = adapter_ctx and adapter_ctx.client or nil
+                if client and type(client.GetStreamStatus) == "function" then
+                    return client:GetStreamStatus(sid, 1, function(ok_s, status_item, resp_s)
+                        if ok_s and type(status_item) == "table" and not status_item.error then
+                            return done(true, status_item, nil, nil)
+                        end
+                        local code_s = resp_s and resp_s.code or nil
+                        local err_s = trim(status_item or "stream status failed")
+                        return done(false, nil, err_s, code_s)
+                    end)
+                end
+                astra_try_paths(cfg, adapter_ctx, {
+                    method = "GET",
+                    paths = {
+                        "/api/stream-status/" .. sid .. "?t=1",
+                        "/api/v1/stream-status/" .. sid .. "?t=1",
+                    },
+                }, function(ok_s, status_item, err_s, code_s)
+                    if ok_s and type(status_item) == "table" and not status_item.error then
+                        return done(true, status_item, nil, nil)
+                    end
+                    return done(false, nil, err_s, code_s)
+                end)
+            end
+            local function enrich_per_stream_status(probe_items)
+                local targets = type(probe_items) == "table" and probe_items or {}
+                local pending = #targets
+                if pending == 0 then
+                    return callback(true, stream_items)
+                end
+                local index = 1
+                local active = 0
+                local finished = false
+                local max_parallel = 6
+                local function finish_with_error(err_text, err_code)
+                    if finished then
+                        return
+                    end
+                    finished = true
+                    callback(false, nil, err_text, err_code)
+                end
+                local function finish_ok()
+                    if finished then
+                        return
+                    end
+                    finished = true
+                    callback(true, stream_items)
+                end
+                local function launch_next()
+                    while not finished and active < max_parallel and index <= #targets do
+                        local item = targets[index]
+                        index = index + 1
+                        active = active + 1
+                        local sid = trim(item and item.id)
+                        if sid == "" then
+                            active = active - 1
+                            pending = pending - 1
+                        else
+                            request_stream_status(sid, function(ok_s, status_item, err_s, code_s)
+                                active = math.max(0, active - 1)
+                                pending = pending - 1
+                                if ok_s and type(status_item) == "table" then
+                                    apply_stream_status(item, status_item)
+                                elseif is_auth_error(code_s or err_s) then
+                                    return finish_with_error("login/password incorrect", code_s or 401)
+                                end
+                                if pending <= 0 then
+                                    return finish_ok()
+                                end
+                                launch_next()
+                            end)
+                        end
+                    end
+                    if not finished and pending <= 0 then
+                        finish_ok()
+                    end
+                end
+                launch_next()
+            end
+            astra_try_paths(cfg, adapter_ctx, {
+                method = "GET",
+                paths = {
+                    "/api/stream-status?t=1",
+                    "/api/v1/stream-status?t=1",
+                },
+            }, function(ok2, status_data, status_err, status_code)
+                if ok2 and type(status_data) == "table" and not status_data.error then
+                    merge_stream_status(stream_items, status_data)
+                    local probe_items = build_probe_list()
+                    if #probe_items == 0 then
+                        return callback(true, stream_items)
+                    end
+                    return enrich_per_stream_status(probe_items)
+                end
+                -- Older Astra variants expose only per-stream status endpoints.
+                if is_auth_error(status_code or status_err) then
+                    return callback(false, nil, "login/password incorrect", status_code or 401)
+                end
+                return enrich_per_stream_status(build_probe_list())
+            end)
+        end
+
+        if #items == 0 then
+            return astra_load_streams_from_control(adapter_ctx, function(ok_load, loaded_items, load_err, load_code)
+                if ok_load and type(loaded_items) == "table" and #loaded_items > 0 then
+                    return continue_with_items(loaded_items)
+                end
+                if not ok_load and is_auth_error(load_code or load_err) then
+                    return callback(false, nil, "login/password incorrect", load_code or 401)
+                end
+                return continue_with_items(items)
+            end)
+        end
+        continue_with_items(items)
     end)
 end
 
 local function astra_get_stream(cfg, adapter_ctx, stream_id, callback)
-    local client = adapter_ctx.client
-    client:GetStreamInfo(stream_id, function(ok, data, resp)
-        if not ok then
-            local code = resp and resp.code or nil
-            local msg = trim(data or "stream not found")
-            if is_auth_error(code or msg) then
-                return callback(false, nil, "login/password incorrect", code or 401)
+    local sid = trim(stream_id)
+    -- Prefer full config from control-load to avoid losing legacy keys on edit/save.
+    astra_load_streams_from_control(adapter_ctx, function(ok_load, loaded_items, load_err, load_code)
+        if ok_load then
+            local list = type(loaded_items) == "table" and loaded_items or {}
+            for _, row in ipairs(list) do
+                if trim(row.id) == sid then
+                    return callback(true, row)
+                end
             end
-            if (code or 0) == 404 then
+        elseif is_auth_error(load_code or load_err) then
+            return callback(false, nil, "login/password incorrect", load_code or 401)
+        end
+
+        -- Fallback to stream-info endpoints for legacy nodes where control load is unavailable.
+        astra_try_paths(cfg, adapter_ctx, {
+            method = "GET",
+            paths = {
+                "/api/stream-info/" .. sid,
+                "/api/v1/stream-info/" .. sid,
+                "/api/stream-info?id=" .. sid,
+            },
+        }, function(ok, data, err, code)
+            if not ok then
+                local msg = trim(err or "stream not found")
+                if is_auth_error(code or msg) then
+                    return callback(false, nil, "login/password incorrect", code or 401)
+                end
+                if (code or 0) == 404 then
+                    return callback(false, nil, "stream not found", 404)
+                end
+                return callback(false, nil, msg, code)
+            end
+            local item = normalize_stream_item(data)
+            if not item then
+                local list = normalize_streams_payload(data)
+                for _, row in ipairs(list) do
+                    if trim(row.id) == sid then
+                        item = row
+                        break
+                    end
+                end
+            end
+            if not item then
                 return callback(false, nil, "stream not found", 404)
             end
-            return callback(false, nil, msg, code)
-        end
-        local item = normalize_stream_item(data)
-        if not item then
-            return callback(false, nil, "stream not found", 404)
-        end
-        callback(true, item)
+            callback(true, item)
+        end)
     end)
 end
 
@@ -997,41 +1481,66 @@ local function astra_upsert_stream(cfg, adapter_ctx, stream, mode, callback)
     if stream_id == "" then
         return callback(false, nil, "stream.id is required", 400)
     end
-    local stream_cfg = type(stream.config) == "table" and stream.config or {}
-    stream_cfg.id = stream_id
-    stream_cfg.enable = stream.enabled ~= false
+    local requested_cfg = type(stream.config) == "table" and stream.config or {}
+    local function build_stream_cfg(existing_item)
+        local base_cfg = existing_item and type(existing_item.config) == "table"
+            and existing_item.config
+            or {}
+        local merged_cfg = merge_object_preserving_unknown(base_cfg, requested_cfg)
+        merged_cfg = sanitize_stream_cfg_for_astra(merged_cfg)
+        merged_cfg.id = stream_id
+        merged_cfg.enable = stream.enabled ~= false
+        return merged_cfg
+    end
 
     local client = adapter_ctx.client
-    if mode == "create" then
-        -- Best effort create check.
-        return client:GetStreamInfo(stream_id, function(ok_get, _, _)
-            if ok_get then
-                return callback(false, nil, "stream already exists", 409)
-            end
-            client:SetStream(stream_id, stream_cfg, function(ok_set, data_set, resp_set)
-                if not ok_set then
-                    local code = resp_set and resp_set.code or nil
-                    local msg = trim(data_set or "set-stream failed")
-                    if is_auth_error(code or msg) then
-                        return callback(false, nil, "login/password incorrect", code or 401)
-                    end
-                    return callback(false, nil, msg, code)
+    local function set_stream(stream_cfg)
+        client:SetStream(stream_id, stream_cfg, function(ok_set, data_set, resp_set)
+            if not ok_set then
+                local code = resp_set and resp_set.code or nil
+                local msg = trim(data_set or "set-stream failed")
+                if is_auth_error(code or msg) then
+                    return callback(false, nil, "login/password incorrect", code or 401)
                 end
-                callback(true, data_set or { status = "ok" })
-            end)
+                return callback(false, nil, msg, code)
+            end
+            callback(true, data_set or { status = "ok" })
         end)
     end
 
-    client:SetStream(stream_id, stream_cfg, function(ok_set, data_set, resp_set)
-        if not ok_set then
-            local code = resp_set and resp_set.code or nil
-            local msg = trim(data_set or "set-stream failed")
-            if is_auth_error(code or msg) then
-                return callback(false, nil, "login/password incorrect", code or 401)
+    if mode == "create" then
+        -- Best effort create check.
+        return astra_get_stream(cfg, adapter_ctx, stream_id, function(ok_get, _, get_err, get_code)
+            if ok_get then
+                return callback(false, nil, "stream already exists", 409)
             end
-            return callback(false, nil, msg, code)
+            if is_auth_error(get_code or get_err) then
+                return callback(false, nil, "login/password incorrect", get_code or 401)
+            end
+            if get_code and get_code ~= 404 then
+                return callback(false, nil, trim(get_err or "stream check failed"), get_code)
+            end
+            set_stream(build_stream_cfg(nil))
+        end)
+    end
+
+    astra_get_stream(cfg, adapter_ctx, stream_id, function(ok_get, existing_item, get_err, get_code)
+        if ok_get then
+            return set_stream(build_stream_cfg(existing_item))
         end
-        callback(true, data_set or { status = "ok" })
+        if is_auth_error(get_code or get_err) then
+            return callback(false, nil, "login/password incorrect", get_code or 401)
+        end
+        if mode == "update" then
+            if get_code == 404 then
+                return callback(false, nil, "stream not found", 404)
+            end
+            return callback(false, nil, trim(get_err or "stream check failed"), get_code)
+        end
+        if get_code and get_code ~= 404 then
+            return callback(false, nil, trim(get_err or "stream check failed"), get_code)
+        end
+        return set_stream(build_stream_cfg(nil))
     end)
 end
 
@@ -1049,19 +1558,13 @@ local function astra_delete_stream(cfg, adapter_ctx, stream_id, callback)
     end)
 end
 
-local function astra_toggle_to(adapter_ctx, stream_id, desired_enabled, callback)
-    adapter_ctx.client:GetStreamInfo(stream_id, function(ok_get, data_get, resp_get)
+local function astra_toggle_to(cfg, adapter_ctx, stream_id, desired_enabled, callback)
+    astra_get_stream(cfg, adapter_ctx, stream_id, function(ok_get, item, get_err, get_code)
         if not ok_get then
-            local code = resp_get and resp_get.code or nil
-            local msg = trim(data_get or "stream not found")
-            if is_auth_error(code or msg) then
-                return callback(false, nil, "login/password incorrect", code or 401)
+            if is_auth_error(get_code or get_err) then
+                return callback(false, nil, "login/password incorrect", get_code or 401)
             end
-            return callback(false, nil, msg, code)
-        end
-        local item = normalize_stream_item(data_get)
-        if not item then
-            return callback(false, nil, "stream not found", 404)
+            return callback(false, nil, trim(get_err or "stream not found"), get_code)
         end
         if item.enabled == desired_enabled then
             return callback(true, { status = "ok", detail = "already " .. (desired_enabled and "enabled" or "disabled") })
@@ -1082,10 +1585,10 @@ end
 
 local function astra_action(cfg, adapter_ctx, stream_id, action, input_index, callback)
     if action == "enable" then
-        return astra_toggle_to(adapter_ctx, stream_id, true, callback)
+        return astra_toggle_to(cfg, adapter_ctx, stream_id, true, callback)
     end
     if action == "disable" then
-        return astra_toggle_to(adapter_ctx, stream_id, false, callback)
+        return astra_toggle_to(cfg, adapter_ctx, stream_id, false, callback)
     end
     if action == "restart" then
         return adapter_ctx.client:RestartStream(stream_id, function(ok, data, resp)
@@ -1140,7 +1643,7 @@ function remote_servers.probe(entry, callback)
             latency_ms = latency_ms,
             message = "ok",
         })
-    end)
+    end, { force = true })
 end
 
 function remote_servers.list_streams(entry, opts, callback)
@@ -1163,8 +1666,17 @@ function remote_servers.list_streams(entry, opts, callback)
                 local code = classify_error_status(err2, code2)
                 return callback(false, nil, err2 or "list failed", code)
             end
+            local out_items = type(items) == "table" and items or {}
+            if #out_items > 0 then
+                streams_cache_write(cfg, out_items)
+            else
+                local cached_items = streams_cache_read(cfg)
+                if cached_items then
+                    out_items = cached_items
+                end
+            end
             callback(true, {
-                items = items or {},
+                items = out_items,
                 capabilities = cached.capabilities or {},
                 api_type_effective = cached.api_type_effective,
                 remote_version = cached.remote_version or "",

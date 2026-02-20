@@ -111,6 +111,60 @@ do
     assert_eq(decoded.id, "a001", "id")
 end
 
+-- 2a) Cookie auth header is forwarded when provided.
+do
+    requests = {}
+    scripted_responses = {
+        { code = 200, headers = {}, content = "{\"ok\":true}" },
+    }
+
+    local client, err = CesboApiClient.new({
+        baseUrl = "http://127.0.0.1:8000",
+        cookie = "astra_session=abc123",
+        max_attempts = 1,
+    })
+    assert_true(client ~= nil, err)
+
+    client:GetVersion(function(ok, data)
+        assert_eq(ok, true, "cookie auth request ok")
+        assert_true(type(data) == "table" and data.ok == true, "cookie auth data parsed")
+    end)
+
+    assert_eq(#requests, 1, "cookie auth one request")
+    local req = requests[1]
+    local cookie = find_header(req.headers, "Cookie: ")
+    assert_eq(cookie, "Cookie: astra_session=abc123", "cookie header value")
+    assert_true(find_header(req.headers, "Authorization: Basic ") == nil, "no basic auth for cookie-only client")
+end
+
+-- 2b) Bearer auth takes precedence over Basic credentials.
+do
+    requests = {}
+    scripted_responses = {
+        { code = 200, headers = {}, content = "{\"ok\":true}" },
+    }
+
+    local client, err = CesboApiClient.new({
+        baseUrl = "http://127.0.0.1:8000",
+        login = "u",
+        password = "p",
+        bearer_token = "token-xyz",
+        max_attempts = 1,
+    })
+    assert_true(client ~= nil, err)
+
+    client:GetVersion(function(ok, data)
+        assert_eq(ok, true, "bearer auth request ok")
+        assert_true(type(data) == "table" and data.ok == true, "bearer auth data parsed")
+    end)
+
+    assert_eq(#requests, 1, "bearer auth one request")
+    local req = requests[1]
+    local bearer = find_header(req.headers, "Authorization: Bearer ")
+    assert_eq(bearer, "Authorization: Bearer token-xyz", "bearer header value")
+    assert_true(find_header(req.headers, "Authorization: Basic ") == nil, "basic must be skipped when bearer is set")
+end
+
 -- 3) Retry: first timeout(code=0) then success
 do
     requests = {}

@@ -468,6 +468,21 @@ select {
   background: rgba(31, 125, 224, 0.08);
 }
 
+.stream-group-row td {
+  background: var(--panel-2);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+}
+
+.stream-group-cell {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 .stream-info {
   min-width: 0;
 }
@@ -533,6 +548,19 @@ select {
   color: var(--muted);
   background: var(--panel-2);
   border: 1px solid var(--border);
+}
+
+.stream-source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  background: rgba(31, 125, 224, 0.1);
+  border: 1px solid rgba(31, 125, 224, 0.35);
 }
 
 .stream-status-badge {
@@ -693,6 +721,21 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
+}
+
+.stream-group-header {
+  grid-column: 1 / -1;
+  display: block;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .stream-compact-row {

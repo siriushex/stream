@@ -17,6 +17,7 @@ const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'input_bitrate', 'transcode', 'dvr', 'clients']);
+const REMOTE_DASHBOARD_ID_PREFIX = 'remote:';
 const STREAM_COMPACT_SORT_LABELS = {
   stream: 'Stream',
   input: 'Input',
@@ -577,6 +578,12 @@ const state = {
   streamTableBulkBusy: false,
   streamCompactRows: {},
   streamUptimeTimer: null,
+  remoteDashboardStreams: [],
+  remoteDashboardByServer: {},
+  remoteDashboardSignature: '',
+  remoteDashboardInFlight: false,
+  localStats: {},
+  remoteStats: {},
   statusFastUntilTs: 0,
   visibleTileIds: new Set(),
   authBlockedUntil: 0,
@@ -610,6 +617,7 @@ const POLL_SERVER_STATUS_MS = 60000;
 const POLL_SERVER_STREAMS_ACTIVE_MS = 5000;
 const POLL_SERVER_STREAMS_FOCUSED_MS = 1000;
 const POLL_SERVER_STREAMS_BACKGROUND_MS = 120000;
+const POLL_REMOTE_DASHBOARD_MS = 5000;
 const POLL_OBSERVABILITY_MS = 60000;
 const API_GET_TIMEOUT_MS = 6000;
 const API_MUTATION_TIMEOUT_MS = 18000;
@@ -617,6 +625,9 @@ const API_GET_RETRY_COUNT = 0;
 const API_MUTATION_RETRY_COUNT = 0;
 const API_POLL_TIMEOUT_MS = 3500;
 const API_POLL_RETRY_COUNT = 0;
+const API_REMOTE_DASHBOARD_LIST_TIMEOUT_MS = 12000;
+const API_REMOTE_DASHBOARD_STATUS_TIMEOUT_MS = 7000;
+const API_REMOTE_DASHBOARD_STATUS_MAX_ITEMS = 250;
 const SETTINGS_POST_SAVE_RELOAD_TIMEOUT_MS = 4000;
 const AUTH_BLOCK_WINDOW_MS = 5000;
 const POLL_BACKOFF_START_MS = 1000;
@@ -6902,6 +6913,293 @@ function formatServerAddress(server) {
   }
 }
 
+function isRemoteDashboardStream(stream) {
+  return !!(stream && stream.remote && stream.remote.dashboard === true);
+}
+
+function makeRemoteDashboardStreamId(serverId, streamId) {
+  const sid = encodeURIComponent(String(serverId || '').trim());
+  const rid = encodeURIComponent(String(streamId || '').trim());
+  return `${REMOTE_DASHBOARD_ID_PREFIX}${sid}:${rid}`;
+}
+
+function getDashboardStreamsList() {
+  const local = Array.isArray(state.streams) ? state.streams : [];
+  const remote = Array.isArray(state.remoteDashboardStreams) ? state.remoteDashboardStreams : [];
+  return local.concat(remote);
+}
+
+function getDashboardRemoteServers() {
+  return (Array.isArray(state.servers) ? state.servers : []).filter((server) => {
+    if (!server || typeof server !== 'object') return false;
+    if (server.enabled === false) return false;
+    const host = String(server.host || server.address || '').trim();
+    return host !== '';
+  });
+}
+
+function normalizeRemoteDashboardStats(item, stream) {
+  const stats = {};
+  if (item && item.on_air !== undefined) {
+    stats.on_air = item.on_air === true;
+  }
+  const bitrateKbps = Number(item && item.bitrate_kbps);
+  if (Number.isFinite(bitrateKbps) && bitrateKbps >= 0) {
+    stats.bitrate = bitrateKbps;
+    stats.bitrate_kbps = bitrateKbps;
+  }
+  const uptimeSec = Number(item && item.uptime_sec);
+  if (Number.isFinite(uptimeSec) && uptimeSec >= 0) {
+    stats.uptime = uptimeSec;
+    stats.uptime_sec = uptimeSec;
+  }
+  const clients = Number(item && (item.clients_count !== undefined ? item.clients_count : item.clients));
+  if (Number.isFinite(clients) && clients >= 0) {
+    stats.clients_count = clients;
+    stats.clients = clients;
+  }
+  const activeInputRaw = item && item.active_input;
+  const activeInput = Number(activeInputRaw);
+  if (Number.isFinite(activeInput) && activeInput > 0) {
+    stats.active_input_index = Math.max(0, Math.floor(activeInput) - 1);
+    stats.active_input_id = Math.floor(activeInput);
+  }
+  if (item && item.last_error) {
+    stats.last_error = String(item.last_error);
+  }
+
+  const cfgInputs = normalizeOutputList(stream && stream.config && stream.config.input);
+  if (cfgInputs.length > 0) {
+    const list = cfgInputs.map((url, index) => {
+      const input = {
+        input_id: index + 1,
+        url: String(url),
+      };
+      if (stats.active_input_index === index) {
+        if (Number.isFinite(bitrateKbps) && bitrateKbps >= 0) {
+          input.bitrate_kbps = bitrateKbps;
+        }
+        if (item && item.on_air !== undefined) {
+          input.on_air = item.on_air === true;
+        }
+      }
+      return input;
+    });
+    stats.inputs = list;
+  }
+  return stats;
+}
+
+function normalizeRemoteDashboardStream(server, payload, item) {
+  const serverId = String(server && server.id || '').trim();
+  const streamId = String(item && item.id || '').trim();
+  if (!serverId || !streamId) return null;
+  const normalized = {
+    id: makeRemoteDashboardStreamId(serverId, streamId),
+    enabled: !(item && item.enabled === false),
+    config: (item && item.config && typeof item.config === 'object') ? { ...item.config } : {},
+    remote: {
+      dashboard: true,
+      serverId,
+      serverName: (server && (server.name || server.id)) ? String(server.name || server.id) : serverId,
+      streamId,
+      apiType: normalizeServerApiType(server && (server.api_type || server.type)),
+      apiTypeEffective: normalizeServerApiType(payload && payload.api_type_effective),
+      remoteVersion: payload && payload.remote_version ? String(payload.remote_version) : '',
+      capabilities: {
+        ...((payload && payload.capabilities && typeof payload.capabilities === 'object') ? payload.capabilities : {}),
+        ...((item && item.capabilities && typeof item.capabilities === 'object') ? item.capabilities : {}),
+      },
+    },
+  };
+  if (!normalized.config || typeof normalized.config !== 'object') {
+    normalized.config = {};
+  }
+  if (!normalized.config.id) normalized.config.id = streamId;
+  if (!normalized.config.name && item && item.name) normalized.config.name = item.name;
+  if (!normalized.config.type && item && item.type) normalized.config.type = item.type;
+  const stats = normalizeRemoteDashboardStats(item, normalized);
+  return { stream: normalized, stats };
+}
+
+function buildRemoteDashboardSignature(streams) {
+  const rows = Array.isArray(streams) ? streams : [];
+  return rows.map((stream) => {
+    const remote = stream && stream.remote ? stream.remote : null;
+    const source = remote ? `${remote.serverId}:${remote.streamId}` : String(stream && stream.id || '');
+    const enabled = stream && stream.enabled === false ? '0' : '1';
+    const name = (stream && stream.config && stream.config.name) ? String(stream.config.name) : '';
+    return `${source}|${enabled}|${name}`;
+  }).join('||');
+}
+
+function rebuildDashboardStats() {
+  const localStats = (state.localStats && typeof state.localStats === 'object') ? state.localStats : {};
+  const remoteStats = (state.remoteStats && typeof state.remoteStats === 'object') ? state.remoteStats : {};
+  state.stats = { ...localStats, ...remoteStats };
+}
+
+function updateDashboardRuntimeUi() {
+  updateTiles();
+  updatePlayerMeta();
+  updateEditorTranscodeStatus();
+  updateEditorTranscodeOutputStatus();
+  updateEditorOutputStatus();
+  updateEditorMptsStatus();
+}
+
+async function fetchRemoteDashboardServerStreams(serverId) {
+  const requestList = async (includeStatus, timeoutMs) => apiJson('/api/v1/servers/streams/list', {
+    method: 'POST',
+    body: JSON.stringify({ id: serverId, include_status: includeStatus }),
+    timeout_ms: timeoutMs,
+    retry: API_POLL_RETRY_COUNT,
+  });
+
+  let payload = await requestList(false, API_REMOTE_DASHBOARD_LIST_TIMEOUT_MS);
+  let items = Array.isArray(payload && payload.items) ? payload.items : [];
+  if (items.length === 0) {
+    // Astra legacy endpoints can intermittently return an empty 2xx body.
+    // One extra attempt improves reliability without increasing steady-state load.
+    payload = await requestList(false, API_REMOTE_DASHBOARD_LIST_TIMEOUT_MS);
+    items = Array.isArray(payload && payload.items) ? payload.items : [];
+  }
+
+  if (items.length > 0 && items.length <= API_REMOTE_DASHBOARD_STATUS_MAX_ITEMS) {
+    try {
+      const statusPayload = await requestList(true, API_REMOTE_DASHBOARD_STATUS_TIMEOUT_MS);
+      const statusItems = Array.isArray(statusPayload && statusPayload.items) ? statusPayload.items : [];
+      if (statusItems.length > 0) {
+        payload = statusPayload;
+      }
+    } catch (err) {
+      // Keep fast list payload; dashboard still shows streams even when status enrichment fails.
+    }
+  }
+
+  return payload;
+}
+
+async function loadDashboardRemoteStreams(opts = {}) {
+  if (state.remoteDashboardInFlight) {
+    return { ok: true };
+  }
+  state.remoteDashboardInFlight = true;
+  const silent = opts && opts.silent === true;
+  try {
+    const servers = getDashboardRemoteServers();
+    const previousStreams = Array.isArray(state.remoteDashboardStreams) ? state.remoteDashboardStreams : [];
+    const previousStats = (state.remoteStats && typeof state.remoteStats === 'object') ? state.remoteStats : {};
+    const previousById = new Map();
+    previousStreams.forEach((stream) => {
+      if (!stream || !stream.id) return;
+      previousById.set(stream.id, stream);
+    });
+    if (!servers.length) {
+      const hadRemote = (state.remoteDashboardStreams && state.remoteDashboardStreams.length > 0)
+        || (state.remoteDashboardSignature !== '');
+      state.remoteDashboardStreams = [];
+      state.remoteDashboardByServer = {};
+      state.remoteDashboardSignature = '';
+      state.remoteStats = {};
+      rebuildDashboardStats();
+      if (hadRemote) {
+        renderStreams();
+      } else {
+        updateDashboardRuntimeUi();
+      }
+      return { ok: true };
+    }
+
+    const nextStreams = [];
+    const nextStats = {};
+    const byServer = {};
+    const errors = [];
+
+    for (const server of servers) {
+      const serverId = String(server && server.id || '').trim();
+      if (!serverId) continue;
+      try {
+        const payload = await fetchRemoteDashboardServerStreams(serverId);
+        const items = Array.isArray(payload && payload.items) ? payload.items : [];
+        byServer[serverId] = [];
+        items.forEach((item) => {
+          const normalized = normalizeRemoteDashboardStream(server, payload, item);
+          if (!normalized || !normalized.stream) return;
+          nextStreams.push(normalized.stream);
+          byServer[serverId].push(normalized.stream.id);
+          nextStats[normalized.stream.id] = normalized.stats || {};
+        });
+      } catch (err) {
+        const prevIds = (state.remoteDashboardByServer && Array.isArray(state.remoteDashboardByServer[serverId]))
+          ? state.remoteDashboardByServer[serverId]
+          : [];
+        if (prevIds.length > 0) {
+          byServer[serverId] = [];
+          prevIds.forEach((streamId) => {
+            const prevStream = previousById.get(streamId);
+            if (!prevStream) return;
+            nextStreams.push(prevStream);
+            byServer[serverId].push(prevStream.id);
+            if (previousStats[prevStream.id] && typeof previousStats[prevStream.id] === 'object') {
+              nextStats[prevStream.id] = previousStats[prevStream.id];
+            }
+          });
+        }
+        errors.push({
+          serverId,
+          message: formatServerActionError(err, `Remote streams unavailable for ${serverId}`),
+        });
+      }
+    }
+
+    nextStreams.sort((a, b) => {
+      const aServer = a && a.remote ? String(a.remote.serverName || a.remote.serverId || '') : '';
+      const bServer = b && b.remote ? String(b.remote.serverName || b.remote.serverId || '') : '';
+      const serverDiff = compareTextNatural(aServer, bServer);
+      if (serverDiff !== 0) return serverDiff;
+      const aName = (a && a.config && a.config.name) ? String(a.config.name) : String(a && a.remote && a.remote.streamId || a && a.id || '');
+      const bName = (b && b.config && b.config.name) ? String(b.config.name) : String(b && b.remote && b.remote.streamId || b && b.id || '');
+      return compareTextNatural(aName, bName);
+    });
+
+    const prevSignature = String(state.remoteDashboardSignature || '');
+    const nextSignature = buildRemoteDashboardSignature(nextStreams);
+    state.remoteDashboardStreams = nextStreams;
+    state.remoteDashboardByServer = byServer;
+    state.remoteDashboardSignature = nextSignature;
+    state.remoteStats = nextStats;
+    rebuildDashboardStats();
+
+    const structureChanged = prevSignature !== nextSignature;
+    if (structureChanged) {
+      renderStreams();
+    } else {
+      updateDashboardRuntimeUi();
+    }
+
+    if (!silent && errors.length > 0) {
+      const head = errors.slice(0, 2).map((item) => item.message).join(' | ');
+      setStatus(head);
+    }
+    return { ok: errors.length === 0, errors };
+  } finally {
+    state.remoteDashboardInFlight = false;
+  }
+}
+
+function startRemoteDashboardPolling() {
+  startPollLoop('dashboard-remote-streams', {
+    intervalMs: POLL_REMOTE_DASHBOARD_MS,
+    immediate: true,
+    tick: () => loadDashboardRemoteStreams({ silent: true }),
+  });
+}
+
+function stopRemoteDashboardPolling() {
+  stopPollLoop('dashboard-remote-streams');
+}
+
 function clearServerStreamsTable() {
   if (!elements.serverStreamsTable) return;
   elements.serverStreamsTable.querySelectorAll('.table-row:not(.header)').forEach((el) => el.remove());
@@ -7113,6 +7411,8 @@ async function loadServerStreams(id, opts = {}) {
   const payload = await apiJson('/api/v1/servers/streams/list', {
     method: 'POST',
     body: JSON.stringify({ id, include_status: true }),
+    timeout_ms: API_REMOTE_DASHBOARD_LIST_TIMEOUT_MS,
+    retry: API_POLL_RETRY_COUNT,
   });
   const items = Array.isArray(payload && payload.items) ? payload.items : [];
   state.serverStreamsItems = items;
@@ -8774,8 +9074,40 @@ function removeStreamFromState(streamId) {
   delete state.streamTileNodes[id];
   state.visibleTileIds.delete(id);
   delete state.streamIndex[id];
-  if (state.stats) {
-    delete state.stats[id];
+  if (state.localStats && typeof state.localStats === 'object') {
+    delete state.localStats[id];
+  }
+  rebuildDashboardStats();
+}
+
+function removeRemoteDashboardStreamFromState(streamId) {
+  const id = String(streamId || '');
+  if (!id) return;
+  state.remoteDashboardStreams = (state.remoteDashboardStreams || []).filter((stream) => stream && stream.id !== id);
+  delete state.streamTileNodes[id];
+  state.visibleTileIds.delete(id);
+  delete state.streamIndex[id];
+  if (state.remoteStats && typeof state.remoteStats === 'object') {
+    delete state.remoteStats[id];
+  }
+  rebuildDashboardStats();
+}
+
+function upsertRemoteDashboardStreamInState(stream) {
+  if (!stream || !stream.id) return;
+  const id = String(stream.id);
+  const rows = Array.isArray(state.remoteDashboardStreams) ? state.remoteDashboardStreams.slice() : [];
+  const index = rows.findIndex((item) => item && item.id === id);
+  if (index >= 0) {
+    rows[index] = stream;
+  } else {
+    rows.push(stream);
+  }
+  state.remoteDashboardStreams = rows;
+  if (isStreamVisible(stream)) {
+    state.streamIndex[id] = stream;
+  } else {
+    delete state.streamIndex[id];
   }
 }
 
@@ -8835,7 +9167,7 @@ async function syncStreamsSilently() {
   try {
     const data = await apiJson('/api/v1/streams');
     state.streams = Array.isArray(data) ? data : [];
-    const filtered = state.streams.filter(isStreamVisible);
+    const filtered = getDashboardStreamsList().filter(isStreamVisible);
     rebuildStreamIndex(filtered);
   } catch (err) {
   }
@@ -22873,6 +23205,8 @@ function updateEditorMptsStatus() {
 function addStatusPollId(ids, id) {
   const value = String(id || '').trim();
   if (!value) return;
+  const stream = state.streamIndex && state.streamIndex[value];
+  if (stream && isRemoteDashboardStream(stream)) return;
   if (ids.has(value)) return;
   ids.add(value);
 }
@@ -22952,8 +23286,8 @@ function statusEntrySignature(entry) {
   ].join('|');
 }
 
-function mergePartialStreamStatus(ids, patch) {
-  const next = { ...(state.stats || {}) };
+function mergePartialLocalStreamStatus(ids, patch) {
+  const next = { ...(state.localStats || {}) };
   const data = (patch && typeof patch === 'object') ? patch : {};
   let changed = false;
   Object.keys(data).forEach((id) => {
@@ -22973,7 +23307,8 @@ function mergePartialStreamStatus(ids, patch) {
     }
   });
   if (!changed) return false;
-  state.stats = next;
+  state.localStats = next;
+  rebuildDashboardStats();
   return true;
 }
 
@@ -23007,17 +23342,13 @@ async function loadStreamStatus() {
       retry: API_POLL_RETRY_COUNT,
     });
     if (statusIds && statusIds.length > 0) {
-      const changed = mergePartialStreamStatus(statusIds, data);
+      const changed = mergePartialLocalStreamStatus(statusIds, data);
       if (!changed) return { ok: true };
     } else {
-      state.stats = data || {};
+      state.localStats = data || {};
+      rebuildDashboardStats();
     }
-    updateTiles();
-    updatePlayerMeta();
-    updateEditorTranscodeStatus();
-    updateEditorTranscodeOutputStatus();
-    updateEditorOutputStatus();
-    updateEditorMptsStatus();
+    updateDashboardRuntimeUi();
     // System metrics are shown only in Observability.
     return { ok: true };
   } catch (err) {
@@ -23489,6 +23820,29 @@ function setStreamTableBulkBusy(busy) {
 
 async function setStreamEnabled(stream, enabled) {
   const nextEnabled = Boolean(enabled);
+  const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
+  if (remote && remote.serverId && remote.streamId) {
+    await remoteStreamAction(remote.serverId, remote.streamId, nextEnabled ? 'enable' : 'disable');
+    const updated = {
+      ...stream,
+      enabled: nextEnabled,
+      config: stream.config || {},
+      remote: {
+        ...(stream.remote || {}),
+        capabilities: { ...((stream.remote && stream.remote.capabilities) || {}) },
+      },
+    };
+    upsertRemoteDashboardStreamInState(updated);
+    if (state.serverStreamsServerId === remote.serverId) {
+      try {
+        await loadServerStreams(remote.serverId, { silent: true });
+      } catch (_err) {
+      } finally {
+        startServerStreamsPollTimer();
+      }
+    }
+    return;
+  }
   await apiJson(`/api/v1/streams/${stream.id}`, {
     method: 'PUT',
     body: JSON.stringify({ enabled: nextEnabled }),
@@ -23513,27 +23867,58 @@ async function runStreamTableBulkAction(action) {
   }
   const failures = [];
   let changed = 0;
+  let localChanged = 0;
+  let remoteChanged = 0;
+  const remoteTouchedServers = new Set();
   setStreamTableBulkBusy(true);
   try {
     for (const streamId of selectedIds) {
-      const stream = state.streamIndex[streamId] || state.streams.find((item) => item && item.id === streamId);
+      const stream = state.streamIndex[streamId]
+        || getDashboardStreamsList().find((item) => item && item.id === streamId);
       if (!stream) continue;
       try {
+        const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
         if (action === 'enable') {
           if (stream.enabled !== false) continue;
           await setStreamEnabled(stream, true);
           changed += 1;
+          if (remote && remote.serverId) {
+            remoteChanged += 1;
+            remoteTouchedServers.add(remote.serverId);
+          } else {
+            localChanged += 1;
+          }
           continue;
         }
         if (action === 'disable') {
           if (stream.enabled === false) continue;
           await setStreamEnabled(stream, false);
           changed += 1;
+          if (remote && remote.serverId) {
+            remoteChanged += 1;
+            remoteTouchedServers.add(remote.serverId);
+          } else {
+            localChanged += 1;
+          }
           continue;
         }
         if (action === 'delete') {
-          await apiJson(`/api/v1/streams/${stream.id}`, { method: 'DELETE' });
-          removeStreamFromState(stream.id);
+          if (remote && remote.serverId && remote.streamId) {
+            await apiJson('/api/v1/servers/streams/delete', {
+              method: 'POST',
+              body: JSON.stringify({
+                id: remote.serverId,
+                stream_id: remote.streamId,
+              }),
+            });
+            removeRemoteDashboardStreamFromState(stream.id);
+            remoteChanged += 1;
+            remoteTouchedServers.add(remote.serverId);
+          } else {
+            await apiJson(`/api/v1/streams/${stream.id}`, { method: 'DELETE' });
+            removeStreamFromState(stream.id);
+            localChanged += 1;
+          }
           state.streamTableSelected.delete(stream.id);
           changed += 1;
         }
@@ -23544,15 +23929,30 @@ async function runStreamTableBulkAction(action) {
   } finally {
     setStreamTableBulkBusy(false);
   }
+  if (remoteTouchedServers.size > 0) {
+    for (const serverId of remoteTouchedServers) {
+      if (state.serverStreamsServerId === serverId) {
+        try {
+          await loadServerStreams(serverId, { silent: true });
+        } catch (_err) {
+        } finally {
+          startServerStreamsPollTimer();
+        }
+      }
+    }
+    await loadDashboardRemoteStreams({ silent: true });
+  }
   renderStreams();
-  boostStatusPolling();
-  scheduleStreamSync();
+  if (localChanged > 0) {
+    boostStatusPolling();
+    scheduleStreamSync();
+  }
   if (failures.length) {
     const head = failures.slice(0, 3).join('; ');
     setStatus(`${action} finished: ok=${changed}, failed=${failures.length}. ${head}`);
     return;
   }
-  setStatus(`${action} finished: ${changed} stream(s) updated`);
+  setStatus(`${action} finished: ${changed} stream(s) updated${remoteChanged > 0 ? ` (remote ${remoteChanged})` : ''}`);
 }
 
 function getStreamTablePageMeta(list) {
@@ -23778,6 +24178,17 @@ function buildStreamModel(stream) {
     : (Number.isFinite(stats.clients) ? Number(stats.clients) : 0);
   const enabled = stream.enabled !== false;
   const shard = resolveStreamShardInfo(stream, stats);
+  const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
+  const sourceGroupKey = remote ? `remote:${remote.serverId}` : 'local';
+  const sourceGroupLabel = remote
+    ? `Remote instance: ${remote.serverName || remote.serverId}`
+    : 'Local instance';
+  const sourceBadge = remote
+    ? `Remote: ${remote.serverName || remote.serverId}`
+    : 'Local';
+  const sourceSort = remote
+    ? String(remote.serverName || remote.serverId || '')
+    : '';
 
   return {
     id: stream.id,
@@ -23809,6 +24220,10 @@ function buildStreamModel(stream) {
     clients,
     enabled,
     hasPreview: true,
+    sourceGroupKey,
+    sourceGroupLabel,
+    sourceBadge,
+    sourceSort,
     shardPort: shard.port,
     shardIndex: shard.index,
     shardLabel: shard.label,
@@ -23854,6 +24269,9 @@ function buildStreamTableRow(stream, modelOverride) {
     shardBadge.title = model.shardTitle;
   }
   sub.appendChild(shardBadge);
+  const sourceBadge = createEl('span', 'stream-source-badge', model.sourceBadge || 'Local');
+  sourceBadge.dataset.role = 'stream-source';
+  sub.appendChild(sourceBadge);
   info.appendChild(nameBtn);
   info.appendChild(sub);
   const health = createEl('div', 'stream-cell-sub stream-health-note');
@@ -23938,6 +24356,7 @@ function buildStreamTableRow(stream, modelOverride) {
     nameBtn,
     status,
     shardBadge,
+    sourceBadge,
     health,
     inputUrl,
     inputMeta,
@@ -23971,6 +24390,10 @@ function updateStreamTableRow(row, stream) {
     shardBadge.textContent = model.shardLabel || '';
     shardBadge.hidden = !model.shardLabel;
     shardBadge.title = model.shardTitle || '';
+  }
+  const sourceBadge = refs.sourceBadge || row.querySelector('[data-role="stream-source"]');
+  if (sourceBadge) {
+    sourceBadge.textContent = model.sourceBadge || 'Local';
   }
   const health = refs.health || row.querySelector('[data-role="stream-health"]');
   if (health) {
@@ -24038,9 +24461,20 @@ function renderStreamTable(list) {
     syncStreamTableSelectionUi();
     return;
   }
+  let currentGroupKey = '';
   list.forEach((item) => {
     const stream = item && item.stream ? item.stream : item;
-    const model = item && item.model ? item.model : null;
+    const model = item && item.model ? item.model : buildStreamModel(stream);
+    const nextGroupKey = model.sourceGroupKey || 'local';
+    if (nextGroupKey !== currentGroupKey) {
+      currentGroupKey = nextGroupKey;
+      const groupRow = document.createElement('tr');
+      groupRow.className = 'stream-group-row';
+      const groupCell = createEl('td', 'stream-group-cell', model.sourceGroupLabel || 'Local instance');
+      groupCell.colSpan = 6;
+      groupRow.appendChild(groupCell);
+      fragment.appendChild(groupRow);
+    }
     const row = buildStreamTableRow(stream, model);
     fragment.appendChild(row);
     state.streamTableRows[stream.id] = row;
@@ -24065,6 +24499,7 @@ function buildStreamCompactRow(stream, modelOverride) {
   row.dataset.streamId = stream.id;
   row.title = [
     model.name,
+    `Source: ${model.sourceBadge || 'Local'}`,
     `Status: ${model.statusInfo.label}`,
     model.shardLabel ? `${model.shardLabel}` : null,
     `Input: ${model.inputUrl || '-'}`,
@@ -24078,8 +24513,8 @@ function buildStreamCompactRow(stream, modelOverride) {
   nameBtn.dataset.action = 'edit';
   const rate = createEl('div', 'stream-compact-rate', model.inputBitrate);
   const clientsText = model.shardLabel
-    ? `Clients: ${model.clients} • ${model.shardLabel}`
-    : `Clients: ${model.clients}`;
+    ? `Clients: ${model.clients} • ${model.shardLabel} • ${model.sourceBadge || 'Local'}`
+    : `Clients: ${model.clients} • ${model.sourceBadge || 'Local'}`;
   const clients = createEl('div', 'stream-compact-clients', clientsText);
   const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
   toggleBtn.dataset.action = 'toggle';
@@ -24105,9 +24540,19 @@ function renderStreamCompact(list) {
     container.appendChild(empty);
     return;
   }
+  let currentGroupKey = '';
   list.forEach((item) => {
     const stream = item && item.stream ? item.stream : item;
-    const model = item && item.model ? item.model : null;
+    const model = item && item.model ? item.model : buildStreamModel(stream);
+    const nextGroupKey = model.sourceGroupKey || 'local';
+    if (nextGroupKey !== currentGroupKey) {
+      currentGroupKey = nextGroupKey;
+      const header = createEl('div', 'stream-group-header', model.sourceGroupLabel || 'Local instance');
+      if (elements.streamCompactGrid) {
+        header.style.gridColumn = '1 / -1';
+      }
+      container.appendChild(header);
+    }
     const row = buildStreamCompactRow(stream, model);
     container.appendChild(row);
     state.streamCompactRows[stream.id] = row;
@@ -24124,6 +24569,7 @@ function updateStreamCompactRows() {
     if (name) name.textContent = model.name;
     row.title = [
       model.name,
+      `Source: ${model.sourceBadge || 'Local'}`,
       `Status: ${model.statusInfo.label}`,
       model.shardLabel ? `${model.shardLabel}` : null,
       `Input: ${model.inputUrl || '-'}`,
@@ -24140,8 +24586,8 @@ function updateStreamCompactRows() {
     const clients = row.querySelector('.stream-compact-clients');
     if (clients) {
       clients.textContent = model.shardLabel
-        ? `Clients: ${model.clients} • ${model.shardLabel}`
-        : `Clients: ${model.clients}`;
+        ? `Clients: ${model.clients} • ${model.shardLabel} • ${model.sourceBadge || 'Local'}`
+        : `Clients: ${model.clients} • ${model.sourceBadge || 'Local'}`;
     }
     const toggleBtn = row.querySelector('[data-action="toggle"]');
     if (toggleBtn) toggleBtn.textContent = model.enabled ? 'Disable' : 'Enable';
@@ -24155,7 +24601,7 @@ function renderStreams() {
   }
   resetTileVisibilityTracking();
   state.streamTileNodes = {};
-  const filtered = state.streams.filter(isStreamVisible);
+  const filtered = getDashboardStreamsList().filter(isStreamVisible);
   state.streamTableTotal = filtered.length;
 
   rebuildStreamIndex(filtered);
@@ -24192,7 +24638,22 @@ function renderStreams() {
     return;
   }
 
-  filtered.forEach((stream) => {
+  const cardRows = filtered.map((stream, index) => ({ stream, model: buildStreamModel(stream), index }));
+  cardRows.sort((a, b) => {
+    const groupDiff = compareTextNatural(a.model.sourceGroupKey, b.model.sourceGroupKey);
+    if (groupDiff !== 0) return groupDiff;
+    return a.index - b.index;
+  });
+  let currentGroupKey = '';
+  cardRows.forEach((item) => {
+    const stream = item.stream;
+    const model = item.model;
+    const nextGroupKey = model.sourceGroupKey || 'local';
+    if (nextGroupKey !== currentGroupKey) {
+      currentGroupKey = nextGroupKey;
+      const header = createEl('div', 'stream-group-header', model.sourceGroupLabel || 'Local instance');
+      elements.dashboardStreams.appendChild(header);
+    }
     const tile = buildStreamTile(stream);
     elements.dashboardStreams.appendChild(tile);
     state.streamTileNodes[stream.id] = tile;
@@ -24203,16 +24664,32 @@ function renderStreams() {
 
 function handleStreamAction(stream, actionName) {
   if (!stream || !actionName) return false;
+  const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
   if (actionName === 'select') return true;
   if (actionName === 'edit') {
+    if (remote && remote.serverId && remote.streamId) {
+      openRemoteStreamEditor(remote.serverId, remote.streamId).catch((err) => {
+        setStatus(formatServerActionError(err, 'Failed to load remote stream'));
+      });
+      return true;
+    }
     openEditor(stream, false);
     return true;
   }
   if (actionName === 'play') {
+    if (remote && remote.serverId && remote.streamId) {
+      openRemoteStream(remote.serverId, remote.streamId);
+      return true;
+    }
     openPlayer(stream);
     return true;
   }
   if (actionName === 'analyze') {
+    if (remote && remote.serverId && remote.streamId) {
+      openRemoteStream(remote.serverId, remote.streamId);
+      setStatus('Remote stream opened on source instance');
+      return true;
+    }
     openAnalyze(stream);
     return true;
   }
@@ -26812,8 +27289,10 @@ function syncPollingForView() {
   }
   if (state.currentView === 'dashboard') {
     startStatusPolling();
+    startRemoteDashboardPolling();
   } else {
     stopStatusPolling();
+    stopRemoteDashboardPolling();
   }
   if (state.currentView === 'dashboard' && state.viewMode === 'table') {
     startStreamUptimeTicker();
@@ -26859,6 +27338,7 @@ function syncPollingForView() {
 
 function pauseAllPolling() {
   stopStatusPolling();
+  stopRemoteDashboardPolling();
   stopStreamUptimeTicker();
   stopAdapterPolling();
   stopDvbPolling();
@@ -29772,7 +30252,12 @@ async function restoreConfigRevision(revisionId) {
 async function loadStreams() {
   const data = await apiJson('/api/v1/streams');
   state.streams = Array.isArray(data) ? data : [];
+  if (!state.localStats || typeof state.localStats !== 'object') {
+    state.localStats = {};
+  }
+  rebuildDashboardStats();
   renderStreams();
+  await loadDashboardRemoteStreams({ silent: true });
   updateObservabilityStreamOptions();
 }
 
@@ -29900,6 +30385,31 @@ async function saveStream(event) {
 async function toggleStream(stream) {
   const currentEnabled = stream && stream.enabled !== false;
   const nextEnabled = !currentEnabled;
+  const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
+  if (remote && remote.serverId && remote.streamId) {
+    await remoteStreamAction(remote.serverId, remote.streamId, nextEnabled ? 'enable' : 'disable');
+    const updated = {
+      ...stream,
+      enabled: nextEnabled,
+      config: stream.config || {},
+      remote: {
+        ...(stream.remote || {}),
+        capabilities: { ...((stream.remote && stream.remote.capabilities) || {}) },
+      },
+    };
+    upsertRemoteDashboardStreamInState(updated);
+    applyStreamUpdate(updated);
+    if (state.serverStreamsServerId === remote.serverId) {
+      try {
+        await loadServerStreams(remote.serverId, { silent: true });
+      } catch (_err) {
+      } finally {
+        startServerStreamsPollTimer();
+      }
+    }
+    await loadDashboardRemoteStreams({ silent: true });
+    return;
+  }
   const payload = {
     enabled: nextEnabled,
   };
@@ -29919,8 +30429,32 @@ async function toggleStream(stream) {
 }
 
 async function deleteStream(stream) {
-  const confirmed = window.confirm(`Delete stream ${stream.id}?`);
+  const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
+  const label = remote && remote.streamId ? remote.streamId : stream.id;
+  const confirmed = window.confirm(`Delete stream ${label}?`);
   if (!confirmed) return;
+  if (remote && remote.serverId && remote.streamId) {
+    await apiJson('/api/v1/servers/streams/delete', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: remote.serverId,
+        stream_id: remote.streamId,
+      }),
+    });
+    setStatus('Remote stream deleted');
+    removeRemoteDashboardStreamFromState(stream.id);
+    applyStreamRemoval(stream.id);
+    if (state.serverStreamsServerId === remote.serverId) {
+      try {
+        await loadServerStreams(remote.serverId, { silent: true });
+      } catch (_err) {
+      } finally {
+        startServerStreamsPollTimer();
+      }
+    }
+    await loadDashboardRemoteStreams({ silent: true });
+    return;
+  }
   await apiJson(`/api/v1/streams/${stream.id}`, { method: 'DELETE' });
   setStatus('Stream deleted');
   removeStreamFromState(stream.id);
@@ -29932,7 +30466,7 @@ async function deleteStream(stream) {
 function getPlayerStream() {
   if (!state.playerStreamId) return null;
   return state.streamIndex[state.playerStreamId]
-    || state.streams.find((item) => item && item.id === state.playerStreamId)
+    || getDashboardStreamsList().find((item) => item && item.id === state.playerStreamId)
     || null;
 }
 
@@ -34012,7 +34546,8 @@ function bindEvents() {
   elements.dashboardStreams.addEventListener('click', (event) => {
     const tile = event.target.closest('.tile');
     if (!tile) return;
-    const stream = state.streams.find((s) => s.id === tile.dataset.id);
+    const stream = state.streamIndex[String(tile.dataset.id || '')]
+      || getDashboardStreamsList().find((s) => s && s.id === tile.dataset.id);
     if (!stream) return;
     const toggleTileExpanded = () => {
       const expanded = isTileExpanded(stream.id);
@@ -34054,7 +34589,7 @@ function bindEvents() {
       return;
     }
 
-    openEditor(stream, false);
+    handleStreamAction(stream, 'edit');
   });
 
   if (elements.streamTable) {
@@ -34073,14 +34608,14 @@ function bindEvents() {
         || (row && row.dataset && row.dataset.streamId)
         || '';
       if (!streamId) return;
-      const stream = state.streamIndex[streamId] || state.streams.find((item) => item.id === streamId);
+      const stream = state.streamIndex[streamId] || getDashboardStreamsList().find((item) => item && item.id === streamId);
       if (!stream) return;
       if (action && handleStreamAction(stream, action.dataset.action)) {
         return;
       }
       if (action) return;
       if (!row) return;
-      openEditor(stream, false);
+      handleStreamAction(stream, 'edit');
     });
     elements.streamTable.addEventListener('change', (event) => {
       const target = event.target;
@@ -34167,13 +34702,15 @@ function bindEvents() {
     elements.streamCompact.addEventListener('click', (event) => {
       const row = event.target.closest('.stream-compact-row');
       if (!row) return;
-      const stream = state.streams.find((item) => item.id === row.dataset.streamId);
+      const streamId = String(row.dataset.streamId || '');
+      const stream = state.streamIndex[streamId]
+        || getDashboardStreamsList().find((item) => item && item.id === streamId);
       if (!stream) return;
       const action = event.target.closest('[data-action]');
       if (action && handleStreamAction(stream, action.dataset.action)) {
         return;
       }
-      openEditor(stream, false);
+      handleStreamAction(stream, 'edit');
     });
   }
 
