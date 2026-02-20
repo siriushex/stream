@@ -70,6 +70,7 @@ local function normalize_metric_path(path)
         :gsub("^(/api/v1/sessions/)[%w%-%_%.]+", "%1:id")
         :gsub("^(/api/v1/users/)[%w%-%_%.]+", "%1:id")
         :gsub("^(/api/v1/dvb%-scan/)[%w%-%_%.]+", "%1:id")
+        :gsub("^(/api/v1/dvb%-full%-scan/)[%w%-%_%.]+", "%1:id")
         :gsub("^(/api/v1/pngts/jobs/)[%w%-%_%.]+", "%1:id")
     return out
 end
@@ -594,6 +595,134 @@ local stream_analyze = {
     active = 0,
 }
 
+local dvb_autosearch = {
+    timer = nil,
+    queue = {},
+    queue_index = {},
+    active = nil,
+    seq = 0,
+    adapter_history = {},
+    adapter_state = {},
+    attempts = {},
+    recent_attempts = {},
+    frozen_until_ts = 0,
+    lock_owner = "",
+    lock_ts = 0,
+}
+
+local dvb_full_scan = {
+    seq = 0,
+    jobs = {},
+    active_id = nil,
+}
+
+local DVB_ADAPTER_TUNE_FIELDS = {
+    "type",
+    "tp",
+    "lnb",
+    "lof1",
+    "lof2",
+    "slof",
+    "diseqc",
+    "tone",
+    "rolloff",
+    "uni_scr",
+    "uni_frequency",
+    "frequency",
+    "polarization",
+    "symbolrate",
+    "bandwidth",
+    "guardinterval",
+    "transmitmode",
+    "hierarchy",
+    "modulation",
+    "stream_id",
+    "budget",
+}
+
+local function deep_copy(value, seen)
+    if type(value) ~= "table" then
+        return value
+    end
+    seen = seen or {}
+    if seen[value] then
+        return seen[value]
+    end
+    local out = {}
+    seen[value] = out
+    for k, v in pairs(value) do
+        out[deep_copy(k, seen)] = deep_copy(v, seen)
+    end
+    return out
+end
+
+local function clamp_number(value, min_value, max_value)
+    local n = tonumber(value)
+    if n == nil then
+        return nil
+    end
+    if min_value ~= nil and n < min_value then
+        n = min_value
+    end
+    if max_value ~= nil and n > max_value then
+        n = max_value
+    end
+    return n
+end
+
+local function normalize_bool(value, fallback)
+    if value == nil then
+        return fallback
+    end
+    if value == true or value == 1 or value == "1" or value == "true" or value == "yes" or value == "on" then
+        return true
+    end
+    if value == false or value == 0 or value == "0" or value == "false" or value == "no" or value == "off" then
+        return false
+    end
+    return fallback
+end
+
+local function sql_escape(value)
+    return tostring(value or ""):gsub("'", "''")
+end
+
+local function db_exec_safe(sql)
+    if not (config and config.db and sql and sql ~= "") then
+        return nil, "database unavailable"
+    end
+    local ok, err = config.db:exec(sql)
+    if ok ~= true then
+        return nil, tostring(err or "exec failed")
+    end
+    return true
+end
+
+local function db_query_safe(sql)
+    if not (config and config.db and sql and sql ~= "") then
+        return nil, "database unavailable"
+    end
+    local rows, err = config.db:query(sql)
+    if not rows then
+        return nil, tostring(err or "query failed")
+    end
+    return rows
+end
+
+local function db_scalar_safe(sql)
+    local rows, err = db_query_safe(sql)
+    if not rows then
+        return nil, err
+    end
+    if #rows == 0 then
+        return nil, nil
+    end
+    for _, value in pairs(rows[1]) do
+        return value, nil
+    end
+    return nil, nil
+end
+
 local function mpts_scan(server, client, request)
     local body = parse_json_body(request)
     if not body or not body.input then
@@ -657,7 +786,7 @@ local function mpts_scan(server, client, request)
     return json_response(server, client, 200, { services = services })
 end
 
-local function dvb_scan_cleanup()
+function dvb_scan_cleanup()
     local now = os.time()
     for id, job in pairs(dvb_scan.jobs) do
         if job and job.status ~= "running" and job.finished_at and (now - job.finished_at) > 300 then
@@ -2685,7 +2814,7 @@ local function list_dvb_adapters(server, client)
     json_response(server, client, 200, result or {})
 end
 
-local function dvb_scan_collect_cas(descriptors)
+function dvb_scan_collect_cas(descriptors)
     local cas = {}
     if type(descriptors) ~= "table" then
         return cas
@@ -2703,7 +2832,7 @@ local function dvb_scan_collect_cas(descriptors)
     return cas
 end
 
-local function dvb_scan_merge_cas(target, items)
+function dvb_scan_merge_cas(target, items)
     target = target or {}
     local seen = {}
     for _, entry in ipairs(target) do
@@ -2724,7 +2853,7 @@ local function dvb_scan_merge_cas(target, items)
     return target
 end
 
-local function dvb_scan_find_lang(descriptors)
+function dvb_scan_find_lang(descriptors)
     if type(descriptors) ~= "table" then
         return nil
     end
@@ -2736,7 +2865,7 @@ local function dvb_scan_find_lang(descriptors)
     return nil
 end
 
-local function dvb_scan_find_descriptor(descriptors, type_ids)
+function dvb_scan_find_descriptor(descriptors, type_ids)
     if type(descriptors) ~= "table" then
         return nil
     end
@@ -2768,7 +2897,7 @@ local function dvb_scan_find_descriptor(descriptors, type_ids)
     return nil
 end
 
-local function dvb_scan_add_pat(job, data)
+function dvb_scan_add_pat(job, data)
     if type(data.programs) ~= "table" then
         return
     end
@@ -2790,7 +2919,7 @@ local function dvb_scan_add_pat(job, data)
     end
 end
 
-local function dvb_scan_add_pmt(job, data)
+function dvb_scan_add_pmt(job, data)
     local pnr = tonumber(data.pnr)
     if not pnr then
         return
@@ -2823,7 +2952,7 @@ local function dvb_scan_add_pmt(job, data)
     job.programs[pnr] = entry
 end
 
-local function dvb_scan_add_sdt(job, data)
+function dvb_scan_add_sdt(job, data)
     if type(data.services) ~= "table" then
         return
     end
@@ -2851,7 +2980,7 @@ local function dvb_scan_add_sdt(job, data)
     end
 end
 
-local function dvb_scan_build_channels(job)
+function dvb_scan_build_channels(job)
     local channels = {}
     for pnr, entry in pairs(job.programs or {}) do
         if pnr and tonumber(pnr) ~= 0 then
@@ -2892,7 +3021,7 @@ local function dvb_scan_build_channels(job)
     job.channels = channels
 end
 
-local function dvb_scan_finish(job, status, err)
+function dvb_scan_finish(job, status, err)
     if job.timer then
         job.timer:close()
         job.timer = nil
@@ -3409,7 +3538,7 @@ local function get_stream_analyze(server, client, request, id)
     json_response(server, client, 200, stream_analyze_payload(job))
 end
 
-local function dvb_scan_config_from_adapter(adapter_id)
+function dvb_scan_config_from_adapter(adapter_id)
     local row = config.get_adapter(adapter_id)
     if not row then
         return nil, "adapter not found"
@@ -3548,6 +3677,1632 @@ local function get_dvb_scan(server, client, request, id)
         payload.signal = runtime.get_adapter_status(job.adapter_id) or payload.signal
     end
     json_response(server, client, 200, payload)
+end
+
+function dvb_autosearch_enabled()
+    return setting_bool("dvb_autosearch_enabled", true)
+end
+
+function dvb_autosearch_lock_ttl_sec()
+    return clamp_number(setting_number("dvb_autosearch_lock_ttl_sec", 30), 10, 120) or 30
+end
+
+function dvb_autosearch_is_leader()
+    if sharding and type(sharding.is_active) == "function" and sharding.is_active() then
+        if type(sharding.is_master) == "function" then
+            return sharding.is_master()
+        end
+        return false
+    end
+    return true
+end
+
+function dvb_autosearch_lock_ok()
+    if not dvb_autosearch_is_leader() then
+        return false
+    end
+    local now = os.time()
+    local ttl = dvb_autosearch_lock_ttl_sec()
+    local owner = tostring(os.getenv("HOSTNAME") or "stream") .. ":" .. tostring(setting_number("http_port", 0) or 0)
+    if dvb_autosearch.lock_owner == "" or (now - (tonumber(dvb_autosearch.lock_ts) or 0)) >= ttl then
+        dvb_autosearch.lock_owner = owner
+        dvb_autosearch.lock_ts = now
+        return true
+    end
+    if dvb_autosearch.lock_owner == owner then
+        dvb_autosearch.lock_ts = now
+        return true
+    end
+    return false
+end
+
+function dvb_extract_adapter_id(url)
+    if type(url) ~= "string" then
+        return nil
+    end
+    local id = url:match("^dvb://([^#%?]+)")
+    if not id or id == "" then
+        return nil
+    end
+    return tostring(id)
+end
+
+function dvb_autosearch_adapter_cfg(row)
+    local cfg = row and row.config or {}
+    return {
+        enabled = normalize_bool(cfg.auto_signal_search_enabled, false),
+        window_sec = clamp_number(cfg.auto_signal_window_sec, 60, 1800) or 300,
+        mode = tostring(cfg.auto_signal_bitrate_mode or "both"),
+        bitrate_min_kbps = clamp_number(cfg.auto_signal_bitrate_min_kbps, 1, 100000) or 500,
+        baseline_window_sec = clamp_number(cfg.auto_signal_baseline_window_sec, 300, 7200) or 1800,
+        baseline_drop_ratio_pct = clamp_number(cfg.auto_signal_baseline_drop_ratio_pct, 1, 99) or 70,
+        cc_delta_threshold = clamp_number(cfg.auto_signal_cc_delta_threshold, 1, 100000) or 50,
+        probe_sec = clamp_number(cfg.auto_signal_probe_sec, 5, 120) or 30,
+        confirm_sec = clamp_number(cfg.auto_signal_confirm_sec, 10, 180) or 60,
+        switch_cooldown_sec = clamp_number(cfg.auto_signal_switch_cooldown_sec, 30, 3600) or 180,
+        min_streams = clamp_number(cfg.auto_signal_min_streams, 1, 2000) or 1,
+        candidate_profiles = type(cfg.auto_signal_candidate_profiles) == "table" and cfg.auto_signal_candidate_profiles or {},
+        allow_type_flip = normalize_bool(cfg.auto_signal_type_flip_enabled, true),
+        type_flip_wait_sec = clamp_number(cfg.auto_signal_type_flip_wait_sec, 5, 120) or 30,
+    }
+end
+
+function dvb_autosearch_collect_runtime()
+    local out = {}
+    local status = runtime and runtime.list_status_lite and runtime.list_status_lite() or {}
+    for stream_id, entry in pairs(status or {}) do
+        local adapter_id = dvb_extract_adapter_id(entry and entry.active_input_url)
+        if adapter_id then
+            local row = out[adapter_id]
+            if not row then
+                row = {
+                    adapter_id = adapter_id,
+                    streams = 0,
+                    streams_on_air = 0,
+                    bitrate_kbps = 0,
+                    cc_total = 0,
+                    pes_total = 0,
+                    stream_ids = {},
+                }
+                out[adapter_id] = row
+            end
+
+            row.streams = row.streams + 1
+            row.stream_ids[#row.stream_ids + 1] = tostring(stream_id)
+            if entry.on_air == true then
+                row.streams_on_air = row.streams_on_air + 1
+            end
+
+            local active = nil
+            if type(entry.inputs) == "table" and tonumber(entry.active_input_id) and tonumber(entry.active_input_id) > 0 then
+                active = entry.inputs[tonumber(entry.active_input_id)]
+            end
+            local bitrate = tonumber(active and active.bitrate_kbps) or tonumber(entry.input_bitrate_kbps)
+                or tonumber(entry.bitrate) or 0
+            if bitrate < 0 then
+                bitrate = 0
+            end
+            row.bitrate_kbps = row.bitrate_kbps + bitrate
+            row.cc_total = row.cc_total + (tonumber(active and active.cc_errors) or 0)
+            row.pes_total = row.pes_total + (tonumber(active and active.pes_errors) or 0)
+        end
+    end
+    return out
+end
+
+function dvb_autosearch_push_history(snapshot)
+    local now = os.time()
+    local max_window = 7200
+    for adapter_id, item in pairs(snapshot or {}) do
+        local list = dvb_autosearch.adapter_history[adapter_id]
+        if type(list) ~= "table" then
+            list = {}
+            dvb_autosearch.adapter_history[adapter_id] = list
+        end
+        list[#list + 1] = {
+            ts = now,
+            streams = tonumber(item.streams) or 0,
+            streams_on_air = tonumber(item.streams_on_air) or 0,
+            bitrate_kbps = tonumber(item.bitrate_kbps) or 0,
+            cc_total = tonumber(item.cc_total) or 0,
+            pes_total = tonumber(item.pes_total) or 0,
+        }
+        while #list > 0 and (now - (tonumber(list[1].ts) or 0)) > max_window do
+            table.remove(list, 1)
+        end
+    end
+end
+
+function dvb_autosearch_degradation(adapter_id, row)
+    local cfg = dvb_autosearch_adapter_cfg(row)
+    local list = dvb_autosearch.adapter_history[adapter_id] or {}
+    if #list < 2 then
+        return false, "insufficient-history", { streams = 0 }
+    end
+    local now = os.time()
+    local window_from = now - cfg.window_sec
+    local base_from = now - cfg.baseline_window_sec
+    local window = {}
+    local baseline = {}
+    for _, item in ipairs(list) do
+        local ts = tonumber(item.ts) or 0
+        if ts >= window_from then
+            window[#window + 1] = item
+        end
+        if ts >= base_from then
+            baseline[#baseline + 1] = item
+        end
+    end
+    if #window < 2 then
+        return false, "insufficient-window", { streams = 0 }
+    end
+    local latest = window[#window]
+    local oldest = window[1]
+    local streams = tonumber(latest.streams) or 0
+    if streams < cfg.min_streams then
+        return false, "not-enough-streams", { streams = streams }
+    end
+    local avg_kbps = (tonumber(latest.bitrate_kbps) or 0) / math.max(1, streams)
+    local cc_delta = math.max(0, (tonumber(latest.cc_total) or 0) - (tonumber(oldest.cc_total) or 0))
+    local bitrate_abs_bad = avg_kbps < cfg.bitrate_min_kbps
+
+    local baseline_sum = 0
+    local baseline_count = 0
+    for _, item in ipairs(baseline) do
+        local s = math.max(1, tonumber(item.streams) or 0)
+        baseline_sum = baseline_sum + ((tonumber(item.bitrate_kbps) or 0) / s)
+        baseline_count = baseline_count + 1
+    end
+    local baseline_avg = baseline_count > 0 and (baseline_sum / baseline_count) or 0
+    local baseline_limit = baseline_avg * (1 - (cfg.baseline_drop_ratio_pct / 100))
+    local bitrate_rel_bad = baseline_avg > 0 and avg_kbps < baseline_limit
+
+    local bitrate_bad = false
+    if cfg.mode == "absolute" then
+        bitrate_bad = bitrate_abs_bad
+    elseif cfg.mode == "relative" then
+        bitrate_bad = bitrate_rel_bad
+    else
+        bitrate_bad = bitrate_abs_bad or bitrate_rel_bad
+    end
+    local cc_bad = cc_delta >= cfg.cc_delta_threshold
+    local degraded = bitrate_bad or cc_bad
+    local reason = degraded and (cc_bad and "cc" or "bitrate") or "ok"
+    return degraded, reason, {
+        streams = streams,
+        streams_on_air = tonumber(latest.streams_on_air) or 0,
+        avg_bitrate_kbps = avg_kbps,
+        baseline_avg_kbps = baseline_avg,
+        cc_delta = cc_delta,
+        bitrate_abs_bad = bitrate_abs_bad,
+        bitrate_rel_bad = bitrate_rel_bad,
+        cc_bad = cc_bad,
+    }
+end
+
+function dvb_autosearch_alert(level, code, message, meta)
+    if config and config.add_alert then
+        pcall(config.add_alert, level, "", code, message, meta or {})
+    end
+end
+
+function dvb_autosearch_record_attempt(task, ok, reason, meta)
+    local now = os.time()
+    local entry = {
+        ts = now,
+        adapter_id = task and task.adapter_id or "",
+        ok = ok == true,
+        reason = tostring(reason or ""),
+        meta = meta or {},
+    }
+    dvb_autosearch.recent_attempts[#dvb_autosearch.recent_attempts + 1] = entry
+    while #dvb_autosearch.recent_attempts > 120 do
+        table.remove(dvb_autosearch.recent_attempts, 1)
+    end
+    dvb_autosearch.attempts[#dvb_autosearch.attempts + 1] = { ts = now, ok = ok == true }
+    local window = clamp_number(setting_number("dvb_autosearch_breaker_window_sec", 600), 60, 7200) or 600
+    local cutoff = now - window
+    while #dvb_autosearch.attempts > 0 and (tonumber(dvb_autosearch.attempts[1].ts) or 0) < cutoff do
+        table.remove(dvb_autosearch.attempts, 1)
+    end
+    local fail_count = 0
+    local success_count = 0
+    for _, item in ipairs(dvb_autosearch.attempts) do
+        if item.ok then
+            success_count = success_count + 1
+        else
+            fail_count = fail_count + 1
+        end
+    end
+    local fail_limit = clamp_number(setting_number("dvb_autosearch_breaker_fail_count", 3), 1, 20) or 3
+    if fail_count >= fail_limit then
+        local freeze_sec = clamp_number(setting_number("dvb_autosearch_breaker_freeze_sec", 300), 30, 3600) or 300
+        dvb_autosearch.frozen_until_ts = now + freeze_sec
+        dvb_autosearch_alert("ERROR", "DVB_AUTOSEARCH_FROZEN",
+            "auto signal search frozen by circuit breaker",
+            { freeze_sec = freeze_sec, failures = fail_count, successes = success_count })
+    elseif (fail_count + success_count) >= 4 and (success_count / math.max(1, fail_count + success_count)) < 0.25 then
+        local freeze_sec = clamp_number(setting_number("dvb_autosearch_breaker_freeze_sec", 300), 30, 3600) or 300
+        dvb_autosearch.frozen_until_ts = now + freeze_sec
+        dvb_autosearch_alert("ERROR", "DVB_AUTOSEARCH_FROZEN",
+            "auto signal search frozen due to low success ratio",
+            { freeze_sec = freeze_sec, failures = fail_count, successes = success_count })
+    end
+end
+
+function dvb_autosearch_task_score(details, queued_at)
+    local streams_on_air = tonumber(details and details.streams_on_air) or 0
+    local cc_delta = tonumber(details and details.cc_delta) or 0
+    local bitrate_deficit = 0
+    if details and details.avg_bitrate_kbps and details.expected_bitrate_kbps then
+        bitrate_deficit = math.max(0, tonumber(details.expected_bitrate_kbps) - tonumber(details.avg_bitrate_kbps))
+    end
+    local age_bonus = math.max(0, os.time() - (tonumber(queued_at) or os.time()))
+    return streams_on_air * 100 + cc_delta + math.floor(bitrate_deficit) + math.floor(age_bonus / 10)
+end
+
+function dvb_autosearch_enqueue(adapter_id, reason, details, opts)
+    opts = type(opts) == "table" and opts or {}
+    if not adapter_id or adapter_id == "" then
+        return false
+    end
+    local now = os.time()
+    local st = dvb_autosearch.adapter_state[adapter_id] or {}
+    local reenqueue_sec = clamp_number(setting_number("dvb_autosearch_reenqueue_sec", 60), 1, 3600) or 60
+    if not opts.force and st.last_enqueue_ts and (now - (tonumber(st.last_enqueue_ts) or 0)) < reenqueue_sec then
+        local existing_cooldown = dvb_autosearch.queue_index[adapter_id]
+        if existing_cooldown then
+            existing_cooldown.reason = reason or existing_cooldown.reason
+            existing_cooldown.details = details or existing_cooldown.details
+            existing_cooldown.score = dvb_autosearch_task_score(existing_cooldown.details, existing_cooldown.queued_at)
+        end
+        st.last_enqueue_reason = tostring(reason or st.last_enqueue_reason or "")
+        st.last_enqueue_blocked_ts = now
+        dvb_autosearch.adapter_state[adapter_id] = st
+        return false
+    end
+    local existing = dvb_autosearch.queue_index[adapter_id]
+    if existing then
+        existing.reason = reason or existing.reason
+        existing.details = details or existing.details
+        existing.score = dvb_autosearch_task_score(existing.details, existing.queued_at)
+        return false
+    end
+    local max_queue = clamp_number(setting_number("dvb_autosearch_queue_max", 32), 1, 512) or 32
+    if #dvb_autosearch.queue >= max_queue then
+        return false
+    end
+    dvb_autosearch.seq = dvb_autosearch.seq + 1
+    local task = {
+        id = "as-" .. tostring(dvb_autosearch.seq),
+        adapter_id = tostring(adapter_id),
+        reason = tostring(reason or "degraded"),
+        details = details or {},
+        queued_at = os.time(),
+        state = "queued",
+    }
+    task.score = dvb_autosearch_task_score(task.details, task.queued_at)
+    dvb_autosearch.queue[#dvb_autosearch.queue + 1] = task
+    dvb_autosearch.queue_index[adapter_id] = task
+    st.last_enqueue_ts = now
+    st.last_enqueue_reason = task.reason
+    dvb_autosearch.adapter_state[adapter_id] = st
+    return true
+end
+
+function dvb_autosearch_dequeue()
+    if #dvb_autosearch.queue == 0 then
+        return nil
+    end
+    table.sort(dvb_autosearch.queue, function(a, b)
+        local sa = tonumber(a.score) or 0
+        local sb = tonumber(b.score) or 0
+        if sa == sb then
+            return (tonumber(a.queued_at) or 0) < (tonumber(b.queued_at) or 0)
+        end
+        return sa > sb
+    end)
+    local task = nil
+    local last_adapter_id = tostring(dvb_autosearch.last_dequeued_adapter_id or "")
+    if #dvb_autosearch.queue > 1 and last_adapter_id ~= "" and tostring(dvb_autosearch.queue[1].adapter_id or "") == last_adapter_id then
+        task = table.remove(dvb_autosearch.queue, 2)
+    else
+        task = table.remove(dvb_autosearch.queue, 1)
+    end
+    if task then
+        dvb_autosearch.queue_index[task.adapter_id] = nil
+        dvb_autosearch.last_dequeued_adapter_id = task.adapter_id
+    end
+    return task
+end
+
+function dvb_autosearch_adapter_busy_keys()
+    local busy = {}
+    if not dvbls then
+        return busy
+    end
+    local ok, list = pcall(dvbls)
+    if not ok or type(list) ~= "table" then
+        return busy
+    end
+    for _, item in ipairs(list) do
+        if type(item) == "table" and item.adapter ~= nil and item.device ~= nil and item.busy == true then
+            busy[tostring(item.adapter) .. "." .. tostring(item.device)] = true
+        end
+    end
+    return busy
+end
+
+function dvb_autosearch_merge_tp_fields(conf)
+    if (not conf.tp or conf.tp == "") and conf.frequency and conf.polarization and conf.symbolrate then
+        conf.tp = tostring(conf.frequency) .. ":" .. tostring(conf.polarization) .. ":" .. tostring(conf.symbolrate)
+    end
+end
+
+function dvb_autosearch_apply_profile(base_cfg, profile)
+    local cfg = deep_copy(base_cfg or {})
+    profile = type(profile) == "table" and profile or {}
+    if profile.adapter ~= nil then cfg.adapter = profile.adapter end
+    if profile.device ~= nil then cfg.device = profile.device end
+    for _, key in ipairs(DVB_ADAPTER_TUNE_FIELDS) do
+        if profile[key] ~= nil then
+            cfg[key] = profile[key]
+        end
+    end
+    dvb_autosearch_merge_tp_fields(cfg)
+    return cfg
+end
+
+function dvb_autosearch_build_candidates(row)
+    local cfg = dvb_autosearch_adapter_cfg(row)
+    local base = row and row.config or {}
+    local busy = dvb_autosearch_adapter_busy_keys()
+    local out = {}
+    for _, item in ipairs(cfg.candidate_profiles or {}) do
+        if type(item) == "table" then
+            local key = nil
+            if item.adapter ~= nil then
+                key = tostring(item.adapter) .. "." .. tostring(item.device or 0)
+            end
+            if key == nil or busy[key] ~= true then
+                local profile = dvb_autosearch_apply_profile(base, item)
+                out[#out + 1] = {
+                    kind = "profile",
+                    name = tostring(item.name or ("adapter " .. tostring(profile.adapter) .. "." .. tostring(profile.device or 0))),
+                    cfg = profile,
+                }
+            end
+        end
+    end
+    return out, cfg
+end
+
+function dvb_autosearch_probe(conf, duration, done_cb)
+    local input = init_input(conf)
+    if not input then
+        done_cb({
+            ok = false,
+            error = "failed to init probe input",
+        })
+        return
+    end
+    local job = {
+        input = input,
+        programs = {},
+        services = {},
+        channels = {},
+        total = { bitrate = 0, cc_errors = 0, pes_errors = 0 },
+    }
+    job.analyze = analyze({
+        upstream = input.tail:stream(),
+        name = tostring(conf.name or "dvb-autosearch-probe"),
+        join_pid = true,
+        callback = function(data)
+            if type(data) ~= "table" then
+                return
+            end
+            if data.psi == "pat" then
+                dvb_scan_add_pat(job, data)
+            elseif data.psi == "pmt" then
+                dvb_scan_add_pmt(job, data)
+            elseif data.psi == "sdt" then
+                dvb_scan_add_sdt(job, data)
+            elseif data.analyze and data.total then
+                job.total.bitrate = tonumber(data.total.bitrate) or job.total.bitrate
+                job.total.cc_errors = tonumber(data.total.cc_errors) or job.total.cc_errors
+                job.total.pes_errors = tonumber(data.total.pes_errors) or job.total.pes_errors
+            end
+        end,
+    })
+
+    local finished = false
+    local function finalize(result)
+        if finished then
+            return
+        end
+        finished = true
+        if job.analyze then
+            job.analyze = nil
+        end
+        if job.input then
+            kill_input(job.input)
+            job.input = nil
+        end
+        done_cb(result)
+    end
+
+    job.timer = timer({
+        interval = duration,
+        callback = function(self)
+            self:close()
+            dvb_scan_build_channels(job)
+            finalize({
+                ok = true,
+                channels = job.channels or {},
+                bitrate = tonumber(job.total.bitrate) or 0,
+                cc_errors = tonumber(job.total.cc_errors) or 0,
+                pes_errors = tonumber(job.total.pes_errors) or 0,
+            })
+        end,
+    })
+end
+
+function dvb_autosearch_apply_adapter_config(adapter_id, next_cfg)
+    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    if not row then
+        return nil, "adapter not found"
+    end
+    local enabled = (tonumber(row.enabled) or 0) ~= 0
+    config.upsert_adapter(adapter_id, enabled, next_cfg)
+    if runtime and runtime.refresh_adapters then
+        runtime.refresh_adapters(true)
+    end
+    return row, nil
+end
+
+function dvb_autosearch_confirm_degradation(adapter_id, row)
+    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+    return degraded == true, reason, details
+end
+
+function dvb_autosearch_start_task(task)
+    local row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+    if not row then
+        task.state = "failed"
+        task.error = "adapter not found"
+        dvb_autosearch_record_attempt(task, false, task.error)
+        return
+    end
+    local candidates, cfg = dvb_autosearch_build_candidates(row)
+    if #candidates == 0 then
+        task.state = "failed"
+        task.error = "no free candidate FE profiles"
+        dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_NO_FREE_FE",
+            "auto signal search skipped: no free FE candidates",
+            { adapter_id = task.adapter_id })
+        dvb_autosearch_record_attempt(task, false, task.error)
+        return
+    end
+    task.state = "running"
+    task.started_at = os.time()
+    task.row = row
+    task.cfg = cfg
+    task.candidates = candidates
+    task.candidate_index = 1
+end
+
+function dvb_autosearch_step_task(task)
+    if not task or task.state ~= "running" then
+        return true
+    end
+    if task.wait_until and os.time() < task.wait_until then
+        return false
+    end
+    if task.phase == "confirm" then
+        local still_bad = false
+        local reason = "ok"
+        local details = {}
+        if task.row then
+            still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row)
+        end
+        if still_bad then
+            -- rollback and continue next candidate
+            if task.prev_cfg then
+                pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, task.prev_cfg)
+            end
+            task.phase = nil
+            task.wait_until = nil
+            task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
+            task.last_error = "confirm failed: " .. tostring(reason)
+            task.last_details = details
+            return false
+        end
+
+        task.state = "done"
+        task.finished_at = os.time()
+        dvb_autosearch_alert("INFO", "DVB_AUTOSEARCH_SWITCH_OK",
+            "auto signal search switched adapter successfully",
+            { adapter_id = task.adapter_id, candidate = task.applied_candidate and task.applied_candidate.name })
+        dvb_autosearch_record_attempt(task, true, "switch-ok", {
+            candidate = task.applied_candidate and task.applied_candidate.name,
+        })
+        local st = dvb_autosearch.adapter_state[task.adapter_id] or {}
+        st.last_switch_ts = os.time()
+        st.last_ok_ts = os.time()
+        st.last_reason = "switch-ok"
+        dvb_autosearch.adapter_state[task.adapter_id] = st
+        return true
+    end
+
+    if task.phase == "wait-probe" then
+        if task.waiting_probe then
+            return false
+        end
+        local candidate = task.probe_candidate
+        local result = task.probe_result
+        task.phase = nil
+        task.probe_candidate = nil
+        task.probe_result = nil
+        if not candidate or not result or result.ok ~= true then
+            task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
+            task.last_error = "probe failed"
+            return false
+        end
+        local has_channels = type(result.channels) == "table" and #result.channels > 0
+        local bitrate = tonumber(result.bitrate) or 0
+        if (not has_channels) or bitrate < task.cfg.bitrate_min_kbps then
+            task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
+            task.last_error = "probe criteria not met"
+            task.last_details = {
+                channels = has_channels and #result.channels or 0,
+                bitrate = bitrate,
+            }
+            return false
+        end
+        local prev_row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+        if not prev_row then
+            task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
+            task.last_error = "adapter disappeared"
+            return false
+        end
+        task.prev_cfg = deep_copy(prev_row.config or {})
+        local next_cfg = dvb_autosearch_apply_profile(prev_row.config or {}, candidate.cfg)
+        local ok_apply, prev_row_after = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, next_cfg)
+        if not ok_apply or prev_row_after == nil then
+            task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
+            task.last_error = "apply candidate failed"
+            return false
+        end
+        task.applied_candidate = candidate
+        task.phase = "confirm"
+        task.wait_until = os.time() + task.cfg.confirm_sec
+        return false
+    end
+
+    if task.phase == "type-flip-return" and task.prev_cfg then
+        local restore = deep_copy(task.prev_cfg)
+        restore.type = "S2"
+        pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, restore)
+        task.wait_until = os.time() + 10
+        task.phase = "confirm"
+        task.applied_candidate = { name = "type-flip S2->S->S2" }
+        return false
+    end
+
+    local candidate = task.candidates and task.candidates[task.candidate_index]
+    if not candidate then
+        -- Last chance recovery: satellite type flip S2 -> S -> S2.
+        if task.cfg and task.cfg.allow_type_flip and not task.type_flip_tried then
+            local cur_type = tostring((task.row and task.row.config and task.row.config.type) or ""):upper()
+            if cur_type == "S2" then
+                task.type_flip_tried = true
+                local original = deep_copy(task.row.config or {})
+                local flip = deep_copy(original)
+                flip.type = "S"
+                local ok1, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, flip)
+                if ok1 and switched ~= nil then
+                    task.prev_cfg = original
+                    task.phase = "type-flip-return"
+                    task.wait_until = os.time() + (task.cfg.type_flip_wait_sec or 30)
+                    return false
+                end
+            end
+        end
+
+        task.state = "failed"
+        task.finished_at = os.time()
+        task.error = task.last_error or "all candidates failed"
+        dvb_autosearch_alert("ERROR", "DVB_AUTOSEARCH_SWITCH_FAIL",
+            "auto signal search failed to switch adapter",
+            { adapter_id = task.adapter_id, error = task.error })
+        dvb_autosearch_record_attempt(task, false, task.error, { details = task.last_details })
+        return true
+    end
+
+    local probe_done = false
+    local probe_result = nil
+    local probe_conf = dvb_scan_config_from_adapter(task.adapter_id)
+    if not probe_conf then
+        task.candidate_index = task.candidate_index + 1
+        task.last_error = "failed to build probe conf"
+        return false
+    end
+    probe_conf = dvb_autosearch_apply_profile(probe_conf, candidate.cfg)
+    probe_conf.name = "dvb-autosearch-probe-" .. tostring(task.adapter_id)
+    dvb_autosearch_probe(probe_conf, task.cfg.probe_sec, function(result)
+        probe_done = true
+        probe_result = result or { ok = false, error = "probe failed" }
+    end)
+    if not probe_done then
+        task.phase = "wait-probe"
+        task.waiting_probe = true
+        task.probe_candidate = candidate
+        task.probe_result = nil
+        task.probe_poll = timer({
+            interval = 0.2,
+            callback = function(self)
+                if probe_done then
+                    self:close()
+                    task.waiting_probe = nil
+                    task.probe_result = probe_result
+                    task.wait_until = os.time()
+                end
+            end,
+        })
+        return false
+    end
+
+    local result = task.probe_result or probe_result
+    if task.waiting_probe then
+        return false
+    end
+    if not result or result.ok ~= true then
+        task.candidate_index = task.candidate_index + 1
+        task.last_error = "probe failed"
+        return false
+    end
+    local has_channels = type(result.channels) == "table" and #result.channels > 0
+    local bitrate = tonumber(result.bitrate) or 0
+    if (not has_channels) or bitrate < task.cfg.bitrate_min_kbps then
+        task.candidate_index = task.candidate_index + 1
+        task.last_error = "probe criteria not met"
+        task.last_details = {
+            channels = has_channels and #result.channels or 0,
+            bitrate = bitrate,
+        }
+        return false
+    end
+
+    local prev_row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+    if not prev_row then
+        task.candidate_index = task.candidate_index + 1
+        task.last_error = "adapter disappeared"
+        return false
+    end
+    task.prev_cfg = deep_copy(prev_row.config or {})
+    local next_cfg = dvb_autosearch_apply_profile(prev_row.config or {}, candidate.cfg)
+    local ok_apply, prev_row_after = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, next_cfg)
+    if not ok_apply or prev_row_after == nil then
+        task.candidate_index = task.candidate_index + 1
+        task.last_error = "apply candidate failed"
+        return false
+    end
+    task.applied_candidate = candidate
+    task.phase = "confirm"
+    task.wait_until = os.time() + task.cfg.confirm_sec
+    return false
+end
+
+function dvb_autosearch_tick()
+    local now = os.time()
+    if not dvb_autosearch_enabled() then
+        return
+    end
+    if now < (tonumber(dvb_autosearch.frozen_until_ts) or 0) then
+        return
+    end
+    if not dvb_autosearch_lock_ok() then
+        return
+    end
+
+    local warmup = clamp_number(setting_number("dvb_autosearch_detection_warmup_sec", 120), 0, 3600) or 120
+    if runtime and runtime.started_at and (now - runtime.started_at) < warmup then
+        return
+    end
+
+    local snapshot = dvb_autosearch_collect_runtime()
+    dvb_autosearch_push_history(snapshot)
+
+    local adapters = config and config.list_adapters and config.list_adapters() or {}
+    for _, row in ipairs(adapters) do
+        local adapter_id = row and row.id and tostring(row.id) or nil
+        if adapter_id then
+            local cfg = dvb_autosearch_adapter_cfg(row)
+            if cfg.enabled then
+                local state = dvb_autosearch.adapter_state[adapter_id] or {}
+                local cooldown_ok = true
+                if state.last_switch_ts then
+                    cooldown_ok = (now - (tonumber(state.last_switch_ts) or 0)) >= cfg.switch_cooldown_sec
+                end
+                if cooldown_ok then
+                    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+                    if degraded then
+                        details.expected_bitrate_kbps = cfg.bitrate_min_kbps
+                        if dvb_autosearch_enqueue(adapter_id, reason, details) then
+                            dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_DEGRADED",
+                                "adapter signal degradation detected",
+                                { adapter_id = adapter_id, reason = reason, details = details })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if dvb_autosearch.active and dvb_autosearch.active.state == "running" then
+        local done = dvb_autosearch_step_task(dvb_autosearch.active)
+        if done then
+            dvb_autosearch.active = nil
+        end
+        return
+    end
+    if dvb_autosearch.active and (dvb_autosearch.active.state == "done" or dvb_autosearch.active.state == "failed") then
+        dvb_autosearch.active = nil
+    end
+
+    if dvb_full_scan.active_id then
+        return
+    end
+
+    local min_gap = clamp_number(setting_number("dvb_autosearch_global_switch_min_gap_sec", 20), 1, 600) or 20
+    local last_switch = tonumber(dvb_autosearch.adapter_state.__last_global_switch_ts) or 0
+    if last_switch > 0 and (now - last_switch) < min_gap then
+        return
+    end
+
+    local task = dvb_autosearch_dequeue()
+    if not task then
+        return
+    end
+    dvb_autosearch.active = task
+    dvb_autosearch_start_task(task)
+    if task.state == "running" then
+        dvb_autosearch.adapter_state.__last_global_switch_ts = now
+    else
+        dvb_autosearch.active = nil
+    end
+end
+
+function dvb_autosearch_status_payload()
+    local queue = {}
+    for _, item in ipairs(dvb_autosearch.queue or {}) do
+        queue[#queue + 1] = {
+            id = item.id,
+            adapter_id = item.adapter_id,
+            reason = item.reason,
+            score = item.score,
+            queued_at = item.queued_at,
+            details = item.details,
+        }
+    end
+    table.sort(queue, function(a, b)
+        return (tonumber(a.score) or 0) > (tonumber(b.score) or 0)
+    end)
+    local adapters = {}
+    for adapter_id, state in pairs(dvb_autosearch.adapter_state or {}) do
+        if adapter_id ~= "__last_global_switch_ts" then
+            adapters[#adapters + 1] = {
+                adapter_id = adapter_id,
+                last_switch_ts = state.last_switch_ts,
+                last_ok_ts = state.last_ok_ts,
+                last_reason = state.last_reason,
+                last_enqueue_ts = state.last_enqueue_ts,
+                last_enqueue_reason = state.last_enqueue_reason,
+                last_enqueue_blocked_ts = state.last_enqueue_blocked_ts,
+            }
+        end
+    end
+    table.sort(adapters, function(a, b) return tostring(a.adapter_id) < tostring(b.adapter_id) end)
+    return {
+        enabled = dvb_autosearch_enabled(),
+        coordinator_leader = dvb_autosearch_is_leader(),
+        lock_owner = dvb_autosearch.lock_owner,
+        lock_ts = dvb_autosearch.lock_ts,
+        queue_depth = #queue,
+        queue = queue,
+        active_task = dvb_autosearch.active,
+        frozen_until_ts = dvb_autosearch.frozen_until_ts,
+        recent_attempts = dvb_autosearch.recent_attempts,
+        adapters = adapters,
+    }
+end
+
+local function get_dvb_autosearch_status(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    return json_response(server, client, 200, dvb_autosearch_status_payload())
+end
+
+local function trigger_dvb_autosearch(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request) or {}
+    local adapter_id = tostring(body.adapter_id or "")
+    local dry_run = normalize_bool(body.dry_run, false)
+    if adapter_id == "" then
+        return error_response(server, client, 400, "adapter_id is required")
+    end
+    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    if not row then
+        return error_response(server, client, 404, "adapter not found")
+    end
+    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+    if dry_run then
+        return json_response(server, client, 200, {
+            status = "dry-run",
+            adapter_id = adapter_id,
+            degraded = degraded,
+            reason = reason,
+            details = details,
+        })
+    end
+    local queued = dvb_autosearch_enqueue(adapter_id, reason, details, { force = true })
+    return json_response(server, client, 200, {
+        status = queued and "queued" or "already_queued",
+        adapter_id = adapter_id,
+        degraded = degraded,
+        reason = reason,
+        details = details,
+    })
+end
+
+local function clear_dvb_autosearch_queue(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    dvb_autosearch.queue = {}
+    dvb_autosearch.queue_index = {}
+    return json_response(server, client, 200, { status = "ok" })
+end
+
+local function unfreeze_dvb_autosearch(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    dvb_autosearch.frozen_until_ts = 0
+    return json_response(server, client, 200, { status = "ok" })
+end
+
+function dvb_scan_presets_default()
+    return {
+        version = "builtin-1",
+        source_url = "builtin",
+        satellites = {
+            { id = "sat_13e", name = "13E", transponders = {} },
+            { id = "sat_19e", name = "19E", transponders = {} },
+            { id = "sat_42e", name = "42E", transponders = {} },
+            { id = "sat_53e", name = "53E", transponders = {} },
+            { id = "sat_36e", name = "36E", transponders = {} },
+            { id = "sat_75e", name = "75E", transponders = {} },
+            { id = "sat_80e", name = "80E", transponders = {} },
+            { id = "sat_16e", name = "16E", transponders = {} },
+            { id = "sat_5e", name = "5E", transponders = {} },
+        },
+        cable = {
+            { id = "dvb_c_8mhz", name = "DVB-C 8MHz", step_mhz = 8, frequencies = {} },
+        },
+        terrestrial = {
+            { id = "dvb_t_8mhz", name = "DVB-T/T2 8MHz", step_mhz = 8, frequencies = {} },
+        },
+    }
+end
+
+function dvb_scan_presets_validate(payload)
+    if type(payload) ~= "table" then
+        return nil, "invalid presets payload"
+    end
+    local out = {
+        version = tostring(payload.version or ""),
+        source_url = tostring(payload.source_url or ""),
+        satellites = type(payload.satellites) == "table" and payload.satellites or {},
+        cable = type(payload.cable) == "table" and payload.cable or {},
+        terrestrial = type(payload.terrestrial) == "table" and payload.terrestrial or {},
+    }
+    if out.version == "" then
+        out.version = "unknown"
+    end
+    return out
+end
+
+function dvb_scan_presets_load_cached()
+    local row = db_query_safe("SELECT version, source_url, fetched_ts, payload_json FROM dvb_scan_presets_cache WHERE key='default' LIMIT 1;")
+    if not row or #row == 0 then
+        return nil
+    end
+    local data = nil
+    local ok = pcall(function()
+        data = json.decode(row[1].payload_json or "{}")
+    end)
+    if not ok or type(data) ~= "table" then
+        return nil
+    end
+    local validated = dvb_scan_presets_validate(data)
+    if not validated then
+        return nil
+    end
+    validated.fetched_ts = tonumber(row[1].fetched_ts) or 0
+    validated.source_url = tostring(row[1].source_url or validated.source_url or "")
+    validated.version = tostring(row[1].version or validated.version or "unknown")
+    return validated
+end
+
+function dvb_scan_presets_store(payload, source_url)
+    local valid, err = dvb_scan_presets_validate(payload)
+    if not valid then
+        return nil, err
+    end
+    local ts = os.time()
+    local json_payload = json.encode(valid)
+    local sql = "INSERT OR REPLACE INTO dvb_scan_presets_cache(key, version, source_url, fetched_ts, payload_json) VALUES(" ..
+        "'default', '" .. sql_escape(valid.version) .. "', '" .. sql_escape(source_url or valid.source_url or "") .. "', " ..
+        tostring(ts) .. ", '" .. sql_escape(json_payload) .. "');"
+    local ok, exec_err = db_exec_safe(sql)
+    if not ok then
+        return nil, exec_err
+    end
+    valid.fetched_ts = ts
+    valid.source_url = source_url or valid.source_url
+    return valid, nil
+end
+
+function dvb_scan_presets_get_effective()
+    local cached = dvb_scan_presets_load_cached()
+    if cached then
+        return cached
+    end
+    local defaults = dvb_scan_presets_default()
+    local stored = dvb_scan_presets_store(defaults, "builtin")
+    return stored or defaults
+end
+
+function dvb_scan_presets_refresh(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local url = setting_string("dvb_scan_presets_url", "https://stream.centv.ru/dvb-presets.json")
+    local cmd = "curl -fsSL " .. shell_escape(url)
+    local output, err = run_command(cmd, 20)
+    if not output or output == "" then
+        dvb_autosearch_alert("WARNING", "DVB_FULLSCAN_PRESET_SOURCE_DOWN",
+            "dvb scan presets source unavailable; cache/manual mode active",
+            { source = url, error = err })
+        return error_response(server, client, 502, "failed to download presets")
+    end
+    local ok, parsed = pcall(json.decode, output)
+    if not ok then
+        return error_response(server, client, 502, "invalid presets json")
+    end
+    local saved, save_err = dvb_scan_presets_store(parsed, url)
+    if not saved then
+        return error_response(server, client, 502, save_err or "failed to store presets")
+    end
+    return json_response(server, client, 200, saved)
+end
+
+local function get_dvb_scan_presets(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    return json_response(server, client, 200, dvb_scan_presets_get_effective())
+end
+
+local function set_dvb_scan_presets_manual(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request) or {}
+    local payload = body.payload or body
+    if type(payload) == "string" and payload ~= "" then
+        local ok_decode, parsed = pcall(json.decode, payload)
+        if not ok_decode or type(parsed) ~= "table" then
+            return error_response(server, client, 400, "invalid presets payload")
+        end
+        payload = parsed
+    end
+    if type(payload) ~= "table" then
+        return error_response(server, client, 400, "invalid presets payload")
+    end
+    local source = tostring(body.source_url or body.source or "manual")
+    if source == "" then
+        source = "manual"
+    end
+    local saved, save_err = dvb_scan_presets_store(payload, source)
+    if not saved then
+        return error_response(server, client, 400, save_err or "failed to store presets")
+    end
+    return json_response(server, client, 200, saved)
+end
+
+function dvb_full_scan_cleanup_memory()
+    local now = os.time()
+    for id, job in pairs(dvb_full_scan.jobs or {}) do
+        if job and job.status ~= "running" and (now - (tonumber(job.finished_ts) or now)) > 1800 then
+            dvb_full_scan.jobs[id] = nil
+        end
+    end
+end
+
+function dvb_full_scan_update_job_db(job)
+    local sql = "UPDATE dvb_scan_jobs SET status='" .. sql_escape(job.status or "") ..
+        "', finished_ts=" .. tostring(tonumber(job.finished_ts) or 0) ..
+        ", progress=" .. tostring(tonumber(job.progress) or 0) ..
+        ", total_steps=" .. tostring(tonumber(job.total_steps) or 0) ..
+        ", error_text='" .. sql_escape(job.error_text or "") .. "'" ..
+        " WHERE id='" .. sql_escape(job.id) .. "';"
+    db_exec_safe(sql)
+end
+
+function dvb_full_scan_insert_grid(job, step_no, step, probe)
+    local status = runtime and runtime.get_adapter_status and runtime.get_adapter_status(job.adapter_id) or nil
+    local channels_count = type(probe.channels) == "table" and #probe.channels or 0
+    local sql = "INSERT INTO dvb_scan_grid(job_id, step_no, frequency, tp, status, signal, snr, ber, unc, bitrate_kbps, channels_count, ts, meta_json) VALUES(" ..
+        "'" .. sql_escape(job.id) .. "', " .. tostring(step_no) .. ", " ..
+        tostring(tonumber(step.frequency) or "NULL") .. ", '" .. sql_escape(step.tp or "") .. "', '" ..
+        sql_escape((probe.ok and "done") or "error") .. "', " ..
+        tostring(tonumber(status and status.signal) or "NULL") .. ", " ..
+        tostring(tonumber(status and status.snr) or "NULL") .. ", " ..
+        tostring(tonumber(status and status.ber) or "NULL") .. ", " ..
+        tostring(tonumber(status and status.unc) or "NULL") .. ", " ..
+        tostring(tonumber(probe.bitrate) or 0) .. ", " ..
+        tostring(channels_count) .. ", " .. tostring(os.time()) .. ", '" ..
+        sql_escape(json.encode({
+            adapter = step.adapter,
+            device = step.device,
+            type = step.type,
+        })) .. "');"
+    db_exec_safe(sql)
+end
+
+function dvb_full_scan_insert_channels(job, step_no, step, channels)
+    if type(channels) ~= "table" then
+        return
+    end
+    local max_rows = clamp_number(setting_number("dvb_scan_rows_max_per_job", 50000), 100, 500000) or 50000
+    local current = tonumber(db_scalar_safe("SELECT COUNT(*) FROM dvb_scan_channels WHERE job_id='" ..
+        sql_escape(job.id) .. "';")) or 0
+    for _, channel in ipairs(channels) do
+        if current >= max_rows then
+            break
+        end
+        local sql = "INSERT INTO dvb_scan_channels(job_id, step_no, pnr, name, provider, cas_json, video_json, audio_json, frequency, tp, meta_json) VALUES(" ..
+            "'" .. sql_escape(job.id) .. "', " .. tostring(step_no) .. ", " .. tostring(tonumber(channel.pnr) or "NULL") .. ", '" ..
+            sql_escape(channel.name or "") .. "', '" .. sql_escape(channel.provider or "") .. "', '" ..
+            sql_escape(json.encode(channel.cas or {})) .. "', '" ..
+            sql_escape(json.encode(channel.video or {})) .. "', '" ..
+            sql_escape(json.encode(channel.audio or {})) .. "', " ..
+            tostring(tonumber(step.frequency) or "NULL") .. ", '" .. sql_escape(step.tp or "") .. "', '" ..
+            sql_escape(json.encode({
+                adapter = step.adapter,
+                device = step.device,
+            })) .. "');"
+        db_exec_safe(sql)
+        current = current + 1
+    end
+end
+
+function dvb_full_scan_finish(job, status, err)
+    job.status = status
+    job.error_text = err
+    job.finished_ts = os.time()
+    dvb_full_scan.active_id = nil
+    dvb_full_scan_update_job_db(job)
+    dvb_full_scan_cleanup_memory()
+end
+
+function dvb_full_scan_run_step(job)
+    if not job or job.status ~= "running" then
+        return
+    end
+    if job.cancel_requested then
+        dvb_full_scan_finish(job, "cancelled", "")
+        return
+    end
+    local step_no = (tonumber(job.progress) or 0) + 1
+    local step = job.plan and job.plan[step_no]
+    if not step then
+        dvb_full_scan_finish(job, "done", "")
+        return
+    end
+    local conf = dvb_autosearch_apply_profile(job.base_conf, step)
+    conf.name = "dvb-full-scan-" .. tostring(job.id) .. "-" .. tostring(step_no)
+    dvb_autosearch_probe(conf, job.step_duration_sec, function(probe)
+        dvb_full_scan_insert_grid(job, step_no, step, probe or { ok = false })
+        dvb_full_scan_insert_channels(job, step_no, step, probe and probe.channels or {})
+        job.progress = step_no
+        dvb_full_scan_update_job_db(job)
+        timer({
+            interval = 0.1,
+            callback = function(self)
+                self:close()
+                dvb_full_scan_run_step(job)
+            end,
+        })
+    end)
+end
+
+function dvb_flatten_profiles(presets, group_key)
+    local list = {}
+    local src = presets and presets[group_key]
+    if type(src) ~= "table" then
+        return list
+    end
+    for _, item in ipairs(src) do
+        if type(item) == "table" then
+            list[#list + 1] = item
+        end
+    end
+    return list
+end
+
+function dvb_plan_from_profile(row, body)
+    local presets = dvb_scan_presets_get_effective()
+    local cfg = row and row.config or {}
+    local type_name = tostring(cfg.type or ""):upper()
+    local group_key = "satellites"
+    if type_name:find("^C") then
+        group_key = "cable"
+    elseif type_name:find("^T") or type_name == "ATSC" then
+        group_key = "terrestrial"
+    end
+    local profile_id = tostring(body.profile_id or "")
+    local profiles = dvb_flatten_profiles(presets, group_key)
+    local selected = nil
+    if profile_id ~= "" then
+        for _, item in ipairs(profiles) do
+            if tostring(item.id or "") == profile_id then
+                selected = item
+                break
+            end
+        end
+    else
+        selected = profiles[1]
+    end
+    if not selected then
+        return nil, "profile not found"
+    end
+    local plan = {}
+    if type(selected.transponders) == "table" and #selected.transponders > 0 then
+        for _, tp in ipairs(selected.transponders) do
+            if type(tp) == "table" then
+                local step = deep_copy(tp)
+                step.tp = step.tp or ((step.frequency and step.polarization and step.symbolrate)
+                    and (tostring(step.frequency) .. ":" .. tostring(step.polarization) .. ":" .. tostring(step.symbolrate)) or nil)
+                plan[#plan + 1] = step
+            end
+        end
+    elseif type(selected.frequencies) == "table" and #selected.frequencies > 0 then
+        for _, freq in ipairs(selected.frequencies) do
+            plan[#plan + 1] = {
+                frequency = tonumber(freq),
+                symbolrate = tonumber(selected.symbolrate),
+                modulation = selected.modulation,
+                bandwidth = selected.bandwidth,
+            }
+        end
+    end
+    return plan, nil
+end
+
+function dvb_plan_from_custom(row, body)
+    local custom = type(body.custom) == "table" and body.custom or {}
+    local cfg = row and row.config or {}
+    local type_name = tostring(custom.type or cfg.type or "S2"):upper()
+    local from = tonumber(custom.frequency_from)
+    local to = tonumber(custom.frequency_to)
+    local step = tonumber(custom.step)
+    if type_name:find("^C") or type_name:find("^T") then
+        if step == nil then
+            step = 8000
+        end
+    elseif step == nil then
+        step = 1000
+    end
+    if not from or not to or not step or step <= 0 then
+        return nil, "custom scan requires frequency_from/frequency_to/step"
+    end
+    if from > to then
+        from, to = to, from
+    end
+    local plan = {}
+    local max_steps = clamp_number(setting_number("dvb_scan_max_steps", 20000), 10, 200000) or 20000
+    local symbolrates = {}
+    if type(custom.symbolrates) == "table" then
+        for _, sr in ipairs(custom.symbolrates) do
+            local n = tonumber(sr)
+            if n and n > 0 then
+                symbolrates[#symbolrates + 1] = n
+            end
+        end
+    end
+    if #symbolrates == 0 and tonumber(custom.symbolrate) then
+        symbolrates[1] = tonumber(custom.symbolrate)
+    end
+    local pols = {}
+    if type(custom.polarizations) == "table" then
+        for _, p in ipairs(custom.polarizations) do
+            local t = tostring(p or ""):upper()
+            if t ~= "" then
+                pols[#pols + 1] = t
+            end
+        end
+    end
+    if #pols == 0 then
+        pols = { "H", "V" }
+    end
+
+    local freq = from
+    while freq <= to do
+        if type_name:find("^S") then
+            local sr_list = (#symbolrates > 0) and symbolrates or { tonumber(cfg.symbolrate) or 27500 }
+            for _, sr in ipairs(sr_list) do
+                for _, pol in ipairs(pols) do
+                    plan[#plan + 1] = {
+                        type = type_name,
+                        frequency = math.floor(freq),
+                        polarization = pol,
+                        symbolrate = sr,
+                        tp = tostring(math.floor(freq)) .. ":" .. tostring(pol) .. ":" .. tostring(sr),
+                        modulation = custom.modulation or cfg.modulation,
+                    }
+                    if #plan > max_steps then
+                        return nil, "scan plan too large"
+                    end
+                end
+            end
+        else
+            plan[#plan + 1] = {
+                type = type_name,
+                frequency = math.floor(freq),
+                symbolrate = tonumber(custom.symbolrate) or tonumber(cfg.symbolrate),
+                bandwidth = tonumber(custom.bandwidth) or tonumber(cfg.bandwidth),
+                modulation = custom.modulation or cfg.modulation,
+            }
+            if #plan > max_steps then
+                return nil, "scan plan too large"
+            end
+        end
+        freq = freq + step
+    end
+    return plan, nil
+end
+
+local function start_dvb_full_scan(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not analyze then
+        return error_response(server, client, 501, "analyze module is not found")
+    end
+    local body = parse_json_body(request) or {}
+    local adapter_id = tostring(body.adapter_id or "")
+    if adapter_id == "" then
+        return error_response(server, client, 400, "adapter_id is required")
+    end
+    if dvb_full_scan.active_id then
+        return error_response(server, client, 409, "another full scan is running")
+    end
+    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    if not row then
+        return error_response(server, client, 404, "adapter not found")
+    end
+    local mode = tostring(body.mode or "profile")
+    local plan = nil
+    local err = nil
+    if mode == "custom" then
+        plan, err = dvb_plan_from_custom(row, body)
+    else
+        plan, err = dvb_plan_from_profile(row, body)
+    end
+    if not plan then
+        return error_response(server, client, 400, err or "failed to build scan plan")
+    end
+    if #plan == 0 then
+        return error_response(server, client, 400, "scan plan is empty")
+    end
+
+    dvb_full_scan.seq = dvb_full_scan.seq + 1
+    local id = tostring(dvb_full_scan.seq)
+    local step_duration = clamp_number(body.step_duration_sec, 1, 15) or 3
+    local base_conf, conf_err = dvb_scan_config_from_adapter(adapter_id)
+    if not base_conf then
+        return error_response(server, client, 400, conf_err or "invalid adapter config")
+    end
+    local job = {
+        id = id,
+        adapter_id = adapter_id,
+        status = "running",
+        started_ts = os.time(),
+        finished_ts = 0,
+        progress = 0,
+        total_steps = #plan,
+        mode = mode,
+        step_duration_sec = step_duration,
+        base_conf = base_conf,
+        plan = plan,
+    }
+    local sql = "INSERT INTO dvb_scan_jobs(id, adapter_id, mode, status, started_ts, finished_ts, progress, total_steps, params_json, error_text) VALUES(" ..
+        "'" .. sql_escape(job.id) .. "', '" .. sql_escape(job.adapter_id) .. "', '" .. sql_escape(job.mode) .. "', 'running', " ..
+        tostring(job.started_ts) .. ", 0, 0, " .. tostring(job.total_steps) .. ", '" ..
+        sql_escape(json.encode({
+            mode = mode,
+            profile_id = body.profile_id,
+            custom = body.custom,
+        })) .. "', '');"
+    local ok, exec_err = db_exec_safe(sql)
+    if not ok then
+        return error_response(server, client, 500, "failed to create scan job: " .. tostring(exec_err))
+    end
+
+    db_exec_safe("DELETE FROM dvb_scan_grid WHERE job_id='" .. sql_escape(job.id) .. "';")
+    db_exec_safe("DELETE FROM dvb_scan_channels WHERE job_id='" .. sql_escape(job.id) .. "';")
+
+    dvb_full_scan.jobs[id] = job
+    dvb_full_scan.active_id = id
+    dvb_full_scan_run_step(job)
+    return json_response(server, client, 200, {
+        id = id,
+        status = job.status,
+        adapter_id = adapter_id,
+        progress = job.progress,
+        total_steps = job.total_steps,
+    })
+end
+
+function dvb_full_scan_query_paging(query)
+    query = query or {}
+    local page = clamp_number(query.page, 1, 100000) or 1
+    local per_page = clamp_number(query.per_page, 10, 500) or 100
+    local offset = (page - 1) * per_page
+    return page, per_page, offset
+end
+
+function dvb_full_scan_load_job(id)
+    local job = dvb_full_scan.jobs[id]
+    if job then
+        return job
+    end
+    local rows, err = db_query_safe("SELECT * FROM dvb_scan_jobs WHERE id='" .. sql_escape(id) .. "' LIMIT 1;")
+    if not rows then
+        return nil, err
+    end
+    if #rows == 0 then
+        return nil, "job not found"
+    end
+    local row = rows[1]
+    return {
+        id = tostring(row.id or ""),
+        adapter_id = tostring(row.adapter_id or ""),
+        mode = tostring(row.mode or ""),
+        status = tostring(row.status or ""),
+        started_ts = tonumber(row.started_ts) or 0,
+        finished_ts = tonumber(row.finished_ts) or 0,
+        progress = tonumber(row.progress) or 0,
+        total_steps = tonumber(row.total_steps) or 0,
+        error_text = row.error_text,
+    }, nil
+end
+
+local function get_dvb_full_scan(server, client, request, id)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local job, err = dvb_full_scan_load_job(id)
+    if not job then
+        return error_response(server, client, 404, err or "job not found")
+    end
+    local query = request and request.query or {}
+    local page, per_page, offset = dvb_full_scan_query_paging(query)
+
+    local grid_sort = tostring(query.grid_sort or "step_no")
+    local grid_order = tostring(query.grid_order or "asc"):lower() == "desc" and "DESC" or "ASC"
+    local grid_sort_whitelist = {
+        step_no = true,
+        frequency = true,
+        bitrate_kbps = true,
+        channels_count = true,
+        ts = true,
+    }
+    if not grid_sort_whitelist[grid_sort] then
+        grid_sort = "step_no"
+    end
+    local grid_rows = db_query_safe("SELECT * FROM dvb_scan_grid WHERE job_id='" .. sql_escape(id) ..
+        "' ORDER BY " .. grid_sort .. " " .. grid_order .. " LIMIT " .. tostring(per_page) ..
+        " OFFSET " .. tostring(offset) .. ";") or {}
+    local grid_total = tonumber(db_scalar_safe("SELECT COUNT(*) FROM dvb_scan_grid WHERE job_id='" ..
+        sql_escape(id) .. "';")) or 0
+
+    local channels_sort = tostring(query.channels_sort or "pnr")
+    local channels_order = tostring(query.channels_order or "asc"):lower() == "desc" and "DESC" or "ASC"
+    local channels_sort_whitelist = {
+        pnr = true,
+        name = true,
+        provider = true,
+        frequency = true,
+    }
+    if not channels_sort_whitelist[channels_sort] then
+        channels_sort = "pnr"
+    end
+    local channels_rows = db_query_safe("SELECT * FROM dvb_scan_channels WHERE job_id='" .. sql_escape(id) ..
+        "' ORDER BY " .. channels_sort .. " " .. channels_order .. " LIMIT " .. tostring(per_page) ..
+        " OFFSET " .. tostring(offset) .. ";") or {}
+    local channels_total = tonumber(db_scalar_safe("SELECT COUNT(*) FROM dvb_scan_channels WHERE job_id='" ..
+        sql_escape(id) .. "';")) or 0
+
+    return json_response(server, client, 200, {
+        job = job,
+        progress = {
+            done = job.progress,
+            total = job.total_steps,
+            pct = job.total_steps > 0 and math.floor((job.progress / job.total_steps) * 100) or 0,
+        },
+        grid_page = {
+            page = page,
+            per_page = per_page,
+            total = grid_total,
+            items = grid_rows,
+        },
+        channels_page = {
+            page = page,
+            per_page = per_page,
+            total = channels_total,
+            items = channels_rows,
+        },
+    })
+end
+
+local function cancel_dvb_full_scan(server, client, request, id)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local job = dvb_full_scan.jobs[id]
+    if not job then
+        return error_response(server, client, 404, "job not found")
+    end
+    job.cancel_requested = true
+    return json_response(server, client, 200, { status = "cancel_requested", id = id })
+end
+
+local function export_dvb_full_scan(server, client, request, id)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local query = request and request.query or {}
+    local format = tostring(query.format or "json")
+    local grid_rows = db_query_safe("SELECT * FROM dvb_scan_grid WHERE job_id='" .. sql_escape(id) .. "' ORDER BY step_no ASC;") or {}
+    local channels_rows = db_query_safe("SELECT * FROM dvb_scan_channels WHERE job_id='" .. sql_escape(id) .. "' ORDER BY pnr ASC;") or {}
+    if format == "csv" then
+        local lines = { "type,step_no,pnr,name,provider,frequency,tp,bitrate_kbps,channels_count,status" }
+        for _, row in ipairs(grid_rows) do
+            lines[#lines + 1] = table.concat({
+                "grid",
+                tostring(row.step_no or ""),
+                "",
+                "",
+                "",
+                tostring(row.frequency or ""),
+                tostring(row.tp or ""),
+                tostring(row.bitrate_kbps or ""),
+                tostring(row.channels_count or ""),
+                tostring(row.status or ""),
+            }, ",")
+        end
+        for _, row in ipairs(channels_rows) do
+            lines[#lines + 1] = table.concat({
+                "channel",
+                tostring(row.step_no or ""),
+                tostring(row.pnr or ""),
+                tostring(row.name or ""):gsub(",", " "),
+                tostring(row.provider or ""):gsub(",", " "),
+                tostring(row.frequency or ""),
+                tostring(row.tp or ""),
+                "",
+                "",
+                "",
+            }, ",")
+        end
+        return server:send(client, {
+            code = 200,
+            headers = {
+                "Content-Type: text/csv",
+                "Cache-Control: no-cache",
+                "Connection: close",
+            },
+            content = table.concat(lines, "\n"),
+        })
+    end
+    return json_response(server, client, 200, {
+        id = id,
+        grid = grid_rows,
+        channels = channels_rows,
+    })
+end
+
+local function slugify_stream_id(name)
+    local text = tostring(name or ""):lower()
+    text = text:gsub("[^%w_%-]+", "_")
+    text = text:gsub("_+", "_")
+    text = text:gsub("^_+", "")
+    text = text:gsub("_+$", "")
+    if text == "" then
+        text = "dvb_stream"
+    end
+    return text
+end
+
+local function create_streams_from_dvb_full_scan(server, client, request, id)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    local body = parse_json_body(request) or {}
+    local selected = type(body.selected) == "table" and body.selected or {}
+    if #selected == 0 then
+        return error_response(server, client, 400, "selected list is empty")
+    end
+    local job, err = dvb_full_scan_load_job(id)
+    if not job then
+        return error_response(server, client, 404, err or "job not found")
+    end
+    local ids = {}
+    for _, value in ipairs(selected) do
+        local n = tonumber(value)
+        if n then
+            ids[#ids + 1] = tostring(math.floor(n))
+        end
+    end
+    if #ids == 0 then
+        return error_response(server, client, 400, "selected list must contain channel row ids")
+    end
+    local rows = db_query_safe("SELECT id, pnr, name FROM dvb_scan_channels WHERE job_id='" .. sql_escape(id) ..
+        "' AND id IN (" .. table.concat(ids, ",") .. ");") or {}
+    if #rows == 0 then
+        return error_response(server, client, 404, "selected channels not found")
+    end
+    local created = {}
+    local skipped = {}
+    for _, row in ipairs(rows) do
+        local pnr = tonumber(row.pnr)
+        if pnr then
+            local base_id = slugify_stream_id(row.name or ("pnr_" .. tostring(pnr)))
+            local stream_id = base_id
+            local idx = 2
+            while config.get_stream(stream_id) do
+                stream_id = base_id .. "_" .. tostring(idx)
+                idx = idx + 1
+            end
+            local payload = {
+                name = row.name or ("PNR " .. tostring(pnr)),
+                type = "spts",
+                input = { "dvb://" .. tostring(job.adapter_id) .. "#pnr=" .. tostring(pnr) },
+                output = {},
+            }
+            if config.get_stream(stream_id) then
+                skipped[#skipped + 1] = stream_id
+            else
+                config.upsert_stream(stream_id, true, payload)
+                created[#created + 1] = stream_id
+            end
+        end
+    end
+    if runtime and runtime.refresh then
+        pcall(runtime.refresh, false)
+    end
+    return json_response(server, client, 200, {
+        status = "ok",
+        created = created,
+        skipped = skipped,
+    })
 end
 
 local function get_adapter_status(server, client, id)
@@ -5078,6 +6833,39 @@ local function get_settings(server, client)
     if rows.ui_polling_interval_sec == nil then
         rows.ui_polling_interval_sec = 1
     end
+    if rows.dvb_autosearch_enabled == nil then
+        rows.dvb_autosearch_enabled = true
+    end
+    if rows.dvb_autosearch_queue_max == nil then
+        rows.dvb_autosearch_queue_max = 32
+    end
+    if rows.dvb_autosearch_global_switch_min_gap_sec == nil then
+        rows.dvb_autosearch_global_switch_min_gap_sec = 20
+    end
+    if rows.dvb_autosearch_reenqueue_sec == nil then
+        rows.dvb_autosearch_reenqueue_sec = 60
+    end
+    if rows.dvb_autosearch_detection_warmup_sec == nil then
+        rows.dvb_autosearch_detection_warmup_sec = 120
+    end
+    if rows.dvb_autosearch_breaker_window_sec == nil then
+        rows.dvb_autosearch_breaker_window_sec = 600
+    end
+    if rows.dvb_autosearch_breaker_fail_count == nil then
+        rows.dvb_autosearch_breaker_fail_count = 3
+    end
+    if rows.dvb_autosearch_breaker_freeze_sec == nil then
+        rows.dvb_autosearch_breaker_freeze_sec = 300
+    end
+    if rows.dvb_scan_jobs_retention_days == nil then
+        rows.dvb_scan_jobs_retention_days = 14
+    end
+    if rows.dvb_scan_rows_max_per_job == nil then
+        rows.dvb_scan_rows_max_per_job = 50000
+    end
+    if rows.dvb_scan_presets_url == nil or tostring(rows.dvb_scan_presets_url) == "" then
+        rows.dvb_scan_presets_url = "https://stream.centv.ru/dvb-presets.json"
+    end
     rows.build_transcode = astra and astra.features and astra.features.transcode == true
     rows.build_variant = rows.build_transcode and "full" or "lite"
     local token = rows.telegram_bot_token
@@ -5278,6 +7066,17 @@ local function settings_patch_skip_runtime_reload(body)
         observability_system_rollup_interval_sec = true,
         observability_system_retention_sec = true,
         observability_system_include_virtual_ifaces = true,
+        dvb_autosearch_enabled = true,
+        dvb_autosearch_queue_max = true,
+        dvb_autosearch_global_switch_min_gap_sec = true,
+        dvb_autosearch_reenqueue_sec = true,
+        dvb_autosearch_detection_warmup_sec = true,
+        dvb_autosearch_breaker_window_sec = true,
+        dvb_autosearch_breaker_fail_count = true,
+        dvb_autosearch_breaker_freeze_sec = true,
+        dvb_scan_jobs_retention_days = true,
+        dvb_scan_rows_max_per_job = true,
+        dvb_scan_presets_url = true,
     }
     local has_keys = false
     for k, _ in pairs(body) do
@@ -8349,6 +10148,32 @@ function api.handle_request(server, client, request)
         return start_dvb_scan(server, client, request)
     end
 
+    if path == "/api/v1/dvb-auto-search/status" and method == "GET" then
+        return get_dvb_autosearch_status(server, client, request)
+    end
+    if path == "/api/v1/dvb-auto-search/trigger" and method == "POST" then
+        return trigger_dvb_autosearch(server, client, request)
+    end
+    if path == "/api/v1/dvb-auto-search/queue/clear" and method == "POST" then
+        return clear_dvb_autosearch_queue(server, client, request)
+    end
+    if path == "/api/v1/dvb-auto-search/unfreeze" and method == "POST" then
+        return unfreeze_dvb_autosearch(server, client, request)
+    end
+
+    if path == "/api/v1/dvb-scan-presets" and method == "GET" then
+        return get_dvb_scan_presets(server, client, request)
+    end
+    if path == "/api/v1/dvb-scan-presets/refresh" and method == "POST" then
+        return dvb_scan_presets_refresh(server, client, request)
+    end
+    if path == "/api/v1/dvb-scan-presets/manual" and method == "POST" then
+        return set_dvb_scan_presets_manual(server, client, request)
+    end
+    if path == "/api/v1/dvb-full-scan" and method == "POST" then
+        return start_dvb_full_scan(server, client, request)
+    end
+
     local dvb_scan_id = path:match("^/api/v1/dvb%-scan/([%w%-%_]+)$")
     if dvb_scan_id and method == "GET" then
         local admin = require_admin(request)
@@ -8356,6 +10181,23 @@ function api.handle_request(server, client, request)
             return error_response(server, client, 403, "forbidden")
         end
         return get_dvb_scan(server, client, request, dvb_scan_id)
+    end
+
+    local dvb_full_scan_id = path:match("^/api/v1/dvb%-full%-scan/([%w%-%_]+)$")
+    if dvb_full_scan_id and method == "GET" then
+        return get_dvb_full_scan(server, client, request, dvb_full_scan_id)
+    end
+    local dvb_full_scan_cancel_id = path:match("^/api/v1/dvb%-full%-scan/([%w%-%_]+)/cancel$")
+    if dvb_full_scan_cancel_id and method == "POST" then
+        return cancel_dvb_full_scan(server, client, request, dvb_full_scan_cancel_id)
+    end
+    local dvb_full_scan_export_id = path:match("^/api/v1/dvb%-full%-scan/([%w%-%_]+)/export$")
+    if dvb_full_scan_export_id and method == "GET" then
+        return export_dvb_full_scan(server, client, request, dvb_full_scan_export_id)
+    end
+    local dvb_full_scan_create_id = path:match("^/api/v1/dvb%-full%-scan/([%w%-%_]+)/create%-streams$")
+    if dvb_full_scan_create_id and method == "POST" then
+        return create_streams_from_dvb_full_scan(server, client, request, dvb_full_scan_create_id)
     end
 
     local adapter_status_id = path:match("^/api/v1/adapter%-status/([%w%-%_]+)$")
@@ -8606,6 +10448,28 @@ function api.start(opts)
         max_clients = http_max_clients,
         max_clients_per_ip = http_max_clients_per_ip,
         accept_backoff_ms = http_accept_backoff_ms,
+    })
+
+    if dvb_autosearch.timer then
+        pcall(function()
+            dvb_autosearch.timer:close()
+        end)
+        dvb_autosearch.timer = nil
+    end
+    dvb_autosearch.timer = timer({
+        interval = 10,
+        callback = function()
+            local ok, err = pcall(dvb_autosearch_tick)
+            if not ok then
+                log.warning("[dvb-autosearch] tick failed: " .. tostring(err))
+            end
+            -- Periodic retention cleanup for scan history.
+            local days = clamp_number(setting_number("dvb_scan_jobs_retention_days", 14), 1, 365) or 14
+            local cutoff = os.time() - (days * 86400)
+            db_exec_safe("DELETE FROM dvb_scan_jobs WHERE finished_ts > 0 AND finished_ts < " .. tostring(cutoff) .. ";")
+            db_exec_safe("DELETE FROM dvb_scan_grid WHERE job_id NOT IN (SELECT id FROM dvb_scan_jobs);")
+            db_exec_safe("DELETE FROM dvb_scan_channels WHERE job_id NOT IN (SELECT id FROM dvb_scan_jobs);")
+        end,
     })
 
     log.info("[api] listening on " .. addr .. ":" .. port)

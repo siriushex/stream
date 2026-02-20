@@ -4184,6 +4184,13 @@ details.fold[open] > .fold-summary::after {
   color: var(--warning);
 }
 
+.toolbar-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .publish-links-row {
   display: flex;
   align-items: center;

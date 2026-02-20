@@ -488,6 +488,11 @@ const state = {
   adapterScanJobId: null,
   adapterScanPoll: null,
   adapterScanResults: null,
+  adapterAutoSignalPoll: null,
+  adapterFullScanJobId: null,
+  adapterFullScanPoll: null,
+  adapterFullScanPresets: null,
+  adapterFullScanSelectedRows: new Set(),
   currentView: 'dashboard',
   sessionTimer: null,
   accessLogTimer: null,
@@ -2040,6 +2045,27 @@ const elements = {
   adapterScanRefresh: $('#adapter-scan-refresh'),
   adapterScanClose: $('#adapter-scan-close'),
   adapterScanCancel: $('#adapter-scan-cancel'),
+  adapterFullScan: $('#adapter-full-scan'),
+  adapterFullScanOverlay: $('#adapter-full-scan-overlay'),
+  adapterFullScanSub: $('#adapter-full-scan-sub'),
+  adapterFullScanStatus: $('#adapter-full-scan-status'),
+  adapterFullScanProgress: $('#adapter-full-scan-progress'),
+  adapterFullScanMode: $('#adapter-full-scan-mode'),
+  adapterFullScanProfile: $('#adapter-full-scan-profile'),
+  adapterFullScanStepDurationSec: $('#adapter-full-scan-step-duration-sec'),
+  adapterFullScanCustomJson: $('#adapter-full-scan-custom-json'),
+  adapterFullScanPresetsJson: $('#adapter-full-scan-presets-json'),
+  adapterFullScanPresetsSave: $('#adapter-full-scan-presets-save'),
+  adapterFullScanGrid: $('#adapter-full-scan-grid'),
+  adapterFullScanChannels: $('#adapter-full-scan-channels'),
+  adapterFullScanStart: $('#adapter-full-scan-start'),
+  adapterFullScanRefresh: $('#adapter-full-scan-refresh'),
+  adapterFullScanExportJson: $('#adapter-full-scan-export-json'),
+  adapterFullScanExportCsv: $('#adapter-full-scan-export-csv'),
+  adapterFullScanCreateStreams: $('#adapter-full-scan-create-streams'),
+  adapterFullScanCancelJob: $('#adapter-full-scan-cancel-job'),
+  adapterFullScanClose: $('#adapter-full-scan-close'),
+  adapterFullScanCancel: $('#adapter-full-scan-cancel'),
   adapterCancel: $('#adapter-cancel'),
   adapterDelete: $('#adapter-delete'),
   adapterError: $('#adapter-error'),
@@ -2071,6 +2097,25 @@ const elements = {
   adapterCFrequency: $('#adapter-c-frequency'),
   adapterCSymbolrate: $('#adapter-c-symbolrate'),
   adapterAtscFrequency: $('#adapter-atsc-frequency'),
+  adapterAutoSignalSearchEnabled: $('#adapter-auto-signal-search-enabled'),
+  adapterAutoSignalWindowSec: $('#adapter-auto-signal-window-sec'),
+  adapterAutoSignalBitrateMode: $('#adapter-auto-signal-bitrate-mode'),
+  adapterAutoSignalBitrateMinKbps: $('#adapter-auto-signal-bitrate-min-kbps'),
+  adapterAutoSignalBaselineWindowSec: $('#adapter-auto-signal-baseline-window-sec'),
+  adapterAutoSignalBaselineDropRatioPct: $('#adapter-auto-signal-baseline-drop-ratio-pct'),
+  adapterAutoSignalCcDeltaThreshold: $('#adapter-auto-signal-cc-delta-threshold'),
+  adapterAutoSignalProbeSec: $('#adapter-auto-signal-probe-sec'),
+  adapterAutoSignalConfirmSec: $('#adapter-auto-signal-confirm-sec'),
+  adapterAutoSignalSwitchCooldownSec: $('#adapter-auto-signal-switch-cooldown-sec'),
+  adapterAutoSignalMinStreams: $('#adapter-auto-signal-min-streams'),
+  adapterAutoSignalTypeFlipEnabled: $('#adapter-auto-signal-type-flip-enabled'),
+  adapterAutoSignalTypeFlipWaitSec: $('#adapter-auto-signal-type-flip-wait-sec'),
+  adapterAutoSignalCandidateProfiles: $('#adapter-auto-signal-candidate-profiles'),
+  adapterAutoSignalStatus: $('#adapter-auto-signal-status'),
+  adapterAutoSignalRefresh: $('#adapter-auto-signal-refresh'),
+  adapterAutoSignalTrigger: $('#adapter-auto-signal-trigger'),
+  adapterAutoSignalUnfreeze: $('#adapter-auto-signal-unfreeze'),
+  adapterAutoSignalQueueClear: $('#adapter-auto-signal-queue-clear'),
   analyzeOverlay: $('#analyze-overlay'),
   analyzeRestart: $('#analyze-restart'),
   analyzeCopy: $('#analyze-copy'),
@@ -5499,9 +5544,13 @@ function setOverlay(overlay, show) {
 }
 
 function setView(name) {
+  const previousView = state.currentView;
   if (state.currentView === 'settings' && name !== 'settings' && state.generalDirty) {
     const proceed = window.confirm('Есть несохранённые изменения в Settings → General. Перейти без сохранения?');
     if (!proceed) return;
+  }
+  if (previousView === 'adapters' && name !== 'adapters') {
+    closeAdapterEditor();
   }
   state.currentView = name;
   uiPerfTelemetry.viewSwitches += 1;
@@ -9270,20 +9319,58 @@ function getActiveInputStats(stats) {
   return { inputs, activeIndex, activeInput };
 }
 
+function hasStreamQualityIssues(stats) {
+  if (!stats || typeof stats !== 'object') return false;
+
+  const hasCounter = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0;
+  };
+
+  if (stats.scrambled === true) return true;
+  if (hasCounter(stats.cc_errors) || hasCounter(stats.pes_errors)) return true;
+
+  const active = getActiveInputStats(stats).activeInput;
+  if (active && typeof active === 'object') {
+    if (active.scrambled === true) return true;
+    if (hasCounter(active.cc_errors) || hasCounter(active.pes_errors)) return true;
+  }
+
+  const transcode = (stats.transcode && typeof stats.transcode === 'object') ? stats.transcode : null;
+  if (!transcode) return false;
+  if (transcode.output_scrambled === true) return true;
+  if (hasCounter(transcode.output_cc_errors) || hasCounter(transcode.output_pes_errors)) return true;
+
+  const outputs = Array.isArray(transcode.outputs_status) ? transcode.outputs_status : [];
+  return outputs.some((entry) => entry
+    && (entry.scrambled_active === true
+      || hasCounter(entry.scrambled_errors)
+      || hasCounter(entry.cc_errors)
+      || hasCounter(entry.pes_errors)));
+}
+
 function getStreamStatusInfo(stream, stats) {
   if (stream.enabled === false) {
     return { label: 'Disabled', className: 'disabled' };
   }
+  const hasQualityIssues = hasStreamQualityIssues(stats);
   if (stats && stats.transcode_state) {
     const state = stats.transcode_state;
-    if (state === 'RUNNING') return { label: 'Online', className: 'ok' };
+    if (state === 'RUNNING') {
+      return hasQualityIssues
+        ? { label: 'Online (issues)', className: 'warn' }
+        : { label: 'Online', className: 'ok' };
+    }
     if (state === 'STARTING' || state === 'RESTARTING') return { label: state, className: 'pending' };
     if (state === 'ERROR') return { label: 'Error', className: 'warn' };
     return { label: state, className: 'warn' };
   }
-  return stats && stats.on_air === true
-    ? { label: 'Online', className: 'ok' }
-    : { label: 'Offline', className: 'warn' };
+  if (stats && stats.on_air === true) {
+    return hasQualityIssues
+      ? { label: 'Online (issues)', className: 'warn' }
+      : { label: 'Online', className: 'ok' };
+  }
+  return { label: 'Offline', className: 'warn' };
 }
 
 function copyText(text, message) {
@@ -18046,6 +18133,10 @@ function updateAdapterScanAvailability() {
   }
   elements.adapterScan.disabled = !!reason;
   elements.adapterScan.title = reason || warning || '';
+  if (elements.adapterFullScan) {
+    elements.adapterFullScan.disabled = !!reason;
+    elements.adapterFullScan.title = reason || warning || '';
+  }
 }
 
 function closeAdapterScanModal() {
@@ -18304,6 +18395,449 @@ async function createStreamsFromScan(adapterId) {
   setTimeout(() => setStatus(''), 6000);
 }
 
+function renderAdapterAutoSignalStatus(payload, adapterId) {
+  if (!elements.adapterAutoSignalStatus) return;
+  if (!payload || typeof payload !== 'object') {
+    elements.adapterAutoSignalStatus.textContent = 'Auto-search status: unavailable';
+    return;
+  }
+  const enabled = payload.enabled === true;
+  const leader = payload.coordinator_leader === true;
+  const queueDepth = Number(payload.queue_depth) || 0;
+  const frozenUntil = Number(payload.frozen_until_ts) || 0;
+  const now = Math.floor(Date.now() / 1000);
+  const frozenSec = frozenUntil > now ? (frozenUntil - now) : 0;
+  const active = payload.active_task && payload.active_task.adapter_id
+    ? `active=${payload.active_task.adapter_id}`
+    : 'active=none';
+  let adapterTail = '';
+  if (adapterId && Array.isArray(payload.adapters)) {
+    const item = payload.adapters.find((row) => String(row.adapter_id || '') === String(adapterId));
+    if (item) {
+      adapterTail = ` · last_reason=${String(item.last_reason || 'n/a')}`;
+    }
+  }
+  elements.adapterAutoSignalStatus.textContent =
+    `Auto-search: ${enabled ? 'ON' : 'OFF'} · leader=${leader ? 'yes' : 'no'} · queue=${queueDepth} · ${active}` +
+    (frozenSec > 0 ? ` · frozen ${frozenSec}s` : '') +
+    adapterTail;
+}
+
+async function loadAdapterAutoSignalStatus(adapterId) {
+  if (!elements.adapterAutoSignalStatus) return;
+  try {
+    const payload = await apiJson('/api/v1/dvb-auto-search/status');
+    renderAdapterAutoSignalStatus(payload, adapterId);
+  } catch (err) {
+    elements.adapterAutoSignalStatus.textContent = `Auto-search status error: ${formatNetworkError(err) || err.message || 'request failed'}`;
+  }
+}
+
+async function triggerAdapterAutoSignal(adapterId, dryRun) {
+  if (!adapterId) {
+    throw new Error('Adapter is not selected');
+  }
+  const payload = await apiJson('/api/v1/dvb-auto-search/trigger', {
+    method: 'POST',
+    body: JSON.stringify({
+      adapter_id: adapterId,
+      dry_run: dryRun === true,
+    }),
+  });
+  const status = String((payload && payload.status) || 'ok');
+  setStatus(`Auto-search trigger: ${status}`);
+  await loadAdapterAutoSignalStatus(adapterId);
+}
+
+async function clearAdapterAutoSignalQueue(adapterId) {
+  await apiJson('/api/v1/dvb-auto-search/queue/clear', { method: 'POST' });
+  setStatus('Auto-search queue cleared');
+  await loadAdapterAutoSignalStatus(adapterId);
+}
+
+async function unfreezeAdapterAutoSignal(adapterId) {
+  await apiJson('/api/v1/dvb-auto-search/unfreeze', { method: 'POST' });
+  setStatus('Auto-search unfreezed');
+  await loadAdapterAutoSignalStatus(adapterId);
+}
+
+function resetAdapterFullScanUi() {
+  state.adapterFullScanSelectedRows = new Set();
+  if (elements.adapterFullScanStatus) elements.adapterFullScanStatus.textContent = '';
+  if (elements.adapterFullScanProgress) elements.adapterFullScanProgress.textContent = '';
+  if (elements.adapterFullScanGrid) elements.adapterFullScanGrid.innerHTML = '';
+  if (elements.adapterFullScanChannels) elements.adapterFullScanChannels.innerHTML = '';
+}
+
+function closeAdapterFullScanModal() {
+  if (state.adapterFullScanPoll) {
+    clearInterval(state.adapterFullScanPoll);
+    state.adapterFullScanPoll = null;
+  }
+  state.adapterFullScanJobId = null;
+  resetAdapterFullScanUi();
+  setOverlay(elements.adapterFullScanOverlay, false);
+}
+
+function getAdapterTypeFamily(typeValue) {
+  const type = String(typeValue || '').toUpperCase();
+  if (type.startsWith('S')) return 'satellites';
+  if (type.startsWith('C')) return 'cable';
+  if (type.startsWith('T') || type === 'ATSC') return 'terrestrial';
+  return 'satellites';
+}
+
+function updateAdapterFullScanModeUi() {
+  if (!elements.adapterFullScanMode) return;
+  const mode = String(elements.adapterFullScanMode.value || 'profile');
+  const customDisabled = mode !== 'custom';
+  if (elements.adapterFullScanCustomJson) {
+    elements.adapterFullScanCustomJson.disabled = customDisabled;
+  }
+  if (elements.adapterFullScanProfile) {
+    elements.adapterFullScanProfile.disabled = mode === 'custom';
+  }
+}
+
+function renderAdapterFullScanProfiles(adapterType) {
+  if (!elements.adapterFullScanProfile) return;
+  const presets = state.adapterFullScanPresets || {};
+  const family = getAdapterTypeFamily(adapterType);
+  const list = Array.isArray(presets[family]) ? presets[family] : [];
+  const previous = elements.adapterFullScanProfile.value;
+  elements.adapterFullScanProfile.innerHTML = '';
+  if (!list.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = 'No profiles';
+    elements.adapterFullScanProfile.appendChild(empty);
+    elements.adapterFullScanProfile.value = '';
+    return;
+  }
+  list.forEach((item) => {
+    const opt = document.createElement('option');
+    opt.value = String(item.id || '');
+    opt.textContent = String(item.name || item.id || 'profile');
+    elements.adapterFullScanProfile.appendChild(opt);
+  });
+  if (previous && list.some((item) => String(item.id || '') === previous)) {
+    elements.adapterFullScanProfile.value = previous;
+  } else {
+    elements.adapterFullScanProfile.value = String(list[0].id || '');
+  }
+}
+
+function renderAdapterFullScanGrid(items) {
+  if (!elements.adapterFullScanGrid) return;
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
+    elements.adapterFullScanGrid.innerHTML = '<div class="scan-empty">No grid rows yet.</div>';
+    return;
+  }
+  const head = `
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Frequency</th>
+        <th>TP</th>
+        <th>Status</th>
+        <th>Bitrate</th>
+        <th>Channels</th>
+      </tr>
+    </thead>
+  `;
+  const body = rows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.step_no || '')}</td>
+      <td>${escapeHtml(row.frequency || '')}</td>
+      <td>${escapeHtml(row.tp || '')}</td>
+      <td>${escapeHtml(row.status || '')}</td>
+      <td>${escapeHtml(row.bitrate_kbps || 0)} Kbit/s</td>
+      <td>${escapeHtml(row.channels_count || 0)}</td>
+    </tr>
+  `).join('');
+  elements.adapterFullScanGrid.innerHTML = `<table class="table table-compact">${head}<tbody>${body}</tbody></table>`;
+}
+
+function renderAdapterFullScanChannels(items) {
+  if (!elements.adapterFullScanChannels) return;
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) {
+    elements.adapterFullScanChannels.innerHTML = '<div class="scan-empty">No channels yet.</div>';
+    return;
+  }
+  const head = `
+    <thead>
+      <tr>
+        <th style="width:40px"><input type="checkbox" id="adapter-full-scan-select-all" /></th>
+        <th>ID</th>
+        <th>PNR</th>
+        <th>Name</th>
+        <th>Provider</th>
+        <th>Frequency</th>
+      </tr>
+    </thead>
+  `;
+  const body = rows.map((row) => {
+    const id = String(row.id || '');
+    const checked = state.adapterFullScanSelectedRows.has(id) ? 'checked' : '';
+    return `
+      <tr>
+        <td><input type="checkbox" class="adapter-full-scan-row" data-row-id="${escapeHtml(id)}" ${checked} /></td>
+        <td>${escapeHtml(id)}</td>
+        <td>${escapeHtml(row.pnr || '')}</td>
+        <td>${escapeHtml(row.name || '')}</td>
+        <td>${escapeHtml(row.provider || '')}</td>
+        <td>${escapeHtml(row.frequency || '')}</td>
+      </tr>
+    `;
+  }).join('');
+  elements.adapterFullScanChannels.innerHTML = `<table class="table table-compact">${head}<tbody>${body}</tbody></table>`;
+
+  const selectAll = elements.adapterFullScanChannels.querySelector('#adapter-full-scan-select-all');
+  const rowInputs = Array.from(elements.adapterFullScanChannels.querySelectorAll('.adapter-full-scan-row'));
+  const allChecked = rowInputs.length > 0 && rowInputs.every((el) => el.checked);
+  if (selectAll) {
+    selectAll.checked = allChecked;
+    selectAll.addEventListener('change', () => {
+      rowInputs.forEach((el) => {
+        el.checked = selectAll.checked;
+        const rowId = String(el.dataset.rowId || '');
+        if (!rowId) return;
+        if (selectAll.checked) {
+          state.adapterFullScanSelectedRows.add(rowId);
+        } else {
+          state.adapterFullScanSelectedRows.delete(rowId);
+        }
+      });
+    });
+  }
+  rowInputs.forEach((el) => {
+    el.addEventListener('change', () => {
+      const rowId = String(el.dataset.rowId || '');
+      if (!rowId) return;
+      if (el.checked) {
+        state.adapterFullScanSelectedRows.add(rowId);
+      } else {
+        state.adapterFullScanSelectedRows.delete(rowId);
+      }
+      if (selectAll) {
+        selectAll.checked = rowInputs.length > 0 && rowInputs.every((item) => item.checked);
+      }
+    });
+  });
+}
+
+function formatFullScanJobStatus(job) {
+  const status = String((job && job.status) || '').toLowerCase();
+  if (status === 'running') return 'Running';
+  if (status === 'done') return 'Done';
+  if (status === 'cancelled') return 'Cancelled';
+  if (status === 'error' || status === 'failed') return 'Failed';
+  if (!status) return 'Idle';
+  return status;
+}
+
+function updateAdapterFullScanProgress(payload) {
+  const job = payload && payload.job ? payload.job : null;
+  const progress = payload && payload.progress ? payload.progress : null;
+  const statusText = formatFullScanJobStatus(job);
+  if (elements.adapterFullScanStatus) {
+    const suffix = job && job.error_text ? ` (${job.error_text})` : '';
+    elements.adapterFullScanStatus.textContent = `Status: ${statusText}${suffix}`;
+  }
+  if (elements.adapterFullScanProgress) {
+    const done = Number(progress && progress.done) || 0;
+    const total = Number(progress && progress.total) || 0;
+    const pct = Number(progress && progress.pct) || 0;
+    elements.adapterFullScanProgress.textContent = total > 0
+      ? `Progress: ${done}/${total} (${pct}%)`
+      : 'Progress: n/a';
+  }
+}
+
+async function loadAdapterFullScanPresets(forceRefresh) {
+  if (forceRefresh === true) {
+    try {
+      await apiJson('/api/v1/dvb-scan-presets/refresh', { method: 'POST' });
+    } catch (err) {
+      setStatus(formatNetworkError(err) || err.message || 'Failed to refresh presets');
+    }
+  }
+  const presets = await apiJson('/api/v1/dvb-scan-presets');
+  state.adapterFullScanPresets = presets || {};
+}
+
+async function saveAdapterFullScanPresetsManual(adapterType) {
+  const raw = String((elements.adapterFullScanPresetsJson && elements.adapterFullScanPresetsJson.value) || '').trim();
+  if (!raw) {
+    throw new Error('Presets JSON is required');
+  }
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error('Presets JSON is invalid');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Presets JSON must be an object');
+  }
+  const saved = await apiJson('/api/v1/dvb-scan-presets/manual', {
+    method: 'POST',
+    body: JSON.stringify({
+      source: 'manual-ui',
+      payload: parsed,
+    }),
+  });
+  state.adapterFullScanPresets = saved || {};
+  renderAdapterFullScanProfiles(adapterType);
+  updateAdapterFullScanModeUi();
+  setStatus('Scan presets loaded from manual JSON');
+}
+
+function getAdapterFullScanRequestPayload(adapterId) {
+  const mode = String((elements.adapterFullScanMode && elements.adapterFullScanMode.value) || 'profile');
+  const stepDuration = toNumber(elements.adapterFullScanStepDurationSec && elements.adapterFullScanStepDurationSec.value);
+  const payload = {
+    adapter_id: adapterId,
+    mode,
+    step_duration_sec: stepDuration || 3,
+  };
+  if (mode === 'custom') {
+    const raw = String((elements.adapterFullScanCustomJson && elements.adapterFullScanCustomJson.value) || '').trim();
+    if (!raw) {
+      throw new Error('Custom mode requires Custom JSON');
+    }
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new Error('Custom JSON is invalid');
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Custom JSON must be an object');
+    }
+    payload.custom = parsed;
+  } else {
+    const profileId = String((elements.adapterFullScanProfile && elements.adapterFullScanProfile.value) || '');
+    if (!profileId) {
+      throw new Error('Profile is required');
+    }
+    payload.profile_id = profileId;
+  }
+  return payload;
+}
+
+async function pollAdapterFullScan(jobId) {
+  if (!jobId) return;
+  const payload = await apiJson(`/api/v1/dvb-full-scan/${encodeURIComponent(jobId)}?page=1&per_page=200`);
+  updateAdapterFullScanProgress(payload);
+  const gridItems = payload && payload.grid_page && Array.isArray(payload.grid_page.items) ? payload.grid_page.items : [];
+  const channelItems = payload && payload.channels_page && Array.isArray(payload.channels_page.items) ? payload.channels_page.items : [];
+  renderAdapterFullScanGrid(gridItems);
+  renderAdapterFullScanChannels(channelItems);
+  const status = String((payload && payload.job && payload.job.status) || '').toLowerCase();
+  if (status === 'done' || status === 'cancelled' || status === 'failed' || status === 'error') {
+    if (state.adapterFullScanPoll) {
+      clearInterval(state.adapterFullScanPoll);
+      state.adapterFullScanPoll = null;
+    }
+  }
+}
+
+async function startAdapterFullScan(adapterId) {
+  const body = getAdapterFullScanRequestPayload(adapterId);
+  resetAdapterFullScanUi();
+  if (elements.adapterFullScanStatus) {
+    elements.adapterFullScanStatus.textContent = 'Starting full scan...';
+  }
+  const response = await apiJson('/api/v1/dvb-full-scan', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  state.adapterFullScanJobId = response.id;
+  if (state.adapterFullScanPoll) {
+    clearInterval(state.adapterFullScanPoll);
+  }
+  state.adapterFullScanPoll = setInterval(() => {
+    pollAdapterFullScan(state.adapterFullScanJobId).catch((err) => {
+      if (elements.adapterFullScanStatus) {
+        elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Full scan failed.';
+      }
+    });
+  }, 1500);
+  await pollAdapterFullScan(state.adapterFullScanJobId);
+}
+
+async function refreshAdapterFullScan() {
+  if (!state.adapterFullScanJobId) {
+    if (elements.adapterFullScanStatus) {
+      elements.adapterFullScanStatus.textContent = 'No active/full scan job yet.';
+    }
+    return;
+  }
+  await pollAdapterFullScan(state.adapterFullScanJobId);
+}
+
+async function cancelAdapterFullScanJob() {
+  if (!state.adapterFullScanJobId) {
+    return;
+  }
+  await apiJson(`/api/v1/dvb-full-scan/${encodeURIComponent(state.adapterFullScanJobId)}/cancel`, {
+    method: 'POST',
+  });
+  await refreshAdapterFullScan();
+}
+
+function exportAdapterFullScan(format) {
+  if (!state.adapterFullScanJobId) {
+    setStatus('No full scan job to export');
+    return;
+  }
+  const fmt = (format === 'csv') ? 'csv' : 'json';
+  const url = `/api/v1/dvb-full-scan/${encodeURIComponent(state.adapterFullScanJobId)}/export?format=${fmt}`;
+  window.open(url, '_blank', 'noopener');
+}
+
+async function createStreamsFromFullScan() {
+  if (!state.adapterFullScanJobId) {
+    setStatus('No full scan job');
+    return;
+  }
+  const selected = Array.from(state.adapterFullScanSelectedRows);
+  if (!selected.length) {
+    setStatus('Select channels first');
+    return;
+  }
+  const result = await apiJson(`/api/v1/dvb-full-scan/${encodeURIComponent(state.adapterFullScanJobId)}/create-streams`, {
+    method: 'POST',
+    body: JSON.stringify({ selected }),
+  });
+  const created = Array.isArray(result && result.created) ? result.created.length : 0;
+  const skipped = Array.isArray(result && result.skipped) ? result.skipped.length : 0;
+  await loadStreams();
+  setStatus(`Created ${created} stream(s), skipped ${skipped}`);
+}
+
+async function openAdapterFullScanModal(adapterId, adapterConfig) {
+  if (!adapterId) {
+    setStatus('Save adapter to enable full scan');
+    return;
+  }
+  resetAdapterFullScanUi();
+  state.adapterFullScanJobId = null;
+  if (elements.adapterFullScanSub) {
+    elements.adapterFullScanSub.textContent = `Adapter: ${adapterId}`;
+  }
+  if (elements.adapterFullScanStepDurationSec && !elements.adapterFullScanStepDurationSec.value) {
+    elements.adapterFullScanStepDurationSec.value = '3';
+  }
+  updateAdapterFullScanModeUi();
+  setOverlay(elements.adapterFullScanOverlay, true);
+  await loadAdapterFullScanPresets(false);
+  renderAdapterFullScanProfiles(adapterConfig && adapterConfig.type);
+}
+
 const FE_HAS_SIGNAL = 1;
 const FE_HAS_CARRIER = 2;
 const FE_HAS_VITERBI = 4;
@@ -18542,10 +19076,68 @@ function openAdapterEditor(adapter, isNew) {
 
   elements.adapterAtscFrequency.value = config.frequency !== undefined ? config.frequency : '';
 
+  if (elements.adapterAutoSignalSearchEnabled) {
+    elements.adapterAutoSignalSearchEnabled.checked = config.auto_signal_search_enabled === true;
+  }
+  if (elements.adapterAutoSignalWindowSec) {
+    elements.adapterAutoSignalWindowSec.value = config.auto_signal_window_sec !== undefined ? config.auto_signal_window_sec : '';
+  }
+  if (elements.adapterAutoSignalBitrateMode) {
+    elements.adapterAutoSignalBitrateMode.value = config.auto_signal_bitrate_mode || 'both';
+  }
+  if (elements.adapterAutoSignalBitrateMinKbps) {
+    elements.adapterAutoSignalBitrateMinKbps.value = config.auto_signal_bitrate_min_kbps !== undefined ? config.auto_signal_bitrate_min_kbps : '';
+  }
+  if (elements.adapterAutoSignalBaselineWindowSec) {
+    elements.adapterAutoSignalBaselineWindowSec.value = config.auto_signal_baseline_window_sec !== undefined ? config.auto_signal_baseline_window_sec : '';
+  }
+  if (elements.adapterAutoSignalBaselineDropRatioPct) {
+    elements.adapterAutoSignalBaselineDropRatioPct.value = config.auto_signal_baseline_drop_ratio_pct !== undefined ? config.auto_signal_baseline_drop_ratio_pct : '';
+  }
+  if (elements.adapterAutoSignalCcDeltaThreshold) {
+    elements.adapterAutoSignalCcDeltaThreshold.value = config.auto_signal_cc_delta_threshold !== undefined ? config.auto_signal_cc_delta_threshold : '';
+  }
+  if (elements.adapterAutoSignalProbeSec) {
+    elements.adapterAutoSignalProbeSec.value = config.auto_signal_probe_sec !== undefined ? config.auto_signal_probe_sec : '';
+  }
+  if (elements.adapterAutoSignalConfirmSec) {
+    elements.adapterAutoSignalConfirmSec.value = config.auto_signal_confirm_sec !== undefined ? config.auto_signal_confirm_sec : '';
+  }
+  if (elements.adapterAutoSignalSwitchCooldownSec) {
+    elements.adapterAutoSignalSwitchCooldownSec.value = config.auto_signal_switch_cooldown_sec !== undefined ? config.auto_signal_switch_cooldown_sec : '';
+  }
+  if (elements.adapterAutoSignalMinStreams) {
+    elements.adapterAutoSignalMinStreams.value = config.auto_signal_min_streams !== undefined ? config.auto_signal_min_streams : '';
+  }
+  if (elements.adapterAutoSignalTypeFlipEnabled) {
+    elements.adapterAutoSignalTypeFlipEnabled.checked = config.auto_signal_type_flip_enabled !== false;
+  }
+  if (elements.adapterAutoSignalTypeFlipWaitSec) {
+    elements.adapterAutoSignalTypeFlipWaitSec.value = config.auto_signal_type_flip_wait_sec !== undefined ? config.auto_signal_type_flip_wait_sec : '';
+  }
+  if (elements.adapterAutoSignalCandidateProfiles) {
+    const profiles = Array.isArray(config.auto_signal_candidate_profiles)
+      ? config.auto_signal_candidate_profiles
+      : [];
+    elements.adapterAutoSignalCandidateProfiles.value = profiles.length ? JSON.stringify(profiles, null, 2) : '';
+  }
+
   setAdapterGroup(elements.adapterType.value);
   renderDvbDetectedSelect();
   updateAdapterBusyWarningFromFields();
   updateAdapterScanAvailability();
+  loadAdapterAutoSignalStatus(id).catch(() => {});
+  if (state.adapterAutoSignalPoll) {
+    clearInterval(state.adapterAutoSignalPoll);
+    state.adapterAutoSignalPoll = null;
+  }
+  if (id) {
+    state.adapterAutoSignalPoll = setInterval(() => {
+      const current = state.adapterEditing && state.adapterEditing.adapter && state.adapterEditing.adapter.id;
+      if (!current) return;
+      loadAdapterAutoSignalStatus(current).catch(() => {});
+    }, 5000);
+  }
   if (elements.adapterDelete) {
     elements.adapterDelete.style.visibility = isNew ? 'hidden' : 'visible';
   }
@@ -18559,8 +19151,16 @@ function openAdapterEditor(adapter, isNew) {
 
 function closeAdapterEditor() {
   state.adapterEditing = null;
+  if (state.adapterAutoSignalPoll) {
+    clearInterval(state.adapterAutoSignalPoll);
+    state.adapterAutoSignalPoll = null;
+  }
+  closeAdapterFullScanModal();
   if (elements.adapterTitle) {
     elements.adapterTitle.textContent = 'Adapter settings';
+  }
+  if (elements.adapterAutoSignalStatus) {
+    elements.adapterAutoSignalStatus.textContent = 'Auto-search status: n/a';
   }
   setAdapterEditorActive(false);
   renderAdapterList();
@@ -18620,6 +19220,66 @@ function readAdapterForm() {
     config.symbolrate = toNumber(elements.adapterCSymbolrate.value);
   } else if (type === 'ATSC') {
     config.frequency = toNumber(elements.adapterAtscFrequency.value);
+  }
+
+  if (elements.adapterAutoSignalSearchEnabled) {
+    config.auto_signal_search_enabled = elements.adapterAutoSignalSearchEnabled.checked === true;
+  }
+  if (elements.adapterAutoSignalWindowSec) {
+    config.auto_signal_window_sec = toNumber(elements.adapterAutoSignalWindowSec.value);
+  }
+  if (elements.adapterAutoSignalBitrateMode) {
+    const mode = String(elements.adapterAutoSignalBitrateMode.value || '').trim().toLowerCase();
+    if (mode) {
+      config.auto_signal_bitrate_mode = mode;
+    }
+  }
+  if (elements.adapterAutoSignalBitrateMinKbps) {
+    config.auto_signal_bitrate_min_kbps = toNumber(elements.adapterAutoSignalBitrateMinKbps.value);
+  }
+  if (elements.adapterAutoSignalBaselineWindowSec) {
+    config.auto_signal_baseline_window_sec = toNumber(elements.adapterAutoSignalBaselineWindowSec.value);
+  }
+  if (elements.adapterAutoSignalBaselineDropRatioPct) {
+    config.auto_signal_baseline_drop_ratio_pct = toNumber(elements.adapterAutoSignalBaselineDropRatioPct.value);
+  }
+  if (elements.adapterAutoSignalCcDeltaThreshold) {
+    config.auto_signal_cc_delta_threshold = toNumber(elements.adapterAutoSignalCcDeltaThreshold.value);
+  }
+  if (elements.adapterAutoSignalProbeSec) {
+    config.auto_signal_probe_sec = toNumber(elements.adapterAutoSignalProbeSec.value);
+  }
+  if (elements.adapterAutoSignalConfirmSec) {
+    config.auto_signal_confirm_sec = toNumber(elements.adapterAutoSignalConfirmSec.value);
+  }
+  if (elements.adapterAutoSignalSwitchCooldownSec) {
+    config.auto_signal_switch_cooldown_sec = toNumber(elements.adapterAutoSignalSwitchCooldownSec.value);
+  }
+  if (elements.adapterAutoSignalMinStreams) {
+    config.auto_signal_min_streams = toNumber(elements.adapterAutoSignalMinStreams.value);
+  }
+  if (elements.adapterAutoSignalTypeFlipEnabled) {
+    config.auto_signal_type_flip_enabled = elements.adapterAutoSignalTypeFlipEnabled.checked === true;
+  }
+  if (elements.adapterAutoSignalTypeFlipWaitSec) {
+    config.auto_signal_type_flip_wait_sec = toNumber(elements.adapterAutoSignalTypeFlipWaitSec.value);
+  }
+  if (elements.adapterAutoSignalCandidateProfiles) {
+    const rawProfiles = String(elements.adapterAutoSignalCandidateProfiles.value || '').trim();
+    if (!rawProfiles) {
+      config.auto_signal_candidate_profiles = [];
+    } else {
+      let parsedProfiles = null;
+      try {
+        parsedProfiles = JSON.parse(rawProfiles);
+      } catch (err) {
+        throw new Error('Candidate profiles must be a valid JSON array');
+      }
+      if (!Array.isArray(parsedProfiles)) {
+        throw new Error('Candidate profiles must be a JSON array');
+      }
+      config.auto_signal_candidate_profiles = parsedProfiles;
+    }
   }
 
   return { id, enabled: elements.adapterEnabled.checked, config };
@@ -36213,6 +36873,128 @@ function bindEvents() {
 
   if (elements.adapterScanCancel) {
     elements.adapterScanCancel.addEventListener('click', closeAdapterScanModal);
+  }
+
+  if (elements.adapterAutoSignalRefresh) {
+    elements.adapterAutoSignalRefresh.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      loadAdapterAutoSignalStatus(adapterId).catch(() => {});
+    });
+  }
+
+  if (elements.adapterAutoSignalTrigger) {
+    elements.adapterAutoSignalTrigger.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      triggerAdapterAutoSignal(adapterId, false).catch((err) => {
+        setStatus(formatNetworkError(err) || err.message || 'Auto-search trigger failed');
+      });
+    });
+  }
+
+  if (elements.adapterAutoSignalUnfreeze) {
+    elements.adapterAutoSignalUnfreeze.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      unfreezeAdapterAutoSignal(adapterId).catch((err) => {
+        setStatus(formatNetworkError(err) || err.message || 'Unfreeze failed');
+      });
+    });
+  }
+
+  if (elements.adapterAutoSignalQueueClear) {
+    elements.adapterAutoSignalQueueClear.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      clearAdapterAutoSignalQueue(adapterId).catch((err) => {
+        setStatus(formatNetworkError(err) || err.message || 'Queue clear failed');
+      });
+    });
+  }
+
+  if (elements.adapterFullScanMode) {
+    elements.adapterFullScanMode.addEventListener('change', updateAdapterFullScanModeUi);
+  }
+
+  if (elements.adapterFullScan) {
+    elements.adapterFullScan.addEventListener('click', async () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      try {
+        await openAdapterFullScanModal(adapterId, adapter && adapter.config);
+      } catch (err) {
+        setStatus(formatNetworkError(err) || err.message || 'Failed to open full scan');
+      }
+    });
+  }
+
+  if (elements.adapterFullScanStart) {
+    elements.adapterFullScanStart.addEventListener('click', async () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterId = adapter && adapter.id;
+      try {
+        await startAdapterFullScan(adapterId);
+      } catch (err) {
+        if (elements.adapterFullScanStatus) {
+          elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Failed to start full scan.';
+        }
+      }
+    });
+  }
+
+  if (elements.adapterFullScanRefresh) {
+    elements.adapterFullScanRefresh.addEventListener('click', () => {
+      refreshAdapterFullScan().catch((err) => {
+        if (elements.adapterFullScanStatus) {
+          elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Refresh failed.';
+        }
+      });
+    });
+  }
+
+  if (elements.adapterFullScanPresetsSave) {
+    elements.adapterFullScanPresetsSave.addEventListener('click', () => {
+      const adapter = state.adapterEditing && state.adapterEditing.adapter;
+      const adapterType = adapter && adapter.config && adapter.config.type;
+      saveAdapterFullScanPresetsManual(adapterType).catch((err) => {
+        if (elements.adapterFullScanStatus) {
+          elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Failed to load manual presets.';
+        }
+      });
+    });
+  }
+
+  if (elements.adapterFullScanExportJson) {
+    elements.adapterFullScanExportJson.addEventListener('click', () => exportAdapterFullScan('json'));
+  }
+  if (elements.adapterFullScanExportCsv) {
+    elements.adapterFullScanExportCsv.addEventListener('click', () => exportAdapterFullScan('csv'));
+  }
+
+  if (elements.adapterFullScanCreateStreams) {
+    elements.adapterFullScanCreateStreams.addEventListener('click', () => {
+      createStreamsFromFullScan().catch((err) => {
+        setStatus(formatNetworkError(err) || err.message || 'Failed to create streams');
+      });
+    });
+  }
+
+  if (elements.adapterFullScanCancelJob) {
+    elements.adapterFullScanCancelJob.addEventListener('click', () => {
+      cancelAdapterFullScanJob().catch((err) => {
+        if (elements.adapterFullScanStatus) {
+          elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Cancel failed.';
+        }
+      });
+    });
+  }
+
+  if (elements.adapterFullScanClose) {
+    elements.adapterFullScanClose.addEventListener('click', closeAdapterFullScanModal);
+  }
+  if (elements.adapterFullScanCancel) {
+    elements.adapterFullScanCancel.addEventListener('click', closeAdapterFullScanModal);
   }
 
   if (elements.adapterForm) {

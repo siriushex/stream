@@ -695,6 +695,69 @@ config.migrations = {
     CREATE INDEX IF NOT EXISTS ai_log_events_stream_component_ts_idx
         ON ai_log_events(stream_id, component, ts DESC);
     ]],
+    [[
+    CREATE TABLE IF NOT EXISTS dvb_scan_jobs (
+        id TEXT PRIMARY KEY,
+        adapter_id TEXT NOT NULL,
+        mode TEXT NOT NULL DEFAULT 'profile',
+        status TEXT NOT NULL DEFAULT 'queued',
+        started_ts INTEGER NOT NULL,
+        finished_ts INTEGER NOT NULL DEFAULT 0,
+        progress INTEGER NOT NULL DEFAULT 0,
+        total_steps INTEGER NOT NULL DEFAULT 0,
+        params_json TEXT,
+        error_text TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS dvb_scan_grid (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        step_no INTEGER NOT NULL,
+        frequency INTEGER,
+        tp TEXT,
+        status TEXT,
+        signal REAL,
+        snr REAL,
+        ber INTEGER,
+        unc INTEGER,
+        bitrate_kbps REAL,
+        channels_count INTEGER,
+        ts INTEGER NOT NULL DEFAULT 0,
+        meta_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS dvb_scan_channels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL,
+        step_no INTEGER NOT NULL,
+        pnr INTEGER,
+        name TEXT,
+        provider TEXT,
+        cas_json TEXT,
+        video_json TEXT,
+        audio_json TEXT,
+        frequency INTEGER,
+        tp TEXT,
+        meta_json TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS dvb_scan_presets_cache (
+        key TEXT PRIMARY KEY,
+        version TEXT,
+        source_url TEXT,
+        fetched_ts INTEGER NOT NULL DEFAULT 0,
+        payload_json TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS dvb_scan_jobs_status_started_idx
+        ON dvb_scan_jobs(status, started_ts);
+    CREATE INDEX IF NOT EXISTS dvb_scan_grid_job_step_idx
+        ON dvb_scan_grid(job_id, step_no);
+    CREATE INDEX IF NOT EXISTS dvb_scan_channels_job_pnr_idx
+        ON dvb_scan_channels(job_id, pnr);
+    CREATE INDEX IF NOT EXISTS dvb_scan_channels_job_name_idx
+        ON dvb_scan_channels(job_id, name);
+    ]],
 }
 
 function config.init(opts)
