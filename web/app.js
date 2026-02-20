@@ -18760,6 +18760,9 @@ async function startAdapterFullScan(adapterId) {
     clearInterval(state.adapterFullScanPoll);
   }
   state.adapterFullScanPoll = setInterval(() => {
+    if (document.hidden || state.currentView !== 'adapters') {
+      return;
+    }
     pollAdapterFullScan(state.adapterFullScanJobId).catch((err) => {
       if (elements.adapterFullScanStatus) {
         elements.adapterFullScanStatus.textContent = formatNetworkError(err) || err.message || 'Full scan failed.';
@@ -19133,6 +19136,7 @@ function openAdapterEditor(adapter, isNew) {
   }
   if (id) {
     state.adapterAutoSignalPoll = setInterval(() => {
+      if (document.hidden || state.currentView !== 'adapters') return;
       const current = state.adapterEditing && state.adapterEditing.adapter && state.adapterEditing.adapter.id;
       if (!current) return;
       loadAdapterAutoSignalStatus(current).catch(() => {});
