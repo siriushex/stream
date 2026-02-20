@@ -7026,6 +7026,32 @@ function hasRemoteRuntimeStats(stats) {
   return false;
 }
 
+function countRemoteRuntimeItems(items) {
+  const rows = Array.isArray(items) ? items : [];
+  let count = 0;
+  rows.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    if (item.on_air !== undefined) {
+      count += 1;
+      return;
+    }
+    const bitrate = parseRemoteBitrateKbps(
+      item.bitrate_kbps !== undefined
+        ? item.bitrate_kbps
+        : (item.bitrate !== undefined ? item.bitrate : item.rate)
+    );
+    if (Number.isFinite(bitrate) && bitrate >= 0) {
+      count += 1;
+      return;
+    }
+    const activeInput = Number(item.active_input);
+    if (Number.isFinite(activeInput) && activeInput > 0) {
+      count += 1;
+    }
+  });
+  return count;
+}
+
 function normalizeRemoteDashboardStats(item, stream) {
   const stats = {};
   if (item && item.on_air !== undefined) {
@@ -7162,9 +7188,18 @@ async function fetchRemoteDashboardServerStreams(serverId) {
     try {
       const statusPayload = await requestList(true, API_REMOTE_DASHBOARD_STATUS_TIMEOUT_MS);
       const statusItems = Array.isArray(statusPayload && statusPayload.items) ? statusPayload.items : [];
-      if (statusItems.length > 0) {
+      if (statusItems.length > 0 && countRemoteRuntimeItems(statusItems) > 0) {
         payload = statusPayload;
         statusEnriched = true;
+      } else if (statusItems.length > 0) {
+        // Some Astra instances return list payload first and status map only after session warm-up.
+        // One extra status probe prevents empty bitrate columns on initial dashboard open.
+        const retryPayload = await requestList(true, API_REMOTE_DASHBOARD_STATUS_TIMEOUT_MS);
+        const retryItems = Array.isArray(retryPayload && retryPayload.items) ? retryPayload.items : [];
+        if (retryItems.length > 0 && countRemoteRuntimeItems(retryItems) > 0) {
+          payload = retryPayload;
+          statusEnriched = true;
+        }
       }
     } catch (err) {
       // Keep fast list payload; dashboard still shows streams even when status enrichment fails.
