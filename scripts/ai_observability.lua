@@ -20,7 +20,20 @@ ai_observability.state = ai_observability.state or {
     metrics_rows_written = 0,
     metrics_rows_dropped = 0,
     metrics_db_busy_count = 0,
+    metrics_flush_in_progress = false,
     high_cpu_since_ts = 0,
+    writer_queue_depth = 0,
+    writer_batch_max = 400,
+    writer_flush_ms = 20,
+    writer_queue_max = 20000,
+    writer_isolated = false,
+    writer_db = "",
+    worker_isolated = false,
+    worker_affinity = nil,
+    worker_policy = "none",
+    worker_backend = "inprocess",
+    worker_last_error = "",
+    degrade_mode = false,
 }
 
 ai_observability.cache = ai_observability.cache or {
@@ -38,6 +51,8 @@ ai_observability.last_rollup_bucket = ai_observability.last_rollup_bucket or {}
 ai_observability.timer_base = ai_observability.timer_base or nil
 ai_observability.timer_highres = ai_observability.timer_highres or nil
 ai_observability.timer_cleanup = ai_observability.timer_cleanup or nil
+ai_observability.timer_writer = ai_observability.timer_writer or nil
+ai_observability.writer_queue = ai_observability.writer_queue or { head = 1, tail = 0, items = {} }
 
 local METRIC = {
     stream_bitrate = "stream.bitrate_kbps.avg",
@@ -81,6 +96,32 @@ local function setting_bool(key, fallback)
         end
     end
     return fallback
+end
+
+local function setting_text(key, fallback)
+    if config and config.get_setting then
+        local value = config.get_setting(key)
+        if value ~= nil then
+            local text = tostring(value)
+            if text ~= "" then
+                return text
+            end
+        end
+    end
+    return fallback
+end
+
+local function worker_module()
+    local mod = rawget(_G, "observability_worker")
+    if type(mod) ~= "table" then
+        return nil
+    end
+    if type(mod.start) ~= "function" or type(mod.stop) ~= "function"
+        or type(mod.enqueue_batch) ~= "function" or type(mod.status) ~= "function"
+    then
+        return nil
+    end
+    return mod
 end
 
 local function setting_cache_ttl_sec()
@@ -146,8 +187,167 @@ function ai_observability.is_read_only_mode()
     return is_read_only_mode()
 end
 
+local function refresh_storage_state()
+    local info = config and config.get_observability_storage_info and config.get_observability_storage_info() or {}
+    ai_observability.state.writer_isolated = info and info.isolated == true
+    ai_observability.state.writer_db = tostring((info and info.db_path) or (config and config.db_path) or "")
+    ai_observability.state.worker_isolated = false
+    ai_observability.state.worker_last_error = ""
+    local mod = worker_module()
+    if not mod then
+        return
+    end
+    local ok, st = pcall(mod.status)
+    if not ok or type(st) ~= "table" then
+        ai_observability.state.worker_last_error = ok and "invalid worker status" or tostring(st or "worker status failed")
+        return
+    end
+    if st.running == true and st.thread_started == true then
+        ai_observability.state.worker_isolated = true
+        ai_observability.state.worker_backend = "thread"
+    end
+    if st.affinity and tostring(st.affinity) ~= "" then
+        ai_observability.state.worker_affinity = tostring(st.affinity)
+    end
+    if st.last_error and tostring(st.last_error) ~= "" then
+        ai_observability.state.worker_last_error = tostring(st.last_error)
+    end
+    if st.rows_written ~= nil then
+        ai_observability.state.metrics_rows_written = tonumber(st.rows_written) or ai_observability.state.metrics_rows_written
+    end
+    if st.rows_dropped ~= nil then
+        ai_observability.state.metrics_rows_dropped = tonumber(st.rows_dropped) or ai_observability.state.metrics_rows_dropped
+    end
+    if st.db_busy_count ~= nil then
+        ai_observability.state.metrics_db_busy_count = tonumber(st.db_busy_count) or ai_observability.state.metrics_db_busy_count
+    end
+    if st.last_flush_ms ~= nil then
+        ai_observability.state.metrics_flush_ms = tonumber(st.last_flush_ms) or ai_observability.state.metrics_flush_ms
+    end
+    if st.queue_depth ~= nil then
+        ai_observability.state.writer_queue_depth = tonumber(st.queue_depth) or ai_observability.state.writer_queue_depth
+    end
+    if st.queue_max ~= nil then
+        ai_observability.state.writer_queue_max = tonumber(st.queue_max) or ai_observability.state.writer_queue_max
+    end
+    if st.db_path and tostring(st.db_path) ~= "" then
+        ai_observability.state.writer_db = tostring(st.db_path)
+    end
+end
+
+local function stop_worker_backend()
+    local mod = worker_module()
+    if not mod then
+        ai_observability.state.worker_backend = "inprocess"
+        ai_observability.state.worker_isolated = false
+        return
+    end
+    pcall(mod.stop)
+    ai_observability.state.worker_backend = "inprocess"
+    ai_observability.state.worker_isolated = false
+end
+
+local function start_worker_backend()
+    ai_observability.state.worker_backend = "inprocess"
+    ai_observability.state.worker_isolated = false
+    ai_observability.state.worker_last_error = ""
+
+    local mod = worker_module()
+    if not mod then
+        return false, "module unavailable"
+    end
+    if not config or type(config.get_observability_storage_info) ~= "function" then
+        return false, "storage info unavailable"
+    end
+    local info = config.get_observability_storage_info() or {}
+    local db_path = tostring(info.db_path or "")
+    if db_path == "" then
+        return false, "db_path is empty"
+    end
+
+    local affinity_enabled = setting_bool("observability_affinity_enabled", true)
+    local worker_policy = string.lower(setting_text("observability_cpu_policy", "auto"))
+    if worker_policy ~= "auto" and worker_policy ~= "manual" and worker_policy ~= "none" then
+        worker_policy = "auto"
+    end
+    if not affinity_enabled then
+        worker_policy = "none"
+    end
+
+    local ok, err = pcall(mod.start, {
+        db_path = db_path,
+        batch_max = ai_observability.state.writer_batch_max or 400,
+        flush_ms = ai_observability.state.writer_flush_ms or 20,
+        queue_max = ai_observability.state.writer_queue_max or 20000,
+        affinity_enabled = affinity_enabled,
+        cpu_policy = worker_policy,
+        cpu_auto_cores = sanitize_interval(setting_number("observability_cpu_auto_cores", 2), 1, 8, 2),
+        cpu_set = setting_text("observability_cpu_set", ""),
+    })
+    if not ok then
+        ai_observability.state.worker_last_error = tostring(err or "worker start failed")
+        return false, ai_observability.state.worker_last_error
+    end
+
+    ai_observability.state.worker_backend = "thread"
+    refresh_storage_state()
+    return true
+end
+
 local function push_row(rows, row)
     rows[#rows + 1] = row
+end
+
+local function writer_queue_size()
+    local q = ai_observability.writer_queue or {}
+    local head = tonumber(q.head) or 1
+    local tail = tonumber(q.tail) or 0
+    if tail < head then
+        return 0
+    end
+    return (tail - head + 1)
+end
+
+local function writer_queue_reset()
+    ai_observability.writer_queue = { head = 1, tail = 0, items = {} }
+    ai_observability.state.writer_queue_depth = 0
+end
+
+local function writer_queue_push(row)
+    local q = ai_observability.writer_queue or { head = 1, tail = 0, items = {} }
+    local items = q.items or {}
+    local tail = (tonumber(q.tail) or 0) + 1
+    items[tail] = row
+    q.items = items
+    q.tail = tail
+    ai_observability.writer_queue = q
+    ai_observability.state.writer_queue_depth = writer_queue_size()
+end
+
+local function writer_queue_pop_batch(limit)
+    local out = {}
+    local q = ai_observability.writer_queue or { head = 1, tail = 0, items = {} }
+    local head = tonumber(q.head) or 1
+    local tail = tonumber(q.tail) or 0
+    local max_rows = math.max(1, tonumber(limit) or 1)
+    local items = q.items or {}
+    while head <= tail and #out < max_rows do
+        out[#out + 1] = items[head]
+        items[head] = nil
+        head = head + 1
+    end
+    if head > tail then
+        q.head = 1
+        q.tail = 0
+        q.items = {}
+    else
+        q.head = head
+        q.tail = tail
+        q.items = items
+    end
+    ai_observability.writer_queue = q
+    ai_observability.state.writer_queue_depth = writer_queue_size()
+    return out
 end
 
 local function metric_row(ts_bucket, scope, scope_id, metric_key, value, resolution_sec, mode, tags)
@@ -296,13 +496,11 @@ local function update_highres_pool_from_incidents(incidents)
     ai_observability.highres_pool = pool
 end
 
-local function build_selected_stream_ids(status)
+local function build_selected_stream_ids()
     local out = {}
     local pool = ai_observability.highres_pool or {}
     for stream_id, _ in pairs(pool) do
-        if status[stream_id] then
-            out[#out + 1] = stream_id
-        end
+        out[#out + 1] = stream_id
     end
     table.sort(out)
     return out
@@ -315,8 +513,22 @@ local function write_rows_batch(rows)
     if #rows == 0 then
         return true
     end
+    if ai_observability.state.metrics_flush_in_progress == true then
+        ai_observability.state.metrics_rows_dropped = (tonumber(ai_observability.state.metrics_rows_dropped) or 0) + #rows
+        ai_observability.state.metrics_db_busy_count = (tonumber(ai_observability.state.metrics_db_busy_count) or 0) + 1
+        ai_observability.state.highres_disabled_until_ts = os.time() + 120
+        return true
+    end
+    ai_observability.state.metrics_flush_in_progress = true
     local started = os.clock()
-    local ok, err = config.upsert_ai_metrics_batch(rows)
+    local ok, err
+    local call_ok, call_result, call_err = pcall(config.upsert_ai_metrics_batch, rows)
+    if call_ok then
+        ok, err = call_result, call_err
+    else
+        ok, err = nil, call_result
+    end
+    ai_observability.state.metrics_flush_in_progress = false
     local elapsed_ms = math.floor(((os.clock() - started) * 1000) + 0.5)
     ai_observability.state.metrics_flush_ms = elapsed_ms
     if ok then
@@ -329,6 +541,145 @@ local function write_rows_batch(rows)
         ai_observability.state.highres_disabled_until_ts = os.time() + 120
     end
     return nil, err
+end
+
+local function update_degrade_mode()
+    local now = os.time()
+    local highres_off_until = tonumber(ai_observability.state.highres_disabled_until_ts) or 0
+    local queue_overflow = (tonumber(ai_observability.state.metrics_rows_dropped) or 0) > 0
+    local db_busy = (tonumber(ai_observability.state.metrics_db_busy_count) or 0) > 0
+    ai_observability.state.degrade_mode = (now < highres_off_until) or queue_overflow or db_busy
+end
+
+local function enqueue_rows(rows)
+    if type(rows) ~= "table" or #rows == 0 then
+        return
+    end
+    local max_queue = sanitize_interval(
+        setting_number("observability_writer_max_queue", ai_observability.state.writer_queue_max or 20000),
+        100, 500000, 20000
+    )
+    ai_observability.state.writer_queue_max = max_queue
+    local queue_size = writer_queue_size()
+    if queue_size >= max_queue then
+        ai_observability.state.metrics_rows_dropped = (tonumber(ai_observability.state.metrics_rows_dropped) or 0) + #rows
+        ai_observability.state.highres_disabled_until_ts = os.time() + 120
+        update_degrade_mode()
+        return
+    end
+    local allowed = math.min(#rows, max_queue - queue_size)
+    for i = 1, allowed do
+        writer_queue_push(rows[i])
+    end
+    if allowed < #rows then
+        ai_observability.state.metrics_rows_dropped =
+            (tonumber(ai_observability.state.metrics_rows_dropped) or 0) + (#rows - allowed)
+        ai_observability.state.highres_disabled_until_ts = os.time() + 120
+    end
+    update_degrade_mode()
+end
+
+local function flush_writer_queue_tick()
+    if not collection_enabled() then
+        writer_queue_reset()
+        stop_worker_backend()
+        return
+    end
+
+    if ai_observability.state.worker_backend == "thread" then
+        local mod = worker_module()
+        if mod then
+            local batch_max = sanitize_interval(
+                setting_number("observability_writer_batch_max", ai_observability.state.writer_batch_max or 400),
+                1, 10000, 400
+            )
+            local flush_budget_ms = sanitize_interval(
+                setting_number("observability_writer_flush_ms", ai_observability.state.writer_flush_ms or 20),
+                1, 1000, 20
+            )
+            ai_observability.state.writer_batch_max = batch_max
+            ai_observability.state.writer_flush_ms = flush_budget_ms
+
+            local started = os.clock()
+            local remaining = batch_max
+            while remaining > 0 and writer_queue_size() > 0 do
+                local chunk = writer_queue_pop_batch(math.min(remaining, 500))
+                if #chunk == 0 then
+                    break
+                end
+                local ok, res = pcall(mod.enqueue_batch, chunk)
+                if not ok or type(res) ~= "table" then
+                    ai_observability.state.metrics_rows_dropped =
+                        (tonumber(ai_observability.state.metrics_rows_dropped) or 0) + #chunk
+                    ai_observability.state.highres_disabled_until_ts = os.time() + 120
+                    ai_observability.state.worker_last_error = ok and "enqueue_batch invalid response" or tostring(res or "enqueue_batch failed")
+                    break
+                end
+                local accepted = tonumber(res.accepted) or 0
+                local dropped = tonumber(res.dropped) or 0
+                if accepted < #chunk then
+                    dropped = math.max(dropped, #chunk - accepted)
+                end
+                if dropped > 0 then
+                    ai_observability.state.metrics_rows_dropped =
+                        (tonumber(ai_observability.state.metrics_rows_dropped) or 0) + dropped
+                    ai_observability.state.highres_disabled_until_ts = os.time() + 120
+                end
+                remaining = remaining - #chunk
+                local elapsed_ms = math.floor(((os.clock() - started) * 1000) + 0.5)
+                if elapsed_ms >= flush_budget_ms then
+                    break
+                end
+            end
+            refresh_storage_state()
+            update_degrade_mode()
+            return
+        end
+
+        -- Worker vanished unexpectedly: fall back safely.
+        ai_observability.state.worker_backend = "inprocess"
+        ai_observability.state.worker_isolated = false
+    end
+
+    local queue_size = writer_queue_size()
+    if queue_size <= 0 then
+        ai_observability.state.writer_queue_depth = 0
+        update_degrade_mode()
+        return
+    end
+
+    local batch_max = sanitize_interval(
+        setting_number("observability_writer_batch_max", ai_observability.state.writer_batch_max or 400),
+        1, 10000, 400
+    )
+    local flush_budget_ms = sanitize_interval(
+        setting_number("observability_writer_flush_ms", ai_observability.state.writer_flush_ms or 20),
+        1, 1000, 20
+    )
+    ai_observability.state.writer_batch_max = batch_max
+    ai_observability.state.writer_flush_ms = flush_budget_ms
+
+    local started = os.clock()
+    local remaining = batch_max
+    while remaining > 0 and writer_queue_size() > 0 do
+        local chunk = writer_queue_pop_batch(math.min(remaining, 500))
+        if #chunk == 0 then
+            break
+        end
+        local ok, err = write_rows_batch(chunk)
+        if not ok then
+            log.warning("[observability] metric flush failed: " .. tostring(err))
+            ai_observability.state.highres_disabled_until_ts = os.time() + 120
+            break
+        end
+        remaining = remaining - #chunk
+        local elapsed_ms = math.floor(((os.clock() - started) * 1000) + 0.5)
+        if elapsed_ms >= flush_budget_ms then
+            break
+        end
+    end
+    ai_observability.state.writer_queue_depth = writer_queue_size()
+    update_degrade_mode()
 end
 
 local function prune_data()
@@ -346,14 +697,14 @@ local function prune_data()
     end
 end
 
-local function collect_rollup(resolution_sec, selected_stream_ids)
+local function collect_rollup(resolution_sec, selected_stream_ids, status_snapshot)
     if not collection_enabled() then
         return
     end
     if (tonumber(ai_observability.state.metrics_retention_days) or 0) <= 0 then
         return
     end
-    if not runtime or not runtime.list_status then
+    if not runtime then
         return
     end
 
@@ -365,7 +716,16 @@ local function collect_rollup(resolution_sec, selected_stream_ids)
     end
     ai_observability.last_rollup_bucket[bucket_key] = bucket
 
-    local status = runtime.list_status() or {}
+    local status = status_snapshot
+    if type(status) ~= "table" then
+        if runtime.list_status_lite then
+            status = runtime.list_status_lite() or {}
+        elseif runtime.list_status then
+            status = runtime.list_status() or {}
+        else
+            return
+        end
+    end
     local ids = {}
     if type(selected_stream_ids) == "table" then
         for _, sid in ipairs(selected_stream_ids) do
@@ -485,15 +845,18 @@ local function collect_rollup(resolution_sec, selected_stream_ids)
         end
     end
 
-    local ok, err = write_rows_batch(rows)
-    if not ok then
-        log.warning("[observability] metric flush failed: " .. tostring(err))
-    end
+    enqueue_rows(rows)
     return incidents
 end
 
 local function base_rollup_tick()
-    local incidents = collect_rollup(ai_observability.state.base_resolution_sec, nil) or {}
+    local status = nil
+    if runtime and runtime.list_status_lite then
+        status = runtime.list_status_lite() or {}
+    elseif runtime and runtime.list_status then
+        status = runtime.list_status() or {}
+    end
+    local incidents = collect_rollup(ai_observability.state.base_resolution_sec, nil, status) or {}
     update_highres_pool_from_incidents(incidents)
 end
 
@@ -506,6 +869,12 @@ local function highres_rollup_tick()
     end
     local now = os.time()
     if now < (tonumber(ai_observability.state.highres_disabled_until_ts) or 0) then
+        return
+    end
+    local queue_depth = tonumber(ai_observability.state.writer_queue_depth) or 0
+    local queue_max = tonumber(ai_observability.state.writer_queue_max) or 0
+    if queue_max > 0 and queue_depth >= math.floor(queue_max * 0.8) then
+        ai_observability.state.highres_disabled_until_ts = now + 60
         return
     end
     local cpu_disable_pct = sanitize_interval(
@@ -530,15 +899,26 @@ local function highres_rollup_tick()
             ai_observability.state.high_cpu_since_ts = 0
         end
     end
-    if not runtime or not runtime.list_status then
+    if not runtime then
         return
     end
-    local status = runtime.list_status() or {}
-    local selected = build_selected_stream_ids(status)
+    local selected = build_selected_stream_ids()
     if #selected == 0 then
         return
     end
-    collect_rollup(ai_observability.state.highres_resolution_sec, selected)
+    local status = nil
+    if runtime.list_status_lite_ids then
+        status = runtime.list_status_lite_ids(selected) or {}
+    elseif runtime.list_status_ids then
+        status = runtime.list_status_ids(selected) or {}
+    elseif runtime.list_status_lite then
+        status = runtime.list_status_lite() or {}
+    elseif runtime.list_status then
+        status = runtime.list_status() or {}
+    else
+        return
+    end
+    collect_rollup(ai_observability.state.highres_resolution_sec, selected, status)
 end
 
 function ai_observability.ingest_alert(entry)
@@ -718,13 +1098,35 @@ function ai_observability.build_metrics_from_logs(range_sec, interval_sec, scope
 end
 
 function ai_observability.build_runtime_metrics(scope, scope_id, interval_sec, range_sec)
-    if not runtime or not runtime.list_status then
+    if not runtime then
         return nil
     end
     local interval = sanitize_interval(interval_sec or ai_observability.state.rollup_interval_sec, 10, 3600, 60)
     local bucket = calc_bucket(os.time(), interval)
     local sample_range = math.max(interval, math.floor(tonumber(range_sec) or interval))
-    local status = runtime.list_status() or {}
+    local status = {}
+    if scope == "stream" and scope_id and scope_id ~= "" then
+        if runtime.get_stream_status_lite then
+            local single = runtime.get_stream_status_lite(scope_id)
+            if single then
+                status[scope_id] = single
+            end
+        elseif runtime.list_status_lite_ids then
+            status = runtime.list_status_lite_ids({ scope_id }) or {}
+        elseif runtime.list_status_ids then
+            status = runtime.list_status_ids({ scope_id }) or {}
+        elseif runtime.list_status_lite then
+            status = runtime.list_status_lite() or {}
+        elseif runtime.list_status then
+            status = runtime.list_status() or {}
+        end
+    else
+        if runtime.list_status_lite then
+            status = runtime.list_status_lite() or {}
+        elseif runtime.list_status then
+            status = runtime.list_status() or {}
+        end
+    end
     local items = {}
     local function push_point(metric_key, value, ts_bucket)
         push_row(items, metric_row(ts_bucket or bucket, scope or "global", scope_id or "", metric_key, value, interval))
@@ -988,6 +1390,26 @@ local function downsample_points_minmax(points, max_points)
     return out
 end
 
+local function with_collector_meta(meta)
+    refresh_storage_state()
+    update_degrade_mode()
+    local out = meta or {}
+    out.collection_enabled = collection_enabled()
+    out.read_only_mode = is_read_only_mode()
+    out.worker_isolated = ai_observability.state.worker_isolated == true
+    out.worker_affinity = ai_observability.state.worker_affinity
+    out.worker_backend = ai_observability.state.worker_backend
+    out.writer_db = ai_observability.state.writer_db
+    out.degrade_mode = ai_observability.state.degrade_mode == true
+    out.writer_queue_depth = tonumber(ai_observability.state.writer_queue_depth) or 0
+    out.writer_queue_max = tonumber(ai_observability.state.writer_queue_max) or 0
+    out.metrics_flush_ms = tonumber(ai_observability.state.metrics_flush_ms) or 0
+    out.metrics_rows_written = tonumber(ai_observability.state.metrics_rows_written) or 0
+    out.metrics_rows_dropped = tonumber(ai_observability.state.metrics_rows_dropped) or 0
+    out.metrics_db_busy_count = tonumber(ai_observability.state.metrics_db_busy_count) or 0
+    return out
+end
+
 function ai_observability.get_stream_series(opts)
     opts = opts or {}
     local stream_id = tostring(opts.stream_id or "")
@@ -1115,14 +1537,12 @@ function ai_observability.get_stream_series(opts)
     end
     return {
         series = series,
-        meta = {
+        meta = with_collector_meta({
             resolution_used = tostring(resolution) .. "s",
             from = since_ts,
             to = now,
             downsampled = downsampled,
-            collection_enabled = collection_enabled(),
-            read_only_mode = is_read_only_mode(),
-        },
+        }),
     }
 end
 
@@ -1135,10 +1555,7 @@ function ai_observability.get_stream_events(opts)
     if not config or not config.list_ai_log_events then
         return {
             items = {},
-            meta = {
-                collection_enabled = collection_enabled(),
-                read_only_mode = is_read_only_mode(),
-            },
+            meta = with_collector_meta({}),
         }
     end
     local range_sec = tonumber(opts.range_sec) or (24 * 3600)
@@ -1189,12 +1606,39 @@ function ai_observability.get_stream_events(opts)
     end
     return {
         items = items,
-        meta = {
+        meta = with_collector_meta({
             from = since_ts,
             to = now,
-            collection_enabled = collection_enabled(),
-            read_only_mode = is_read_only_mode(),
-        },
+        }),
+    }
+end
+
+function ai_observability.get_collector_status()
+    refresh_storage_state()
+    update_degrade_mode()
+    return {
+        collection_enabled = collection_enabled(),
+        read_only_mode = is_read_only_mode(),
+        worker_isolated = ai_observability.state.worker_isolated == true,
+        worker_affinity = ai_observability.state.worker_affinity,
+        worker_policy = tostring(ai_observability.state.worker_policy or "none"),
+        worker_backend = tostring(ai_observability.state.worker_backend or "inprocess"),
+        writer_db = ai_observability.state.writer_db,
+        writer_isolated = ai_observability.state.writer_isolated == true,
+        writer_queue_depth = tonumber(ai_observability.state.writer_queue_depth) or 0,
+        writer_queue_max = tonumber(ai_observability.state.writer_queue_max) or 0,
+        metrics_flush_ms = tonumber(ai_observability.state.metrics_flush_ms) or 0,
+        metrics_rows_written = tonumber(ai_observability.state.metrics_rows_written) or 0,
+        metrics_rows_dropped = tonumber(ai_observability.state.metrics_rows_dropped) or 0,
+        metrics_db_busy_count = tonumber(ai_observability.state.metrics_db_busy_count) or 0,
+        highres_disabled_until_ts = tonumber(ai_observability.state.highres_disabled_until_ts) or 0,
+        highres_pool_size = (function()
+            local n = 0
+            for _, _ in pairs(ai_observability.highres_pool or {}) do n = n + 1 end
+            return n
+        end)(),
+        degrade_mode = ai_observability.state.degrade_mode == true,
+        last_error = ai_observability.state.worker_last_error or "",
     }
 end
 
@@ -1219,6 +1663,40 @@ function ai_observability.configure()
     ai_observability.state.stream_detail_enabled = setting_bool("observability_stream_detail_enabled", true)
     ai_observability.state.highres_enabled = setting_bool("observability_stream_highres_enabled", true)
     ai_observability.state.stream_ffmpeg_metrics_enabled = setting_bool("observability_stream_ffmpeg_metrics_enabled", true)
+    ai_observability.state.metrics_flush_in_progress = false
+    ai_observability.state.writer_batch_max = sanitize_interval(
+        setting_number("observability_writer_batch_max", ai_observability.state.writer_batch_max or 400),
+        1, 10000, 400
+    )
+    ai_observability.state.writer_flush_ms = sanitize_interval(
+        setting_number("observability_writer_flush_ms", ai_observability.state.writer_flush_ms or 20),
+        1, 1000, 20
+    )
+    ai_observability.state.writer_queue_max = sanitize_interval(
+        setting_number("observability_writer_max_queue", ai_observability.state.writer_queue_max or 20000),
+        100, 500000, 20000
+    )
+    local affinity_enabled = setting_bool("observability_affinity_enabled", true)
+    local worker_policy = string.lower(setting_text("observability_cpu_policy", "auto"))
+    if worker_policy ~= "auto" and worker_policy ~= "manual" and worker_policy ~= "none" then
+        worker_policy = "auto"
+    end
+    if not affinity_enabled then
+        worker_policy = "none"
+    end
+    ai_observability.state.worker_policy = worker_policy
+    ai_observability.state.worker_backend = "inprocess"
+    ai_observability.state.worker_isolated = false
+    ai_observability.state.worker_last_error = ""
+    if worker_policy == "manual" then
+        ai_observability.state.worker_affinity = setting_text("observability_cpu_set", "")
+    elseif worker_policy == "auto" then
+        local auto_cores = sanitize_interval(setting_number("observability_cpu_auto_cores", 2), 1, 8, 2)
+        ai_observability.state.worker_affinity = "auto:last-" .. tostring(auto_cores)
+    else
+        ai_observability.state.worker_affinity = nil
+    end
+    refresh_storage_state()
 
     if ai_observability.timer_base then
         ai_observability.timer_base:close()
@@ -1232,8 +1710,24 @@ function ai_observability.configure()
         ai_observability.timer_cleanup:close()
         ai_observability.timer_cleanup = nil
     end
+    if ai_observability.timer_writer then
+        ai_observability.timer_writer:close()
+        ai_observability.timer_writer = nil
+    end
+    stop_worker_backend()
 
     if collection_enabled() then
+        writer_queue_reset()
+        local started, start_err = start_worker_backend()
+        if not started then
+            ai_observability.state.worker_backend = "inprocess"
+            if start_err and start_err ~= ""
+                and start_err ~= "module unavailable"
+                and start_err ~= "storage info unavailable"
+            then
+                log.warning("[observability] isolated worker unavailable: " .. tostring(start_err))
+            end
+        end
         ai_observability.timer_base = timer({
             interval = ai_observability.state.base_resolution_sec,
             callback = function()
@@ -1254,16 +1748,32 @@ function ai_observability.configure()
                 prune_data()
             end,
         })
+        ai_observability.timer_writer = timer({
+            interval = 1,
+            callback = function()
+                flush_writer_queue_tick()
+            end,
+        })
         prune_data()
         base_rollup_tick()
+        flush_writer_queue_tick()
+        update_degrade_mode()
         log.info(string.format(
-            "[observability] collection enabled: logs=%dd metrics=%dd base=%ds highres=%s",
+            "[observability] collection enabled: logs=%dd metrics=%dd base=%ds highres=%s writer_db=%s isolated=%s",
             ai_observability.state.logs_retention_days,
             ai_observability.state.metrics_retention_days,
             ai_observability.state.base_resolution_sec,
-            ai_observability.state.highres_enabled and "on" or "off"
+            ai_observability.state.highres_enabled and "on" or "off",
+            tostring(ai_observability.state.writer_db or ""),
+            ai_observability.state.writer_isolated and "yes" or "no"
         ))
     else
+        writer_queue_reset()
+        stop_worker_backend()
+        ai_observability.highres_pool = {}
+        ai_observability.state.high_cpu_since_ts = 0
+        ai_observability.state.highres_disabled_until_ts = 0
+        update_degrade_mode()
         log.info("[observability] collection disabled (read-only mode)")
     end
 end

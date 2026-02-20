@@ -51,6 +51,14 @@ http_request = function(req)
     })
     return
   end
+  if mode == "login_unauthorized" then
+    req.callback(req, {
+      code = 401,
+      headers = {},
+      content = json.encode({ error = "unauthorized" }),
+    })
+    return
+  end
 
   if req.path and req.path:find("/auth/login", 1, true) then
     req.callback(req, {
@@ -127,6 +135,19 @@ assert_true(ok1 and type(payload1) == "table", "expected json payload for login 
 assert_true(
   tostring(payload1.error or ""):find("login/password incorrect", 1, true) ~= nil,
   "expected login/password incorrect message"
+)
+
+mode = "login_unauthorized"
+sent = nil
+api.handle_request(server, client, make_request("/api/v1/servers/test", {
+  id = "remote-1",
+}))
+assert_true(sent ~= nil and tonumber(sent.code) == 403, "expected 403 on login unauthorized")
+local ok401, payload401 = pcall(json.decode, sent.content or "")
+assert_true(ok401 and type(payload401) == "table", "expected json payload for login unauthorized")
+assert_true(
+  tostring(payload401.error or ""):find("login/password incorrect", 1, true) ~= nil,
+  "expected login/password incorrect for unauthorized mode"
 )
 
 mode = "streams_404"

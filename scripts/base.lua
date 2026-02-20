@@ -1887,6 +1887,11 @@ function init_input(conf)
             descramble_worker_stack_kb = tonumber(read_setting("softcam_descramble_worker_stack_kb"))
         end
 
+        local descramble_workers_cap = tonumber(conf.descramble_workers_cap)
+        if descramble_workers_cap == nil then
+            descramble_workers_cap = tonumber(read_setting("softcam_descramble_workers_cap"))
+        end
+
         local descramble_drop_policy = conf.descramble_drop_policy
         if descramble_drop_policy == nil then
             descramble_drop_policy = read_setting("softcam_descramble_drop_policy")
@@ -1908,6 +1913,7 @@ function init_input(conf)
             descramble_batch_packets = descramble_batch_packets,
             descramble_queue_depth_batches = descramble_queue_depth_batches,
             descramble_worker_stack_kb = descramble_worker_stack_kb,
+            descramble_workers_cap = descramble_workers_cap,
             descramble_drop_policy = descramble_drop_policy,
             descramble_log_rate_limit_sec = descramble_log_rate_limit_sec,
         })
@@ -2136,6 +2142,11 @@ function init_input(conf)
                 descramble_worker_stack_kb = tonumber(read_setting("softcam_descramble_worker_stack_kb"))
             end
 
+            local descramble_workers_cap = tonumber(conf.descramble_workers_cap)
+            if descramble_workers_cap == nil then
+                descramble_workers_cap = tonumber(read_setting("softcam_descramble_workers_cap"))
+            end
+
             local descramble_drop_policy = conf.descramble_drop_policy
             if descramble_drop_policy == nil then
                 descramble_drop_policy = read_setting("softcam_descramble_drop_policy")
@@ -2167,6 +2178,7 @@ function init_input(conf)
                 descramble_batch_packets = descramble_batch_packets,
                 descramble_queue_depth_batches = descramble_queue_depth_batches,
                 descramble_worker_stack_kb = descramble_worker_stack_kb,
+                descramble_workers_cap = descramble_workers_cap,
                 descramble_drop_policy = descramble_drop_policy,
                 descramble_log_rate_limit_sec = descramble_log_rate_limit_sec,
             })

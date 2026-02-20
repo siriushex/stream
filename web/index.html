@@ -12,8 +12,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260217a" />
-  <script defer src="/app.js?v=20260217a"></script>
+  <link rel="stylesheet" href="/styles.css?v=20260220a" />
+  <script defer src="/app.js?v=20260220a"></script>
 </head>
 <body>
   <div class="app">
@@ -40,7 +40,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260217a</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260220a</div>
       </div>
     </header>
 
@@ -110,8 +110,8 @@
               <thead>
                 <tr>
                   <th class="col-select">
-                    <label class="table-check" title="Select all visible streams">
-                      <input type="checkbox" id="stream-table-select-all" aria-label="Select all streams">
+                    <label class="table-check" title="Select all filtered streams">
+                      <input type="checkbox" id="stream-table-select-all" aria-label="Select all filtered streams">
                     </label>
                   </th>
                   <th class="col-stream">
@@ -157,6 +157,7 @@
                     <option value="25">25</option>
                     <option value="50">50</option>
                     <option value="100">100</option>
+                    <option value="all">all</option>
                   </select>
                 </label>
                 <button class="btn ghost tiny" type="button" id="stream-table-page-prev">Prev</button>
@@ -164,7 +165,23 @@
               </div>
             </div>
           </div>
-          <div class="stream-compact stream-view stream-view-compact" id="stream-compact"></div>
+          <div class="stream-compact stream-view stream-view-compact" id="stream-compact">
+            <div class="stream-compact-toolbar">
+              <label class="stream-compact-sort">
+                <span>Sort</span>
+                <select id="stream-compact-sort">
+                  <option value="stream">Stream</option>
+                  <option value="input">Input</option>
+                  <option value="input_bitrate">Input bitrate</option>
+                  <option value="transcode">Transcode</option>
+                  <option value="dvr">DVR</option>
+                  <option value="clients">Clients</option>
+                </select>
+              </label>
+              <button class="btn ghost tiny" type="button" id="stream-compact-sort-dir">ASC</button>
+            </div>
+            <div class="stream-compact-grid" id="stream-compact-grid"></div>
+          </div>
         </div>
       </section>
 

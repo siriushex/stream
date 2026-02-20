@@ -18,6 +18,7 @@
 log.set({ color = true })
 
 arg_n = nil
+arg_stats_interval_sec = 5
 
 --      o      oooo   oooo     o      ooooo    ooooo  oooo ooooooooooo ooooooooooo
 --     888      8888o  88     888      888       888  88   88    888    888    88
@@ -229,6 +230,16 @@ function on_analyze(instance, data)
             log.debug("Unknown PSI: " .. tostring(data.psi))
         end
     elseif data.analyze then
+        local now = os.time()
+        local stats_log_interval = tonumber(instance.stats_log_interval_sec) or 5
+        if stats_log_interval < 1 then
+            stats_log_interval = 1
+        elseif stats_log_interval > 300 then
+            stats_log_interval = 300
+        end
+        local should_log_stats = (instance.last_stats_log_ts == nil)
+            or ((now - instance.last_stats_log_ts) >= stats_log_interval)
+
         local bitrate = 0
         local cc_error = ""
         local pes_error = ""
@@ -254,7 +265,9 @@ function on_analyze(instance, data)
             end
             ::continue::
         end
-        log.info("Bitrate: " .. tostring(bitrate) .. " Kbit/s")
+        if should_log_stats then
+            log.info("Bitrate: " .. tostring(bitrate) .. " Kbit/s")
+        end
         if #cc_error > 0 then
             log.error("CC: " .. cc_error)
         end
@@ -271,12 +284,15 @@ function on_analyze(instance, data)
         else
             local pcr_jitter_max = tonumber(data.analyze.pcr_jitter_max_ms)
             local pcr_jitter_avg = tonumber(data.analyze.pcr_jitter_avg_ms)
-            if pcr_jitter_max then
+            if should_log_stats and pcr_jitter_max then
                 if not pcr_jitter_avg then
                     pcr_jitter_avg = 0
                 end
                 log.info(("PCRJitter: max_ms=%.3f avg_ms=%.3f"):format(pcr_jitter_max, pcr_jitter_avg))
             end
+        end
+        if should_log_stats then
+            instance.last_stats_log_ts = now
         end
         if arg_n then
             arg_n = arg_n - 1
@@ -322,6 +338,18 @@ function start_analyze(instance, addr)
     end
 
     instance.input = init_input(conf)
+    local stats_interval = tonumber(conf.analyze_log_interval_sec)
+        or tonumber(conf.stats_log_interval_sec)
+        or tonumber(arg_stats_interval_sec)
+        or 5
+    if stats_interval < 1 then
+        stats_interval = 1
+    elseif stats_interval > 300 then
+        stats_interval = 300
+    end
+    instance.stats_log_interval_sec = math.floor(stats_interval)
+    instance.last_stats_log_ts = nil
+
     instance.analyze = analyze({
         upstream = instance.input.tail:stream(),
         name = conf.name,
@@ -339,6 +367,7 @@ end
 
 options_usage = [[
     -n S                stop analyzer and exit after S seconds
+    -i S                stats log interval in seconds (default: 5)
     ADDRESS             source address. Available formats:
 
 UDP:
@@ -369,6 +398,13 @@ input_url = nil
 options = {
     ["-n"] = function(idx)
         arg_n = tonumber(argv[idx + 1])
+        return 1
+    end,
+    ["-i"] = function(idx)
+        local v = tonumber(argv[idx + 1])
+        if v and v > 0 then
+            arg_stats_interval_sec = math.floor(v)
+        end
         return 1
     end,
     ["*"] = function(idx)

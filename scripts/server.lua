@@ -2520,6 +2520,7 @@ WantedBy=multi-user.target
                                 upstream = self:stream(),
                                 buffer_size = buffer_size,
                                 buffer_fill = buffer_fill,
+                                ts_rewrite_cc_enabled = true,
                             }, "video/MP2T")
                         end,
                     })
@@ -2675,6 +2676,7 @@ WantedBy=multi-user.target
                 upstream = upstream,
                 buffer_size = buffer_size,
                 buffer_fill = buffer_fill,
+                ts_rewrite_cc_enabled = true,
             }, "video/MP2T")
 	        end
 

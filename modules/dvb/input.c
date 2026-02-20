@@ -51,6 +51,9 @@ struct module_data_t
     uint8_t dvr_buffer[1022 * TS_PACKET_SIZE];
 
     uint32_t dvr_read;
+    uint64_t dvr_last_reopen_us;
+    uint64_t dvr_last_error_log_us;
+    uint32_t dvr_suppressed_errors;
 
     mpegts_psi_t *pat;
     int pat_error;
@@ -73,6 +76,10 @@ struct module_data_t
 #define THREAD_DELAY_CA (1 * 1000 * 1000)
 #define THREAD_DELAY_DVR (2 * 1000 * 1000)
 
+/* Protect main event loop from tight dvr close/open storms on noisy drivers. */
+#define DVR_REOPEN_MIN_INTERVAL_US (500 * 1000)
+#define DVR_ERROR_LOG_MIN_INTERVAL_US (5 * 1000 * 1000)
+
 /*
  * ooooooooo  ooooo  oooo oooooooooo
  *  888    88o 888    88   888    888
@@ -84,6 +91,67 @@ struct module_data_t
 
 static void dvr_open(module_data_t *mod);
 static void dvr_close(module_data_t *mod);
+
+static void dvr_log_error_rate_limited(module_data_t *mod, bool is_warning, const char *prefix, int err)
+{
+    const uint64_t now = asc_utime();
+    if(mod->dvr_last_error_log_us != 0 && now - mod->dvr_last_error_log_us < DVR_ERROR_LOG_MIN_INTERVAL_US)
+    {
+        ++mod->dvr_suppressed_errors;
+        return;
+    }
+
+    if(mod->dvr_suppressed_errors > 0)
+    {
+        if(is_warning)
+            asc_log_warning(MSG("%s [%s] (+%u suppressed)"), prefix, strerror(err), mod->dvr_suppressed_errors);
+        else
+            asc_log_error(MSG("%s [%s] (+%u suppressed)"), prefix, strerror(err), mod->dvr_suppressed_errors);
+        mod->dvr_suppressed_errors = 0;
+    }
+    else
+    {
+        if(is_warning)
+            asc_log_warning(MSG("%s [%s]"), prefix, strerror(err));
+        else
+            asc_log_error(MSG("%s [%s]"), prefix, strerror(err));
+    }
+
+    mod->dvr_last_error_log_us = now;
+}
+
+static bool dvr_reopen_allowed(module_data_t *mod)
+{
+    const uint64_t now = asc_utime();
+    if(mod->dvr_last_reopen_us != 0 && now - mod->dvr_last_reopen_us < DVR_REOPEN_MIN_INTERVAL_US)
+        return false;
+    mod->dvr_last_reopen_us = now;
+    return true;
+}
+
+static void dvr_handle_error(module_data_t *mod, int err)
+{
+    if(err == 0)
+        err = EIO;
+
+    if(err == EINTR || err == EAGAIN || err == EWOULDBLOCK)
+        return;
+
+    if(err == EOVERFLOW)
+    {
+        /* Driver overflow: avoid immediate fd reopen loop, ask demux bounce path to recover. */
+        mod->do_bounce = 1;
+        dvr_log_error_rate_limited(mod, true, "dvr overflow, scheduling dmx bounce", err);
+        return;
+    }
+
+    dvr_log_error_rate_limited(mod, false, "dvr read error, try to reopen", err);
+    if(!dvr_reopen_allowed(mod))
+        return;
+
+    dvr_close(mod);
+    dvr_open(mod);
+}
 
 static void on_pat(void *arg, mpegts_psi_t *psi)
 {
@@ -126,9 +194,11 @@ static void on_pat(void *arg, mpegts_psi_t *psi)
 static void dvr_on_error(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
-    asc_log_error(MSG("dvr read error, try to reopen [%s]"), strerror(errno));
-    dvr_close(mod);
-    dvr_open(mod);
+    /*
+     * asc_event on_error does not provide a reliable errno for this fd.
+     * Use EIO marker to avoid logging stale errno from unrelated syscalls.
+     */
+    dvr_handle_error(mod, EIO);
 }
 
 static void dvr_on_read(void *arg)
@@ -138,12 +208,16 @@ static void dvr_on_read(void *arg)
     const ssize_t len = read(mod->dvr_fd, mod->dvr_buffer, sizeof(mod->dvr_buffer));
     if(len <= 0)
     {
-        dvr_on_error(mod);
+        dvr_handle_error(mod, (len == 0) ? EPIPE : errno);
         return;
     }
-    mod->dvr_read += len;
 
-    for(int i = 0; i < len; i += TS_PACKET_SIZE)
+    const ssize_t aligned_len = (len / TS_PACKET_SIZE) * TS_PACKET_SIZE;
+    if(aligned_len <= 0)
+        return;
+    mod->dvr_read += (uint32_t)aligned_len;
+
+    for(ssize_t i = 0; i < aligned_len; i += TS_PACKET_SIZE)
     {
         const uint8_t *ts = &mod->dvr_buffer[i];
 

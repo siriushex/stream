@@ -5258,6 +5258,26 @@ local function settings_patch_skip_runtime_reload(body)
         auth_backends = true,
         users = true,
         softcam = true,
+        observability_enabled = true,
+        ai_logs_retention_days = true,
+        ai_metrics_retention_days = true,
+        ai_rollup_interval_sec = true,
+        ai_metrics_on_demand = true,
+        observability_db_path = true,
+        observability_writer_batch_max = true,
+        observability_writer_flush_ms = true,
+        observability_writer_max_queue = true,
+        observability_affinity_enabled = true,
+        observability_cpu_policy = true,
+        observability_cpu_auto_cores = true,
+        observability_cpu_set = true,
+        observability_stream_detail_enabled = true,
+        observability_stream_highres_enabled = true,
+        observability_stream_ffmpeg_metrics_enabled = true,
+        observability_system_rollup_enabled = true,
+        observability_system_rollup_interval_sec = true,
+        observability_system_retention_sec = true,
+        observability_system_include_virtual_ifaces = true,
     }
     local has_keys = false
     for k, _ in pairs(body) do
@@ -5379,6 +5399,13 @@ local function set_settings(server, client, request)
                 end
                 config.set_setting(k, v)
             end
+            if config and config.init_observability_db
+                and (body.observability_db_path ~= nil)
+            then
+                config.init_observability_db({
+                    observability_db_path = body.observability_db_path,
+                })
+            end
             if reset_detector_defaults and type(stream_reset_global_detector_defaults_cache) == "function" then
                 stream_reset_global_detector_defaults_cache()
             end
@@ -5431,18 +5458,32 @@ local function set_settings(server, client, request)
                 ai_runtime.configure()
             end
             if ai_observability and ai_observability.configure
-                and (body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
-                    or body.ai_rollup_interval_sec ~= nil)
+                and (body.observability_enabled ~= nil
+                    or body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
+                    or body.ai_rollup_interval_sec ~= nil
+                    or body.observability_db_path ~= nil
+                    or body.observability_writer_batch_max ~= nil
+                    or body.observability_writer_flush_ms ~= nil
+                    or body.observability_writer_max_queue ~= nil
+                    or body.observability_affinity_enabled ~= nil
+                    or body.observability_cpu_policy ~= nil
+                    or body.observability_cpu_auto_cores ~= nil
+                    or body.observability_cpu_set ~= nil
+                    or body.observability_stream_highres_enabled ~= nil
+                    or body.observability_stream_detail_enabled ~= nil
+                    or body.observability_stream_ffmpeg_metrics_enabled ~= nil)
             then
                 ai_observability.configure()
             end
             if system_metrics and system_metrics.configure
-                and (body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
+                and (body.observability_enabled ~= nil
+                    or body.ai_logs_retention_days ~= nil or body.ai_metrics_retention_days ~= nil
                     or body.ai_rollup_interval_sec ~= nil
                     or body.observability_system_rollup_enabled ~= nil
                     or body.observability_system_rollup_interval_sec ~= nil
                     or body.observability_system_retention_sec ~= nil
-                    or body.observability_system_include_virtual_ifaces ~= nil)
+                    or body.observability_system_include_virtual_ifaces ~= nil
+                    or body.observability_db_path ~= nil)
             then
                 system_metrics.configure()
             end
@@ -5566,6 +5607,23 @@ local function parse_range_seconds(value, fallback)
     return fallback
 end
 
+local function observability_collector_status()
+    local status = {}
+    if ai_observability and ai_observability.get_collector_status then
+        local ok, payload = pcall(ai_observability.get_collector_status)
+        if ok and type(payload) == "table" then
+            status = payload
+        end
+    end
+    if status.collection_enabled == nil then
+        status.collection_enabled = setting_bool("observability_enabled", false)
+    end
+    if status.read_only_mode == nil then
+        status.read_only_mode = not (status.collection_enabled == true)
+    end
+    return status
+end
+
 local function ai_logs(server, client, request)
     if not require_admin(request) then
         return error_response(server, client, 403, "forbidden")
@@ -5587,14 +5645,19 @@ local function ai_logs(server, client, request)
         stream_id = stream_id,
         limit = limit,
     })
-    local collection_enabled = ai_observability and ai_observability.is_collection_enabled
-        and ai_observability.is_collection_enabled() or false
+    local collector = observability_collector_status()
+    local collection_enabled = collector.collection_enabled == true
     json_response(server, client, 200, {
         since = since_ts,
         range = range,
         items = rows,
         collection_enabled = collection_enabled,
         read_only_mode = not collection_enabled,
+        worker_isolated = collector.worker_isolated == true,
+        worker_affinity = collector.worker_affinity,
+        worker_backend = collector.worker_backend,
+        writer_db = collector.writer_db,
+        degrade_mode = collector.degrade_mode == true,
     })
 end
 
@@ -5612,8 +5675,8 @@ local function ai_metrics(server, client, request)
     local scope_id = query.id or query.stream_id or ""
     local metric_key = query.metric or ""
     local limit = tonumber(query.limit) or 2000
-    local collection_enabled = ai_observability and ai_observability.is_collection_enabled
-        and ai_observability.is_collection_enabled() or false
+    local collector = observability_collector_status()
+    local collection_enabled = collector.collection_enabled == true
     local on_demand = setting_bool("ai_metrics_on_demand", true)
     if ai_observability and ai_observability.state and ai_observability.state.metrics_on_demand then
         on_demand = true
@@ -5649,6 +5712,11 @@ local function ai_metrics(server, client, request)
             mode = result.mode or "on_demand",
             collection_enabled = collection_enabled,
             read_only_mode = not collection_enabled,
+            worker_isolated = collector.worker_isolated == true,
+            worker_affinity = collector.worker_affinity,
+            worker_backend = collector.worker_backend,
+            writer_db = collector.writer_db,
+            degrade_mode = collector.degrade_mode == true,
         })
         return
     end
@@ -5667,11 +5735,12 @@ local function ai_metrics(server, client, request)
         mode = "rollup",
         collection_enabled = collection_enabled,
         read_only_mode = not collection_enabled,
+        worker_isolated = collector.worker_isolated == true,
+        worker_affinity = collector.worker_affinity,
+        worker_backend = collector.worker_backend,
+        writer_db = collector.writer_db,
+        degrade_mode = collector.degrade_mode == true,
     })
-end
-
-local function observability_collection_enabled()
-    return setting_bool("observability_enabled", false) == true
 end
 
 local function parse_csv_list(text)
@@ -5702,7 +5771,8 @@ local function system_metrics_snapshot(server, client, request)
     local snap = system_metrics.snapshot() or {}
     local now_ms = (snap.ts or os.time()) * 1000
     snap.ts_ms = now_ms
-    local collection_enabled = observability_collection_enabled()
+    local collector = observability_collector_status()
+    local collection_enabled = collector.collection_enabled == true
 
     json_response(server, client, 200, {
         now = now_ms,
@@ -5715,6 +5785,11 @@ local function system_metrics_snapshot(server, client, request)
             rollup_interval_sec = system_metrics.state and system_metrics.state.rollup_interval_sec or nil,
             retention_sec = system_metrics.state and system_metrics.state.retention_sec or nil,
             retention_source = system_metrics.state and system_metrics.state.retention_source or nil,
+            worker_isolated = collector.worker_isolated == true,
+            worker_affinity = collector.worker_affinity,
+            worker_backend = collector.worker_backend,
+            writer_db = collector.writer_db,
+            degrade_mode = collector.degrade_mode == true,
         },
     })
 end
@@ -5768,7 +5843,8 @@ local function system_metrics_timeseries(server, client, request)
     end
 
     local now_ms = os.time() * 1000
-    local collection_enabled = observability_collection_enabled()
+    local collector = observability_collector_status()
+    local collection_enabled = collector.collection_enabled == true
     json_response(server, client, 200, {
         now = now_ms,
         timeseries = series,
@@ -5781,6 +5857,11 @@ local function system_metrics_timeseries(server, client, request)
             rollup_interval_sec = system_metrics.state and system_metrics.state.rollup_interval_sec or nil,
             retention_sec = system_metrics.state and system_metrics.state.retention_sec or nil,
             retention_source = system_metrics.state and system_metrics.state.retention_source or nil,
+            worker_isolated = collector.worker_isolated == true,
+            worker_affinity = collector.worker_affinity,
+            worker_backend = collector.worker_backend,
+            writer_db = collector.writer_db,
+            degrade_mode = collector.degrade_mode == true,
         },
     })
 end
@@ -5839,6 +5920,13 @@ local function observability_stream_events(server, client, request)
         return error_response(server, client, 400, err or "failed to load stream events")
     end
     json_response(server, client, 200, result)
+end
+
+local function observability_collector_debug(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    json_response(server, client, 200, observability_collector_status())
 end
 
 local function ai_summary(server, client, request)
@@ -6128,11 +6216,50 @@ function normalize_server_host(entry)
     end
     local insecure = (entry.insecure == true or entry.insecure == 1 or entry.insecure == "1"
         or entry.tls_insecure == true or entry.tls_insecure == 1 or entry.tls_insecure == "1")
+    local function pick_login(src)
+        local login = tostring(src and src.login or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if login ~= "" then
+            return login
+        end
+        local user = tostring(src and src.user or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if user ~= "" then
+            return user
+        end
+        if src and src.login ~= nil then
+            return tostring(src.login):gsub("^%s+", ""):gsub("%s+$", "")
+        end
+        if src and src.user ~= nil then
+            return tostring(src.user):gsub("^%s+", ""):gsub("%s+$", "")
+        end
+        return ""
+    end
+
+    local function pick_password(src)
+        if type(src) ~= "table" then
+            return ""
+        end
+        local password = tostring(src.password or "")
+        if password ~= "" then
+            return password
+        end
+        local pass = tostring(src.pass or "")
+        if pass ~= "" then
+            return pass
+        end
+        if src.password ~= nil then
+            return tostring(src.password or "")
+        end
+        if src.pass ~= nil then
+            return tostring(src.pass or "")
+        end
+        return ""
+    end
+
     return {
         host = hostname,
         port = port,
-        login = entry.login or entry.user or "",
-        password = entry.password or entry.pass or "",
+        login = pick_login(entry),
+        password = pick_password(entry),
         scheme = scheme,
         base_path = base_path,
         insecure = insecure == true,
@@ -6219,8 +6346,11 @@ function api._servers_classify_error_status(message, fallback_code)
     if text:find("forbidden", 1, true) then
         return 403
     end
-    if text:find("unauthorized", 1, true) then
-        return 401
+    if text:find("unauthorized", 1, true)
+        or text:find("login/password incorrect", 1, true)
+    then
+        -- Remote auth failures should not be treated as local session expiry.
+        return 403
     end
     if text:find("no response", 1, true)
         or text:find("timeout", 1, true)
@@ -8387,6 +8517,9 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/observability/stream-events" and method == "GET" then
         return observability_stream_events(server, client, request)
+    end
+    if path == "/api/v1/observability/collector/status" and method == "GET" then
+        return observability_collector_debug(server, client, request)
     end
     if path == "/api/v1/ai/summary" and method == "GET" then
         return ai_summary(server, client, request)

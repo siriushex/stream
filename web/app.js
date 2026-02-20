@@ -17,6 +17,14 @@ const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'input_bitrate', 'transcode', 'dvr', 'clients']);
+const STREAM_COMPACT_SORT_LABELS = {
+  stream: 'Stream',
+  input: 'Input',
+  input_bitrate: 'Input bitrate',
+  transcode: 'Transcode',
+  dvr: 'DVR',
+  clients: 'Clients',
+};
 const SIDEBAR_HELP_KEYS = {
   hlssplitter: 'sidebarHelp.hlssplitter',
   buffer: 'sidebarHelp.buffer',
@@ -202,9 +210,16 @@ function loadShowDisabledState() {
 }
 
 function normalizeStreamTablePageSize(value) {
-  const size = Number(value);
+  const raw = String(value === undefined || value === null ? '' : value).trim().toLowerCase();
+  if (raw === 'all' || raw === '-1') return -1;
+  const size = Number(raw);
   if (size === 25 || size === 50 || size === 100) return size;
   return 50;
+}
+
+function streamTablePageSizeToUiValue(value) {
+  const size = normalizeStreamTablePageSize(value);
+  return size === -1 ? 'all' : String(size);
 }
 
 function loadStreamTablePageSize() {
@@ -292,6 +307,7 @@ const state = {
   adapters: [],
   dvbAdapters: [],
   dvbAdaptersLoaded: false,
+  dvbAdaptersBootstrapChecked: false,
   settings: {},
   authBackends: {},
   authBackendEditing: null,
@@ -1028,6 +1044,9 @@ const elements = {
   streamTablePageNext: $('#stream-table-page-next'),
   streamTablePageSize: $('#stream-table-page-size'),
   streamCompact: $('#stream-compact'),
+  streamCompactGrid: $('#stream-compact-grid'),
+  streamCompactSort: $('#stream-compact-sort'),
+  streamCompactSortDir: $('#stream-compact-sort-dir'),
   splitterList: $('#splitter-list'),
   splitterListEmpty: $('#splitter-list-empty'),
   splitterSidebarHelp: $('#splitter-sidebar-help'),
@@ -2444,6 +2463,16 @@ const SETTINGS_GENERAL_SECTIONS = [
             dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
           },
           {
+            id: 'settings-softcam-descramble-workers-cap',
+            label: 'SoftCAM parallel workers cap (0=auto)',
+            type: 'input',
+            inputType: 'number',
+            key: 'softcam_descramble_workers_cap',
+            level: 'advanced',
+            placeholder: '0',
+            dependsOn: { id: 'settings-softcam-descramble-parallel', value: 'per_stream_thread' },
+          },
+          {
             id: 'settings-softcam-descramble-drop',
             label: 'SoftCAM drop policy',
             type: 'select',
@@ -2919,6 +2948,103 @@ const SETTINGS_GENERAL_SECTIONS = [
             level: 'advanced',
           },
           {
+            id: 'settings-observability-db-path',
+            label: 'Observability DB path',
+            type: 'input',
+            inputType: 'text',
+            key: 'observability_db_path',
+            level: 'advanced',
+            placeholder: '/var/lib/stream/observability.db',
+          },
+          {
+            id: 'settings-observability-writer-batch',
+            label: 'Writer batch max (rows)',
+            type: 'select',
+            key: 'observability_writer_batch_max',
+            level: 'advanced',
+            options: [
+              { value: '100', label: '100' },
+              { value: '200', label: '200' },
+              { value: '400', label: '400' },
+              { value: '800', label: '800' },
+              { value: '1200', label: '1200' },
+            ],
+          },
+          {
+            id: 'settings-observability-writer-flush-ms',
+            label: 'Writer flush budget (ms)',
+            type: 'select',
+            key: 'observability_writer_flush_ms',
+            level: 'advanced',
+            options: [
+              { value: '10', label: '10' },
+              { value: '20', label: '20' },
+              { value: '40', label: '40' },
+              { value: '80', label: '80' },
+            ],
+          },
+          {
+            id: 'settings-observability-writer-queue-max',
+            label: 'Writer queue max (rows)',
+            type: 'select',
+            key: 'observability_writer_max_queue',
+            level: 'advanced',
+            options: [
+              { value: '5000', label: '5000' },
+              { value: '10000', label: '10000' },
+              { value: '20000', label: '20000' },
+              { value: '50000', label: '50000' },
+            ],
+          },
+          {
+            id: 'settings-observability-affinity-enabled',
+            label: 'Collector CPU policy enabled',
+            type: 'switch',
+            key: 'observability_affinity_enabled',
+            level: 'advanced',
+          },
+          {
+            id: 'settings-observability-cpu-policy',
+            label: 'Collector CPU policy',
+            type: 'select',
+            key: 'observability_cpu_policy',
+            level: 'advanced',
+            options: [
+              { value: 'auto', label: 'auto (last cores)' },
+              { value: 'manual', label: 'manual' },
+              { value: 'none', label: 'none' },
+            ],
+            dependsOn: () => readBoolValue('settings-observability-affinity-enabled', true),
+          },
+          {
+            id: 'settings-observability-cpu-auto-cores',
+            label: 'Auto cores count',
+            type: 'select',
+            key: 'observability_cpu_auto_cores',
+            level: 'advanced',
+            options: [
+              { value: '1', label: '1' },
+              { value: '2', label: '2' },
+              { value: '3', label: '3' },
+              { value: '4', label: '4' },
+            ],
+            dependsOn: () =>
+              readBoolValue('settings-observability-affinity-enabled', true)
+              && readStringValue('settings-observability-cpu-policy', 'auto') === 'auto',
+          },
+          {
+            id: 'settings-observability-cpu-set',
+            label: 'Manual CPU set',
+            type: 'input',
+            inputType: 'text',
+            key: 'observability_cpu_set',
+            level: 'advanced',
+            placeholder: '6,7',
+            dependsOn: () =>
+              readBoolValue('settings-observability-affinity-enabled', true)
+              && readStringValue('settings-observability-cpu-policy', 'auto') === 'manual',
+          },
+          {
             type: 'note',
             text: 'On-demand снижает фоновую нагрузку, но история зависит от логов. Для устойчивых долгих графиков выключите on-demand и включите rollup.',
             level: 'advanced',
@@ -2935,7 +3061,8 @@ const SETTINGS_GENERAL_SECTIONS = [
           const rollup = onDemand
             ? '—'
             : formatSeconds(readNumberValue('settings-observability-rollup', 60));
-          return `Включено · Logs: ${formatDays(logs)} · Metrics: ${metrics} · Rollup: ${rollup}`;
+          const writer = readNumberValue('settings-observability-writer-batch', 400);
+          return `Включено · Logs: ${formatDays(logs)} · Metrics: ${metrics} · Rollup: ${rollup} · Writer batch: ${writer}`;
         },
       },
       {
@@ -4629,6 +4756,7 @@ function bindGeneralElements() {
     settingsSoftcamDescrambleBatch: 'settings-softcam-descramble-batch',
     settingsSoftcamDescrambleDepth: 'settings-softcam-descramble-depth',
     settingsSoftcamDescrambleStack: 'settings-softcam-descramble-stack',
+    settingsSoftcamDescrambleWorkersCap: 'settings-softcam-descramble-workers-cap',
     settingsSoftcamDescrambleDrop: 'settings-softcam-descramble-drop',
     settingsSoftcamDescrambleLograte: 'settings-softcam-descramble-lograte',
     settingsLuaGcStepUnits: 'settings-lua-gc-step-units',
@@ -5378,7 +5506,9 @@ function setView(name) {
     stopServerStreamsPollTimer();
   }
   if (name === 'adapters') {
-    loadDvbAdapters().catch(() => {});
+    if (!state.dvbAdaptersLoaded) {
+      loadDvbAdapters().catch(() => {});
+    }
     if (!document.hidden) {
       startDvbPolling();
     }
@@ -18236,6 +18366,7 @@ async function loadAdapterStatus() {
 }
 
 async function loadDvbAdapters() {
+  state.dvbAdaptersBootstrapChecked = true;
   let ok = true;
   let error = null;
   try {
@@ -23222,6 +23353,18 @@ function setStreamTableSort(key) {
   }
   state.streamTablePage = 1;
   updateStreamTableSortUi();
+  updateStreamCompactSortUi();
+  renderStreams();
+}
+
+function setStreamTableSortDirect(key, dir) {
+  const nextKey = normalizeStreamTableSortKey(key);
+  const nextDir = dir === 'desc' ? 'desc' : 'asc';
+  state.streamTableSortKey = nextKey;
+  state.streamTableSortDir = nextDir;
+  state.streamTablePage = 1;
+  updateStreamTableSortUi();
+  updateStreamCompactSortUi();
   renderStreams();
 }
 
@@ -23231,7 +23374,7 @@ function compareStreamTableModels(left, right) {
     case 'stream':
       return compareTextNatural(left.name, right.name);
     case 'input': {
-      const inputIdDiff = compareMaybeNumber(left.activeInputId, right.activeInputId);
+      const inputIdDiff = compareTextNatural(left.activeInputIdText, right.activeInputIdText);
       if (inputIdDiff !== 0) return inputIdDiff;
       const labelDiff = compareTextNatural(left.inputLabel, right.inputLabel);
       if (labelDiff !== 0) return labelDiff;
@@ -23324,6 +23467,21 @@ function setStreamTableSelectionForAll(selectAll) {
   syncStreamTableSelectionUi();
 }
 
+function updateStreamCompactSortUi() {
+  if (elements.streamCompactSort) {
+    const key = normalizeStreamTableSortKey(state.streamTableSortKey);
+    elements.streamCompactSort.value = key;
+  }
+  if (elements.streamCompactSortDir) {
+    const dir = state.streamTableSortDir === 'desc' ? 'desc' : 'asc';
+    const key = normalizeStreamTableSortKey(state.streamTableSortKey);
+    const label = STREAM_COMPACT_SORT_LABELS[key] || 'Sort';
+    elements.streamCompactSortDir.textContent = dir === 'desc' ? 'DESC' : 'ASC';
+    elements.streamCompactSortDir.title = `Direction: ${dir.toUpperCase()} (${label})`;
+    elements.streamCompactSortDir.setAttribute('aria-label', `Toggle compact sort direction (${dir.toUpperCase()})`);
+  }
+}
+
 function setStreamTableBulkBusy(busy) {
   state.streamTableBulkBusy = Boolean(busy);
   syncStreamTableSelectionUi();
@@ -23401,7 +23559,8 @@ function getStreamTablePageMeta(list) {
   const total = Array.isArray(list) ? list.length : 0;
   const size = normalizeStreamTablePageSize(state.streamTablePageSize);
   state.streamTablePageSize = size;
-  const pages = Math.max(1, Math.ceil(total / size));
+  const allRows = size === -1;
+  const pages = allRows ? 1 : Math.max(1, Math.ceil(total / size));
   if (!Number.isFinite(state.streamTablePage) || state.streamTablePage < 1) {
     state.streamTablePage = 1;
   }
@@ -23409,16 +23568,17 @@ function getStreamTablePageMeta(list) {
     state.streamTablePage = pages;
   }
   const page = state.streamTablePage;
-  const start = total > 0 ? ((page - 1) * size) : 0;
-  const end = Math.min(start + size, total);
+  const start = allRows ? 0 : (total > 0 ? ((page - 1) * size) : 0);
+  const end = allRows ? total : Math.min(start + size, total);
   return {
     total,
     page,
     pages,
     size,
+    allRows,
     start,
     end,
-    items: (list || []).slice(start, end),
+    items: allRows ? (list || []).slice() : (list || []).slice(start, end),
   };
 }
 
@@ -23432,16 +23592,18 @@ function renderStreamTablePagination(meta) {
   if (elements.streamTablePageInfo) {
     const from = meta.total > 0 ? meta.start + 1 : 0;
     const to = meta.end;
-    elements.streamTablePageInfo.textContent = `Rows ${from}-${to} of ${meta.total} • Page ${meta.page}/${meta.pages}`;
+    elements.streamTablePageInfo.textContent = meta.allRows
+      ? `Rows ${from}-${to} of ${meta.total} • All rows`
+      : `Rows ${from}-${to} of ${meta.total} • Page ${meta.page}/${meta.pages}`;
   }
   if (elements.streamTablePagePrev) {
-    elements.streamTablePagePrev.disabled = meta.page <= 1;
+    elements.streamTablePagePrev.disabled = meta.allRows || meta.page <= 1;
   }
   if (elements.streamTablePageNext) {
-    elements.streamTablePageNext.disabled = meta.page >= meta.pages;
+    elements.streamTablePageNext.disabled = meta.allRows || meta.page >= meta.pages;
   }
   if (elements.streamTablePageSize) {
-    elements.streamTablePageSize.value = String(meta.size);
+    elements.streamTablePageSize.value = streamTablePageSizeToUiValue(meta.size);
   }
 }
 
@@ -23624,6 +23786,11 @@ function buildStreamModel(stream) {
     inputUrl,
     inputLabel,
     activeInputId,
+    activeInputIdText: Number.isFinite(activeInputId)
+      ? String(activeInputId)
+      : (activeInputIdRaw !== undefined && activeInputIdRaw !== null && String(activeInputIdRaw).trim()
+        ? String(activeInputIdRaw).trim()
+        : ''),
     inputBitrateKbps,
     inputBitrate,
     inputUptime,
@@ -23704,7 +23871,7 @@ function buildStreamTableRow(stream, modelOverride) {
   inputUrl.dataset.role = 'stream-input-url';
   inputUrl.textContent = model.inputUrl || '-';
   if (model.inputUrl) inputUrl.title = model.inputUrl;
-  const inputMeta = createEl('div', 'stream-cell-sub');
+  const inputMeta = createEl('div', 'stream-cell-sub stream-cell-sub-ellipsis');
   inputMeta.dataset.role = 'stream-input-meta';
   inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
   inputCell.appendChild(inputUrl);
@@ -23714,7 +23881,7 @@ function buildStreamTableRow(stream, modelOverride) {
   const tcSummary = createEl('div', 'stream-transcode-summary');
   tcSummary.dataset.role = 'stream-transcode-summary';
   tcSummary.textContent = `Transcode: ${model.transcodeStatus}`;
-  const tcMeta = createEl('div', 'stream-cell-sub');
+  const tcMeta = createEl('div', 'stream-cell-sub stream-cell-sub-ellipsis');
   tcMeta.dataset.role = 'stream-transcode-meta';
   tcMeta.textContent = model.transcodeRates;
   tcMeta.hidden = !model.transcodeRates;
@@ -23725,7 +23892,7 @@ function buildStreamTableRow(stream, modelOverride) {
   tcCell.appendChild(tcMeta);
 
   const dvrCell = createEl('td', 'col-dvr');
-  const dvrMeta = createEl('div', 'stream-cell-sub', `DVR: ${model.dvrStatus}`);
+  const dvrMeta = createEl('div', 'stream-cell-sub stream-cell-sub-ellipsis', `DVR: ${model.dvrStatus}`);
   dvrMeta.dataset.role = 'stream-dvr-meta';
   dvrCell.appendChild(dvrMeta);
 
@@ -23892,8 +24059,8 @@ function updateStreamTableRows() {
   updateStreamTableUptimeRows();
 }
 
-function buildStreamCompactRow(stream) {
-  const model = buildStreamModel(stream);
+function buildStreamCompactRow(stream, modelOverride) {
+  const model = modelOverride || buildStreamModel(stream);
   const row = createEl('div', 'stream-compact-row');
   row.dataset.streamId = stream.id;
   row.title = [
@@ -23926,17 +24093,23 @@ function buildStreamCompactRow(stream) {
 }
 
 function renderStreamCompact(list) {
-  if (!elements.streamCompact) return;
-  elements.streamCompact.innerHTML = '';
+  const container = elements.streamCompactGrid || elements.streamCompact;
+  if (!container) return;
+  container.innerHTML = '';
   state.streamCompactRows = {};
   if (list.length === 0) {
     const empty = createEl('div', 'panel', 'No streams yet. Create the first one.');
-    elements.streamCompact.appendChild(empty);
+    if (elements.streamCompactGrid) {
+      empty.style.gridColumn = '1 / -1';
+    }
+    container.appendChild(empty);
     return;
   }
-  list.forEach((stream) => {
-    const row = buildStreamCompactRow(stream);
-    elements.streamCompact.appendChild(row);
+  list.forEach((item) => {
+    const stream = item && item.stream ? item.stream : item;
+    const model = item && item.model ? item.model : null;
+    const row = buildStreamCompactRow(stream, model);
+    container.appendChild(row);
     state.streamCompactRows[stream.id] = row;
   });
 }
@@ -24005,7 +24178,9 @@ function renderStreams() {
   renderStreamTablePagination(null);
   stopStreamUptimeTicker();
   if (state.viewMode === 'compact') {
-    renderStreamCompact(filtered);
+    const sortedRows = sortStreamTableItems(filtered);
+    updateStreamCompactSortUi();
+    renderStreamCompact(sortedRows);
     return;
   }
 
@@ -25013,21 +25188,24 @@ function drawLineChart(canvas, series, opts) {
     minX -= 1;
     maxX += 1;
   }
-  if (minY === maxY) {
-    minY = minY === 0 ? -1 : minY * 0.9;
-    maxY = maxY === 0 ? 1 : maxY * 1.1;
-  }
-
-  const padding = showAxes
-    ? { left: 52, right: 10, top: 12, bottom: 26 }
-    : { left: 36, right: 8, top: 10, bottom: 18 };
-  const width = rect.width - padding.left - padding.right;
-  const height = rect.height - padding.top - padding.bottom;
-  const xScale = (x) => padding.left + ((x - minX) / (maxX - minX)) * width;
-  const yScale = (y) => rect.height - padding.bottom - ((y - minY) / (maxY - minY)) * height;
-
   const axisColor = getThemeColor('--border', '#3d434e');
   const textColor = getThemeColor('--muted', '#8f98a3');
+  const yFormatter = typeof options.yFormatter === 'function' ? options.yFormatter : formatCountAxisLabel;
+  const xSpanMs = Math.max(1, Number(maxX) - Number(minX));
+  const xFormatter = typeof options.xFormatter === 'function'
+    ? options.xFormatter
+    : (value) => formatObservabilityTimeTick(value, options.range || '24h', xSpanMs);
+
+  if (minY === maxY) {
+    if (Number.isFinite(options.yMin) && Number(options.yMin) >= 0 && minY >= 0) {
+      minY = Math.max(0, Number(options.yMin));
+      maxY = minY === 0 ? 1 : minY * 1.1;
+    } else {
+      minY = minY === 0 ? -1 : minY * 0.9;
+      maxY = maxY === 0 ? 1 : maxY * 1.1;
+    }
+  }
+
   const yTicks = showAxes
     ? computeLinearTicks(minY, maxY, options.yTickCount || 5, { integer: options.yInteger === true })
     : [];
@@ -25036,11 +25214,31 @@ function drawLineChart(canvas, series, opts) {
       ? computeTimeTicks(minX, maxX, options.range || '24h', options.xTickCount || 5)
       : computeLinearTicks(minX, maxX, options.xTickCount || 5))
     : [];
-  const yFormatter = typeof options.yFormatter === 'function' ? options.yFormatter : formatCountAxisLabel;
-  const xSpanMs = Math.max(1, Number(maxX) - Number(minX));
-  const xFormatter = typeof options.xFormatter === 'function'
-    ? options.xFormatter
-    : (value) => formatObservabilityTimeTick(value, options.range || '24h', xSpanMs);
+  const basePadding = showAxes
+    ? { left: 52, right: 10, top: 12, bottom: 26 }
+    : { left: 36, right: 8, top: 10, bottom: 18 };
+  const padding = { ...basePadding };
+  if (showAxes && yTicks.length) {
+    ctx.font = '11px "IBM Plex Sans", sans-serif';
+    let maxLabelWidth = 0;
+    yTicks.forEach((tick) => {
+      const label = yFormatter(tick);
+      const width = ctx.measureText(String(label || '')).width;
+      if (Number.isFinite(width) && width > maxLabelWidth) {
+        maxLabelWidth = width;
+      }
+    });
+    // Keep Y labels visible for wide values (e.g. 300+ Mbit/s).
+    padding.left = Math.max(basePadding.left, Math.ceil(maxLabelWidth + 12));
+  }
+  const width = rect.width - padding.left - padding.right;
+  const height = rect.height - padding.top - padding.bottom;
+  if (width <= 0 || height <= 0) {
+    drawEmptyChart(canvas, options.emptyMessage || 'No data');
+    return;
+  }
+  const xScale = (x) => padding.left + ((x - minX) / (maxX - minX)) * width;
+  const yScale = (y) => rect.height - padding.bottom - ((y - minY) / (maxY - minY)) * height;
   let xLabels = [];
   if (showAxes) {
     xLabels = xTicks.map((tick) => xFormatter(tick));
@@ -25089,13 +25287,36 @@ function drawLineChart(canvas, series, opts) {
       ctx.fillText(yFormatter(tick), padding.left - 6, y);
     });
 
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+    const xLabelY = rect.height - padding.bottom + 5;
+    const lastIdx = xTicks.length - 1;
+    let lastRight = -Infinity;
     xTicks.forEach((tick, idx) => {
-      const x = xScale(tick);
+      const xRaw = xScale(tick);
       const label = xLabels[idx] || xFormatter(tick);
-      ctx.fillText(label, x, rect.height - padding.bottom + 5);
+      const text = String(label || '');
+      const textWidth = ctx.measureText(text).width;
+      const isFirst = idx === 0;
+      const isLast = idx === lastIdx;
+      let align = 'center';
+      let x = xRaw;
+      if (isFirst) {
+        align = 'left';
+        x = Math.max(padding.left, xRaw);
+      } else if (isLast) {
+        align = 'right';
+        x = Math.min(rect.width - padding.right, xRaw);
+      }
+      const left = align === 'left' ? x : (align === 'right' ? x - textWidth : x - textWidth / 2);
+      const right = align === 'left' ? x + textWidth : (align === 'right' ? x : x + textWidth / 2);
+      if (!isFirst && !isLast && left <= (lastRight + 6)) {
+        return;
+      }
+      ctx.textAlign = align;
+      ctx.fillText(text, x, xLabelY);
+      lastRight = Math.max(lastRight, right);
     });
+    ctx.textAlign = 'center';
   }
 
   preparedSeries.forEach((item) => {
@@ -25669,6 +25890,7 @@ function renderObservabilityCharts(items, scope) {
         yFormatter: formatBitrateAxisLabel,
         yTickCount: 5,
         xTickCount: 6,
+        yMin: 0,
       },
     )) visibleCharts += 1;
 
@@ -25811,6 +26033,7 @@ function renderObservabilityCharts(items, scope) {
         yFormatter: formatMbitAxisLabel,
         yTickCount: 5,
         xTickCount: 6,
+        yMin: 0,
       },
     )) visibleCharts += 1;
 
@@ -26365,6 +26588,18 @@ async function loadObservability(showStatus) {
     let logItems = [];
     let summary = {};
     let collectionEnabled = collectionEnabledSetting;
+    let collectorMeta = {
+      worker_isolated: false,
+      worker_affinity: '',
+      worker_backend: '',
+      writer_db: '',
+      degrade_mode: false,
+      writer_queue_depth: 0,
+      writer_queue_max: 0,
+      metrics_flush_ms: 0,
+      metrics_rows_dropped: 0,
+      metrics_db_busy_count: 0,
+    };
 
     if (scope === 'stream') {
       const seriesUrl = new URL('/api/v1/observability/stream-series', window.location.origin);
@@ -26404,6 +26639,16 @@ async function loadObservability(showStatus) {
       mapSeries('stream.on_air.state', 'on_air');
       if (seriesPayload && seriesPayload.meta) {
         collectionEnabled = !!seriesPayload.meta.collection_enabled;
+        collectorMeta.worker_isolated = !!seriesPayload.meta.worker_isolated;
+        collectorMeta.worker_affinity = seriesPayload.meta.worker_affinity || '';
+        collectorMeta.worker_backend = seriesPayload.meta.worker_backend || '';
+        collectorMeta.writer_db = seriesPayload.meta.writer_db || '';
+        collectorMeta.degrade_mode = !!seriesPayload.meta.degrade_mode;
+        collectorMeta.writer_queue_depth = Number(seriesPayload.meta.writer_queue_depth || 0);
+        collectorMeta.writer_queue_max = Number(seriesPayload.meta.writer_queue_max || 0);
+        collectorMeta.metrics_flush_ms = Number(seriesPayload.meta.metrics_flush_ms || 0);
+        collectorMeta.metrics_rows_dropped = Number(seriesPayload.meta.metrics_rows_dropped || 0);
+        collectorMeta.metrics_db_busy_count = Number(seriesPayload.meta.metrics_db_busy_count || 0);
         const fromSec = Number(seriesPayload.meta.from);
         const toSec = Number(seriesPayload.meta.to);
         if (Number.isFinite(fromSec) && Number.isFinite(toSec) && toSec > fromSec) {
@@ -26437,6 +26682,16 @@ async function loadObservability(showStatus) {
       collectionEnabled = metrics && metrics.collection_enabled !== undefined
         ? !!metrics.collection_enabled
         : collectionEnabled;
+      collectorMeta.worker_isolated = !!(metrics && metrics.worker_isolated);
+      collectorMeta.worker_affinity = (metrics && metrics.worker_affinity) || '';
+      collectorMeta.worker_backend = (metrics && metrics.worker_backend) || '';
+      collectorMeta.writer_db = (metrics && metrics.writer_db) || '';
+      collectorMeta.degrade_mode = !!(metrics && metrics.degrade_mode);
+      collectorMeta.writer_queue_depth = Number((metrics && metrics.writer_queue_depth) || 0);
+      collectorMeta.writer_queue_max = Number((metrics && metrics.writer_queue_max) || 0);
+      collectorMeta.metrics_flush_ms = Number((metrics && metrics.metrics_flush_ms) || 0);
+      collectorMeta.metrics_rows_dropped = Number((metrics && metrics.metrics_rows_dropped) || 0);
+      collectorMeta.metrics_db_busy_count = Number((metrics && metrics.metrics_db_busy_count) || 0);
       const metricsSinceSec = Number(metrics && metrics.since);
       const metricsRangeSec = Number(metrics && metrics.range);
       if (Number.isFinite(metricsSinceSec) && Number.isFinite(metricsRangeSec) && metricsRangeSec > 0) {
@@ -26507,6 +26762,34 @@ async function loadObservability(showStatus) {
       elements.observabilityReadOnly.textContent = collectionEnabled
         ? ''
         : 'Observability collection is disabled. Showing historical data only.';
+    }
+    if (elements.observabilityHint) {
+      const hints = [];
+      if (onDemand) {
+        hints.push('On-demand analytics enabled; rollups are still available for long-range charts.');
+      }
+      if (collectorMeta.writer_db) {
+        hints.push(`Writer DB: ${collectorMeta.writer_db}${collectorMeta.worker_isolated ? ' (isolated)' : ''}`);
+      }
+      if (collectorMeta.worker_backend) {
+        hints.push(`Collector backend: ${collectorMeta.worker_backend}`);
+      }
+      if (collectorMeta.worker_affinity) {
+        hints.push(`Collector CPU policy: ${collectorMeta.worker_affinity}`);
+      }
+      if (collectorMeta.writer_queue_max > 0) {
+        hints.push(`Writer queue: ${collectorMeta.writer_queue_depth}/${collectorMeta.writer_queue_max}`);
+      }
+      if (collectorMeta.metrics_flush_ms > 0) {
+        hints.push(`Writer flush: ${collectorMeta.metrics_flush_ms}ms`);
+      }
+      if (collectorMeta.metrics_rows_dropped > 0 || collectorMeta.metrics_db_busy_count > 0) {
+        hints.push(`Backpressure: dropped=${collectorMeta.metrics_rows_dropped} busy=${collectorMeta.metrics_db_busy_count}`);
+      }
+      if (collectorMeta.degrade_mode) {
+        hints.push('Collector is in degrade mode (highres/backpressure protection active).');
+      }
+      elements.observabilityHint.textContent = hints.join(' ');
     }
     renderObservabilitySummary(summary, scope, streamId, state.systemMetricsSnapshot);
     renderObservabilityCharts(items, scope);
@@ -27304,6 +27587,9 @@ function applySettingsToUI() {
   }
   if (elements.settingsSoftcamDescrambleStack) {
     elements.settingsSoftcamDescrambleStack.value = getSettingNumber('softcam_descramble_worker_stack_kb', 256);
+  }
+  if (elements.settingsSoftcamDescrambleWorkersCap) {
+    elements.settingsSoftcamDescrambleWorkersCap.value = getSettingNumber('softcam_descramble_workers_cap', 0);
   }
   if (elements.settingsSoftcamDescrambleDrop) {
     setSelectValue(
@@ -28160,6 +28446,10 @@ function collectGeneralSettings() {
   if (softcamWorkerStackKb !== undefined && (softcamWorkerStackKb < 0 || softcamWorkerStackKb > 2048)) {
     throw new Error('SoftCAM worker stack must be 0..2048 KB');
   }
+  const softcamWorkersCap = toNumber(elements.settingsSoftcamDescrambleWorkersCap && elements.settingsSoftcamDescrambleWorkersCap.value);
+  if (softcamWorkersCap !== undefined && (softcamWorkersCap < 0 || softcamWorkersCap > 1024)) {
+    throw new Error('SoftCAM parallel workers cap must be 0..1024');
+  }
   const softcamDropPolicy = elements.settingsSoftcamDescrambleDrop
     ? String(elements.settingsSoftcamDescrambleDrop.value || 'drop_oldest').trim()
     : 'drop_oldest';
@@ -28346,6 +28636,14 @@ function collectGeneralSettings() {
   const observabilityMetricsDays = toNumber(elements.settingsObservabilityMetricsDays && elements.settingsObservabilityMetricsDays.value);
   const observabilityRollup = toNumber(elements.settingsObservabilityRollup && elements.settingsObservabilityRollup.value);
   const observabilityOnDemand = !!(elements.settingsObservabilityOnDemand && elements.settingsObservabilityOnDemand.checked);
+  const observabilityDbPath = readStringValue('settings-observability-db-path', '').trim();
+  const observabilityWriterBatchMax = readNumberValue('settings-observability-writer-batch', 400);
+  const observabilityWriterFlushMs = readNumberValue('settings-observability-writer-flush-ms', 20);
+  const observabilityWriterQueueMax = readNumberValue('settings-observability-writer-queue-max', 20000);
+  const observabilityAffinityEnabled = readBoolValue('settings-observability-affinity-enabled', true);
+  const observabilityCpuPolicy = readStringValue('settings-observability-cpu-policy', 'auto').trim().toLowerCase();
+  const observabilityCpuAutoCores = readNumberValue('settings-observability-cpu-auto-cores', 2);
+  const observabilityCpuSet = readStringValue('settings-observability-cpu-set', '').trim();
   const systemMetricsRollupEnabled = elements.settingsSystemMetricsRollupEnabled && elements.settingsSystemMetricsRollupEnabled.checked;
   const systemMetricsRollupInterval = toNumber(elements.settingsSystemMetricsRollupInterval && elements.settingsSystemMetricsRollupInterval.value);
   const systemMetricsRetention = toNumber(elements.settingsSystemMetricsRetention && elements.settingsSystemMetricsRetention.value);
@@ -28368,6 +28666,21 @@ function collectGeneralSettings() {
     if (systemMetricsRetention !== undefined && (systemMetricsRetention < 0 || systemMetricsRetention > 31536000)) {
       throw new Error('System metrics retention must be 0..31536000 sec');
     }
+  }
+  if (observabilityWriterBatchMax !== undefined && observabilityWriterBatchMax < 1) {
+    throw new Error('Observability writer batch must be >= 1');
+  }
+  if (observabilityWriterFlushMs !== undefined && observabilityWriterFlushMs < 1) {
+    throw new Error('Observability writer flush budget must be >= 1 ms');
+  }
+  if (observabilityWriterQueueMax !== undefined && observabilityWriterQueueMax < 100) {
+    throw new Error('Observability writer queue max must be >= 100');
+  }
+  if (observabilityCpuPolicy && !['auto', 'manual', 'none'].includes(observabilityCpuPolicy)) {
+    throw new Error('Observability CPU policy must be auto/manual/none');
+  }
+  if (observabilityCpuAutoCores !== undefined && (observabilityCpuAutoCores < 1 || observabilityCpuAutoCores > 8)) {
+    throw new Error('Observability auto cores must be between 1 and 8');
   }
   const telegramEnabled = elements.settingsTelegramEnabled && elements.settingsTelegramEnabled.checked;
   const telegramLevel = elements.settingsTelegramLevel && elements.settingsTelegramLevel.value;
@@ -28655,6 +28968,7 @@ function collectGeneralSettings() {
     softcam_descramble_batch_packets: softcamBatchPackets !== undefined ? Math.floor(softcamBatchPackets) : 64,
     softcam_descramble_queue_depth_batches: softcamQueueDepth !== undefined ? Math.floor(softcamQueueDepth) : 16,
     softcam_descramble_worker_stack_kb: softcamWorkerStackKb !== undefined ? Math.floor(softcamWorkerStackKb) : 256,
+    softcam_descramble_workers_cap: softcamWorkersCap !== undefined ? Math.floor(softcamWorkersCap) : 0,
     softcam_descramble_drop_policy: softcamDropPolicy || 'drop_oldest',
     softcam_descramble_log_rate_limit_sec: softcamLogRate !== undefined ? Math.floor(softcamLogRate) : 5,
     lua_gc_step_units: luaGcStepUnits !== undefined ? Math.floor(luaGcStepUnits) : 0,
@@ -28810,6 +29124,22 @@ function collectGeneralSettings() {
     payload.ai_logs_retention_days = observabilityLogsDays || 7;
     payload.ai_metrics_retention_days = observabilityMetricsDays || 30;
     payload.ai_rollup_interval_sec = observabilityRollup || 60;
+    payload.observability_db_path = observabilityDbPath || '';
+    payload.observability_writer_batch_max = observabilityWriterBatchMax !== undefined
+      ? Math.floor(observabilityWriterBatchMax)
+      : 400;
+    payload.observability_writer_flush_ms = observabilityWriterFlushMs !== undefined
+      ? Math.floor(observabilityWriterFlushMs)
+      : 20;
+    payload.observability_writer_max_queue = observabilityWriterQueueMax !== undefined
+      ? Math.floor(observabilityWriterQueueMax)
+      : 20000;
+    payload.observability_affinity_enabled = !!observabilityAffinityEnabled;
+    payload.observability_cpu_policy = observabilityCpuPolicy || 'auto';
+    payload.observability_cpu_auto_cores = observabilityCpuAutoCores !== undefined
+      ? Math.floor(observabilityCpuAutoCores)
+      : 2;
+    payload.observability_cpu_set = observabilityCpuSet || '';
     if (elements.settingsSystemMetricsRollupEnabled) {
       payload.observability_system_rollup_enabled = !!systemMetricsRollupEnabled;
     }
@@ -32426,7 +32756,9 @@ async function refreshAll() {
     } else if (view === 'adapters') {
       await loadAdapters();
       await loadAdapterStatus();
-      await loadDvbAdapters();
+      if (!state.dvbAdaptersLoaded) {
+        await loadDvbAdapters();
+      }
     } else if (view === 'splitters') {
       await loadSplitters();
     } else if (view === 'buffers') {
@@ -32466,6 +32798,10 @@ async function refreshAll() {
     if (view !== 'adapters') {
       bgTasks.push(loadAdapters());
       bgTasks.push(loadAdapterStatus());
+      // One-time DVB detection at startup to keep UI economical.
+      if (!state.dvbAdaptersBootstrapChecked) {
+        bgTasks.push(loadDvbAdapters());
+      }
     }
     if (view !== 'splitters') {
       bgTasks.push(loadSplitters());
@@ -33166,14 +33502,32 @@ function bindEvents() {
     elements.serverTest.addEventListener('click', async () => {
       try {
         if (elements.serverError) elements.serverError.textContent = '';
+        const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
+        const passwordRaw = elements.serverPassword ? elements.serverPassword.value : '';
+        let password = passwordRaw;
+        if (!password && login) {
+          const editing = state.serverEditing && typeof state.serverEditing === 'object'
+            ? state.serverEditing
+            : null;
+          const fromEditing = editing
+            ? (editing.password || editing.pass || '')
+            : '';
+          const storedServer = (!fromEditing && editing && editing.id)
+            ? (state.servers || []).find((s) => s && s.id === editing.id)
+            : null;
+          const fromState = (!fromEditing && editing && editing.id)
+            ? ((storedServer && (storedServer.password || storedServer.pass)) || '')
+            : '';
+          password = fromEditing || fromState || '';
+        }
         const payload = {
           id: state.serverEditing && state.serverEditing.id ? state.serverEditing.id : undefined,
           api_type: normalizeServerApiType(elements.serverType ? elements.serverType.value.trim() : 'auto'),
           host: elements.serverHost ? elements.serverHost.value.trim() : '',
           port: toNumber(elements.serverPort && elements.serverPort.value),
           insecure: elements.serverInsecure ? elements.serverInsecure.checked : false,
-          login: elements.serverLogin ? elements.serverLogin.value.trim() : '',
-          password: elements.serverPassword ? elements.serverPassword.value : '',
+          login,
+          password,
         };
         await testServer(undefined, payload);
       } catch (err) {
@@ -33786,11 +34140,28 @@ function bindEvents() {
     });
   }
   if (elements.streamTablePageSize) {
-    elements.streamTablePageSize.value = String(normalizeStreamTablePageSize(state.streamTablePageSize));
+    elements.streamTablePageSize.value = streamTablePageSizeToUiValue(state.streamTablePageSize);
     elements.streamTablePageSize.addEventListener('change', () => {
       setStreamTablePageSize(elements.streamTablePageSize.value);
     });
   }
+  if (elements.streamCompactSort) {
+    elements.streamCompactSort.value = normalizeStreamTableSortKey(state.streamTableSortKey);
+    elements.streamCompactSort.addEventListener('change', () => {
+      const nextKey = normalizeStreamTableSortKey(elements.streamCompactSort.value);
+      const currentKey = normalizeStreamTableSortKey(state.streamTableSortKey);
+      if (nextKey === currentKey) return;
+      const defaultDir = (nextKey === 'clients' || nextKey === 'input_bitrate' || nextKey === 'transcode' || nextKey === 'dvr') ? 'desc' : 'asc';
+      setStreamTableSortDirect(nextKey, defaultDir);
+    });
+  }
+  if (elements.streamCompactSortDir) {
+    elements.streamCompactSortDir.addEventListener('click', () => {
+      const nextDir = state.streamTableSortDir === 'desc' ? 'asc' : 'desc';
+      setStreamTableSortDirect(state.streamTableSortKey, nextDir);
+    });
+  }
+  updateStreamCompactSortUi();
 
   if (elements.streamCompact) {
     elements.streamCompact.addEventListener('click', (event) => {

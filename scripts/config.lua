@@ -167,6 +167,93 @@ local function db_count(db, table_name, where)
     return tonumber(value) or 0
 end
 
+local function setup_observability_schema(db)
+    if not db then
+        return
+    end
+    db_exec(db, [[
+    CREATE TABLE IF NOT EXISTS ai_log_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        level TEXT NOT NULL,
+        stream_id TEXT,
+        component TEXT,
+        message TEXT,
+        fingerprint TEXT,
+        tags_json TEXT
+    );
+    ]])
+    db_exec(db, [[
+    CREATE TABLE IF NOT EXISTS ai_metrics_rollup (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts_bucket INTEGER NOT NULL,
+        scope TEXT NOT NULL,
+        scope_id TEXT,
+        metric_key TEXT NOT NULL,
+        resolution_sec INTEGER NOT NULL DEFAULT 60,
+        value REAL NOT NULL,
+        tags_json TEXT
+    );
+    ]])
+    db_exec(db, [[
+    CREATE TABLE IF NOT EXISTS system_metrics_rollup (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts_bucket INTEGER NOT NULL UNIQUE,
+        cpu_usage REAL,
+        mem_used_percent REAL,
+        disk_used_percent REAL,
+        net_json TEXT
+    );
+    ]])
+    db_exec_safe(db, [[
+    ALTER TABLE ai_metrics_rollup ADD COLUMN resolution_sec INTEGER NOT NULL DEFAULT 60;
+    ]])
+
+    db_exec_safe(db, "DROP INDEX IF EXISTS ai_metrics_rollup_unique;")
+
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_log_events_ts_idx ON ai_log_events(ts);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_log_events_stream_idx ON ai_log_events(stream_id);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_log_events_level_idx ON ai_log_events(level);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_log_events_stream_component_ts_idx
+        ON ai_log_events(stream_id, component, ts DESC);
+    ]])
+    db_exec(db, [[
+    CREATE UNIQUE INDEX IF NOT EXISTS ai_metrics_rollup_unique2
+        ON ai_metrics_rollup(ts_bucket, scope, scope_id, metric_key, resolution_sec);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_ts_idx ON ai_metrics_rollup(ts_bucket);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_idx ON ai_metrics_rollup(scope, scope_id);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_key_idx ON ai_metrics_rollup(metric_key);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_ts_res_idx
+        ON ai_metrics_rollup(scope, scope_id, ts_bucket, resolution_sec);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_scope_metric_ts_res_idx
+        ON ai_metrics_rollup(scope, scope_id, metric_key, ts_bucket, resolution_sec);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS ai_metrics_rollup_metric_ts_res_idx
+        ON ai_metrics_rollup(metric_key, ts_bucket, resolution_sec);
+    ]])
+    db_exec(db, [[
+    CREATE INDEX IF NOT EXISTS system_metrics_rollup_ts_idx ON system_metrics_rollup(ts_bucket);
+    ]])
+end
+
 local function db_supports_upsert(db)
     local ok, err = db:exec("CREATE TABLE IF NOT EXISTS __astra_upsert_check (id INTEGER PRIMARY KEY, v TEXT);")
     if ok ~= true then
@@ -662,8 +749,92 @@ function config.init(opts)
             "), using compatibility mode" .. detail)
     end
     config.migrate_observability_master_switch()
+    config.init_observability_db(opts)
     config.ensure_admin()
     config.sanitize_adapters()
+end
+
+function config.init_observability_db(opts)
+    opts = opts or {}
+    local function normalize_path(path)
+        local text = tostring(path or "")
+        if text == "" then
+            return ""
+        end
+        return text
+    end
+
+    local prev_db = config.observability_db
+    local prev_path = tostring(config.observability_db_path or "")
+    local function close_prev_if_needed(new_db, new_path)
+        if prev_db and prev_db ~= config.db and prev_db ~= new_db then
+            if prev_path ~= tostring(new_path or "") then
+                pcall(function()
+                    prev_db:close()
+                end)
+            end
+        end
+    end
+
+    local configured_path = normalize_path(opts.observability_db_path)
+    if configured_path == "" and config.get_setting then
+        configured_path = normalize_path(config.get_setting("observability_db_path"))
+    end
+    if configured_path == "" then
+        configured_path = tostring(config.data_dir or "./data") .. "/observability.db"
+    end
+
+    if config.observability_db and config.observability_db ~= config.db
+        and configured_path == tostring(config.observability_db_path or "")
+    then
+        config.observability_isolated = true
+        setup_observability_schema(config.observability_db)
+        return
+    end
+
+    if configured_path == tostring(config.db_path or "") then
+        close_prev_if_needed(config.db, config.db_path)
+        config.observability_db = config.db
+        config.observability_db_path = config.db_path
+        config.observability_isolated = false
+        setup_observability_schema(config.observability_db)
+        return
+    end
+
+    local obs_dir = configured_path:match("^(.*)/[^/]+$")
+    if obs_dir and obs_dir ~= "" then
+        ensure_dir(obs_dir)
+    end
+
+    local obs_db, err = sqlite.open(configured_path)
+    if not obs_db then
+        log.warning("[observability] failed to open separate observability db (" ..
+            tostring(configured_path) .. "): " .. tostring(err) .. ". fallback to stream.db")
+        close_prev_if_needed(config.db, config.db_path)
+        config.observability_db = config.db
+        config.observability_db_path = config.db_path
+        config.observability_isolated = false
+        setup_observability_schema(config.observability_db)
+        return
+    end
+
+    db_exec_safe(obs_db, "PRAGMA journal_mode=WAL;")
+    db_exec_safe(obs_db, "PRAGMA synchronous=NORMAL;")
+    db_exec_safe(obs_db, "PRAGMA busy_timeout=3000;")
+    setup_observability_schema(obs_db)
+
+    close_prev_if_needed(obs_db, configured_path)
+    config.observability_db = obs_db
+    config.observability_db_path = configured_path
+    config.observability_isolated = true
+    log.info("[observability] using separate storage: " .. tostring(config.observability_db_path))
+end
+
+function config.get_observability_storage_info()
+    return {
+        db_path = config.observability_db_path or config.db_path,
+        isolated = config.observability_isolated == true,
+    }
 end
 
 function config.sanitize_adapters()
@@ -1959,6 +2130,10 @@ function config.add_alert(level, stream_id, code, message, meta)
     return true
 end
 
+local function get_observability_db()
+    return config.observability_db or config.db
+end
+
 function config.list_alerts(opts)
     opts = opts or {}
     local since = tonumber(opts.since) or 0
@@ -2026,7 +2201,8 @@ function config.add_ai_log_event(entry)
     if entry.tags ~= nil then
         tags_json = json_encode(entry.tags)
     end
-    local ok, err = db_exec_safe(config.db,
+    local obs_db = get_observability_db()
+    local ok, err = db_exec_safe(obs_db,
         "INSERT INTO ai_log_events(ts, level, stream_id, component, message, fingerprint, tags_json) VALUES(" ..
         ts .. ", '" .. sql_escape(level) .. "', '" .. sql_escape(stream_id) .. "', '" ..
         sql_escape(component) .. "', '" .. sql_escape(message) .. "', '" ..
@@ -2070,8 +2246,13 @@ function config.list_ai_log_events(opts)
     if opts.order and tostring(opts.order):lower() == "asc" then
         order = "ASC"
     end
-    local rows = db_query(config.db, "SELECT id, ts, level, stream_id, component, message, fingerprint, tags_json " ..
+    local obs_db = get_observability_db()
+    local rows = db_query(obs_db, "SELECT id, ts, level, stream_id, component, message, fingerprint, tags_json " ..
         "FROM ai_log_events WHERE " .. where_sql .. " ORDER BY ts " .. order .. " LIMIT " .. limit .. ";")
+    if #rows == 0 and obs_db ~= config.db then
+        rows = db_query(config.db, "SELECT id, ts, level, stream_id, component, message, fingerprint, tags_json " ..
+            "FROM ai_log_events WHERE " .. where_sql .. " ORDER BY ts " .. order .. " LIMIT " .. limit .. ";")
+    end
     for _, row in ipairs(rows) do
         if row.tags_json and row.tags_json ~= "" then
             row.tags = json_decode(row.tags_json)
@@ -2087,7 +2268,8 @@ function config.prune_ai_log_events(before_ts)
     if cutoff <= 0 then
         return 0
     end
-    local res = db_exec(config.db, "DELETE FROM ai_log_events WHERE ts < " .. cutoff .. ";")
+    local obs_db = get_observability_db()
+    local res = db_exec(obs_db, "DELETE FROM ai_log_events WHERE ts < " .. cutoff .. ";")
     return res and true or false
 end
 
@@ -2131,7 +2313,8 @@ function config.upsert_ai_metric(entry)
             ts_bucket .. ", '" .. sql_escape(scope) .. "', '" .. sql_escape(scope_id) .. "', '" ..
             sql_escape(metric_key) .. "', " .. resolution_sec .. ", " .. value .. ", '" .. sql_escape(tags_json) .. "');"
     end
-    local ok, err = db_exec_safe(config.db, sql)
+    local obs_db = get_observability_db()
+    local ok, err = db_exec_safe(obs_db, sql)
     if not ok then
         -- Метрики не критичны; не прерываем работу процесса.
         log.warning("[observability] failed to upsert ai_metric: " .. tostring(err))
@@ -2147,20 +2330,21 @@ function config.upsert_ai_metrics_batch(rows)
     if #rows == 0 then
         return true
     end
-    local ok, err = db_exec_safe(config.db, "BEGIN;")
+    local obs_db = get_observability_db()
+    local ok, err = db_exec_safe(obs_db, "BEGIN;")
     if not ok then
         return nil, err
     end
     for _, entry in ipairs(rows) do
         local applied, apply_err = config.upsert_ai_metric(entry)
         if not applied then
-            db_exec_safe(config.db, "ROLLBACK;")
+            db_exec_safe(obs_db, "ROLLBACK;")
             return nil, apply_err
         end
     end
-    ok, err = db_exec_safe(config.db, "COMMIT;")
+    ok, err = db_exec_safe(obs_db, "COMMIT;")
     if not ok then
-        db_exec_safe(config.db, "ROLLBACK;")
+        db_exec_safe(obs_db, "ROLLBACK;")
         return nil, err
     end
     return true
@@ -2211,8 +2395,13 @@ function config.list_ai_metrics(opts)
         table.insert(where, "resolution_sec<=" .. math.floor(tonumber(opts.resolution_max)))
     end
     local where_sql = table.concat(where, " AND ")
-    local rows = db_query(config.db, "SELECT ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json " ..
+    local obs_db = get_observability_db()
+    local rows = db_query(obs_db, "SELECT ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json " ..
         "FROM ai_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    if #rows == 0 and obs_db ~= config.db then
+        rows = db_query(config.db, "SELECT ts_bucket, scope, scope_id, metric_key, resolution_sec, value, tags_json " ..
+            "FROM ai_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    end
     for _, row in ipairs(rows) do
         if row.tags_json and row.tags_json ~= "" then
             row.tags = json_decode(row.tags_json)
@@ -2228,7 +2417,8 @@ function config.prune_ai_metrics(before_ts)
     if cutoff <= 0 then
         return 0
     end
-    local res = db_exec(config.db, "DELETE FROM ai_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
+    local obs_db = get_observability_db()
+    local res = db_exec(obs_db, "DELETE FROM ai_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
     return res and true or false
 end
 
@@ -2257,7 +2447,8 @@ function config.upsert_system_metric_rollup(entry)
         return tostring(v)
     end
 
-    local ok, err = db_exec_safe(config.db,
+    local obs_db = get_observability_db()
+    local ok, err = db_exec_safe(obs_db,
         "INSERT OR REPLACE INTO system_metrics_rollup(ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json) VALUES(" ..
         ts_bucket .. ", " .. sql_num_or_null(cpu_usage) .. ", " .. sql_num_or_null(mem_used_percent) .. ", " ..
         sql_num_or_null(disk_used_percent) .. ", '" .. sql_escape(net_json) .. "');")
@@ -2283,8 +2474,13 @@ function config.list_system_metric_rollup(opts)
         table.insert(where, "ts_bucket < " .. until_ts)
     end
     local where_sql = table.concat(where, " AND ")
-    local rows = db_query(config.db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
+    local obs_db = get_observability_db()
+    local rows = db_query(obs_db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
         "FROM system_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    if #rows == 0 and obs_db ~= config.db then
+        rows = db_query(config.db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
+            "FROM system_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
+    end
     for _, row in ipairs(rows) do
         if row.net_json and row.net_json ~= "" then
             row.net = json_decode(row.net_json)
@@ -2300,7 +2496,8 @@ function config.prune_system_metric_rollup(before_ts)
     if cutoff <= 0 then
         return 0
     end
-    local res = db_exec(config.db, "DELETE FROM system_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
+    local obs_db = get_observability_db()
+    local res = db_exec(obs_db, "DELETE FROM system_metrics_rollup WHERE ts_bucket < " .. cutoff .. ";")
     return res and true or false
 end
 

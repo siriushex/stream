@@ -23,6 +23,14 @@ config.set_setting = function(key, value)
   set_calls = set_calls + 1
   store[key] = value
 end
+local obs_db_reinit_calls = 0
+local last_obs_db_path = nil
+config.init_observability_db = function(opts)
+  obs_db_reinit_calls = obs_db_reinit_calls + 1
+  if type(opts) == "table" then
+    last_obs_db_path = opts.observability_db_path
+  end
+end
 config.add_alert = function() end
 config.with_transaction = function(fn)
   return fn()
@@ -36,6 +44,18 @@ runtime = {
   refresh = function(_force)
     reload_calls = reload_calls + 1
     return true
+  end,
+}
+local obs_configure_calls = 0
+local sysm_configure_calls = 0
+ai_observability = {
+  configure = function()
+    obs_configure_calls = obs_configure_calls + 1
+  end,
+}
+system_metrics = {
+  configure = function()
+    sysm_configure_calls = sysm_configure_calls + 1
   end,
 }
 
@@ -93,6 +113,22 @@ assert_true(sent ~= nil and tonumber(sent.code) == 200,
   "expected 200 for runtime-affecting settings save, got code=" .. tostring(sent and sent.code) ..
   " body=" .. tostring(sent and sent.content))
 assert_true(reload_calls == 1, "runtime-affecting settings patch must call reload_runtime")
+
+api.handle_request(server, client, make_request({
+  observability_enabled = true,
+  observability_db_path = "/tmp/observability-unit.db",
+  observability_writer_batch_max = 400,
+}))
+
+assert_true(sent ~= nil and tonumber(sent.code) == 200,
+  "expected 200 for observability-only settings save, got code=" .. tostring(sent and sent.code) ..
+  " body=" .. tostring(sent and sent.content))
+assert_true(reload_calls == 1, "observability-only patch must not call reload_runtime")
+assert_true(obs_configure_calls >= 1, "expected ai_observability.configure call")
+assert_true(sysm_configure_calls >= 1, "expected system_metrics.configure call")
+assert_true(obs_db_reinit_calls >= 1, "expected observability db reinit")
+assert_true(last_obs_db_path == "/tmp/observability-unit.db",
+  "expected observability db path to be passed to reinit")
 
 log.info("[unit] settings_runtime_reload_fastpath_unit ok")
 astra.exit()

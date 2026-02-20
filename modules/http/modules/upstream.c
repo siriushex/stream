@@ -44,6 +44,8 @@ struct http_response_t
     size_t buffer_fill;
 
     bool is_socket_busy;
+    bool ts_rewrite_cc_enabled;
+    uint8_t *cc_map;
 };
 
 /*
@@ -96,39 +98,54 @@ static void on_ts(void *arg, const uint8_t *ts)
 {
     http_client_t *client = (http_client_t *)arg;
     http_response_t *response = client->response;
+    uint8_t packet[TS_PACKET_SIZE];
 
     if(response->buffer_count + TS_PACKET_SIZE >= response->buffer_size)
     {
-        // overflow
-        response->buffer_count = 0;
-        response->buffer_read = 0;
-        response->buffer_write = 0;
-        if(response->is_socket_busy)
-        {
-            asc_socket_set_on_ready(client->sock, NULL);
-            response->is_socket_busy = false;
-        }
+        /* Do not silently drop TS packets: this causes downstream CC errors. */
+        http_client_error(client, "upstream buffer overflow (%d/%d), closing client",
+                          (int)response->buffer_count, (int)response->buffer_size);
+        http_client_close(client);
         return;
+    }
+
+    memcpy(packet, ts, TS_PACKET_SIZE);
+    if(response->ts_rewrite_cc_enabled && response->cc_map)
+    {
+        const uint16_t pid = TS_GET_PID(packet);
+        const uint8_t state = response->cc_map[pid];
+        const bool seen = (state & 0x80) != 0;
+        const uint8_t last_cc = state & 0x0F;
+        const uint8_t afc = (packet[3] >> 4) & 0x03;
+        const bool has_payload = (afc == 0x01 || afc == 0x03);
+        uint8_t cc = 0;
+
+        if(seen)
+            cc = has_payload ? (uint8_t)((last_cc + 1) & 0x0F) : last_cc;
+
+        TS_SET_CC(packet, cc);
+        response->cc_map[pid] = (uint8_t)(0x80 | cc);
     }
 
     const size_t buffer_write = response->buffer_write + TS_PACKET_SIZE;
     if(buffer_write < response->buffer_size)
     {
-        memcpy(&response->buffer[response->buffer_write], ts, TS_PACKET_SIZE);
+        memcpy(&response->buffer[response->buffer_write], packet, TS_PACKET_SIZE);
         response->buffer_write = buffer_write;
     }
     else if(buffer_write > response->buffer_size)
     {
         const size_t ts_head = response->buffer_size - response->buffer_write;
-        memcpy(&response->buffer[response->buffer_write], ts, ts_head);
+        memcpy(&response->buffer[response->buffer_write], packet, ts_head);
         response->buffer_write = TS_PACKET_SIZE - ts_head;
-        memcpy(response->buffer, &ts[ts_head], response->buffer_write);
+        memcpy(response->buffer, &packet[ts_head], response->buffer_write);
     }
     else
     {
-        memcpy(&response->buffer[response->buffer_write], ts, TS_PACKET_SIZE);
+        memcpy(&response->buffer[response->buffer_write], packet, TS_PACKET_SIZE);
         response->buffer_write = 0;
     }
+
     response->buffer_count += TS_PACKET_SIZE;
 
     if(   response->is_socket_busy == false
@@ -182,6 +199,10 @@ static void on_upstream_send(void *arg)
         }
         lua_pop(lua, 1);
 
+        lua_getfield(lua, 3, "ts_rewrite_cc_enabled");
+        client->response->ts_rewrite_cc_enabled = lua_toboolean(lua, -1);
+        lua_pop(lua, 1);
+
         if(client->response->buffer_size <= client->response->buffer_fill)
         {
             http_client_error(client, "buffer_size must be greater than buffer_fill");
@@ -201,6 +222,8 @@ static void on_upstream_send(void *arg)
     }
 
     client->response->buffer = (uint8_t *)malloc(client->response->buffer_size);
+    if(client->response->ts_rewrite_cc_enabled)
+        client->response->cc_map = (uint8_t *)calloc(MAX_PID, sizeof(uint8_t));
 
     // like module_stream_init()
     client->response->__stream.self = (void *)client;
@@ -246,6 +269,8 @@ static int module_call(module_data_t *mod)
 
             module_stream_destroy(client->response);
 
+            if(client->response->cc_map)
+                free(client->response->cc_map);
             free(client->response->buffer);
             free(client->response);
             client->response = NULL;

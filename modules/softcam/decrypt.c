@@ -35,6 +35,7 @@
  *      descramble_batch_packets - number: batch size in TS packets (default 64)
  *      descramble_queue_depth_batches - number: input queue depth in batches (default 16)
  *      descramble_worker_stack_kb - number: pthread stack size for worker (default 256)
+ *      descramble_workers_cap - number: global cap for parallel workers (0=auto, default)
  *      descramble_drop_policy - string: drop_oldest|drop_newest (default drop_oldest)
  *      descramble_log_rate_limit_sec - number: rate limit for overflow logs (default 5)
  *      cas_data    - string, additional paramters for CAS
@@ -236,6 +237,7 @@ struct ca_stream_t
     uint64_t backup_suspend_count;
 
     /* Parallel descramble: immutable key ctx (refcounted) */
+    pthread_mutex_t parallel_key_mutex;
     descramble_key_ctx_t *parallel_key;
 };
 
@@ -305,12 +307,14 @@ struct module_data_t
         uint32_t batch_packets;
         uint32_t queue_depth_batches;
         uint32_t worker_stack_kb;
+        uint32_t workers_cap; /* 0=auto */
         uint8_t drop_policy; /* 0=drop_oldest, 1=drop_newest */
         uint32_t log_rate_limit_sec;
 
         pthread_t thread;
         bool thread_running;
         bool stop;
+        bool worker_slot_acquired;
 
         int pipe_rd;
         int pipe_wr;
@@ -356,7 +360,86 @@ struct module_data_t
 #define CAM_BACKUP_SUSPEND_BAD_STREAK 3
 #define CAM_BACKUP_SUSPEND_MS 10000
 
+/* Global safety cap for per-stream descramble workers. */
+static volatile uint32_t g_descramble_workers_active = 0;
+static volatile uint64_t g_descramble_cap_last_log_us = 0;
+
 void ca_stream_set_keys(ca_stream_t *ca_stream, const uint8_t *even, const uint8_t *odd);
+
+static uint32_t descramble_workers_cap_default(void)
+{
+    long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+    if(cpus < 1)
+        cpus = 1;
+    /*
+     * Conservative auto-cap:
+     * one worker per online CPU (not 2x), bounded to protect CAM/network loops
+     * on dense channel packs with per-stream fallback.
+     */
+    uint32_t cap = (uint32_t)cpus;
+    if(cap < 2U)
+        cap = 2U;
+    if(cap > 32U)
+        cap = 32U;
+    return cap;
+}
+
+static uint32_t descramble_workers_cap_effective(const module_data_t *mod)
+{
+    if(!mod)
+        return 0;
+    if(mod->descramble.workers_cap > 0)
+        return mod->descramble.workers_cap;
+    return descramble_workers_cap_default();
+}
+
+static bool descramble_worker_slot_acquire(module_data_t *mod)
+{
+    if(!mod)
+        return false;
+    if(mod->descramble.worker_slot_acquired)
+        return true;
+    const uint32_t cap = descramble_workers_cap_effective(mod);
+    if(cap == 0)
+        return true;
+
+    while(true)
+    {
+        const uint32_t cur = __sync_add_and_fetch(&g_descramble_workers_active, 0);
+        if(cur >= cap)
+            return false;
+        if(__sync_bool_compare_and_swap(&g_descramble_workers_active, cur, cur + 1U))
+        {
+            mod->descramble.worker_slot_acquired = true;
+            return true;
+        }
+    }
+}
+
+static void descramble_worker_slot_release(module_data_t *mod)
+{
+    if(!mod || !mod->descramble.worker_slot_acquired)
+        return;
+    __sync_sub_and_fetch(&g_descramble_workers_active, 1);
+    mod->descramble.worker_slot_acquired = false;
+}
+
+static void descramble_cap_log_rate_limited(module_data_t *mod, uint32_t cap)
+{
+    if(!mod)
+        return;
+    const uint64_t now_us = asc_utime();
+    const uint64_t interval_us = 30000000ULL; /* 30s */
+    const uint64_t last_us = g_descramble_cap_last_log_us;
+    if(last_us != 0 && now_us - last_us < interval_us)
+        return;
+    if(__sync_bool_compare_and_swap(&g_descramble_cap_last_log_us, last_us, now_us))
+    {
+        asc_log_warning(MSG("descramble_parallel cap reached (cap:%u active:%u), running inline"),
+                        (unsigned)cap,
+                        (unsigned)__sync_add_and_fetch(&g_descramble_workers_active, 0));
+    }
+}
 
 static inline uint32_t ref_inc_u32(volatile uint32_t *v)
 {
@@ -523,6 +606,13 @@ static void descramble_stop(module_data_t *mod);
 static void descramble_queue_ts(module_data_t *mod, const uint8_t *ts);
 static void descramble_flush_current(module_data_t *mod);
 
+static inline bool descramble_parallel_active(const module_data_t *mod)
+{
+    return mod
+        && mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD
+        && mod->descramble.thread_running;
+}
+
 static inline bool decrypt_any_cam_ready(module_data_t *mod)
 {
     return (   (mod->cam_primary && mod->cam_primary->is_ready)
@@ -578,6 +668,7 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
 
     ca_stream = malloc(sizeof(ca_stream_t));
     memset(ca_stream, 0, sizeof(ca_stream_t));
+    pthread_mutex_init(&ca_stream->parallel_key_mutex, NULL);
 
     ca_stream->ecm_pid = ecm_pid;
     ca_stream->arg_primary.stream = ca_stream;
@@ -614,6 +705,8 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
 
 void ca_stream_destroy(ca_stream_t *ca_stream)
 {
+    descramble_key_ctx_t *parallel_ctx = NULL;
+
     if(ca_stream->backup_timer)
     {
         asc_timer_destroy(ca_stream->backup_timer);
@@ -650,11 +743,15 @@ void ca_stream_destroy(ca_stream_t *ca_stream)
 
 #endif
 
-    if(ca_stream->parallel_key)
-    {
-        descramble_key_ctx_release(ca_stream->parallel_key);
-        ca_stream->parallel_key = NULL;
-    }
+    pthread_mutex_lock(&ca_stream->parallel_key_mutex);
+    parallel_ctx = ca_stream->parallel_key;
+    ca_stream->parallel_key = NULL;
+    pthread_mutex_unlock(&ca_stream->parallel_key_mutex);
+
+    if(parallel_ctx)
+        descramble_key_ctx_release(parallel_ctx);
+
+    pthread_mutex_destroy(&ca_stream->parallel_key_mutex);
 
     free(ca_stream);
 }
@@ -877,7 +974,7 @@ static void ca_stream_apply_keys_from_cam(module_data_t *mod, ca_stream_t *ca_st
     {
         /* Immediate apply path (legacy behavior) */
         ca_stream_stage_new_key(ca_stream, key16, mask, is_backup);
-        if(mod && mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        if(descramble_parallel_active(mod))
             ca_stream_apply_staged_key_parallel(mod, ca_stream);
         if(mask == 3 && ca_stream->active_key_set && asc_log_is_debug())
             asc_log_debug(MSG("Both keys changed"));
@@ -931,13 +1028,29 @@ static void ca_stream_guard_clear(ca_stream_t *ca_stream)
     ca_stream->cand_fail_count = 0;
 }
 
+static descramble_key_ctx_t * ca_stream_parallel_key_acquire(ca_stream_t *ca_stream)
+{
+    if(!ca_stream)
+        return NULL;
+    descramble_key_ctx_t *ctx = NULL;
+    pthread_mutex_lock(&ca_stream->parallel_key_mutex);
+    ctx = ca_stream->parallel_key;
+    if(ctx)
+        descramble_key_ctx_acquire(ctx);
+    pthread_mutex_unlock(&ca_stream->parallel_key_mutex);
+    return ctx;
+}
+
 static void ca_stream_parallel_key_replace(ca_stream_t *ca_stream)
 {
     if(!ca_stream)
         return;
     descramble_key_ctx_t *new_ctx = descramble_key_ctx_create_from_active(ca_stream);
-    descramble_key_ctx_t *old_ctx = ca_stream->parallel_key;
+    descramble_key_ctx_t *old_ctx = NULL;
+    pthread_mutex_lock(&ca_stream->parallel_key_mutex);
+    old_ctx = ca_stream->parallel_key;
     ca_stream->parallel_key = new_ctx;
+    pthread_mutex_unlock(&ca_stream->parallel_key_mutex);
     if(old_ctx)
         descramble_key_ctx_release(old_ctx);
 }
@@ -946,7 +1059,7 @@ static void ca_stream_apply_staged_key_parallel(module_data_t *mod, ca_stream_t 
 {
     if(!mod || !ca_stream)
         return;
-    if(mod->descramble.mode != DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    if(!descramble_parallel_active(mod))
         return;
     if(ca_stream->new_key_id == 0)
         return;
@@ -1422,7 +1535,7 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     /* In parallel mode keep TS order: PMT output must go through the same queue as A/V packets. */
     void (*pmt_send_cb)(void *, const uint8_t *) = (void (*)(void *, const uint8_t *))__module_stream_send;
     void *pmt_send_arg = &mod->__stream;
-    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    if(descramble_parallel_active(mod))
     {
         pmt_send_cb = (void (*)(void *, const uint8_t *))descramble_queue_ts;
         pmt_send_arg = mod;
@@ -1438,7 +1551,7 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     if(crc32 == psi->crc32)
     {
         mpegts_psi_demux(mod->pmt, pmt_send_cb, pmt_send_arg);
-        if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+        if(descramble_parallel_active(mod))
             descramble_flush_current(mod);
         return;
     }
@@ -1540,7 +1653,7 @@ static void on_pmt(void *arg, mpegts_psi_t *psi)
     PSI_SET_CRC32(mod->pmt);
 
     mpegts_psi_demux(mod->pmt, pmt_send_cb, pmt_send_arg);
-    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    if(descramble_parallel_active(mod))
         descramble_flush_current(mod);
 }
 
@@ -2017,6 +2130,12 @@ static bool descramble_start(module_data_t *mod)
         return true;
     if(mod->descramble.thread_running)
         return true;
+    if(!descramble_worker_slot_acquire(mod))
+    {
+        const uint32_t cap = descramble_workers_cap_effective(mod);
+        descramble_cap_log_rate_limited(mod, cap);
+        return true;
+    }
 
     /* Reset runtime state (keep config values). */
     mod->descramble.stop = false;
@@ -2033,6 +2152,7 @@ static bool descramble_start(module_data_t *mod)
     if(pipe(fds) != 0)
     {
         asc_log_error(MSG("descramble: pipe() failed: %s"), strerror(errno));
+        descramble_worker_slot_release(mod);
         return false;
     }
     mod->descramble.pipe_rd = fds[0];
@@ -2045,6 +2165,7 @@ static bool descramble_start(module_data_t *mod)
         close(mod->descramble.pipe_wr);
         mod->descramble.pipe_rd = -1;
         mod->descramble.pipe_wr = -1;
+        descramble_worker_slot_release(mod);
         return false;
     }
 
@@ -2135,7 +2256,10 @@ static void descramble_stop(module_data_t *mod)
     if(!mod)
         return;
     if(!mod->descramble.thread_running && mod->descramble.pipe_rd == -1 && mod->descramble.pipe_wr == -1)
+    {
+        descramble_worker_slot_release(mod);
         return;
+    }
 
     /* Drop current batch (module is reloading/stopping). */
     if(mod->descramble.current)
@@ -2192,6 +2316,7 @@ static void descramble_stop(module_data_t *mod)
     descramble_free_pool(mod);
 
     mod->descramble.stop = false;
+    descramble_worker_slot_release(mod);
 }
 
 static void decrypt(module_data_t *mod)
@@ -2389,7 +2514,7 @@ static void descramble_queue_ts(module_data_t *mod, const uint8_t *ts)
         const uint16_t pid = TS_GET_PID(dst);
         ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
         if(ca_stream)
-            ctx = ca_stream->parallel_key;
+            ctx = ca_stream_parallel_key_acquire(ca_stream);
     }
 
     b->pkt_ctx[b->count] = ctx;
@@ -2407,7 +2532,16 @@ static void descramble_queue_ts(module_data_t *mod, const uint8_t *ts)
         if(!seen && b->held_ctx_count < b->cap)
         {
             b->held_ctx[b->held_ctx_count++] = ctx;
-            descramble_key_ctx_acquire(ctx);
+        }
+        else
+        {
+            /*
+             * ctx was acquired for this packet via ca_stream_parallel_key_acquire().
+             * Keep exactly one ref per unique ctx in held_ctx; release duplicate refs.
+             */
+            descramble_key_ctx_release(ctx);
+            if(!seen)
+                b->pkt_ctx[b->count] = NULL;
         }
     }
 
@@ -2543,7 +2677,7 @@ static void on_ts_parallel(module_data_t *mod, const uint8_t *ts)
 
 static void on_ts(module_data_t *mod, const uint8_t *ts)
 {
-    if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+    if(descramble_parallel_active(mod))
     {
         on_ts_parallel(mod, ts);
         return;
@@ -2638,7 +2772,7 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
                     if(ca_stream->cand_ok_count >= 2)
                     {
                         ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
-                        if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
+                        if(descramble_parallel_active(mod))
                             ca_stream_apply_staged_key_parallel(mod, ca_stream);
                         if(asc_log_is_debug())
                             asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
@@ -2810,17 +2944,35 @@ void on_cam_error(module_data_t *mod)
 
 void on_cam_response(module_data_t *mod, void *arg, const uint8_t *data)
 {
-    cam_ecm_arg_t *em_arg = (cam_ecm_arg_t *)arg;
-    ca_stream_t *ca_stream = em_arg ? em_arg->stream : NULL;
-    const bool is_backup = em_arg ? em_arg->is_backup : false;
-    if(!ca_stream)
+    if(!arg || !data)
         return;
+
+    /*
+     * `arg` can outlive ca_stream during reloads (queued ECM in CAM module).
+     * Never dereference arg directly: resolve it by address against live streams.
+     */
+    cam_ecm_arg_t *em_arg = (cam_ecm_arg_t *)arg;
+    ca_stream_t *ca_stream = NULL;
+    bool is_backup = false;
     asc_list_for(mod->ca_list)
     {
-        if(asc_list_data(mod->ca_list) == ca_stream)
+        ca_stream_t *it = asc_list_data(mod->ca_list);
+        if(!it)
+            continue;
+        if(&it->arg_primary == em_arg)
+        {
+            ca_stream = it;
+            is_backup = false;
             break;
+        }
+        if(&it->arg_backup == em_arg)
+        {
+            ca_stream = it;
+            is_backup = true;
+            break;
+        }
     }
-    if(asc_list_eol(mod->ca_list))
+    if(!ca_stream)
         return;
 
     if((data[0] & ~0x01) != 0x80)
@@ -3021,8 +3173,10 @@ static void module_init(module_data_t *mod)
     mod->descramble.batch_packets = 64;
     mod->descramble.queue_depth_batches = 16;
     mod->descramble.worker_stack_kb = 256;
+    mod->descramble.workers_cap = 0; /* 0 = auto (1xCPU, max 32) */
     mod->descramble.drop_policy = 0; /* drop_oldest */
     mod->descramble.log_rate_limit_sec = 5;
+    mod->descramble.worker_slot_acquired = false;
 
     const char *descramble_parallel_opt = NULL;
     module_option_string("descramble_parallel", &descramble_parallel_opt, NULL);
@@ -3059,6 +3213,14 @@ static void module_init(module_data_t *mod)
     if(worker_stack_kb > 2048)
         worker_stack_kb = 2048;
     mod->descramble.worker_stack_kb = (uint32_t)worker_stack_kb;
+
+    int workers_cap = (int)mod->descramble.workers_cap;
+    module_option_number("descramble_workers_cap", &workers_cap);
+    if(workers_cap < 0)
+        workers_cap = 0;
+    if(workers_cap > 1024)
+        workers_cap = 1024;
+    mod->descramble.workers_cap = (uint32_t)workers_cap;
 
     const char *drop_policy_opt = NULL;
     module_option_string("descramble_drop_policy", &drop_policy_opt, NULL);
@@ -3380,6 +3542,14 @@ static int method_stats(module_data_t *mod)
     lua_setfield(lua, -2, "batch_packets");
     lua_pushinteger(lua, (lua_Integer)mod->descramble.queue_depth_batches);
     lua_setfield(lua, -2, "queue_depth_batches");
+    lua_pushinteger(lua, (lua_Integer)mod->descramble.workers_cap);
+    lua_setfield(lua, -2, "workers_cap");
+    lua_pushinteger(lua, (lua_Integer)descramble_workers_cap_effective(mod));
+    lua_setfield(lua, -2, "workers_cap_effective");
+    lua_pushinteger(lua, (lua_Integer)__sync_add_and_fetch(&g_descramble_workers_active, 0));
+    lua_setfield(lua, -2, "workers_active_global");
+    lua_pushboolean(lua, mod->descramble.thread_running);
+    lua_setfield(lua, -2, "worker_enabled");
     lua_pushinteger(lua, (lua_Integer)mod->descramble.drops);
     lua_setfield(lua, -2, "drops");
     lua_pushinteger(lua, (lua_Integer)mod->descramble.batches);

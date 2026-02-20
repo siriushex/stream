@@ -4539,6 +4539,7 @@ function http_output_on_request(server, client, request)
             upstream = channel_data.tail:stream(),
             buffer_size = buffer_size,
             buffer_fill = buffer_fill,
+            ts_rewrite_cc_enabled = true,
         })
     end
 
@@ -4595,6 +4596,7 @@ function http_output_on_request(server, client, request)
             upstream = channel_data.tail:stream(),
             buffer_size = client_data.output_data.config.buffer_size,
             buffer_fill = client_data.output_data.config.buffer_fill,
+            ts_rewrite_cc_enabled = true,
         })
     end
 

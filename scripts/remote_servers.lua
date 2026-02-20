@@ -81,10 +81,9 @@ local function classify_error_status(message, fallback_code)
     if text:find("unauthorized", 1, true)
         or text:find("login/password incorrect", 1, true)
     then
-        if status == 403 then
-            return 403
-        end
-        return 401
+        -- Remote auth failures must not trigger local UI unauthorized flow.
+        -- Return 403 consistently for "servers/*" actions.
+        return 403
     end
     if text:find("no response", 1, true)
         or text:find("timeout", 1, true)
@@ -165,6 +164,46 @@ local function normalize_api_type(value)
     return "auto"
 end
 
+local function pick_login(entry)
+    local login = trim(entry and entry.login or "")
+    if login ~= "" then
+        return login
+    end
+    local user = trim(entry and entry.user or "")
+    if user ~= "" then
+        return user
+    end
+    if entry and entry.login ~= nil then
+        return trim(entry.login)
+    end
+    if entry and entry.user ~= nil then
+        return trim(entry.user)
+    end
+    return ""
+end
+
+local function pick_password(entry)
+    if type(entry) ~= "table" then
+        return ""
+    end
+    local password = safe_tostring(entry.password)
+    if password ~= "" then
+        return password
+    end
+    local pass = safe_tostring(entry.pass)
+    if pass ~= "" then
+        return pass
+    end
+    -- Keep explicit empty override support when both fields are explicitly empty.
+    if entry.password ~= nil then
+        return safe_tostring(entry.password)
+    end
+    if entry.pass ~= nil then
+        return safe_tostring(entry.pass)
+    end
+    return ""
+end
+
 function remote_servers.normalize(entry)
     if type(entry) ~= "table" then
         return nil, "invalid server"
@@ -226,8 +265,8 @@ function remote_servers.normalize(entry)
         name = trim(entry.name),
         host = parsed and parsed.host or host_only,
         port = port,
-        login = trim(entry.login or entry.user),
-        password = safe_tostring(entry.password or entry.pass or ""),
+        login = pick_login(entry),
+        password = pick_password(entry),
         scheme = scheme,
         base_path = base_path,
         insecure = insecure == true,
