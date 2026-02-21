@@ -1405,12 +1405,66 @@ local function apply_config_change(server, client, request, opts)
         if not lkg_target and config and config.lkg_snapshot_path then
             lkg_target = config.lkg_snapshot_path()
         end
+        local export_paths = {
+            primary_path = primary_path,
+            lkg_path = lkg_target,
+            snapshot_path = snapshot_path,
+        }
+        local async_ok = false
+        local async_err = nil
         if stream_export_async and type(stream_export_async.request) == "function" then
-            pcall(stream_export_async.request, {
-                primary_path = primary_path,
-                lkg_path = lkg_target,
-                snapshot_path = snapshot_path,
-            })
+            local safe, res = pcall(stream_export_async.request, export_paths)
+            async_ok = safe and (res ~= false and res ~= nil)
+            if not async_ok then
+                async_err = safe and "request returned nil/false" or tostring(res)
+            end
+        else
+            async_err = "async exporter unavailable"
+        end
+        if not async_ok then
+            local payload, encoded_or_err = ensure_export_payload()
+            if payload then
+                local function write_target(path, label)
+                    if not path or path == "" then
+                        return true
+                    end
+                    local ok_export, err_export = config.export_astra_file(path, {
+                        payload = payload,
+                        encoded = encoded_or_err,
+                    })
+                    if not ok_export then
+                        return nil, tostring(label) .. " export failed: " .. tostring(err_export)
+                    end
+                    return true
+                end
+                local ok_export, export_err = write_target(export_paths.primary_path, "primary")
+                if ok_export then
+                    ok_export, export_err = write_target(export_paths.snapshot_path, "snapshot")
+                end
+                if ok_export then
+                    ok_export, export_err = write_target(export_paths.lkg_path, "lkg")
+                end
+                if not ok_export then
+                    log.error("[api] deferred export fallback failed: " .. tostring(export_err))
+                    if config and config.add_alert then
+                        config.add_alert("WARNING", "", "CONFIG_EXPORT_FALLBACK_FAILED", tostring(export_err), {
+                            revision_id = revision_id,
+                            async_error = tostring(async_err or ""),
+                        })
+                    end
+                else
+                    log.warning("[api] deferred export fallback used: " .. tostring(async_err or "unknown async error"))
+                end
+            else
+                local text = "config export failed: " .. tostring(encoded_or_err)
+                log.error("[api] deferred export fallback failed: " .. text)
+                if config and config.add_alert then
+                    config.add_alert("WARNING", "", "CONFIG_EXPORT_FALLBACK_FAILED", text, {
+                        revision_id = revision_id,
+                        async_error = tostring(async_err or ""),
+                    })
+                end
+            end
         end
     end
     if config and config.add_alert then
@@ -1746,8 +1800,9 @@ local function upsert_stream(server, client, id, request)
     end
     apply_config_change(server, client, request, {
         comment = "stream " .. id,
-        -- Keep stream Save fast: export primary config + revisions asynchronously (primary writer only).
-        defer_export = true,
+        -- Streams are user-facing and often edited live; keep on-disk JSON in sync
+        -- immediately to avoid runtime/file drift after save.
+        defer_export = false,
         validate = function()
             if enabled and type(validate_stream_config) == "function" then
                 local ok, err = validate_stream_config(cfg)
@@ -1785,7 +1840,7 @@ end
 local function delete_stream(server, client, id, request)
     apply_config_change(server, client, request, {
         comment = "stream " .. id .. " delete",
-        defer_export = true,
+        defer_export = false,
         apply = function()
             config.delete_stream(id)
         end,
@@ -1825,7 +1880,7 @@ local function purge_disabled_streams(server, client, request)
     apply_config_change(server, client, request, {
         actor = admin.username,
         comment = "purge disabled streams",
-        defer_export = true,
+        defer_export = false,
         apply = function()
             for _, id in ipairs(ids) do
                 config.delete_stream(id)

@@ -672,6 +672,16 @@ local function is_dash_mpd_path(path)
     return clean:match("%.mpd$") ~= nil
 end
 
+local function is_hls_playlist_path(path)
+    if not path or path == "" then
+        return false
+    end
+    local raw = tostring(path)
+    local clean = raw:match("^[^%?]+") or raw
+    clean = clean:lower()
+    return clean:match("%.m3u8$") ~= nil
+end
+
 function resolve_effective_input_format(conf)
     if type(conf) ~= "table" then
         return nil
@@ -706,6 +716,9 @@ function resolve_effective_input_format(conf)
         end
         if is_dash_mpd_path(path) then
             return "dash"
+        end
+        if is_hls_playlist_path(path) then
+            return "hls"
         end
     end
 
@@ -3576,6 +3589,51 @@ local function hls_build_base(conf)
     return scheme .. host
 end
 
+local function hls_apply_playlist_redirect(instance, location)
+    if not instance or not instance.playlist_conf then
+        return nil, "playlist_missing"
+    end
+    local conf = instance.playlist_conf
+    local loc = tostring(location or "")
+    if loc == "" then
+        return nil, "redirect_no_location"
+    end
+
+    local resolved = loc
+    if not resolved:match("://") then
+        if resolved:sub(1, 2) == "//" then
+            local scheme = (conf.format == "https") and "https:" or "http:"
+            resolved = scheme .. resolved
+        elseif resolved:sub(1, 1) == "/" then
+            conf.path = resolved
+            return true
+        else
+            local base_dir = tostring(conf.path or "/"):match("(.*/)")
+            if not base_dir then
+                base_dir = "/"
+            end
+            if base_dir:sub(-1) ~= "/" then
+                base_dir = base_dir .. "/"
+            end
+            conf.path = base_dir .. resolved
+            return true
+        end
+    end
+
+    local o = parse_url(resolved)
+    if not o then
+        return nil, "redirect_failed"
+    end
+    if o.format == "https" and not https_native_supported() then
+        return nil, "redirect_https_unsupported"
+    end
+    conf.format = o.format
+    conf.host = o.host
+    conf.port = o.port
+    conf.path = o.path
+    return true
+end
+
 local function hls_resolve_url(base_url, base_dir, ref)
     if ref:match("^https?://") then
         return ref
@@ -4044,6 +4102,21 @@ local function hls_start(instance)
                     hls_schedule_backoff(instance, "playlist_no_response")
                 elseif response.code == 200 and response.content then
                     hls_handle_playlist(instance, response.content)
+                elseif response.code == 301 or response.code == 302 then
+                    local loc = response.headers and response.headers["location"] or nil
+                    local ok_redirect, redirect_err = hls_apply_playlist_redirect(instance, loc)
+                    if ok_redirect then
+                        log.info("[" .. tostring(instance.config and instance.config.name or "hls")
+                            .. "] HLS playlist redirect to "
+                            .. tostring(instance.playlist_conf.format) .. "://"
+                            .. tostring(instance.playlist_conf.host) .. ":"
+                            .. tostring(instance.playlist_conf.port)
+                            .. tostring(instance.playlist_conf.path))
+                        instance.force_refresh = true
+                    else
+                        log.error("[hls] playlist redirect error: " .. tostring(redirect_err))
+                        hls_schedule_backoff(instance, tostring(redirect_err))
+                    end
                 else
                     local msg = response.message or "error"
                     log.error("[hls] playlist http error: " .. tostring(response.code) .. ":" .. tostring(msg))
