@@ -1471,21 +1471,15 @@
                 <summary class="fold-summary">Что это и как пользоваться</summary>
                 <div class="fold-body">
                   <div class="form-hint">
-                    Auth backend — это внешний “портал”, который решает: пускать клиента к потоку или нет.
-                    Stream Hub вызывает URL при открытии <code>/play</code>/<code>HLS</code> и ждёт ответ.
+                    Auth backend — внешний портал, который решает: пускать клиента к потоку или нет.
+                    Для базовой настройки достаточно создать backend и указать только <b>Portal address</b>.
                   </div>
                   <div class="form-hint">
-                    Ответы портала: <code>200</code> — разрешить, <code>401/403</code> — запретить,
-                    <code>302</code> — редирект (Location будет отдан клиенту).
+                    Поддержаны пресеты для <b>Ministra Middleware</b> и <b>TMS IPTV</b>:
+                    endpoint и session keys заполняются автоматически. Остальные опции спрятаны в <b>Advanced</b>.
                   </div>
                   <div class="form-hint">
-                    Несколько URL:
-                    <b>Sequential</b> — пробуем по очереди, пока кто-то не разрешит.
-                    <b>Parallel</b> — запросы одновременно (быстрее, но дороже по сети).
-                  </div>
-                  <div class="form-hint">
-                    “Allow if all backends are down” — fail-open. Если порталы упали/таймаут — всё равно разрешить.
-                    Используйте осторожно.
+                    Ответы портала: <code>200</code> — allow, <code>401/403</code> — deny, <code>302</code> — redirect.
                   </div>
                   <div class="form-hint">
                     Где включить: <b>Edit stream → Auth</b> → Mode: “Named auth backend” → выбрать backend.
@@ -1496,9 +1490,10 @@
               <div class="table" id="auth-backend-table">
                 <div class="table-row header">
                   <div>ID</div>
+                  <div>Portal</div>
                   <div>Backends</div>
-                  <div>Allow default</div>
                   <div>Rules</div>
+                  <div>Cache</div>
                   <div></div>
                 </div>
               </div>
@@ -4631,20 +4626,49 @@
             <summary class="fold-summary">Что это</summary>
             <div class="fold-body">
               <div class="form-hint">
-                Этот backend вызывается при старте просмотра. Он должен ответить: <code>200</code> (allow) или
-                <code>401/403</code> (deny). Если вернёт <code>302</code> — клиент получит редирект.
+                В простом режиме нужно указать только адрес портала. Stream Hub сам построит endpoint авторизации
+                для популярных порталов (Ministra / TMS IPTV) и подставит правильный набор параметров.
               </div>
               <div class="form-hint">
-                Дальше: <b>Edit stream → Auth</b> → Mode: “Named auth backend” → выбрать этот ID.
+                Ответы портала: <code>200</code> — allow, <code>401/403</code> — deny, <code>302</code> — redirect.
+                Дальше: <b>Edit stream → Auth</b> → Mode: “Named auth backend” → выбрать backend ID.
               </div>
             </div>
           </details>
 
           <div class="form-grid">
             <label class="field">
-              <span>ID</span>
-              <input type="text" id="auth-backend-id" placeholder="main" />
+              <span>Backend ID (optional)</span>
+              <input type="text" id="auth-backend-id" placeholder="auto from portal host" />
+              <small class="form-hint">Если пусто, ID будет сгенерирован автоматически.</small>
             </label>
+            <label class="field">
+              <span>Portal type</span>
+              <select id="auth-backend-provider">
+                <option value="auto">Auto detect</option>
+                <option value="ministra">Ministra Middleware</option>
+                <option value="tms">TMS IPTV</option>
+                <option value="generic">Generic HTTP backend</option>
+              </select>
+              <small class="form-hint" id="auth-backend-provider-hint">Provider preset is detected from URL.</small>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Portal address</span>
+            <input type="text" id="auth-backend-portal-url" placeholder="https://name.com/stalker_portal or https://name.com/api/drm/auth_token" />
+            <small class="form-hint">Можно вставить URL портала или полный endpoint. Доп. параметр допускается в конце: <code>key=value</code>.</small>
+          </label>
+
+          <label class="field">
+            <span>Resolved auth endpoint</span>
+            <input type="text" id="auth-backend-resolved-url" placeholder="auto" readonly />
+          </label>
+
+          <details class="fold" id="auth-backend-advanced">
+            <summary class="fold-summary">Advanced</summary>
+            <div class="fold-body">
+          <div class="form-grid">
             <label class="field">
               <span>Mode</span>
               <select id="auth-backend-mode">
@@ -4653,15 +4677,6 @@
               </select>
               <small class="form-hint">Sequential — по очереди. Parallel — одновременно.</small>
             </label>
-          </div>
-
-          <label class="field">
-            <span>Backend URLs (one per line)</span>
-            <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
-            <small class="form-hint">Можно несколько URL. 1 строка = 1 URL. Комментарии: строки с <code>#</code> или <code>;</code>.</small>
-          </label>
-
-          <div class="form-grid">
             <label class="field">
               <span>Timeout (ms)</span>
               <input type="number" id="auth-backend-timeout" placeholder="3000" />
@@ -4672,10 +4687,6 @@
               <span>Fail-open: allow if all backends are down</span>
             </label>
           </div>
-
-          <details class="fold" id="auth-backend-advanced">
-            <summary class="fold-summary">Advanced</summary>
-            <div class="fold-body">
               <div class="form-grid">
                 <label class="field">
                   <span>Total timeout (ms)</span>
@@ -4691,6 +4702,12 @@
                   <input type="number" id="auth-backend-deny-ttl" placeholder="180" />
                 </label>
               </div>
+
+              <label class="field">
+                <span>Backend URLs (one per line, manual override)</span>
+                <textarea id="auth-backend-urls" rows="4" placeholder="http://127.0.0.1:9100/on_play"></textarea>
+                <small class="form-hint">Если заполнено “Portal address”, это поле заполнять не обязательно. Можно использовать для сложных схем и нескольких URL.</small>
+              </label>
 
               <label class="field">
                 <span>Session keys default</span>

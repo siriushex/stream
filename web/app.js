@@ -2224,6 +2224,10 @@ const elements = {
   authBackendTitle: $('#auth-backend-title'),
   authBackendForm: $('#auth-backend-form'),
   authBackendId: $('#auth-backend-id'),
+  authBackendProvider: $('#auth-backend-provider'),
+  authBackendProviderHint: $('#auth-backend-provider-hint'),
+  authBackendPortalUrl: $('#auth-backend-portal-url'),
+  authBackendResolvedUrl: $('#auth-backend-resolved-url'),
   authBackendAllowDefault: $('#auth-backend-allow-default'),
   authBackendUrls: $('#auth-backend-urls'),
   authBackendMode: $('#auth-backend-mode'),
@@ -6449,12 +6453,213 @@ function closeGroupModal() {
   setOverlay(elements.groupOverlay, false);
 }
 
+const AUTH_BACKEND_PROVIDER_AUTO = 'auto';
+const AUTH_BACKEND_PROVIDER_MINISTRA = 'ministra';
+const AUTH_BACKEND_PROVIDER_TMS = 'tms';
+const AUTH_BACKEND_PROVIDER_GENERIC = 'generic';
+const AUTH_BACKEND_DEFAULT_SESSION_KEYS = 'ip,name,proto,token,header.x-playback-session-id';
+
+function normalizeAuthBackendProvider(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === AUTH_BACKEND_PROVIDER_MINISTRA) return AUTH_BACKEND_PROVIDER_MINISTRA;
+  if (raw === AUTH_BACKEND_PROVIDER_TMS) return AUTH_BACKEND_PROVIDER_TMS;
+  if (raw === AUTH_BACKEND_PROVIDER_GENERIC) return AUTH_BACKEND_PROVIDER_GENERIC;
+  return AUTH_BACKEND_PROVIDER_AUTO;
+}
+
+function formatAuthBackendProvider(provider) {
+  const normalized = normalizeAuthBackendProvider(provider);
+  if (normalized === AUTH_BACKEND_PROVIDER_MINISTRA) return 'Ministra';
+  if (normalized === AUTH_BACKEND_PROVIDER_TMS) return 'TMS';
+  if (normalized === AUTH_BACKEND_PROVIDER_GENERIC) return 'Generic';
+  return 'Auto';
+}
+
+function parseAuthBackendStaticParams(value) {
+  const out = {};
+  const text = String(value || '').trim().replace(/[;]+$/g, '');
+  if (!text) return out;
+  text.split(/[;\s,]+/).forEach((token) => {
+    const part = String(token || '').trim();
+    if (!part) return;
+    const eq = part.indexOf('=');
+    if (eq <= 0) return;
+    const key = part.slice(0, eq).trim();
+    const val = part.slice(eq + 1).trim();
+    if (!key) return;
+    out[key] = val;
+  });
+  return out;
+}
+
+function normalizePortalUrlWithScheme(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(raw)) {
+    return `http://${raw}`;
+  }
+  return raw;
+}
+
+function parseAuthBackendPortalExpression(value) {
+  const source = String(value || '').trim().replace(/[;]+$/g, '');
+  if (!source) {
+    return { portalUrl: '', params: {} };
+  }
+  const split = source.match(/^(\S+)(?:\s+(.+))?$/);
+  const rawUrl = split ? split[1] : source;
+  const suffix = split && split[2] ? split[2] : '';
+  const portalUrl = normalizePortalUrlWithScheme(rawUrl);
+  return {
+    portalUrl,
+    params: parseAuthBackendStaticParams(suffix),
+  };
+}
+
+function detectAuthBackendProviderByUrl(portalUrl) {
+  let parsed = null;
+  try {
+    parsed = new URL(portalUrl);
+  } catch (_) {
+    return AUTH_BACKEND_PROVIDER_GENERIC;
+  }
+  const host = String(parsed.hostname || '').toLowerCase();
+  const path = String(parsed.pathname || '').toLowerCase();
+  if (path.includes('/stalker_portal/server/api/chk_flussonic_tmp_link.php')) {
+    return AUTH_BACKEND_PROVIDER_MINISTRA;
+  }
+  if (path.includes('/stalker_portal')) {
+    return AUTH_BACKEND_PROVIDER_MINISTRA;
+  }
+  if (path.includes('/api/drm/auth_token') || path.includes('/api/drm/')) {
+    return AUTH_BACKEND_PROVIDER_TMS;
+  }
+  if (host.includes('ministra') || host.includes('middleware')) {
+    return AUTH_BACKEND_PROVIDER_MINISTRA;
+  }
+  if (host.includes('tms') || host.includes('iptv')) {
+    return AUTH_BACKEND_PROVIDER_TMS;
+  }
+  return AUTH_BACKEND_PROVIDER_GENERIC;
+}
+
+function resolveAuthBackendPortalEndpoint(portalUrl, providerValue) {
+  if (!portalUrl) {
+    return { ok: false, error: 'Portal address is required' };
+  }
+  let parsed = null;
+  try {
+    parsed = new URL(portalUrl);
+  } catch (_) {
+    return { ok: false, error: 'Portal address must be a valid http/https URL' };
+  }
+  const protocol = String(parsed.protocol || '').toLowerCase();
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    return { ok: false, error: 'Portal address must use http:// or https://' };
+  }
+  const detected = detectAuthBackendProviderByUrl(parsed.toString());
+  const provider = normalizeAuthBackendProvider(providerValue) === AUTH_BACKEND_PROVIDER_AUTO
+    ? detected
+    : normalizeAuthBackendProvider(providerValue);
+  const endpoint = new URL(parsed.toString());
+  const pathLower = String(endpoint.pathname || '').toLowerCase();
+  if (provider === AUTH_BACKEND_PROVIDER_MINISTRA) {
+    if (!pathLower.includes('/stalker_portal/server/api/chk_flussonic_tmp_link.php')) {
+      const idx = pathLower.indexOf('/stalker_portal');
+      const base = idx >= 0
+        ? endpoint.pathname.slice(0, idx) + '/stalker_portal'
+        : '/stalker_portal';
+      endpoint.pathname = `${base}/server/api/chk_flussonic_tmp_link.php`;
+      endpoint.search = '';
+    }
+  } else if (provider === AUTH_BACKEND_PROVIDER_TMS) {
+    if (!pathLower.includes('/api/drm/auth_token')) {
+      endpoint.pathname = '/api/drm/auth_token';
+      endpoint.search = '';
+    }
+  }
+  return {
+    ok: true,
+    provider,
+    endpointUrl: endpoint.toString(),
+    portalUrl: parsed.toString(),
+  };
+}
+
+function buildAuthBackendPortalPreset(rawPortal, providerValue) {
+  const parsedPortal = parseAuthBackendPortalExpression(rawPortal);
+  const resolved = resolveAuthBackendPortalEndpoint(parsedPortal.portalUrl, providerValue);
+  if (!resolved.ok) return resolved;
+  return {
+    ok: true,
+    provider: resolved.provider,
+    portalUrl: resolved.portalUrl,
+    endpointUrl: resolved.endpointUrl,
+    params: parsedPortal.params || {},
+  };
+}
+
+function suggestAuthBackendId(existingMap, editingId, portalPreset, fallbackUrl) {
+  const current = String(editingId || '').trim();
+  const map = existingMap && typeof existingMap === 'object' ? existingMap : {};
+  let host = '';
+  if (portalPreset && portalPreset.portalUrl) {
+    try {
+      host = String(new URL(portalPreset.portalUrl).hostname || '');
+    } catch (_) {
+      host = '';
+    }
+  }
+  if (!host && fallbackUrl) {
+    try {
+      host = String(new URL(fallbackUrl).hostname || '');
+    } catch (_) {
+      host = '';
+    }
+  }
+  const prefix = portalPreset ? `${portalPreset.provider || 'auth'}_${host || 'portal'}` : (host || 'auth_backend');
+  const base = slugifyServerId(prefix);
+  let id = base || `auth_backend_${Date.now()}`;
+  let suffix = 2;
+  while (map[id] && id !== current) {
+    id = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
+
+function updateAuthBackendPortalPreview() {
+  if (!elements.authBackendPortalUrl || !elements.authBackendResolvedUrl) return;
+  const provider = elements.authBackendProvider ? elements.authBackendProvider.value : AUTH_BACKEND_PROVIDER_AUTO;
+  const rawPortal = elements.authBackendPortalUrl.value || '';
+  const resolved = buildAuthBackendPortalPreset(rawPortal, provider);
+  if (!rawPortal.trim()) {
+    elements.authBackendResolvedUrl.value = '';
+    if (elements.authBackendProviderHint) {
+      elements.authBackendProviderHint.textContent = 'Provider preset is detected from URL.';
+    }
+    return;
+  }
+  if (!resolved.ok) {
+    elements.authBackendResolvedUrl.value = '';
+    if (elements.authBackendProviderHint) {
+      elements.authBackendProviderHint.textContent = resolved.error || 'Invalid portal address';
+    }
+    return;
+  }
+  elements.authBackendResolvedUrl.value = resolved.endpointUrl;
+  if (elements.authBackendProviderHint) {
+    elements.authBackendProviderHint.textContent = `Resolved provider: ${formatAuthBackendProvider(resolved.provider)}`;
+  }
+}
+
 function renderAuthBackends() {
   if (!elements.authBackendTable || !elements.authBackendEmpty) return;
   const header = `
     <div class="table-row header">
       <div>ID</div>
-      <div>Default</div>
+      <div>Portal</div>
       <div>Backends</div>
       <div>Rules</div>
       <div>Cache</div>
@@ -6500,6 +6705,10 @@ function renderAuthBackends() {
     const urlsLabel = urls.length
       ? truncateText(urls[0], 60) + (urls.length > 1 ? ` (+${urls.length - 1})` : '')
       : '—';
+    const provider = cfg && cfg.provider
+      ? normalizeAuthBackendProvider(cfg.provider)
+      : detectAuthBackendProviderByUrl(urls[0] || '');
+    const providerLabel = formatAuthBackendProvider(provider);
 
     const rules = cfg && cfg.rules && typeof cfg.rules === 'object' ? cfg.rules : {};
     const allow = rules.allow && typeof rules.allow === 'object' ? rules.allow : {};
@@ -6517,7 +6726,8 @@ function renderAuthBackends() {
     if (allowIps || denyIps) rulesParts.push(`ip ${allowIps}/${denyIps}`);
     if (allowUa || denyUa) rulesParts.push(`ua ${allowUa}/${denyUa}`);
     if (allowCountry || denyCountry) rulesParts.push(`country ${allowCountry}/${denyCountry}`);
-    const rulesLabel = rulesParts.length ? rulesParts.join(' · ') : '—';
+    const policyLabel = allowDefault ? 'fail-open' : 'fail-close';
+    const rulesLabel = rulesParts.length ? `${policyLabel} · ${rulesParts.join(' · ')}` : policyLabel;
 
     const cacheLabel = [
       (allowTtl !== undefined ? `allow ${allowTtl}s` : 'allow —'),
@@ -6525,7 +6735,10 @@ function renderAuthBackends() {
     ].join(' · ');
 
     const idCell = createEl('div', '', id);
-    const defaultCell = createEl('div', '', allowDefault ? 'Allow' : 'Deny');
+    const providerCell = createEl('div', '', providerLabel);
+    if (cfg && cfg.portal_url) {
+      providerCell.title = String(cfg.portal_url);
+    }
     const urlCell = createEl('div', '', urlsLabel);
     if (urls.length) {
       urlCell.title = urls.join('\n');
@@ -6546,7 +6759,7 @@ function renderAuthBackends() {
     actionCell.appendChild(deleteBtn);
 
     row.appendChild(idCell);
-    row.appendChild(defaultCell);
+    row.appendChild(providerCell);
     row.appendChild(urlCell);
     row.appendChild(rulesCell);
     row.appendChild(cacheCell);
@@ -6572,6 +6785,26 @@ function openAuthBackendModal(id) {
   const cfg = id ? (state.authBackends && state.authBackends[id]) : null;
   state.authBackendEditingId = id ? String(id) : '';
   state.authBackendEditing = cfg ? { ...cfg } : null;
+  const list = cfg ? (cfg.backends || []) : [];
+  const backendItems = (Array.isArray(list) ? list : [])
+    .map((b) => {
+      if (!b) return null;
+      if (typeof b === 'string') {
+        return { url: String(b).trim(), params: {} };
+      }
+      if (typeof b === 'object' && b.url) {
+        return {
+          url: String(b.url).trim(),
+          params: (b.params && typeof b.params === 'object') ? { ...b.params } : {},
+          timeout_ms: b.timeout_ms,
+          static_headers: b.static_headers,
+        };
+      }
+      return null;
+    })
+    .filter((entry) => entry && entry.url);
+  const urls = backendItems.map((entry) => entry.url);
+  const firstBackend = backendItems[0] || null;
 
   if (elements.authBackendTitle) {
     elements.authBackendTitle.textContent = id ? `Edit auth backend: ${id}` : 'New auth backend';
@@ -6584,17 +6817,23 @@ function openAuthBackendModal(id) {
     elements.authBackendAllowDefault.checked = cfg ? cfg.allow_default === true : false;
   }
   if (elements.authBackendUrls) {
-    const list = cfg ? (cfg.backends || []) : [];
-    const urls = (Array.isArray(list) ? list : [])
-      .map((b) => {
-        if (!b) return '';
-        if (typeof b === 'string') return b;
-        if (typeof b === 'object' && b.url) return String(b.url);
-        return '';
-      })
-      .filter(Boolean);
     elements.authBackendUrls.value = urls.join('\n');
   }
+  if (elements.authBackendPortalUrl) {
+    let portalUrl = cfg && cfg.portal_url ? String(cfg.portal_url) : '';
+    if (!portalUrl && backendItems.length === 1) {
+      portalUrl = firstBackend ? String(firstBackend.url || '') : '';
+    }
+    elements.authBackendPortalUrl.value = portalUrl;
+  }
+  if (elements.authBackendProvider) {
+    const provider = normalizeAuthBackendProvider(cfg && cfg.provider);
+    elements.authBackendProvider.value = provider;
+  }
+  if (elements.authBackendResolvedUrl) {
+    elements.authBackendResolvedUrl.value = '';
+  }
+  updateAuthBackendPortalPreview();
   if (elements.authBackendMode) {
     const mode = cfg && cfg.mode ? String(cfg.mode) : 'parallel';
     elements.authBackendMode.value = (mode === 'sequential') ? 'sequential' : 'parallel';
@@ -6667,7 +6906,11 @@ function openAuthBackendModal(id) {
       && (cfg.cache.default_allow_sec !== undefined || cfg.cache.default_deny_sec !== undefined));
     const hasSessionKeys = !!(cfg && cfg.session_keys_default && parseCommaList(cfg.session_keys_default).length);
     const hasTotalTimeout = !!(cfg && cfg.total_timeout_ms !== undefined);
-    adv.open = !!(hasRules || hasCache || hasSessionKeys || hasTotalTimeout);
+    const hasManualBackends = backendItems.length > 1
+      || backendItems.some((entry) => entry && entry.params && Object.keys(entry.params).length > 0)
+      || backendItems.some((entry) => entry && entry.timeout_ms !== undefined)
+      || backendItems.some((entry) => entry && entry.static_headers && Object.keys(entry.static_headers || {}).length > 0);
+    adv.open = !!(hasRules || hasCache || hasSessionKeys || hasTotalTimeout || hasManualBackends);
   }
   setOverlay(elements.authBackendOverlay, true);
 }
@@ -6690,8 +6933,8 @@ function parseAuthBackendUrls(value) {
     const trimmed = line.trim();
     if (!trimmed) return;
     if (trimmed.startsWith('#') || trimmed.startsWith(';')) return;
-    trimmed.split(',').forEach((part) => {
-      const url = part.trim();
+    trimmed.split(/[;,]/).forEach((part) => {
+      const url = part.trim().replace(/[;]+$/g, '');
       if (url) out.push(url);
     });
   });
@@ -6704,12 +6947,38 @@ async function saveAuthBackend() {
   }
   setAuthBackendSavingState(true);
   try {
-  const id = elements.authBackendId ? elements.authBackendId.value.trim() : '';
+  const authBackends = { ...(state.authBackends || {}) };
+  const editingId = String(state.authBackendEditingId || '').trim();
+  const providerRaw = elements.authBackendProvider
+    ? String(elements.authBackendProvider.value || AUTH_BACKEND_PROVIDER_AUTO)
+    : AUTH_BACKEND_PROVIDER_AUTO;
+  const portalRaw = elements.authBackendPortalUrl ? String(elements.authBackendPortalUrl.value || '').trim() : '';
+  const portalPreset = portalRaw ? buildAuthBackendPortalPreset(portalRaw, providerRaw) : null;
+  if (portalRaw && (!portalPreset || !portalPreset.ok)) {
+    throw new Error((portalPreset && portalPreset.error) || 'Invalid portal address');
+  }
+
+  let urls = [];
+  if (portalPreset && portalPreset.endpointUrl) {
+    urls = [portalPreset.endpointUrl];
+  } else {
+    urls = parseAuthBackendUrls(elements.authBackendUrls ? elements.authBackendUrls.value : '');
+  }
+  if (!urls.length) throw new Error('Portal address is required (or fill Backend URLs in Advanced)');
+
+  let id = elements.authBackendId ? elements.authBackendId.value.trim() : '';
+  if (!id) {
+    id = suggestAuthBackendId(authBackends, editingId, portalPreset, urls[0] || '');
+    if (elements.authBackendId) {
+      elements.authBackendId.value = id;
+    }
+  }
   if (!id) throw new Error('Backend id is required');
+  if (authBackends[id] && editingId !== id) {
+    throw new Error(`Backend id "${id}" already exists`);
+  }
 
   const allowDefault = !!(elements.authBackendAllowDefault && elements.authBackendAllowDefault.checked);
-  const urls = parseAuthBackendUrls(elements.authBackendUrls ? elements.authBackendUrls.value : '');
-  if (!urls.length) throw new Error('At least one backend URL is required');
 
   const modeRaw = elements.authBackendMode ? String(elements.authBackendMode.value || '').trim() : '';
   const mode = modeRaw === 'sequential' ? 'sequential' : 'parallel';
@@ -6736,8 +7005,11 @@ async function saveAuthBackend() {
   if (allowTtl !== undefined && allowTtl <= 0) throw new Error('Allow cache TTL must be > 0');
   if (denyTtl !== undefined && denyTtl <= 0) throw new Error('Deny cache TTL must be > 0');
 
-  const authBackends = { ...(state.authBackends || {}) };
-  const prev = authBackends[id] && typeof authBackends[id] === 'object' ? authBackends[id] : {};
+  const prevKey = editingId || id;
+  const prev = authBackends[prevKey] && typeof authBackends[prevKey] === 'object' ? authBackends[prevKey] : {};
+  if (prevKey && prevKey !== id && authBackends[prevKey]) {
+    delete authBackends[prevKey];
+  }
 
   const prevBackends = Array.isArray(prev.backends) ? prev.backends : [];
   const prevByUrl = new Map();
@@ -6759,6 +7031,20 @@ async function saveAuthBackend() {
     }
     return { url };
   });
+  if (portalPreset && nextBackends[0]) {
+    const currentParams = nextBackends[0].params && typeof nextBackends[0].params === 'object'
+      ? { ...nextBackends[0].params }
+      : {};
+    const mergedParams = {
+      ...currentParams,
+      ...(portalPreset.params || {}),
+    };
+    if (Object.keys(mergedParams).length) {
+      nextBackends[0].params = mergedParams;
+    } else {
+      delete nextBackends[0].params;
+    }
+  }
 
   const nextRules = {
     allow: {
@@ -6786,8 +7072,17 @@ async function saveAuthBackend() {
     backends: nextBackends,
     rules: nextRules,
     cache: nextCache,
-    session_keys_default: sessionKeys.length ? sessionKeys : undefined,
+    session_keys_default: sessionKeys.length
+      ? sessionKeys
+      : (portalPreset ? parseCommaList(AUTH_BACKEND_DEFAULT_SESSION_KEYS) : undefined),
   };
+  if (portalPreset) {
+    nextCfg.provider = portalPreset.provider;
+    nextCfg.portal_url = portalPreset.portalUrl;
+  } else {
+    delete nextCfg.provider;
+    delete nextCfg.portal_url;
+  }
   if (timeoutMs !== undefined) {
     nextCfg.timeout_ms = Math.round(timeoutMs);
   } else {
@@ -35055,6 +35350,49 @@ function bindEvents() {
         if (elements.authBackendError) {
           elements.authBackendError.textContent = err.message || 'Failed to save auth backend';
         }
+      }
+    });
+  }
+  const handleAuthBackendQuickInput = () => {
+    updateAuthBackendPortalPreview();
+    if (!elements.authBackendId || elements.authBackendId.disabled) return;
+    if ((elements.authBackendId.value || '').trim()) return;
+    const rawPortal = elements.authBackendPortalUrl ? String(elements.authBackendPortalUrl.value || '').trim() : '';
+    const provider = elements.authBackendProvider
+      ? String(elements.authBackendProvider.value || AUTH_BACKEND_PROVIDER_AUTO)
+      : AUTH_BACKEND_PROVIDER_AUTO;
+    let preset = null;
+    if (rawPortal) {
+      const result = buildAuthBackendPortalPreset(rawPortal, provider);
+      if (result && result.ok) {
+        preset = result;
+      }
+    }
+    const urls = parseAuthBackendUrls(elements.authBackendUrls ? elements.authBackendUrls.value : '');
+    const suggested = suggestAuthBackendId(state.authBackends || {}, state.authBackendEditingId, preset, urls[0] || '');
+    if (suggested) {
+      elements.authBackendId.value = suggested;
+    }
+  };
+  if (elements.authBackendProvider) {
+    elements.authBackendProvider.addEventListener('change', handleAuthBackendQuickInput);
+  }
+  if (elements.authBackendPortalUrl) {
+    elements.authBackendPortalUrl.addEventListener('input', handleAuthBackendQuickInput);
+    elements.authBackendPortalUrl.addEventListener('blur', handleAuthBackendQuickInput);
+  }
+  if (elements.authBackendUrls) {
+    elements.authBackendUrls.addEventListener('input', () => {
+      if ((elements.authBackendPortalUrl && elements.authBackendPortalUrl.value.trim())
+        || !elements.authBackendId || elements.authBackendId.disabled
+        || (elements.authBackendId.value || '').trim()) {
+        return;
+      }
+      const urls = parseAuthBackendUrls(elements.authBackendUrls.value);
+      if (!urls.length) return;
+      const suggested = suggestAuthBackendId(state.authBackends || {}, state.authBackendEditingId, null, urls[0]);
+      if (suggested) {
+        elements.authBackendId.value = suggested;
       }
     });
   }
