@@ -40,7 +40,7 @@
         <button class="link-btn" id="btn-new-stream">New Stream</button>
         <button class="link-btn" id="btn-view">View</button>
         <button class="link-btn" id="btn-logout">Logout</button>
-        <div class="ui-stamp" id="ui-stamp">UI build 20260220a</div>
+        <div class="ui-stamp" id="ui-stamp">UI build 20260221a</div>
       </div>
     </header>
 
@@ -445,75 +445,102 @@
 
                 <div class="form-subsection">
                   <div class="panel-title">Auto signal search</div>
-                  <label class="checkline">
-                    <input type="checkbox" id="adapter-auto-signal-search-enabled" />
+                  <label class="switchline">
                     <span>Enable auto signal search for this adapter</span>
+                    <span class="switch">
+                      <input
+                        type="checkbox"
+                        id="adapter-auto-signal-search-enabled"
+                        data-toggle-target="adapter-auto-signal-body"
+                        role="switch"
+                        aria-label="Enable auto signal search for this adapter"
+                        aria-checked="false"
+                      />
+                      <span class="switch-slider"></span>
+                    </span>
                   </label>
-                  <div class="form-grid">
+                  <div id="adapter-auto-signal-body" hidden>
+                    <div class="form-grid">
+                      <label class="field">
+                        <span>Window (sec)</span>
+                        <input type="number" id="adapter-auto-signal-window-sec" placeholder="300" />
+                      </label>
+                      <label class="field">
+                        <span>Bitrate mode</span>
+                        <select id="adapter-auto-signal-bitrate-mode">
+                          <option value="both">both</option>
+                          <option value="absolute">absolute</option>
+                          <option value="relative">relative</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>Bitrate min (Kbit/s)</span>
+                        <input type="number" id="adapter-auto-signal-bitrate-min-kbps" placeholder="500" />
+                      </label>
+                      <label class="field">
+                        <span>Baseline window (sec)</span>
+                        <input type="number" id="adapter-auto-signal-baseline-window-sec" placeholder="1800" />
+                      </label>
+                      <label class="field">
+                        <span>Baseline drop (%)</span>
+                        <input type="number" id="adapter-auto-signal-baseline-drop-ratio-pct" placeholder="70" />
+                      </label>
+                      <label class="field">
+                        <span>CC delta threshold</span>
+                        <input type="number" id="adapter-auto-signal-cc-delta-threshold" placeholder="50" />
+                      </label>
+                      <label class="field">
+                        <span>Probe (sec)</span>
+                        <input type="number" id="adapter-auto-signal-probe-sec" placeholder="30" />
+                      </label>
+                      <label class="field">
+                        <span>Confirm (sec)</span>
+                        <input type="number" id="adapter-auto-signal-confirm-sec" placeholder="60" />
+                      </label>
+                      <label class="field">
+                        <span>Switch cooldown (sec)</span>
+                        <input type="number" id="adapter-auto-signal-switch-cooldown-sec" placeholder="180" />
+                      </label>
+                      <label class="field">
+                        <span>Min streams</span>
+                        <input type="number" id="adapter-auto-signal-min-streams" placeholder="1" />
+                      </label>
+                      <label class="switchline">
+                        <span>Satellite type flip recovery (S2->S->S2)</span>
+                        <span class="switch">
+                          <input
+                            type="checkbox"
+                            id="adapter-auto-signal-type-flip-enabled"
+                            data-toggle-target="adapter-auto-signal-type-flip-wait-field"
+                            role="switch"
+                            aria-label="Satellite type flip recovery (S2->S->S2)"
+                            aria-checked="false"
+                          />
+                          <span class="switch-slider"></span>
+                        </span>
+                      </label>
+                      <label class="field" id="adapter-auto-signal-type-flip-wait-field" hidden>
+                        <span>Type flip wait (sec)</span>
+                        <input type="number" id="adapter-auto-signal-type-flip-wait-sec" placeholder="30" />
+                      </label>
+                    </div>
                     <label class="field">
-                      <span>Window (sec)</span>
-                      <input type="number" id="adapter-auto-signal-window-sec" placeholder="300" />
+                      <span>Candidate FE targets (optional)</span>
+                      <input type="text" id="adapter-auto-signal-candidate-targets" placeholder="1.0, 2.0, 3.1" />
                     </label>
                     <label class="field">
-                      <span>Bitrate mode</span>
-                      <select id="adapter-auto-signal-bitrate-mode">
-                        <option value="both">both</option>
-                        <option value="absolute">absolute</option>
-                        <option value="relative">relative</option>
-                      </select>
+                      <span>Candidate profiles (JSON array)</span>
+                      <textarea id="adapter-auto-signal-candidate-profiles" rows="5" readonly></textarea>
                     </label>
-                    <label class="field">
-                      <span>Bitrate min (Kbit/s)</span>
-                      <input type="number" id="adapter-auto-signal-bitrate-min-kbps" placeholder="500" />
-                    </label>
-                    <label class="field">
-                      <span>Baseline window (sec)</span>
-                      <input type="number" id="adapter-auto-signal-baseline-window-sec" placeholder="1800" />
-                    </label>
-                    <label class="field">
-                      <span>Baseline drop (%)</span>
-                      <input type="number" id="adapter-auto-signal-baseline-drop-ratio-pct" placeholder="70" />
-                    </label>
-                    <label class="field">
-                      <span>CC delta threshold</span>
-                      <input type="number" id="adapter-auto-signal-cc-delta-threshold" placeholder="50" />
-                    </label>
-                    <label class="field">
-                      <span>Probe (sec)</span>
-                      <input type="number" id="adapter-auto-signal-probe-sec" placeholder="30" />
-                    </label>
-                    <label class="field">
-                      <span>Confirm (sec)</span>
-                      <input type="number" id="adapter-auto-signal-confirm-sec" placeholder="60" />
-                    </label>
-                    <label class="field">
-                      <span>Switch cooldown (sec)</span>
-                      <input type="number" id="adapter-auto-signal-switch-cooldown-sec" placeholder="180" />
-                    </label>
-                    <label class="field">
-                      <span>Min streams</span>
-                      <input type="number" id="adapter-auto-signal-min-streams" placeholder="1" />
-                    </label>
-                    <label class="checkline">
-                      <input type="checkbox" id="adapter-auto-signal-type-flip-enabled" />
-                      <span>Satellite type flip recovery (S2->S->S2)</span>
-                    </label>
-                    <label class="field">
-                      <span>Type flip wait (sec)</span>
-                      <input type="number" id="adapter-auto-signal-type-flip-wait-sec" placeholder="30" />
-                    </label>
-                  </div>
-                  <label class="field">
-                    <span>Candidate profiles (JSON array)</span>
-                    <textarea id="adapter-auto-signal-candidate-profiles" rows="5" placeholder='[{"name":"FE2","adapter":1,"device":0,"tp":"12322:H:27500","type":"S2"}]'></textarea>
-                  </label>
-                  <div class="form-hint">Only free FE candidates are used. Profiles must include adapter/device and tune params.</div>
-                  <div class="form-hint" id="adapter-auto-signal-status">Auto-search status: n/a</div>
-                  <div class="toolbar-row">
-                    <button class="btn ghost" type="button" id="adapter-auto-signal-refresh">Refresh status</button>
-                    <button class="btn ghost" type="button" id="adapter-auto-signal-trigger">Trigger now</button>
-                    <button class="btn ghost" type="button" id="adapter-auto-signal-unfreeze">Unfreeze</button>
-                    <button class="btn ghost danger" type="button" id="adapter-auto-signal-queue-clear">Clear queue</button>
+                    <div class="form-hint" id="adapter-auto-signal-candidate-hint">Profiles are generated automatically from current tune params and free FE targets.</div>
+                    <div class="form-hint">Only free FE candidates are used. Profiles must include adapter/device and tune params.</div>
+                    <div class="form-hint" id="adapter-auto-signal-status">Auto-search status: n/a</div>
+                    <div class="toolbar-row">
+                      <button class="btn ghost" type="button" id="adapter-auto-signal-refresh">Refresh status</button>
+                      <button class="btn ghost" type="button" id="adapter-auto-signal-trigger">Trigger now</button>
+                      <button class="btn ghost" type="button" id="adapter-auto-signal-unfreeze">Unfreeze</button>
+                      <button class="btn ghost danger" type="button" id="adapter-auto-signal-queue-clear">Clear queue</button>
+                    </div>
                   </div>
                 </div>
               </div>

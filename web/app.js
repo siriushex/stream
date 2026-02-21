@@ -2114,7 +2114,9 @@ const elements = {
   adapterAutoSignalMinStreams: $('#adapter-auto-signal-min-streams'),
   adapterAutoSignalTypeFlipEnabled: $('#adapter-auto-signal-type-flip-enabled'),
   adapterAutoSignalTypeFlipWaitSec: $('#adapter-auto-signal-type-flip-wait-sec'),
+  adapterAutoSignalCandidateTargets: $('#adapter-auto-signal-candidate-targets'),
   adapterAutoSignalCandidateProfiles: $('#adapter-auto-signal-candidate-profiles'),
+  adapterAutoSignalCandidateHint: $('#adapter-auto-signal-candidate-hint'),
   adapterAutoSignalStatus: $('#adapter-auto-signal-status'),
   adapterAutoSignalRefresh: $('#adapter-auto-signal-refresh'),
   adapterAutoSignalTrigger: $('#adapter-auto-signal-trigger'),
@@ -18523,6 +18525,193 @@ function updateAdapterBusyWarningFromFields() {
       elements.adapterDetectedBadge.className = `adapter-detected-badge ${item ? status.className : ''}`.trim();
     }
   }
+  if (state.adapterEditing) {
+    refreshAdapterAutoSignalCandidateProfiles();
+  }
+}
+
+function parseAdapterAutoSignalCandidateTargets(rawValue) {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return [];
+  const out = [];
+  const seen = new Set();
+  raw.split(/[,\s;]+/).forEach((token) => {
+    const value = String(token || '').trim();
+    if (!value) return;
+    const match = value.match(/^(\d+)(?:[.:](\d+))?$/);
+    if (!match) return;
+    const adapter = Number(match[1]);
+    if (!Number.isFinite(adapter)) return;
+    const device = match[2] !== undefined ? Number(match[2]) : null;
+    if (device !== null && !Number.isFinite(device)) return;
+    const key = `${adapter}.${device === null ? '*' : device}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ adapter, device });
+  });
+  return out;
+}
+
+function inferAdapterAutoSignalCandidateTargets(profiles, currentAdapter, currentDevice) {
+  if (!Array.isArray(profiles) || !profiles.length) return '';
+  const curA = Number(currentAdapter);
+  const curD = Number(currentDevice);
+  const seen = new Set();
+  const out = [];
+  profiles.forEach((profile) => {
+    if (!profile || typeof profile !== 'object') return;
+    const adapter = Number(profile.adapter);
+    const device = profile.device !== undefined ? Number(profile.device) : 0;
+    if (!Number.isFinite(adapter) || !Number.isFinite(device)) return;
+    if (Number.isFinite(curA) && Number.isFinite(curD) && adapter === curA && device === curD) return;
+    const key = `${adapter}.${device}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(key);
+  });
+  return out.join(', ');
+}
+
+function buildAdapterAutoSignalTuneProfileFromForm() {
+  const type = String((elements.adapterType && elements.adapterType.value) || '').toUpperCase();
+  const profile = {};
+  if (type) profile.type = type;
+  if (!type) return profile;
+
+  if (type.startsWith('S')) {
+    const tp = String((elements.adapterTp && elements.adapterTp.value) || '').trim();
+    if (tp) {
+      profile.tp = tp;
+    } else {
+      const freq = toNumber(elements.adapterTFrequency && elements.adapterTFrequency.value);
+      if (freq !== undefined) profile.frequency = freq;
+      const symbolrate = toNumber(elements.adapterCSymbolrate && elements.adapterCSymbolrate.value);
+      if (symbolrate !== undefined) profile.symbolrate = symbolrate;
+    }
+    const lnb = String((elements.adapterLnb && elements.adapterLnb.value) || '').trim();
+    if (lnb) profile.lnb = lnb;
+    const modulation = String((elements.adapterModulation && elements.adapterModulation.value) || '').trim();
+    if (modulation && modulation.toUpperCase() !== 'AUTO') profile.modulation = modulation;
+    const diseqc = toNumber(elements.adapterDiseqc && elements.adapterDiseqc.value);
+    if (diseqc !== undefined) profile.diseqc = diseqc;
+    if (elements.adapterTone && elements.adapterTone.checked) profile.tone = true;
+    const rolloff = String((elements.adapterRolloff && elements.adapterRolloff.value) || '').trim();
+    if (rolloff && rolloff.toUpperCase() !== 'AUTO') profile.rolloff = rolloff;
+    const uniScr = toNumber(elements.adapterUniScr && elements.adapterUniScr.value);
+    if (uniScr !== undefined) profile.uni_scr = uniScr;
+    const uniFrequency = toNumber(elements.adapterUniFrequency && elements.adapterUniFrequency.value);
+    if (uniFrequency !== undefined) profile.uni_frequency = uniFrequency;
+    return profile;
+  }
+
+  if (type.startsWith('C')) {
+    const frequency = toNumber(elements.adapterCFrequency && elements.adapterCFrequency.value);
+    if (frequency !== undefined) profile.frequency = frequency;
+    const symbolrate = toNumber(elements.adapterCSymbolrate && elements.adapterCSymbolrate.value);
+    if (symbolrate !== undefined) profile.symbolrate = symbolrate;
+    const modulation = String((elements.adapterModulation && elements.adapterModulation.value) || '').trim();
+    if (modulation && modulation.toUpperCase() !== 'AUTO') profile.modulation = modulation;
+    return profile;
+  }
+
+  if (type.startsWith('T')) {
+    const frequency = toNumber(elements.adapterTFrequency && elements.adapterTFrequency.value);
+    if (frequency !== undefined) profile.frequency = frequency;
+    const bandwidth = String((elements.adapterBandwidth && elements.adapterBandwidth.value) || '').trim();
+    if (bandwidth && bandwidth.toUpperCase() !== 'AUTO') profile.bandwidth = bandwidth;
+    const guardinterval = String((elements.adapterGuardinterval && elements.adapterGuardinterval.value) || '').trim();
+    if (guardinterval && guardinterval.toUpperCase() !== 'AUTO') profile.guardinterval = guardinterval;
+    const transmitmode = String((elements.adapterTransmitmode && elements.adapterTransmitmode.value) || '').trim();
+    if (transmitmode && transmitmode.toUpperCase() !== 'AUTO') profile.transmitmode = transmitmode;
+    const hierarchy = String((elements.adapterHierarchy && elements.adapterHierarchy.value) || '').trim();
+    if (hierarchy && hierarchy.toUpperCase() !== 'AUTO') profile.hierarchy = hierarchy;
+    return profile;
+  }
+
+  if (type === 'ATSC') {
+    const frequency = toNumber(elements.adapterAtscFrequency && elements.adapterAtscFrequency.value);
+    if (frequency !== undefined) profile.frequency = frequency;
+  }
+
+  return profile;
+}
+
+function buildAdapterAutoSignalCandidateProfilesFromForm() {
+  const adapter = toNumber(elements.adapterIndex && elements.adapterIndex.value);
+  const device = toNumber(elements.adapterDevice && elements.adapterDevice.value) || 0;
+  const currentKey = normalizeDvbKey(adapter, device);
+  const freeItems = (state.dvbAdapters || []).filter((item) => {
+    if (!item || item.error || item.busy) return false;
+    const key = normalizeDvbKey(item.adapter, item.device);
+    return key && key !== currentKey;
+  });
+
+  const targetSpecs = parseAdapterAutoSignalCandidateTargets(
+    elements.adapterAutoSignalCandidateTargets && elements.adapterAutoSignalCandidateTargets.value,
+  );
+
+  let candidates = freeItems;
+  if (targetSpecs.length) {
+    const selected = [];
+    const seen = new Set();
+    targetSpecs.forEach((spec) => {
+      freeItems.forEach((item) => {
+        const a = Number(item.adapter);
+        const d = Number(item.device || 0);
+        if (!Number.isFinite(a) || !Number.isFinite(d)) return;
+        if (a !== spec.adapter) return;
+        if (spec.device !== null && d !== spec.device) return;
+        const key = normalizeDvbKey(a, d);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        selected.push(item);
+      });
+    });
+    candidates = selected;
+  }
+
+  candidates.sort((a, b) => {
+    const aKey = normalizeDvbKey(a.adapter, a.device) || '';
+    const bKey = normalizeDvbKey(b.adapter, b.device) || '';
+    return aKey.localeCompare(bKey, undefined, { numeric: true });
+  });
+
+  const tune = buildAdapterAutoSignalTuneProfileFromForm();
+  return candidates.map((item) => {
+    const adapterNum = Number(item.adapter);
+    const deviceNum = Number(item.device || 0);
+    return {
+      name: `FE${adapterNum}.${deviceNum}`,
+      adapter: adapterNum,
+      device: deviceNum,
+      ...tune,
+    };
+  });
+}
+
+function refreshAdapterAutoSignalCandidateProfiles() {
+  if (!elements.adapterAutoSignalCandidateProfiles) return [];
+  if (!state.dvbAdaptersLoaded) {
+    const adapter = state.adapterEditing && state.adapterEditing.adapter;
+    const existingProfiles = Array.isArray(adapter && adapter.config && adapter.config.auto_signal_candidate_profiles)
+      ? adapter.config.auto_signal_candidate_profiles
+      : [];
+    elements.adapterAutoSignalCandidateProfiles.value = JSON.stringify(existingProfiles, null, 2);
+    if (elements.adapterAutoSignalCandidateHint) {
+      elements.adapterAutoSignalCandidateHint.textContent =
+        'DVB adapter list is unavailable. Showing stored candidate profiles.';
+    }
+    return existingProfiles;
+  }
+  const profiles = buildAdapterAutoSignalCandidateProfilesFromForm();
+  elements.adapterAutoSignalCandidateProfiles.value = JSON.stringify(profiles, null, 2);
+  if (elements.adapterAutoSignalCandidateHint) {
+    const rawTargets = String((elements.adapterAutoSignalCandidateTargets && elements.adapterAutoSignalCandidateTargets.value) || '').trim();
+    const targetsLabel = rawTargets ? `targets: ${rawTargets}` : 'targets: all free FE';
+    elements.adapterAutoSignalCandidateHint.textContent =
+      `Auto-generated ${profiles.length} profile(s) from current tune params · ${targetsLabel}.`;
+  }
+  return profiles;
 }
 
 function getAdapterStatusEntry(adapterId, cfg) {
@@ -18874,6 +19063,18 @@ function renderAdapterAutoSignalStatus(payload, adapterId) {
     `Auto-search: ${enabled ? 'ON' : 'OFF'} · leader=${leader ? 'yes' : 'no'} · queue=${queueDepth} · ${active}` +
     (frozenSec > 0 ? ` · frozen ${frozenSec}s` : '') +
     adapterTail;
+}
+
+function syncAdapterAutoSignalControls() {
+  const autoSearchEnabled = !!(elements.adapterAutoSignalSearchEnabled && elements.adapterAutoSignalSearchEnabled.checked);
+  if (elements.adapterAutoSignalSearchEnabled) {
+    elements.adapterAutoSignalSearchEnabled.setAttribute('aria-checked', autoSearchEnabled ? 'true' : 'false');
+  }
+  const typeFlipEnabled = !!(elements.adapterAutoSignalTypeFlipEnabled && elements.adapterAutoSignalTypeFlipEnabled.checked);
+  if (elements.adapterAutoSignalTypeFlipEnabled) {
+    elements.adapterAutoSignalTypeFlipEnabled.setAttribute('aria-checked', typeFlipEnabled ? 'true' : 'false');
+  }
+  syncToggleTargets();
 }
 
 async function loadAdapterAutoSignalStatus(adapterId) {
@@ -19571,12 +19772,18 @@ function openAdapterEditor(adapter, isNew) {
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     elements.adapterAutoSignalTypeFlipWaitSec.value = config.auto_signal_type_flip_wait_sec !== undefined ? config.auto_signal_type_flip_wait_sec : '';
   }
-  if (elements.adapterAutoSignalCandidateProfiles) {
-    const profiles = Array.isArray(config.auto_signal_candidate_profiles)
+  if (elements.adapterAutoSignalCandidateTargets) {
+    const existingProfiles = Array.isArray(config.auto_signal_candidate_profiles)
       ? config.auto_signal_candidate_profiles
       : [];
-    elements.adapterAutoSignalCandidateProfiles.value = profiles.length ? JSON.stringify(profiles, null, 2) : '';
+    elements.adapterAutoSignalCandidateTargets.value = inferAdapterAutoSignalCandidateTargets(
+      existingProfiles,
+      config.adapter,
+      config.device,
+    );
   }
+  refreshAdapterAutoSignalCandidateProfiles();
+  syncAdapterAutoSignalControls();
 
   setAdapterGroup(elements.adapterType.value);
   renderDvbDetectedSelect();
@@ -19721,23 +19928,7 @@ function readAdapterForm() {
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     config.auto_signal_type_flip_wait_sec = toNumber(elements.adapterAutoSignalTypeFlipWaitSec.value);
   }
-  if (elements.adapterAutoSignalCandidateProfiles) {
-    const rawProfiles = String(elements.adapterAutoSignalCandidateProfiles.value || '').trim();
-    if (!rawProfiles) {
-      config.auto_signal_candidate_profiles = [];
-    } else {
-      let parsedProfiles = null;
-      try {
-        parsedProfiles = JSON.parse(rawProfiles);
-      } catch (err) {
-        throw new Error('Candidate profiles must be a valid JSON array');
-      }
-      if (!Array.isArray(parsedProfiles)) {
-        throw new Error('Candidate profiles must be a JSON array');
-      }
-      config.auto_signal_candidate_profiles = parsedProfiles;
-    }
-  }
+  config.auto_signal_candidate_profiles = refreshAdapterAutoSignalCandidateProfiles();
 
   return { id, enabled: elements.adapterEnabled.checked, config };
 }
@@ -37276,8 +37467,36 @@ function bindEvents() {
   if (elements.adapterType) {
     elements.adapterType.addEventListener('change', () => {
       setAdapterGroup(elements.adapterType.value);
+      refreshAdapterAutoSignalCandidateProfiles();
     });
   }
+
+  const adapterAutoSignalTuneInputs = [
+    elements.adapterModulation,
+    elements.adapterTp,
+    elements.adapterLnb,
+    elements.adapterDiseqc,
+    elements.adapterTone,
+    elements.adapterRolloff,
+    elements.adapterUniScr,
+    elements.adapterUniFrequency,
+    elements.adapterTFrequency,
+    elements.adapterBandwidth,
+    elements.adapterGuardinterval,
+    elements.adapterTransmitmode,
+    elements.adapterHierarchy,
+    elements.adapterCFrequency,
+    elements.adapterCSymbolrate,
+    elements.adapterAtscFrequency,
+  ];
+  adapterAutoSignalTuneInputs.forEach((input) => {
+    if (!input) return;
+    const eventName = input.tagName === 'SELECT' || input.type === 'checkbox' ? 'change' : 'input';
+    input.addEventListener(eventName, () => {
+      if (!state.adapterEditing) return;
+      refreshAdapterAutoSignalCandidateProfiles();
+    });
+  });
 
   if (elements.adapterSelect) {
     elements.adapterSelect.addEventListener('change', (event) => {
@@ -37434,6 +37653,20 @@ function bindEvents() {
       clearAdapterAutoSignalQueue(adapterId).catch((err) => {
         setStatus(formatNetworkError(err) || err.message || 'Queue clear failed');
       });
+    });
+  }
+
+  if (elements.adapterAutoSignalSearchEnabled) {
+    elements.adapterAutoSignalSearchEnabled.addEventListener('change', syncAdapterAutoSignalControls);
+  }
+
+  if (elements.adapterAutoSignalTypeFlipEnabled) {
+    elements.adapterAutoSignalTypeFlipEnabled.addEventListener('change', syncAdapterAutoSignalControls);
+  }
+
+  if (elements.adapterAutoSignalCandidateTargets) {
+    elements.adapterAutoSignalCandidateTargets.addEventListener('input', () => {
+      refreshAdapterAutoSignalCandidateProfiles();
     });
   }
 
