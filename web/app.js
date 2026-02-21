@@ -6991,6 +6991,10 @@ function getDashboardRemoteServers() {
   });
 }
 
+function hasConfiguredRemoteServers() {
+  return getDashboardRemoteServers().length > 0;
+}
+
 function parseRemoteBitrateKbps(value) {
   if (value === null || value === undefined) return null;
   if (Number.isFinite(Number(value))) {
@@ -25002,14 +25006,19 @@ function buildStreamModel(stream) {
   const enabled = stream.enabled !== false;
   const shard = resolveStreamShardInfo(stream, stats);
   const remote = isRemoteDashboardStream(stream) ? stream.remote : null;
+  const showSourceLabels = hasConfiguredRemoteServers();
   const sourceGroupKey = remote ? `remote:${remote.serverId}` : 'local';
-  const sourceGroupLabel = remote
-    ? `Remote instance: ${remote.serverName || remote.serverId}`
-    : 'Local instance';
-  const sourceBadge = remote
-    ? `Remote: ${remote.serverName || remote.serverId}`
-    : 'Local';
-  const sourceSort = remote
+  const sourceGroupLabel = showSourceLabels
+    ? (remote
+      ? `Remote instance: ${remote.serverName || remote.serverId}`
+      : 'Local instance')
+    : '';
+  const sourceBadge = showSourceLabels
+    ? (remote
+      ? `Remote: ${remote.serverName || remote.serverId}`
+      : 'Local')
+    : '';
+  const sourceSort = (showSourceLabels && remote)
     ? String(remote.serverName || remote.serverId || '')
     : '';
 
@@ -25092,8 +25101,10 @@ function buildStreamTableRow(stream, modelOverride) {
     shardBadge.title = model.shardTitle;
   }
   sub.appendChild(shardBadge);
-  const sourceBadge = createEl('span', 'stream-source-badge', model.sourceBadge || 'Local');
+  const sourceBadgeText = model.sourceBadge || '';
+  const sourceBadge = createEl('span', 'stream-source-badge', sourceBadgeText);
   sourceBadge.dataset.role = 'stream-source';
+  sourceBadge.hidden = !sourceBadgeText;
   sub.appendChild(sourceBadge);
   info.appendChild(nameBtn);
   info.appendChild(sub);
@@ -25216,7 +25227,9 @@ function updateStreamTableRow(row, stream) {
   }
   const sourceBadge = refs.sourceBadge || row.querySelector('[data-role="stream-source"]');
   if (sourceBadge) {
-    sourceBadge.textContent = model.sourceBadge || 'Local';
+    const badgeText = model.sourceBadge || '';
+    sourceBadge.textContent = badgeText;
+    sourceBadge.hidden = !badgeText;
   }
   const health = refs.health || row.querySelector('[data-role="stream-health"]');
   if (health) {
@@ -25291,12 +25304,14 @@ function renderStreamTable(list) {
     const nextGroupKey = model.sourceGroupKey || 'local';
     if (nextGroupKey !== currentGroupKey) {
       currentGroupKey = nextGroupKey;
-      const groupRow = document.createElement('tr');
-      groupRow.className = 'stream-group-row';
-      const groupCell = createEl('td', 'stream-group-cell', model.sourceGroupLabel || 'Local instance');
-      groupCell.colSpan = 6;
-      groupRow.appendChild(groupCell);
-      fragment.appendChild(groupRow);
+      if (model.sourceGroupLabel) {
+        const groupRow = document.createElement('tr');
+        groupRow.className = 'stream-group-row';
+        const groupCell = createEl('td', 'stream-group-cell', model.sourceGroupLabel);
+        groupCell.colSpan = 6;
+        groupRow.appendChild(groupCell);
+        fragment.appendChild(groupRow);
+      }
     }
     const row = buildStreamTableRow(stream, model);
     fragment.appendChild(row);
@@ -25320,9 +25335,10 @@ function buildStreamCompactRow(stream, modelOverride) {
   const model = modelOverride || buildStreamModel(stream);
   const row = createEl('div', 'stream-compact-row');
   row.dataset.streamId = stream.id;
+  const sourceTitle = model.sourceBadge ? `Source: ${model.sourceBadge}` : null;
   row.title = [
     model.name,
-    `Source: ${model.sourceBadge || 'Local'}`,
+    sourceTitle,
     `Status: ${model.statusInfo.label}`,
     model.shardLabel ? `${model.shardLabel}` : null,
     `Input: ${model.inputUrl || '-'}`,
@@ -25335,9 +25351,10 @@ function buildStreamCompactRow(stream, modelOverride) {
   const nameBtn = createEl('button', 'stream-compact-name', model.name);
   nameBtn.dataset.action = 'edit';
   const rate = createEl('div', 'stream-compact-rate', model.inputBitrate);
+  const sourceSuffix = model.sourceBadge ? ` • ${model.sourceBadge}` : '';
   const clientsText = model.shardLabel
-    ? `Clients: ${model.clients} • ${model.shardLabel} • ${model.sourceBadge || 'Local'}`
-    : `Clients: ${model.clients} • ${model.sourceBadge || 'Local'}`;
+    ? `Clients: ${model.clients} • ${model.shardLabel}${sourceSuffix}`
+    : `Clients: ${model.clients}${sourceSuffix}`;
   const clients = createEl('div', 'stream-compact-clients', clientsText);
   const toggleBtn = createEl('button', 'btn ghost', model.enabled ? 'Disable' : 'Enable');
   toggleBtn.dataset.action = 'toggle';
@@ -25370,11 +25387,13 @@ function renderStreamCompact(list) {
     const nextGroupKey = model.sourceGroupKey || 'local';
     if (nextGroupKey !== currentGroupKey) {
       currentGroupKey = nextGroupKey;
-      const header = createEl('div', 'stream-group-header', model.sourceGroupLabel || 'Local instance');
-      if (elements.streamCompactGrid) {
-        header.style.gridColumn = '1 / -1';
+      if (model.sourceGroupLabel) {
+        const header = createEl('div', 'stream-group-header', model.sourceGroupLabel);
+        if (elements.streamCompactGrid) {
+          header.style.gridColumn = '1 / -1';
+        }
+        container.appendChild(header);
       }
-      container.appendChild(header);
     }
     const row = buildStreamCompactRow(stream, model);
     container.appendChild(row);
@@ -25390,9 +25409,10 @@ function updateStreamCompactRows() {
     const model = buildStreamModel(stream);
     const name = row.querySelector('.stream-compact-name');
     if (name) name.textContent = model.name;
+    const titleSourceLine = model.sourceBadge ? `Source: ${model.sourceBadge}` : null;
     row.title = [
       model.name,
-      `Source: ${model.sourceBadge || 'Local'}`,
+      titleSourceLine,
       `Status: ${model.statusInfo.label}`,
       model.shardLabel ? `${model.shardLabel}` : null,
       `Input: ${model.inputUrl || '-'}`,
@@ -25408,9 +25428,10 @@ function updateStreamCompactRows() {
     if (rate) rate.textContent = model.inputBitrate;
     const clients = row.querySelector('.stream-compact-clients');
     if (clients) {
+      const sourceSuffix = model.sourceBadge ? ` • ${model.sourceBadge}` : '';
       clients.textContent = model.shardLabel
-        ? `Clients: ${model.clients} • ${model.shardLabel} • ${model.sourceBadge || 'Local'}`
-        : `Clients: ${model.clients} • ${model.sourceBadge || 'Local'}`;
+        ? `Clients: ${model.clients} • ${model.shardLabel}${sourceSuffix}`
+        : `Clients: ${model.clients}${sourceSuffix}`;
     }
     const toggleBtn = row.querySelector('[data-action="toggle"]');
     if (toggleBtn) toggleBtn.textContent = model.enabled ? 'Disable' : 'Enable';
@@ -25474,8 +25495,10 @@ function renderStreams() {
     const nextGroupKey = model.sourceGroupKey || 'local';
     if (nextGroupKey !== currentGroupKey) {
       currentGroupKey = nextGroupKey;
-      const header = createEl('div', 'stream-group-header', model.sourceGroupLabel || 'Local instance');
-      elements.dashboardStreams.appendChild(header);
+      if (model.sourceGroupLabel) {
+        const header = createEl('div', 'stream-group-header', model.sourceGroupLabel);
+        elements.dashboardStreams.appendChild(header);
+      }
     }
     const tile = buildStreamTile(stream);
     elements.dashboardStreams.appendChild(tile);
