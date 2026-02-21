@@ -72,5 +72,6 @@ __pycache__/
 /stream-diag-*.tar.gz
 /stream-diag-*/
 *.log
+flussonic.conf
 *.db
 *.sqlite

@@ -12,6 +12,14 @@ Operational manuals, internal infrastructure notes, logs, and environment-specif
 
 License: see `COPYING`.
 
+## Auth Backends (Ministra/TMS)
+
+Integration contract and QA artifacts:
+
+- `contrib/auth-backends/contract.md`
+- `contrib/auth-backends/test-matrix.md`
+- `contrib/auth-backends/acceptance-checklist.md`
+
 ## Observability Runbook (Production)
 
 Use these settings to keep long history with low overhead:
