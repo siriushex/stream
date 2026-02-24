@@ -1973,11 +1973,13 @@ function on_analyze_spts(channel_data, input_id, data)
         input_data.stats = {
             bitrate = display_bitrate_kbps,
             raw_bitrate = raw_bitrate_kbps,
+            raw_bitrate_kbps = raw_bitrate_kbps,
             cc_errors = total.cc_errors,
             pes_errors = total.pes_errors,
             scrambled = total.scrambled,
             on_air = effective_on_air,
             updated_at = os.time(),
+            updated_raw_at = now,
         }
         input_data.last_seen_ts = now
 

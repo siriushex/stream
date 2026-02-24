@@ -17,7 +17,7 @@ const PLAYER_PLAYBACK_MODE_KEY = 'astral.player.playback_mode';
 const STREAM_TABLE_PAGE_SIZE_KEY = 'stream.tablePageSize';
 const STREAM_TABLE_PAGE_SIZE_KEY_LEGACY = 'astra.streamTablePageSize';
 const STREAM_TABLE_SORT_KEYS = new Set(['stream', 'input', 'input_bitrate', 'transcode', 'dvr', 'clients']);
-const BITRATE_DISPLAY_HOLD_MS = 15000;
+const BITRATE_DISPLAY_HOLD_MS = 1000;
 const BITRATE_DISPLAY_CACHE_TTL_MS = 120000;
 const BITRATE_DISPLAY_CACHE_MAX = 4096;
 const REMOTE_DASHBOARD_ID_PREFIX = 'remote:';
@@ -486,6 +486,10 @@ const state = {
   pollingPausedBySave: false,
   statusPollBackoffMs: 0,
   statusPollToken: 0,
+  statusPollChunkCursor: 0,
+  statusPollPrimedCount: 0,
+  statusPollUsingIds: false,
+  statusPollLastIdsCount: 0,
   adapterTimer: null,
   dvbTimer: null,
   adapterScanJobId: null,
@@ -9776,6 +9780,30 @@ function getActiveInputStats(stats) {
   return { inputs, activeIndex, activeInput };
 }
 
+function resolveStreamErrorCounters(stats, activeInputOverride = undefined) {
+  const hasCounter = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) ? Math.max(0, Math.floor(num)) : 0;
+  };
+  const activeInput = activeInputOverride === undefined
+    ? getActiveInputStats(stats).activeInput
+    : activeInputOverride;
+  const activeCc = hasCounter(activeInput && activeInput.cc_errors);
+  const activePes = hasCounter(activeInput && activeInput.pes_errors);
+  const topCc = hasCounter(stats && stats.cc_errors);
+  const topPes = hasCounter(stats && stats.pes_errors);
+  return {
+    cc: activeCc > 0 ? activeCc : topCc,
+    pes: activePes > 0 ? activePes : topPes,
+  };
+}
+
+function formatStreamErrorSummary(stats, activeInputOverride = undefined) {
+  const counters = resolveStreamErrorCounters(stats, activeInputOverride);
+  if (counters.cc <= 0 && counters.pes <= 0) return '';
+  return `CC:${counters.cc} • PES:${counters.pes}`;
+}
+
 function hasStreamQualityIssues(stats) {
   if (!stats || typeof stats !== 'object') return false;
 
@@ -9785,7 +9813,8 @@ function hasStreamQualityIssues(stats) {
   };
 
   if (stats.scrambled === true) return true;
-  if (hasCounter(stats.cc_errors) || hasCounter(stats.pes_errors)) return true;
+  const counters = resolveStreamErrorCounters(stats);
+  if (counters.cc > 0 || counters.pes > 0) return true;
 
   const active = getActiveInputStats(stats).activeInput;
   if (active && typeof active === 'object') {
@@ -23842,9 +23871,11 @@ function updateTiles() {
     const transcode = stats.transcode || {};
     const transcodeStateUpper = String(transcodeState || '').toUpperCase();
     const statsBitrateKbps = Number(stats && stats.bitrate);
+    const statsRawBitrateKbps = Number(stats && (stats.raw_bitrate_kbps || stats.raw_bitrate));
     const tcOutputKbps = Number(transcode && transcode.output_bitrate_kbps);
     const hasTranscodeTraffic = (Number.isFinite(tcOutputKbps) && tcOutputKbps > 0)
-      || (Number.isFinite(statsBitrateKbps) && statsBitrateKbps > 0);
+      || (Number.isFinite(statsBitrateKbps) && statsBitrateKbps > 0)
+      || (Number.isFinite(statsRawBitrateKbps) && statsRawBitrateKbps > 0);
     const isRunning = transcodeState
       ? (transcodeStateUpper === 'RUNNING'
         || ((transcodeStateUpper === 'STARTING' || transcodeStateUpper === 'RESTARTING') && hasTranscodeTraffic))
@@ -23867,7 +23898,9 @@ function updateTiles() {
         const activeInputKbps = activeInput
           ? (Number.isFinite(Number(activeInput.bitrate_kbps))
             ? Number(activeInput.bitrate_kbps)
-            : Number(activeInput.bitrate))
+            : (Number.isFinite(Number(activeInput.raw_bitrate_kbps))
+              ? Number(activeInput.raw_bitrate_kbps)
+              : Number(activeInput.bitrate)))
           : NaN;
         const inputKbps = Number.isFinite(Number(transcode.input_bitrate_kbps))
           ? Number(transcode.input_bitrate_kbps)
@@ -23916,7 +23949,8 @@ function updateTiles() {
           refs.rateEl.__rateLines = null;
           refs.rateEl.classList.remove('is-transcode');
         }
-        const stableMainKbps = resolveStableBitrateKbps(`${id}|tile-main`, stats.bitrate, onAir);
+        const mainRate = Number.isFinite(statsBitrateKbps) ? statsBitrateKbps : statsRawBitrateKbps;
+        const stableMainKbps = resolveStableBitrateKbps(`${id}|tile-main`, mainRate, onAir);
         const text = formatBitrate(Number(stableMainKbps) || 0);
         if (refs.rateEl.textContent !== text) refs.rateEl.textContent = text;
       }
@@ -23959,7 +23993,9 @@ function updateTiles() {
           if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
         }
       } else {
-        const text = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
+        const counters = formatStreamErrorSummary(stats, activeInput);
+        const base = activeLabel ? `Active input: ${activeLabel}` : (onAir ? 'Active' : 'Inactive');
+        const text = counters ? `${base} • ${counters}` : base;
         if (refs.metaEl.textContent !== text) refs.metaEl.textContent = text;
       }
     }
@@ -24581,17 +24617,77 @@ function addStatusPollId(ids, id) {
   ids.add(value);
 }
 
+function listLocalStatusPollCandidates() {
+  const items = Array.isArray(state.streams) ? state.streams : [];
+  const seen = new Set();
+  const out = [];
+  items.forEach((stream) => {
+    if (!stream || isRemoteDashboardStream(stream)) return;
+    const id = String(stream.id || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    out.push(id);
+  });
+  if (out.length > 0) return out;
+  Object.keys(state.streamIndex || {}).forEach((id) => {
+    const key = String(id || '').trim();
+    if (!key || seen.has(key)) return;
+    const stream = state.streamIndex[key];
+    if (stream && isRemoteDashboardStream(stream)) return;
+    seen.add(key);
+    out.push(key);
+  });
+  return out;
+}
+
+function buildRotatingStatusPollIds(priorityIds, candidateIds, maxCount = STATUS_POLL_IDS_MAX) {
+  const out = [];
+  const seen = new Set();
+  const add = (id) => {
+    const value = String(id || '').trim();
+    if (!value || seen.has(value)) return;
+    const stream = state.streamIndex && state.streamIndex[value];
+    if (stream && isRemoteDashboardStream(stream)) return;
+    seen.add(value);
+    out.push(value);
+  };
+
+  const priorities = Array.isArray(priorityIds) ? priorityIds : [];
+  priorities.forEach((id) => add(id));
+  if (out.length >= maxCount) return out.slice(0, maxCount);
+
+  const pool = Array.isArray(candidateIds) ? candidateIds.filter(Boolean) : [];
+  const total = pool.length;
+  if (total === 0) return out;
+
+  let cursor = Number(state.statusPollChunkCursor);
+  if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
+  cursor = cursor % total;
+  let idx = cursor;
+  let scanned = 0;
+  while (out.length < maxCount && scanned < total) {
+    add(pool[idx]);
+    idx = (idx + 1) % total;
+    scanned += 1;
+  }
+  state.statusPollChunkCursor = (cursor + maxCount) % total;
+  return out;
+}
+
 function collectStatusPollIds() {
   if (state.currentView !== 'dashboard') return null;
-  const total = Array.isArray(state.streams) ? state.streams.length : 0;
+  const candidates = listLocalStatusPollCandidates();
+  const total = candidates.length;
+  const priorityLimit = STATUS_POLL_IDS_FALLBACK_MAX * 2;
+  if (total === 0) return null;
   if (state.viewMode === 'cards') {
     if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
 
     const ids = new Set();
     if (state.visibleTileIds && state.visibleTileIds.size > 0) {
-      state.visibleTileIds.forEach((id) => addStatusPollId(ids, id));
+      Array.from(state.visibleTileIds).slice(0, priorityLimit).forEach((id) => addStatusPollId(ids, id));
     }
-    $$('.tile.is-expanded').forEach((tile) => addStatusPollId(ids, tile && tile.dataset && tile.dataset.id));
+    $$('.tile.is-expanded').slice(0, priorityLimit).forEach((tile) => addStatusPollId(ids, tile && tile.dataset && tile.dataset.id));
     addStatusPollId(ids, state.playerStreamId);
     addStatusPollId(ids, state.analyzeStreamId);
     if (state.editing && state.editing.stream) {
@@ -24599,42 +24695,50 @@ function collectStatusPollIds() {
     }
 
     if (ids.size === 0) {
-      const fallback = Object.keys(state.streamIndex || {});
-      for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
-        addStatusPollId(ids, fallback[i]);
+      for (let i = 0; i < candidates.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+        addStatusPollId(ids, candidates[i]);
       }
     }
 
     if (ids.size === 0) return null;
-    const out = Array.from(ids);
-    if (out.length > STATUS_POLL_IDS_MAX) {
-      return out.slice(0, STATUS_POLL_IDS_MAX);
-    }
-    return out;
+    return buildRotatingStatusPollIds(Array.from(ids), candidates, STATUS_POLL_IDS_MAX);
   }
 
   if (state.viewMode === 'table') {
     // Table view is paginated. Poll only the currently rendered rows to keep status updates fast.
     if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
     const ids = new Set();
-    Object.keys(state.streamTableRows || {}).forEach((id) => addStatusPollId(ids, id));
+    Object.keys(state.streamTableRows || {}).slice(0, priorityLimit).forEach((id) => addStatusPollId(ids, id));
     addStatusPollId(ids, state.playerStreamId);
     addStatusPollId(ids, state.analyzeStreamId);
     if (state.editing && state.editing.stream) {
       addStatusPollId(ids, state.editing.stream.id);
     }
     if (ids.size === 0) {
-      const fallback = Object.keys(state.streamIndex || {});
-      for (let i = 0; i < fallback.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
-        addStatusPollId(ids, fallback[i]);
+      for (let i = 0; i < candidates.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+        addStatusPollId(ids, candidates[i]);
       }
     }
     if (ids.size === 0) return null;
-    const out = Array.from(ids);
-    if (out.length > STATUS_POLL_IDS_MAX) {
-      return out.slice(0, STATUS_POLL_IDS_MAX);
+    return buildRotatingStatusPollIds(Array.from(ids), candidates, STATUS_POLL_IDS_MAX);
+  }
+
+  if (state.viewMode === 'compact') {
+    if (total < TILE_VISIBILITY_UPDATE_THRESHOLD) return null;
+    const ids = new Set();
+    Object.keys(state.streamCompactRows || {}).slice(0, priorityLimit).forEach((id) => addStatusPollId(ids, id));
+    addStatusPollId(ids, state.playerStreamId);
+    addStatusPollId(ids, state.analyzeStreamId);
+    if (state.editing && state.editing.stream) {
+      addStatusPollId(ids, state.editing.stream.id);
     }
-    return out;
+    if (ids.size === 0) {
+      for (let i = 0; i < candidates.length && ids.size < STATUS_POLL_IDS_FALLBACK_MAX; i += 1) {
+        addStatusPollId(ids, candidates[i]);
+      }
+    }
+    if (ids.size === 0) return null;
+    return buildRotatingStatusPollIds(Array.from(ids), candidates, STATUS_POLL_IDS_MAX);
   }
 
   return null;
@@ -24646,11 +24750,17 @@ function statusEntrySignature(entry) {
   return [
     entry.on_air === true ? 1 : 0,
     Number(entry.bitrate || 0),
+    Number(entry.raw_bitrate_kbps || entry.raw_bitrate || 0),
+    Number(entry.cc_errors || 0),
+    Number(entry.pes_errors || 0),
     Number(entry.updated_at || 0),
+    Number(entry.updated_raw_at || 0),
     String(entry.transcode_state || ''),
     tc ? Number(tc.updated_at || 0) : 0,
     tc ? Number(tc.input_bitrate_kbps || 0) : 0,
     tc ? Number(tc.output_bitrate_kbps || 0) : 0,
+    tc ? Number(tc.output_cc_errors || 0) : 0,
+    tc ? Number(tc.output_pes_errors || 0) : 0,
     Number(entry.active_input_index || 0),
     Number(entry.clients_count || entry.clients || 0),
   ].join('|');
@@ -24670,16 +24780,29 @@ function mergePartialLocalStreamStatus(ids, patch) {
     const key = String(id || '').trim();
     if (!key) return;
     if (!Object.prototype.hasOwnProperty.call(data, key)) {
-      if (Object.prototype.hasOwnProperty.call(next, key)) {
+      const stream = state.streamIndex && state.streamIndex[key];
+      const canDrop = !stream || isRemoteDashboardStream(stream);
+      if (canDrop && Object.prototype.hasOwnProperty.call(next, key)) {
         changed = true;
+        delete next[key];
       }
-      delete next[key];
     }
   });
   if (!changed) return false;
   state.localStats = next;
   rebuildDashboardStats();
   return true;
+}
+
+function countKnownLocalStatusEntries() {
+  const localStats = (state.localStats && typeof state.localStats === 'object') ? state.localStats : {};
+  let count = 0;
+  Object.keys(localStats).forEach((id) => {
+    const stream = state.streamIndex && state.streamIndex[id];
+    if (!stream || isRemoteDashboardStream(stream)) return;
+    count += 1;
+  });
+  return count;
 }
 
 async function loadStreamStatus() {
@@ -24692,17 +24815,26 @@ async function loadStreamStatus() {
       || state.analyzeJob
     );
     const statusIds = collectStatusPollIds();
+    const localCandidates = listLocalStatusPollCandidates();
+    const localTotal = localCandidates.length;
+    let requestIds = statusIds;
+    if (Array.isArray(requestIds) && requestIds.length > 0 && localTotal > STATUS_POLL_IDS_MAX) {
+      const primedCount = Number(state.statusPollPrimedCount) || 0;
+      if (primedCount < localTotal) {
+        requestIds = null;
+      }
+    }
     // Used by computeStatusPollDelayMs() safety floor: when we poll only a subset of streams
     // (ids=...), we should base the UI load heuristic on the polled count, not total streams.
-    state.statusPollUsingIds = Array.isArray(statusIds) && statusIds.length > 0;
-    state.statusPollLastIdsCount = state.statusPollUsingIds ? statusIds.length : 0;
+    state.statusPollUsingIds = Array.isArray(requestIds) && requestIds.length > 0;
+    state.statusPollLastIdsCount = state.statusPollUsingIds ? requestIds.length : 0;
     const liteEnabled = getSettingBool('ui_status_lite_enabled', true);
     const params = [];
     if (liteEnabled && !needsFullStatus) {
       params.push('lite=1');
     }
-    if (statusIds && statusIds.length > 0) {
-      params.push(`ids=${statusIds.join(',')}`);
+    if (requestIds && requestIds.length > 0) {
+      params.push(`ids=${requestIds.join(',')}`);
     }
     const endpoint = params.length > 0
       ? `/api/v1/stream-status?${params.join('&')}`
@@ -24711,11 +24843,17 @@ async function loadStreamStatus() {
       timeout_ms: API_POLL_TIMEOUT_MS,
       retry: API_POLL_RETRY_COUNT,
     });
-    if (statusIds && statusIds.length > 0) {
-      const changed = mergePartialLocalStreamStatus(statusIds, data);
+    if (requestIds && requestIds.length > 0) {
+      const changed = mergePartialLocalStreamStatus(requestIds, data);
       if (!changed) return { ok: true };
     } else {
       state.localStats = data || {};
+      if (localTotal > STATUS_POLL_IDS_MAX) {
+        const known = countKnownLocalStatusEntries();
+        state.statusPollPrimedCount = Math.max(known, localTotal);
+      } else {
+        state.statusPollPrimedCount = localTotal;
+      }
       rebuildDashboardStats();
     }
     updateDashboardRuntimeUi();
@@ -24739,6 +24877,12 @@ function getStatusPollSafetyFloorMs() {
     ? Math.floor(Number(state.statusPollLastIdsCount) || 0)
     : 0;
   const count = (polled > 0 && polled <= STATUS_POLL_IDS_MAX) ? polled : total;
+  if (state.statusPollUsingIds === true) {
+    if (count >= 240) return 3000;
+    if (count >= 120) return 1500;
+    if (count >= 60) return 1000;
+    return 0;
+  }
   if (state.viewMode === 'cards') {
     if (count >= 240) return 5000;
     if (count >= 120) return 3000;
@@ -24838,6 +24982,10 @@ function startStatusPolling() {
   state.statusPollToken += 1;
   state.statusPollStartMs = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   state.statusPollBackoffMs = 0;
+  state.statusPollChunkCursor = 0;
+  state.statusPollPrimedCount = 0;
+  state.statusPollUsingIds = false;
+  state.statusPollLastIdsCount = 0;
   scheduleNextStatusPoll(0, state.statusPollToken);
 }
 
@@ -24851,6 +24999,9 @@ function stopStatusPolling() {
   state.statusPollStartMs = 0;
   state.statusPollInFlight = false;
   state.statusPollBackoffMs = 0;
+  state.statusPollChunkCursor = 0;
+  state.statusPollUsingIds = false;
+  state.statusPollLastIdsCount = 0;
 }
 
 function boostStatusPolling(windowMs = POLL_STATUS_FAST_WINDOW_MS) {
@@ -24934,10 +25085,14 @@ function resolveModelInputUptime(stats, activeInput) {
   };
 }
 
-function formatTableInputMetaLine(label, uptime, bitrate) {
+function formatTableInputMetaLine(label, uptime, bitrate, errors) {
   const safeLabel = label || 'n/a';
   const safeUptime = uptime || '-';
   const safeBitrate = bitrate || '-';
+  const safeErrors = String(errors || '').trim();
+  if (safeErrors) {
+    return `In ${safeLabel} • Up ${safeUptime} • ${safeBitrate} • ${safeErrors}`;
+  }
   return `In ${safeLabel} • Up ${safeUptime} • ${safeBitrate}`;
 }
 
@@ -24992,6 +25147,11 @@ function resolveStreamHealthSummary(stream, stats, activeInput) {
     if (inputState && inputState !== 'ACTIVE') {
       return `Input state: ${inputState}`;
     }
+  }
+
+  const errors = formatStreamErrorSummary(stats, input);
+  if (errors) {
+    return errors;
   }
 
   if (stats && stats.on_air !== true) {
@@ -25437,6 +25597,7 @@ function applyTableRowUptimeDataset(row, model) {
   if (!row) return;
   row.dataset.inputLabel = model.inputLabel || 'n/a';
   row.dataset.inputBitrate = model.inputBitrate || '-';
+  row.dataset.inputErrors = model.inputErrors || '';
   row.dataset.inputUptimeBase = Number.isFinite(model.inputUptimeBaseSec) ? String(model.inputUptimeBaseSec) : '';
   row.dataset.inputUptimeUpdated = Number.isFinite(model.inputUptimeUpdatedAtSec) ? String(model.inputUptimeUpdatedAtSec) : '';
   row.dataset.inputUptimeLive = model.inputUptimeLive ? '1' : '0';
@@ -25455,8 +25616,9 @@ function updateTableRowUptimeText(row) {
   const live = row.dataset.inputUptimeLive === '1';
   const label = row.dataset.inputLabel || 'n/a';
   const bitrate = row.dataset.inputBitrate || '-';
+  const errors = row.dataset.inputErrors || '';
   const uptime = formatStreamUptime(computeLiveUptimeSec(baseSec, Number.isFinite(updatedAtSec) ? updatedAtSec : null, live));
-  const text = formatTableInputMetaLine(label, uptime, bitrate);
+  const text = formatTableInputMetaLine(label, uptime, bitrate, errors);
   if (inputMeta.textContent !== text) {
     inputMeta.textContent = text;
   }
@@ -25504,11 +25666,25 @@ function buildStreamModel(stream) {
   const inputLabel = activeInput
     ? getInputLabel(activeInput, activeIndex || 0)
     : (inputUrl ? shortInputLabel(inputUrl) : 'n/a');
-  let inputBitrateValue = stats.bitrate;
+  let inputBitrateValue = Number(stats && stats.bitrate);
   if (activeInput) {
-    const activeRate = Number.isFinite(activeInput.bitrate_kbps) ? activeInput.bitrate_kbps : activeInput.bitrate;
+    const activeRate = Number.isFinite(Number(activeInput.bitrate_kbps))
+      ? Number(activeInput.bitrate_kbps)
+      : Number(activeInput.bitrate);
     if (Number.isFinite(activeRate)) {
       inputBitrateValue = activeRate;
+    }
+    if (!Number.isFinite(inputBitrateValue)) {
+      const activeRawRate = Number(activeInput.raw_bitrate_kbps);
+      if (Number.isFinite(activeRawRate)) {
+        inputBitrateValue = activeRawRate;
+      }
+    }
+  }
+  if (!Number.isFinite(inputBitrateValue)) {
+    const statsRaw = Number(stats && stats.raw_bitrate_kbps);
+    if (Number.isFinite(statsRaw)) {
+      inputBitrateValue = statsRaw;
     }
   }
   if (!Number.isFinite(inputBitrateValue)) {
@@ -25527,6 +25703,7 @@ function buildStreamModel(stream) {
   const stableInputBitrateValue = resolveStableBitrateKbps(`${stream.id}|table-input`, inputBitrateValue, streamLive);
   const inputBitrateKbps = Number.isFinite(Number(stableInputBitrateValue)) ? Number(stableInputBitrateValue) : null;
   const inputBitrate = formatMaybeBitrate(stableInputBitrateValue);
+  const inputErrors = formatStreamErrorSummary(stats, activeInput);
   const uptime = resolveModelInputUptime(stats, activeInput);
   const inputUptime = uptime.text;
 
@@ -25581,6 +25758,7 @@ function buildStreamModel(stream) {
         : ''),
     inputBitrateKbps,
     inputBitrate,
+    inputErrors,
     inputUptime,
     inputUptimeBaseSec: uptime.baseSec,
     inputUptimeUpdatedAtSec: uptime.updatedAtSec,
@@ -25670,7 +25848,7 @@ function buildStreamTableRow(stream, modelOverride) {
   if (model.inputUrl) inputUrl.title = model.inputUrl;
   const inputMeta = createEl('div', 'stream-cell-sub stream-cell-sub-ellipsis');
   inputMeta.dataset.role = 'stream-input-meta';
-  inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
+  inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate, model.inputErrors);
   inputCell.appendChild(inputUrl);
   inputCell.appendChild(inputMeta);
 
@@ -25789,7 +25967,7 @@ function updateStreamTableRow(row, stream) {
   }
   const inputMeta = refs.inputMeta || row.querySelector('[data-role="stream-input-meta"]');
   if (inputMeta) {
-    inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate);
+    inputMeta.textContent = formatTableInputMetaLine(model.inputLabel, model.inputUptime, model.inputBitrate, model.inputErrors);
   }
   const tcSummary = refs.tcSummary || row.querySelector('[data-role="stream-transcode-summary"]');
   if (tcSummary) {
@@ -25888,6 +26066,7 @@ function buildStreamCompactRow(stream, modelOverride) {
     model.shardLabel ? `${model.shardLabel}` : null,
     `Input: ${model.inputUrl || '-'}`,
     `Input bitrate: ${model.inputBitrate}`,
+    model.inputErrors ? `Input errors: ${model.inputErrors}` : null,
     `Transcode: ${model.transcodeStatus}`,
     `Outputs: ${model.outputSummary}`,
   ].filter(Boolean).join('\n');
@@ -25895,7 +26074,11 @@ function buildStreamCompactRow(stream, modelOverride) {
   const dot = createEl('span', `stream-status-dot ${model.statusInfo.className}`);
   const nameBtn = createEl('button', 'stream-compact-name', model.name);
   nameBtn.dataset.action = 'edit';
-  const rate = createEl('div', 'stream-compact-rate', model.inputBitrate);
+  const rate = createEl(
+    'div',
+    'stream-compact-rate',
+    model.inputErrors ? `${model.inputBitrate} • ${model.inputErrors}` : model.inputBitrate,
+  );
   const sourceSuffix = model.sourceBadge ? ` • ${model.sourceBadge}` : '';
   const clientsText = model.shardLabel
     ? `Clients: ${model.clients} • ${model.shardLabel}${sourceSuffix}`
@@ -25962,6 +26145,7 @@ function updateStreamCompactRows() {
       model.shardLabel ? `${model.shardLabel}` : null,
       `Input: ${model.inputUrl || '-'}`,
       `Input bitrate: ${model.inputBitrate}`,
+      model.inputErrors ? `Input errors: ${model.inputErrors}` : null,
       `Transcode: ${model.transcodeStatus}`,
       `Outputs: ${model.outputSummary}`,
     ].filter(Boolean).join('\n');
@@ -25970,7 +26154,11 @@ function updateStreamCompactRows() {
       dot.className = `stream-status-dot ${model.statusInfo.className}`;
     }
     const rate = row.querySelector('.stream-compact-rate');
-    if (rate) rate.textContent = model.inputBitrate;
+    if (rate) {
+      rate.textContent = model.inputErrors
+        ? `${model.inputBitrate} • ${model.inputErrors}`
+        : model.inputBitrate;
+    }
     const clients = row.querySelector('.stream-compact-clients');
     if (clients) {
       const sourceSuffix = model.sourceBadge ? ` • ${model.sourceBadge}` : '';

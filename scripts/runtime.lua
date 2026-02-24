@@ -647,13 +647,22 @@ end
 
 local function normalize_stats(stats)
     local src = stats or {}
+    local raw_bitrate_kbps = tonumber(src.raw_bitrate_kbps)
+    if raw_bitrate_kbps == nil then
+        raw_bitrate_kbps = tonumber(src.raw_bitrate)
+    end
+    if raw_bitrate_kbps == nil then
+        raw_bitrate_kbps = tonumber(src.bitrate)
+    end
     return {
         bitrate = tonumber(src.bitrate) or 0,
+        raw_bitrate_kbps = raw_bitrate_kbps or 0,
         cc_errors = tonumber(src.cc_errors) or 0,
         pes_errors = tonumber(src.pes_errors) or 0,
         scrambled = src.scrambled == true,
         on_air = src.on_air == true,
         updated_at = src.updated_at,
+        updated_raw_at = tonumber(src.updated_raw_at) or tonumber(src.updated_at) or nil,
     }
 end
 
@@ -783,6 +792,13 @@ local function collect_input_stats(channel, lite)
         else
             entry.bitrate_kbps = nil
         end
+        if input_data and input_data.stats then
+            entry.raw_bitrate_kbps = tonumber(input_data.stats.raw_bitrate_kbps)
+                or tonumber(input_data.stats.raw_bitrate)
+                or nil
+        else
+            entry.raw_bitrate_kbps = nil
+        end
 
         -- Профиль сети (dc/wan/bad/max) и факт включения resilience для входа.
         -- Это нужно для UI Analyze, чтобы оператор понимал, почему вход "degraded/offline".
@@ -807,11 +823,13 @@ local function collect_input_stats(channel, lite)
         if input_data and input_data.stats then
             local normalized = normalize_stats(input_data.stats)
             entry.bitrate = normalized.bitrate
+            entry.raw_bitrate_kbps = normalized.raw_bitrate_kbps
             entry.cc_errors = normalized.cc_errors
             entry.pes_errors = normalized.pes_errors
             entry.scrambled = normalized.scrambled
             entry.on_air = normalized.on_air
             entry.updated_at = normalized.updated_at
+            entry.updated_raw_at = normalized.updated_raw_at
 
             -- For paced HLS/HTTP inputs (playout enabled), show effective output rate
             -- instead of bursty analyzer bitrate measured at segment ingest.
@@ -2518,6 +2536,12 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
         end
         if active and active.bitrate ~= nil then
             entry.bitrate = tonumber(active.bitrate) or entry.bitrate
+        end
+        if active and active.raw_bitrate_kbps ~= nil then
+            entry.raw_bitrate_kbps = tonumber(active.raw_bitrate_kbps) or entry.raw_bitrate_kbps
+        end
+        if active and active.updated_raw_at ~= nil then
+            entry.updated_raw_at = tonumber(active.updated_raw_at) or entry.updated_raw_at
         end
     end
     entry.last_switch = channel and channel.failover and channel.failover.last_switch or nil
