@@ -612,10 +612,10 @@ const STREAM_UPTIME_TICK_MS = 1000;
 const POLL_STATUS_WARMUP_MS = 2000;
 const POLL_STATUS_WARMUP_WINDOW_MS = 30000;
 const POLL_STATUS_RAMP_WINDOW_MS = 20000;
-const POLL_STATUS_FAST_MS = 1000;
+const POLL_STATUS_FAST_MS = 500;
 const POLL_STATUS_FAST_WINDOW_MS = 15000;
 const TILE_VISIBILITY_UPDATE_THRESHOLD = 40;
-const STATUS_POLL_IDS_MAX = 120;
+const STATUS_POLL_IDS_MAX = 180;
 const STATUS_POLL_IDS_FALLBACK_MAX = 24;
 const POLL_STATUS_HIDDEN_MIN_MS = 10000;
 const POLL_ADAPTER_MS = 5000;
@@ -24817,13 +24817,7 @@ async function loadStreamStatus() {
     const statusIds = collectStatusPollIds();
     const localCandidates = listLocalStatusPollCandidates();
     const localTotal = localCandidates.length;
-    let requestIds = statusIds;
-    if (Array.isArray(requestIds) && requestIds.length > 0 && localTotal > STATUS_POLL_IDS_MAX) {
-      const primedCount = Number(state.statusPollPrimedCount) || 0;
-      if (primedCount < localTotal) {
-        requestIds = null;
-      }
-    }
+    const requestIds = statusIds;
     // Used by computeStatusPollDelayMs() safety floor: when we poll only a subset of streams
     // (ids=...), we should base the UI load heuristic on the polled count, not total streams.
     state.statusPollUsingIds = Array.isArray(requestIds) && requestIds.length > 0;
@@ -24839,8 +24833,11 @@ async function loadStreamStatus() {
     const endpoint = params.length > 0
       ? `/api/v1/stream-status?${params.join('&')}`
       : '/api/v1/stream-status';
+    const timeoutMs = (requestIds && requestIds.length > 0)
+      ? Math.max(1200, Math.min(API_POLL_TIMEOUT_MS, 2200))
+      : API_POLL_TIMEOUT_MS;
     const data = await apiJson(endpoint, {
-      timeout_ms: API_POLL_TIMEOUT_MS,
+      timeout_ms: timeoutMs,
       retry: API_POLL_RETRY_COUNT,
     });
     if (requestIds && requestIds.length > 0) {
@@ -24878,9 +24875,10 @@ function getStatusPollSafetyFloorMs() {
     : 0;
   const count = (polled > 0 && polled <= STATUS_POLL_IDS_MAX) ? polled : total;
   if (state.statusPollUsingIds === true) {
-    if (count >= 240) return 3000;
-    if (count >= 120) return 1500;
-    if (count >= 60) return 1000;
+    if (count >= 300) return 2000;
+    if (count >= 200) return 1400;
+    if (count >= 120) return 800;
+    if (count >= 60) return 500;
     return 0;
   }
   if (state.viewMode === 'cards') {
