@@ -43,11 +43,12 @@ local degradation_opts = nil
 
 dvb_autosearch_degradation = function(_, _row, opts)
     degradation_opts = opts or {}
-    return true, "cc", {
+    return true, "no_data_pes", {
         streams = 2,
         streams_on_air = 2,
         avg_bitrate_kbps = 1200,
-        cc_delta = 100,
+        no_data_fault_delta = 50,
+        pes_peak_sum = 120,
     }
 end
 
@@ -103,15 +104,17 @@ runtime.started_at = os.time() - 1000
 dvb_autosearch_tick()
 
 assert_true(enqueue_called == true, "tick should enqueue task for standalone type-flip mode")
-assert_true(enqueue_reason == "cc", "standalone type-flip mode should trigger on cc reason")
+assert_true(enqueue_reason == "no_data_pes", "standalone type-flip mode should trigger on no_data+pes reason")
 assert_true(enqueue_opts and enqueue_opts.type_flip_only == true,
     "standalone type-flip enqueue should set type_flip_only")
-assert_true(degradation_opts and degradation_opts.cc_only == true,
-    "standalone type-flip degradation should be cc-only")
+assert_true(degradation_opts and degradation_opts.no_data_pes_only == true,
+    "standalone type-flip degradation should be no_data+pes only")
 assert_true(tonumber(degradation_opts and degradation_opts.window_sec) == 60,
     "standalone type-flip degradation should use 60 sec window")
-assert_true(tonumber(degradation_opts and degradation_opts.cc_threshold) == 120,
-    "standalone type-flip degradation should use cc threshold 120")
+assert_true(tonumber(degradation_opts and degradation_opts.no_data_threshold) == 40,
+    "standalone type-flip degradation should use no_data threshold 40")
+assert_true(tonumber(degradation_opts and degradation_opts.pes_threshold) == 40,
+    "standalone type-flip degradation should use PES threshold 40")
 
 dvb_autosearch_enabled = saved_enabled
 dvb_autosearch_lock_ok = saved_lock_ok

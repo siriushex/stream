@@ -603,6 +603,7 @@ local dvb_autosearch = {
     seq = 0,
     adapter_history = {},
     adapter_state = {},
+    stream_fault_state = {},
     attempts = {},
     recent_attempts = {},
     frozen_until_ts = 0,
@@ -3803,14 +3804,29 @@ function dvb_autosearch_adapter_cfg(row)
         type_flip_confirm_sec = clamp_number(cfg.auto_signal_type_flip_confirm_sec, 30, 600) or 180,
         type_flip_cc_window_sec = clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600) or 60,
         type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 120,
+        -- Standalone type-flip trigger (S2->S->S2) is based on no_data faults + PES sum.
+        type_flip_fault_window_sec = clamp_number(cfg.auto_signal_type_flip_fault_window_sec, 10, 600)
+            or clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600)
+            or 60,
+        type_flip_no_data_threshold = clamp_number(cfg.auto_signal_type_flip_no_data_threshold, 1, 100000) or 40,
+        type_flip_pes_threshold = clamp_number(cfg.auto_signal_type_flip_pes_threshold, 1, 100000) or 40,
     }
 end
 
 function dvb_autosearch_collect_runtime()
     local out = {}
     local status = runtime and runtime.list_status_lite and runtime.list_status_lite() or {}
+    local now = os.time()
+    local seen_streams = {}
     for stream_id, entry in pairs(status or {}) do
+        local sid = tostring(stream_id or "")
+        if sid ~= "" then
+            seen_streams[sid] = true
+        end
         local adapter_id = dvb_extract_adapter_id(entry and entry.active_input_url)
+        if not adapter_id and sid ~= "" then
+            dvb_autosearch.stream_fault_state[sid] = nil
+        end
         if adapter_id then
             local row = out[adapter_id]
             if not row then
@@ -3821,6 +3837,7 @@ function dvb_autosearch_collect_runtime()
                     bitrate_kbps = 0,
                     cc_total = 0,
                     pes_total = 0,
+                    no_data_fault_events = 0,
                     stream_ids = {},
                 }
                 out[adapter_id] = row
@@ -3844,6 +3861,30 @@ function dvb_autosearch_collect_runtime()
             row.bitrate_kbps = row.bitrate_kbps + bitrate
             row.cc_total = row.cc_total + (tonumber(active and active.cc_errors) or 0)
             row.pes_total = row.pes_total + (tonumber(active and active.pes_errors) or 0)
+
+            if sid ~= "" then
+                local last_error = tostring(active and active.last_error or "")
+                local is_no_data = (last_error == "no_data")
+                local prev = dvb_autosearch.stream_fault_state[sid]
+                local prev_is_no_data = prev
+                    and tostring(prev.adapter_id or "") == tostring(adapter_id)
+                    and prev.is_no_data == true
+                if is_no_data and not prev_is_no_data then
+                    row.no_data_fault_events = row.no_data_fault_events + 1
+                end
+                dvb_autosearch.stream_fault_state[sid] = {
+                    adapter_id = tostring(adapter_id),
+                    is_no_data = is_no_data,
+                    ts = now,
+                }
+            end
+        end
+    end
+    for sid, meta in pairs(dvb_autosearch.stream_fault_state or {}) do
+        if not seen_streams[sid] then
+            dvb_autosearch.stream_fault_state[sid] = nil
+        elseif type(meta) == "table" and (now - (tonumber(meta.ts) or now)) > 7200 then
+            dvb_autosearch.stream_fault_state[sid] = nil
         end
     end
     return out
@@ -3858,6 +3899,12 @@ function dvb_autosearch_push_history(snapshot)
             list = {}
             dvb_autosearch.adapter_history[adapter_id] = list
         end
+        local prev_no_data_total = tonumber(list[#list] and list[#list].no_data_fault_total) or 0
+        local no_data_fault_events = tonumber(item.no_data_fault_events) or 0
+        if no_data_fault_events < 0 then
+            no_data_fault_events = 0
+        end
+        local no_data_fault_total = prev_no_data_total + no_data_fault_events
         list[#list + 1] = {
             ts = now,
             streams = tonumber(item.streams) or 0,
@@ -3865,7 +3912,12 @@ function dvb_autosearch_push_history(snapshot)
             bitrate_kbps = tonumber(item.bitrate_kbps) or 0,
             cc_total = tonumber(item.cc_total) or 0,
             pes_total = tonumber(item.pes_total) or 0,
+            no_data_fault_events = no_data_fault_events,
+            no_data_fault_total = no_data_fault_total,
         }
+        local st = dvb_autosearch.adapter_state[adapter_id] or {}
+        st.no_data_fault_total = no_data_fault_total
+        dvb_autosearch.adapter_state[adapter_id] = st
         while #list > 0 and (now - (tonumber(list[1].ts) or 0)) > max_window do
             table.remove(list, 1)
         end
@@ -3883,6 +3935,7 @@ function dvb_autosearch_degradation(adapter_id, row, opts)
     local window_sec = clamp_number(opts.window_sec, 10, 3600) or cfg.window_sec
     local cc_threshold = clamp_number(opts.cc_threshold, 1, 100000) or cfg.cc_delta_threshold
     local cc_only = normalize_bool(opts.cc_only, false)
+    local no_data_pes_only = normalize_bool(opts.no_data_pes_only, false)
     local window_from = now - window_sec
     local base_from = now - cfg.baseline_window_sec
     local since_ts = tonumber(opts.since_ts) or 0
@@ -3910,6 +3963,55 @@ function dvb_autosearch_degradation(adapter_id, row, opts)
         return false, "not-enough-streams", { streams = streams }
     end
     local avg_kbps = (tonumber(latest.bitrate_kbps) or 0) / math.max(1, streams)
+    local window_span_sec = math.max(1, (tonumber(window[#window].ts) or now) - (tonumber(window[1].ts) or now))
+
+    if no_data_pes_only then
+        local no_data_threshold = clamp_number(opts.no_data_threshold, 1, 100000) or cfg.type_flip_no_data_threshold or 40
+        local pes_threshold = clamp_number(opts.pes_threshold, 1, 100000) or cfg.type_flip_pes_threshold or 40
+
+        local no_data_fault_delta = 0
+        for i = 2, #window do
+            local prev_total = tonumber(window[i - 1].no_data_fault_total)
+            local cur_total = tonumber(window[i].no_data_fault_total)
+            if prev_total ~= nil and cur_total ~= nil then
+                local step = cur_total - prev_total
+                if step >= 0 then
+                    no_data_fault_delta = no_data_fault_delta + step
+                else
+                    no_data_fault_delta = no_data_fault_delta + math.max(0, cur_total)
+                end
+            else
+                no_data_fault_delta = no_data_fault_delta + math.max(0, tonumber(window[i].no_data_fault_events) or 0)
+            end
+        end
+
+        local pes_peak_sum = 0
+        for _, item in ipairs(window) do
+            local pes = tonumber(item.pes_total) or 0
+            if pes > pes_peak_sum then
+                pes_peak_sum = pes
+            end
+        end
+
+        local no_data_bad = no_data_fault_delta > no_data_threshold
+        local pes_bad = pes_peak_sum > pes_threshold
+        local degraded = no_data_bad and pes_bad
+        local reason = degraded and "no_data_pes" or "ok"
+        return degraded, reason, {
+            streams = streams,
+            streams_on_air = tonumber(latest.streams_on_air) or 0,
+            avg_bitrate_kbps = avg_kbps,
+            no_data_fault_delta = no_data_fault_delta,
+            no_data_fault_threshold = no_data_threshold,
+            pes_peak_sum = pes_peak_sum,
+            pes_threshold = pes_threshold,
+            window_sec = window_sec,
+            window_span_sec = window_span_sec,
+            no_data_bad = no_data_bad,
+            pes_bad = pes_bad,
+        }
+    end
+
     -- CC counters can reset on adapter/input restarts. Build an effective delta that
     -- tolerates resets so sustained CC degradation is still detected.
     local cc_delta = 0
@@ -3955,6 +4057,7 @@ function dvb_autosearch_degradation(adapter_id, row, opts)
         cc_delta = cc_delta,
         cc_threshold = cc_threshold,
         window_sec = window_sec,
+        window_span_sec = window_span_sec,
         bitrate_abs_bad = bitrate_abs_bad,
         bitrate_rel_bad = bitrate_rel_bad,
         cc_bad = cc_bad,
@@ -4008,6 +4111,23 @@ function dvb_autosearch_record_attempt(task, ok, reason, meta)
         dvb_autosearch_alert("ERROR", "DVB_AUTOSEARCH_FROZEN",
             "auto signal search frozen due to low success ratio",
             { freeze_sec = freeze_sec, failures = fail_count, successes = success_count })
+    end
+end
+
+local function dvb_autosearch_reset_adapter_counters(adapter_id)
+    local id = tostring(adapter_id or "")
+    if id == "" then
+        return
+    end
+    dvb_autosearch.adapter_history[id] = {}
+    local st = dvb_autosearch.adapter_state[id] or {}
+    st.no_data_fault_total = 0
+    st.type_flip_last_reset_ts = os.time()
+    dvb_autosearch.adapter_state[id] = st
+    for stream_id, meta in pairs(dvb_autosearch.stream_fault_state or {}) do
+        if type(meta) == "table" and tostring(meta.adapter_id or "") == id then
+            dvb_autosearch.stream_fault_state[stream_id] = nil
+        end
     end
 end
 
@@ -4325,9 +4445,10 @@ function dvb_autosearch_step_task(task)
                 since_ts = task.switch_applied_ts,
             }
             if task.type_flip_only then
-                confirm_opts.window_sec = task.cfg and task.cfg.type_flip_cc_window_sec or 60
-                confirm_opts.cc_threshold = task.cfg and task.cfg.type_flip_cc_threshold or 120
-                confirm_opts.cc_only = true
+                confirm_opts.window_sec = task.cfg and task.cfg.type_flip_fault_window_sec or 60
+                confirm_opts.no_data_threshold = task.cfg and task.cfg.type_flip_no_data_threshold or 40
+                confirm_opts.pes_threshold = task.cfg and task.cfg.type_flip_pes_threshold or 40
+                confirm_opts.no_data_pes_only = true
             end
             still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row, confirm_opts)
         end
@@ -4335,6 +4456,9 @@ function dvb_autosearch_step_task(task)
             -- rollback and continue next candidate
             if task.prev_cfg then
                 pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, task.prev_cfg)
+            end
+            if task.type_flip_only == true or task.type_flip_tried == true then
+                dvb_autosearch_reset_adapter_counters(task.adapter_id)
             end
             task.phase = nil
             task.wait_until = nil
@@ -4346,6 +4470,9 @@ function dvb_autosearch_step_task(task)
 
         task.state = "done"
         task.finished_at = os.time()
+        if task.type_flip_only == true or task.type_flip_tried == true then
+            dvb_autosearch_reset_adapter_counters(task.adapter_id)
+        end
         dvb_autosearch_alert("INFO", "DVB_AUTOSEARCH_SWITCH_OK",
             "auto signal search switched adapter successfully",
             { adapter_id = task.adapter_id, candidate = task.applied_candidate and task.applied_candidate.name })
@@ -4365,6 +4492,7 @@ function dvb_autosearch_step_task(task)
         flip.type = "S"
         local ok_apply_s, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, flip)
         if not ok_apply_s or switched == nil then
+            dvb_autosearch_reset_adapter_counters(task.adapter_id)
             task.state = "failed"
             task.finished_at = os.time()
             task.error = "type-flip apply S failed"
@@ -4427,6 +4555,7 @@ function dvb_autosearch_step_task(task)
         restore.type = task.prev_cfg.type or "S2"
         local ok_restore, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, restore)
         if not ok_restore or switched == nil then
+            dvb_autosearch_reset_adapter_counters(task.adapter_id)
             task.state = "failed"
             task.finished_at = os.time()
             task.error = "type-flip restore S2 failed"
@@ -4461,6 +4590,9 @@ function dvb_autosearch_step_task(task)
 
         task.state = "failed"
         task.finished_at = os.time()
+        if task.type_flip_only == true or task.type_flip_tried == true then
+            dvb_autosearch_reset_adapter_counters(task.adapter_id)
+        end
         task.error = task.last_error or "all candidates failed"
         dvb_autosearch_alert("ERROR", "DVB_AUTOSEARCH_SWITCH_FAIL",
             "auto signal search failed to switch adapter",
@@ -4582,9 +4714,10 @@ function dvb_autosearch_tick()
                         local degraded, reason, details = nil, "ok", {}
                         if type_flip_only then
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
-                                window_sec = cfg.type_flip_cc_window_sec,
-                                cc_threshold = cfg.type_flip_cc_threshold,
-                                cc_only = true,
+                                window_sec = cfg.type_flip_fault_window_sec,
+                                no_data_threshold = cfg.type_flip_no_data_threshold,
+                                pes_threshold = cfg.type_flip_pes_threshold,
+                                no_data_pes_only = true,
                             })
                         else
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
@@ -4727,9 +4860,10 @@ local function trigger_dvb_autosearch(server, client, request)
     local degraded, reason, details = nil, "ok", {}
     if type_flip_only then
         degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
-            window_sec = cfg.type_flip_cc_window_sec,
-            cc_threshold = cfg.type_flip_cc_threshold,
-            cc_only = true,
+            window_sec = cfg.type_flip_fault_window_sec,
+            no_data_threshold = cfg.type_flip_no_data_threshold,
+            pes_threshold = cfg.type_flip_pes_threshold,
+            no_data_pes_only = true,
         })
     else
         degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)

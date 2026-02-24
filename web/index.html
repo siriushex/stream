@@ -541,7 +541,7 @@
                       <span>Type flip wait (sec)</span>
                       <input type="number" id="adapter-auto-signal-type-flip-wait-sec" placeholder="20" />
                     </label>
-                    <div class="form-hint">Works independently from backup adapter. Sequence: S2 hold 10s -> S hold (this value) -> S2 confirm 180s. Trigger: CC >= 120 over 60s.</div>
+                    <div class="form-hint">Works independently from backup adapter. Sequence: S2 hold 10s -> S hold (this value) -> S2 confirm 180s. Trigger: active input fault (no_data) &gt; 40 plus PES sum &gt; 40 over 60s for streams on this adapter.</div>
                   </div>
                 </div>
               </div>
