@@ -812,6 +812,17 @@ local function collect_input_stats(channel, lite)
             entry.scrambled = normalized.scrambled
             entry.on_air = normalized.on_air
             entry.updated_at = normalized.updated_at
+
+            -- For paced HLS/HTTP inputs (playout enabled), show effective output rate
+            -- instead of bursty analyzer bitrate measured at segment ingest.
+            if entry.playout and entry.playout.playout_enabled == true then
+                local paced_kbps = tonumber(entry.playout.current_kbps)
+                if paced_kbps and paced_kbps > 0 then
+                    entry.input_bitrate_kbps = normalized.bitrate
+                    entry.bitrate = math.floor(paced_kbps + 0.5)
+                    entry.bitrate_kbps = entry.bitrate
+                end
+            end
         else
             entry.on_air = input_data and input_data.on_air == true
         end
@@ -2504,6 +2515,9 @@ local function build_stream_status_entry(id, stream, clients_count, lite)
         end
         if active and active.uptime_sec ~= nil then
             entry.uptime_sec = tonumber(active.uptime_sec) or nil
+        end
+        if active and active.bitrate ~= nil then
+            entry.bitrate = tonumber(active.bitrate) or entry.bitrate
         end
     end
     entry.last_switch = channel and channel.failover and channel.failover.last_switch or nil

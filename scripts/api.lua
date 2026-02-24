@@ -3797,8 +3797,12 @@ function dvb_autosearch_adapter_cfg(row)
         switch_cooldown_sec = clamp_number(cfg.auto_signal_switch_cooldown_sec, 30, 3600) or 180,
         min_streams = clamp_number(cfg.auto_signal_min_streams, 1, 2000) or 1,
         candidate_profiles = type(cfg.auto_signal_candidate_profiles) == "table" and cfg.auto_signal_candidate_profiles or {},
-        allow_type_flip = normalize_bool(cfg.auto_signal_type_flip_enabled, true),
-        type_flip_wait_sec = clamp_number(cfg.auto_signal_type_flip_wait_sec, 5, 120) or 30,
+        allow_type_flip = normalize_bool(cfg.auto_signal_type_flip_enabled, false),
+        type_flip_s2_hold_sec = clamp_number(cfg.auto_signal_type_flip_s2_hold_sec, 1, 120) or 10,
+        type_flip_wait_sec = clamp_number(cfg.auto_signal_type_flip_wait_sec, 5, 120) or 20,
+        type_flip_confirm_sec = clamp_number(cfg.auto_signal_type_flip_confirm_sec, 30, 600) or 180,
+        type_flip_cc_window_sec = clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600) or 60,
+        type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 120,
     }
 end
 
@@ -3868,15 +3872,23 @@ function dvb_autosearch_push_history(snapshot)
     end
 end
 
-function dvb_autosearch_degradation(adapter_id, row)
+function dvb_autosearch_degradation(adapter_id, row, opts)
+    opts = type(opts) == "table" and opts or {}
     local cfg = dvb_autosearch_adapter_cfg(row)
     local list = dvb_autosearch.adapter_history[adapter_id] or {}
     if #list < 2 then
         return false, "insufficient-history", { streams = 0 }
     end
     local now = os.time()
-    local window_from = now - cfg.window_sec
+    local window_sec = clamp_number(opts.window_sec, 10, 3600) or cfg.window_sec
+    local cc_threshold = clamp_number(opts.cc_threshold, 1, 100000) or cfg.cc_delta_threshold
+    local cc_only = normalize_bool(opts.cc_only, false)
+    local window_from = now - window_sec
     local base_from = now - cfg.baseline_window_sec
+    local since_ts = tonumber(opts.since_ts) or 0
+    if since_ts > window_from then
+        window_from = since_ts
+    end
     local window = {}
     local baseline = {}
     for _, item in ipairs(list) do
@@ -3898,7 +3910,19 @@ function dvb_autosearch_degradation(adapter_id, row)
         return false, "not-enough-streams", { streams = streams }
     end
     local avg_kbps = (tonumber(latest.bitrate_kbps) or 0) / math.max(1, streams)
-    local cc_delta = math.max(0, (tonumber(latest.cc_total) or 0) - (tonumber(oldest.cc_total) or 0))
+    -- CC counters can reset on adapter/input restarts. Build an effective delta that
+    -- tolerates resets so sustained CC degradation is still detected.
+    local cc_delta = 0
+    for i = 2, #window do
+        local prev_cc = tonumber(window[i - 1].cc_total) or 0
+        local cur_cc = tonumber(window[i].cc_total) or 0
+        local step = cur_cc - prev_cc
+        if step >= 0 then
+            cc_delta = cc_delta + step
+        else
+            cc_delta = cc_delta + math.max(0, cur_cc)
+        end
+    end
     local bitrate_abs_bad = avg_kbps < cfg.bitrate_min_kbps
 
     local baseline_sum = 0
@@ -3920,8 +3944,8 @@ function dvb_autosearch_degradation(adapter_id, row)
     else
         bitrate_bad = bitrate_abs_bad or bitrate_rel_bad
     end
-    local cc_bad = cc_delta >= cfg.cc_delta_threshold
-    local degraded = bitrate_bad or cc_bad
+    local cc_bad = cc_delta >= cc_threshold
+    local degraded = cc_only and cc_bad or (bitrate_bad or cc_bad)
     local reason = degraded and (cc_bad and "cc" or "bitrate") or "ok"
     return degraded, reason, {
         streams = streams,
@@ -3929,6 +3953,8 @@ function dvb_autosearch_degradation(adapter_id, row)
         avg_bitrate_kbps = avg_kbps,
         baseline_avg_kbps = baseline_avg,
         cc_delta = cc_delta,
+        cc_threshold = cc_threshold,
+        window_sec = window_sec,
         bitrate_abs_bad = bitrate_abs_bad,
         bitrate_rel_bad = bitrate_rel_bad,
         cc_bad = cc_bad,
@@ -4035,6 +4061,7 @@ function dvb_autosearch_enqueue(adapter_id, reason, details, opts)
         details = details or {},
         queued_at = os.time(),
         state = "queued",
+        type_flip_only = opts.type_flip_only == true,
     }
     task.score = dvb_autosearch_task_score(task.details, task.queued_at)
     dvb_autosearch.queue[#dvb_autosearch.queue + 1] = task
@@ -4202,26 +4229,47 @@ function dvb_autosearch_probe(conf, duration, done_cb)
     })
 end
 
+local function dvb_autosearch_get_adapter(adapter_id, fallback)
+    if not (config and config.get_adapter and adapter_id ~= nil) then
+        return fallback
+    end
+    local ok, row = pcall(config.get_adapter, adapter_id)
+    if not ok then
+        return fallback
+    end
+    if row == nil then
+        return fallback
+    end
+    return row
+end
+
 function dvb_autosearch_apply_adapter_config(adapter_id, next_cfg)
-    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    local row = dvb_autosearch_get_adapter(adapter_id, nil)
     if not row then
         return nil, "adapter not found"
     end
+    local merged_cfg = deep_copy(next_cfg or {})
+    local current_cfg = type(row.config) == "table" and row.config or {}
+    for key, value in pairs(current_cfg) do
+        if tostring(key):match("^auto_signal_") then
+            merged_cfg[key] = deep_copy(value)
+        end
+    end
     local enabled = (tonumber(row.enabled) or 0) ~= 0
-    config.upsert_adapter(adapter_id, enabled, next_cfg)
+    config.upsert_adapter(adapter_id, enabled, merged_cfg)
     if runtime and runtime.refresh_adapters then
         runtime.refresh_adapters(true)
     end
     return row, nil
 end
 
-function dvb_autosearch_confirm_degradation(adapter_id, row)
-    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+function dvb_autosearch_confirm_degradation(adapter_id, row, opts)
+    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, opts)
     return degraded == true, reason, details
 end
 
 function dvb_autosearch_start_task(task)
-    local row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+    local row = dvb_autosearch_get_adapter(task.adapter_id, nil)
     if not row then
         task.state = "failed"
         task.error = "adapter not found"
@@ -4229,7 +4277,15 @@ function dvb_autosearch_start_task(task)
         return
     end
     local candidates, cfg = dvb_autosearch_build_candidates(row)
-    if #candidates == 0 then
+    if task.type_flip_only == true then
+        candidates = {}
+    end
+    local can_type_flip = false
+    if cfg and cfg.allow_type_flip then
+        local cur_type = tostring((row.config and row.config.type) or ""):upper()
+        can_type_flip = (cur_type == "S2")
+    end
+    if #candidates == 0 and not can_type_flip then
         task.state = "failed"
         task.error = "no free candidate FE profiles"
         dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_NO_FREE_FE",
@@ -4244,6 +4300,13 @@ function dvb_autosearch_start_task(task)
     task.cfg = cfg
     task.candidates = candidates
     task.candidate_index = 1
+    if #candidates == 0 and can_type_flip then
+        task.no_candidate_profiles = true
+        task.last_error = "no free candidate FE profiles; trying type flip recovery"
+        dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_NO_FREE_FE",
+            "no free FE candidates, trying type flip recovery",
+            { adapter_id = task.adapter_id })
+    end
 end
 
 function dvb_autosearch_step_task(task)
@@ -4258,7 +4321,15 @@ function dvb_autosearch_step_task(task)
         local reason = "ok"
         local details = {}
         if task.row then
-            still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row)
+            local confirm_opts = {
+                since_ts = task.switch_applied_ts,
+            }
+            if task.type_flip_only then
+                confirm_opts.window_sec = task.cfg and task.cfg.type_flip_cc_window_sec or 60
+                confirm_opts.cc_threshold = task.cfg and task.cfg.type_flip_cc_threshold or 120
+                confirm_opts.cc_only = true
+            end
+            still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row, confirm_opts)
         end
         if still_bad then
             -- rollback and continue next candidate
@@ -4289,6 +4360,22 @@ function dvb_autosearch_step_task(task)
         return true
     end
 
+    if task.phase == "type-flip-pre-wait" and task.prev_cfg then
+        local flip = deep_copy(task.prev_cfg)
+        flip.type = "S"
+        local ok_apply_s, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, flip)
+        if not ok_apply_s or switched == nil then
+            task.state = "failed"
+            task.finished_at = os.time()
+            task.error = "type-flip apply S failed"
+            dvb_autosearch_record_attempt(task, false, task.error)
+            return true
+        end
+        task.phase = "type-flip-return"
+        task.wait_until = os.time() + (task.cfg.type_flip_wait_sec or 20)
+        return false
+    end
+
     if task.phase == "wait-probe" then
         if task.waiting_probe then
             return false
@@ -4314,7 +4401,7 @@ function dvb_autosearch_step_task(task)
             }
             return false
         end
-        local prev_row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+        local prev_row = dvb_autosearch_get_adapter(task.adapter_id, nil)
         if not prev_row then
             task.candidate_index = (tonumber(task.candidate_index) or 1) + 1
             task.last_error = "adapter disappeared"
@@ -4329,6 +4416,7 @@ function dvb_autosearch_step_task(task)
             return false
         end
         task.applied_candidate = candidate
+        task.switch_applied_ts = os.time()
         task.phase = "confirm"
         task.wait_until = os.time() + task.cfg.confirm_sec
         return false
@@ -4336,9 +4424,17 @@ function dvb_autosearch_step_task(task)
 
     if task.phase == "type-flip-return" and task.prev_cfg then
         local restore = deep_copy(task.prev_cfg)
-        restore.type = "S2"
-        pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, restore)
-        task.wait_until = os.time() + 10
+        restore.type = task.prev_cfg.type or "S2"
+        local ok_restore, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, restore)
+        if not ok_restore or switched == nil then
+            task.state = "failed"
+            task.finished_at = os.time()
+            task.error = "type-flip restore S2 failed"
+            dvb_autosearch_record_attempt(task, false, task.error)
+            return true
+        end
+        task.switch_applied_ts = os.time()
+        task.wait_until = os.time() + (task.cfg.type_flip_confirm_sec or 180)
         task.phase = "confirm"
         task.applied_candidate = { name = "type-flip S2->S->S2" }
         return false
@@ -4351,14 +4447,13 @@ function dvb_autosearch_step_task(task)
             local cur_type = tostring((task.row and task.row.config and task.row.config.type) or ""):upper()
             if cur_type == "S2" then
                 task.type_flip_tried = true
-                local original = deep_copy(task.row.config or {})
-                local flip = deep_copy(original)
-                flip.type = "S"
-                local ok1, switched = pcall(dvb_autosearch_apply_adapter_config, task.adapter_id, flip)
-                if ok1 and switched ~= nil then
+                local live_row = dvb_autosearch_get_adapter(task.adapter_id, task.row)
+                local original = deep_copy((live_row and live_row.config) or task.row.config or {})
+                if original and next(original) ~= nil then
                     task.prev_cfg = original
-                    task.phase = "type-flip-return"
-                    task.wait_until = os.time() + (task.cfg.type_flip_wait_sec or 30)
+                    task.phase = "type-flip-pre-wait"
+                    task.wait_until = os.time() + (task.cfg.type_flip_s2_hold_sec or 10)
+                    task.applied_candidate = { name = "type-flip S2->S->S2" }
                     return false
                 end
             end
@@ -4428,7 +4523,7 @@ function dvb_autosearch_step_task(task)
         return false
     end
 
-    local prev_row = config and config.get_adapter and config.get_adapter(task.adapter_id) or nil
+    local prev_row = dvb_autosearch_get_adapter(task.adapter_id, nil)
     if not prev_row then
         task.candidate_index = task.candidate_index + 1
         task.last_error = "adapter disappeared"
@@ -4443,6 +4538,7 @@ function dvb_autosearch_step_task(task)
         return false
     end
     task.applied_candidate = candidate
+    task.switch_applied_ts = os.time()
     task.phase = "confirm"
     task.wait_until = os.time() + task.cfg.confirm_sec
     return false
@@ -4461,32 +4557,47 @@ function dvb_autosearch_tick()
     end
 
     local warmup = clamp_number(setting_number("dvb_autosearch_detection_warmup_sec", 120), 0, 3600) or 120
+    local detection_allowed = true
     if runtime and runtime.started_at and (now - runtime.started_at) < warmup then
-        return
+        detection_allowed = false
     end
 
-    local snapshot = dvb_autosearch_collect_runtime()
-    dvb_autosearch_push_history(snapshot)
+    if detection_allowed then
+        local snapshot = dvb_autosearch_collect_runtime()
+        dvb_autosearch_push_history(snapshot)
 
-    local adapters = config and config.list_adapters and config.list_adapters() or {}
-    for _, row in ipairs(adapters) do
-        local adapter_id = row and row.id and tostring(row.id) or nil
-        if adapter_id then
-            local cfg = dvb_autosearch_adapter_cfg(row)
-            if cfg.enabled then
-                local state = dvb_autosearch.adapter_state[adapter_id] or {}
-                local cooldown_ok = true
-                if state.last_switch_ts then
-                    cooldown_ok = (now - (tonumber(state.last_switch_ts) or 0)) >= cfg.switch_cooldown_sec
-                end
-                if cooldown_ok then
-                    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
-                    if degraded then
-                        details.expected_bitrate_kbps = cfg.bitrate_min_kbps
-                        if dvb_autosearch_enqueue(adapter_id, reason, details) then
-                            dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_DEGRADED",
-                                "adapter signal degradation detected",
-                                { adapter_id = adapter_id, reason = reason, details = details })
+        local adapters = config and config.list_adapters and config.list_adapters() or {}
+        for _, row in ipairs(adapters) do
+            local adapter_id = row and row.id and tostring(row.id) or nil
+            if adapter_id then
+                local cfg = dvb_autosearch_adapter_cfg(row)
+                if cfg.enabled or cfg.allow_type_flip then
+                    local state = dvb_autosearch.adapter_state[adapter_id] or {}
+                    local cooldown_ok = true
+                    if state.last_switch_ts then
+                        cooldown_ok = (now - (tonumber(state.last_switch_ts) or 0)) >= cfg.switch_cooldown_sec
+                    end
+                    if cooldown_ok then
+                        local type_flip_only = (cfg.enabled ~= true) and (cfg.allow_type_flip == true)
+                        local degraded, reason, details = nil, "ok", {}
+                        if type_flip_only then
+                            degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
+                                window_sec = cfg.type_flip_cc_window_sec,
+                                cc_threshold = cfg.type_flip_cc_threshold,
+                                cc_only = true,
+                            })
+                        else
+                            degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+                        end
+                        if degraded then
+                            if not type_flip_only then
+                                details.expected_bitrate_kbps = cfg.bitrate_min_kbps
+                            end
+                            if dvb_autosearch_enqueue(adapter_id, reason, details, { type_flip_only = type_flip_only }) then
+                                dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_DEGRADED",
+                                    "adapter signal degradation detected",
+                                    { adapter_id = adapter_id, reason = reason, details = details, type_flip_only = type_flip_only })
+                            end
                         end
                     end
                 end
@@ -4495,6 +4606,18 @@ function dvb_autosearch_tick()
     end
 
     if dvb_autosearch.active and dvb_autosearch.active.state == "running" then
+        local active_row = dvb_autosearch_get_adapter(dvb_autosearch.active.adapter_id, nil)
+        local active_cfg = active_row and dvb_autosearch_adapter_cfg(active_row) or nil
+        local active_allowed = active_cfg and (active_cfg.enabled or active_cfg.allow_type_flip) or false
+        local active_type_flip_allowed = active_cfg and active_cfg.allow_type_flip or false
+        if (not active_allowed) or (dvb_autosearch.active.type_flip_only == true and not active_type_flip_allowed) then
+            dvb_autosearch.active.state = "failed"
+            dvb_autosearch.active.finished_at = os.time()
+            dvb_autosearch.active.error = "manually disabled"
+            dvb_autosearch_record_attempt(dvb_autosearch.active, false, dvb_autosearch.active.error)
+            dvb_autosearch.active = nil
+            return
+        end
         local done = dvb_autosearch_step_task(dvb_autosearch.active)
         if done then
             dvb_autosearch.active = nil
@@ -4576,6 +4699,12 @@ local function get_dvb_autosearch_status(server, client, request)
     if not require_admin(request) then
         return error_response(server, client, 403, "forbidden")
     end
+    -- Safety fallback: process one scheduler step on demand.
+    -- This keeps auto-search/type-flip operational even if periodic timer is delayed.
+    local ok, err = pcall(dvb_autosearch_tick)
+    if not ok then
+        log.warning("[dvb-autosearch] on-demand status tick failed: " .. tostring(err))
+    end
     return json_response(server, client, 200, dvb_autosearch_status_payload())
 end
 
@@ -4589,11 +4718,22 @@ local function trigger_dvb_autosearch(server, client, request)
     if adapter_id == "" then
         return error_response(server, client, 400, "adapter_id is required")
     end
-    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    local row = dvb_autosearch_get_adapter(adapter_id, nil)
     if not row then
         return error_response(server, client, 404, "adapter not found")
     end
-    local degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+    local cfg = dvb_autosearch_adapter_cfg(row)
+    local type_flip_only = (cfg.enabled ~= true) and (cfg.allow_type_flip == true)
+    local degraded, reason, details = nil, "ok", {}
+    if type_flip_only then
+        degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
+            window_sec = cfg.type_flip_cc_window_sec,
+            cc_threshold = cfg.type_flip_cc_threshold,
+            cc_only = true,
+        })
+    else
+        degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
+    end
     if dry_run then
         return json_response(server, client, 200, {
             status = "dry-run",
@@ -4601,15 +4741,27 @@ local function trigger_dvb_autosearch(server, client, request)
             degraded = degraded,
             reason = reason,
             details = details,
+            type_flip_only = type_flip_only,
         })
     end
-    local queued = dvb_autosearch_enqueue(adapter_id, reason, details, { force = true })
+    local queued = dvb_autosearch_enqueue(adapter_id, reason, details, {
+        force = true,
+        type_flip_only = type_flip_only,
+    })
+    if queued then
+        -- Start processing immediately for manual trigger UX.
+        local ok_tick, err_tick = pcall(dvb_autosearch_tick)
+        if not ok_tick then
+            log.warning("[dvb-autosearch] on-demand trigger tick failed: " .. tostring(err_tick))
+        end
+    end
     return json_response(server, client, 200, {
         status = queued and "queued" or "already_queued",
         adapter_id = adapter_id,
         degraded = degraded,
         reason = reason,
         details = details,
+        type_flip_only = type_flip_only,
     })
 end
 
@@ -5048,7 +5200,7 @@ local function start_dvb_full_scan(server, client, request)
     if dvb_full_scan.active_id then
         return error_response(server, client, 409, "another full scan is running")
     end
-    local row = config and config.get_adapter and config.get_adapter(adapter_id) or nil
+    local row = dvb_autosearch_get_adapter(adapter_id, nil)
     if not row then
         return error_response(server, client, 404, "adapter not found")
     end

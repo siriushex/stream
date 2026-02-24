@@ -874,6 +874,11 @@ local function format_input_url(conf)
     return nil
 end
 
+local function is_bursty_http_input_format(format)
+    local f = tostring(format or ""):lower()
+    return f == "http" or f == "https" or f == "hls" or f == "dash" or f == "np"
+end
+
 local INPUT_NO_AUDIO_DEFAULT_SEC = 5
 local INPUT_STOP_VIDEO_DEFAULT_SEC = 5
 local INPUT_AV_DESYNC_THRESHOLD_MS_DEFAULT = 800
@@ -1907,23 +1912,26 @@ function on_analyze_spts(channel_data, input_id, data)
         end
 
     elseif data.analyze then
+        local cfg = input_data.config or {}
+        local format = (type(resolve_effective_input_format) == "function"
+            and resolve_effective_input_format(cfg))
+            or cfg.format
+
         local effective_on_air = data.on_air
         if data.on_air == true then
             input_data.__no_data_streak = 0
         elseif data.on_air == false then
-            local cfg = input_data.config or {}
-            local format = (type(resolve_effective_input_format) == "function"
-                and resolve_effective_input_format(cfg))
-                or cfg.format
             local hold_sec = tonumber(cfg.no_data_timeout_sec)
                 or tonumber(channel_data
                     and channel_data.failover
                     and channel_data.failover.no_data_timeout)
                 or 3
-            -- DASH live часто приходит сегментами с короткими "дырами";
+            -- DASH/HLS live часто приходят сегментами с короткими "дырами";
             -- минимальный hold предотвращает ложные DOWN/ACTIVE флапы.
             if format == "dash" and hold_sec < 10 then
                 hold_sec = 10
+            elseif format == "hls" and hold_sec < 8 then
+                hold_sec = 8
             end
             hold_sec = math.floor(math.max(1, math.min(hold_sec, 120)))
             input_data.__no_data_streak = (tonumber(input_data.__no_data_streak) or 0) + 1
@@ -1933,8 +1941,38 @@ function on_analyze_spts(channel_data, input_id, data)
         end
 
         local total = data.total or {}
+        local raw_bitrate_kbps = tonumber(total.bitrate) or 0
+        local display_bitrate_kbps = raw_bitrate_kbps
+        local hls_bitrate_kbps = tonumber(input_data and input_data.hls and input_data.hls.bitrate_kbps)
+        if effective_on_air ~= true then
+            -- For offline/degraded input show immediate zero in UI.
+            display_bitrate_kbps = 0
+            input_data.__bitrate_ema_kbps = 0
+        elseif hls_bitrate_kbps and hls_bitrate_kbps > 0 then
+            -- For HLS prefer bitrate derived from segment bytes/duration window.
+            -- It represents encoded channel bitrate and is not inflated by burst downloads.
+            display_bitrate_kbps = math.floor(hls_bitrate_kbps + 0.5)
+            input_data.__bitrate_ema_kbps = display_bitrate_kbps
+        elseif is_bursty_http_input_format(format) then
+            -- HLS/HTTP inputs arrive in bursts (segment downloads), so raw instantaneous bitrate
+            -- can be 5-10x higher than real channel bitrate. Smooth only UI/status value.
+            local alpha = tonumber(cfg.bitrate_smooth_alpha) or 0.2
+            if alpha < 0.01 or alpha > 1 then
+                alpha = 0.2
+            end
+            local prev = tonumber(input_data.__bitrate_ema_kbps)
+            if prev and prev >= 0 then
+                display_bitrate_kbps = prev + (raw_bitrate_kbps - prev) * alpha
+            end
+            input_data.__bitrate_ema_kbps = display_bitrate_kbps
+            display_bitrate_kbps = math.floor(display_bitrate_kbps + 0.5)
+        else
+            input_data.__bitrate_ema_kbps = nil
+        end
+
         input_data.stats = {
-            bitrate = total.bitrate,
+            bitrate = display_bitrate_kbps,
+            raw_bitrate = raw_bitrate_kbps,
             cc_errors = total.cc_errors,
             pes_errors = total.pes_errors,
             scrambled = total.scrambled,
@@ -2247,12 +2285,25 @@ local function channel_prepare_input(channel_data, input_id, opts)
             end
         end
         input_data.config.on_hls_stats = function(stats)
-            input_data.hls = stats
-            if stats and stats.state then
-                input_data.health_state = stats.state
-                if stats.last_error and stats.last_error ~= "" then
-                    input_data.health_reason = stats.last_error
-                elseif stats.state == "running" then
+            local safe = nil
+            if type(stats) == "table" then
+                safe = {}
+                for k, v in pairs(stats) do
+                    if k ~= "bitrate_samples" then
+                        safe[k] = v
+                    end
+                end
+                if type(stats.bitrate_samples) == "table" then
+                    safe.bitrate_samples_count = #stats.bitrate_samples
+                end
+            end
+            input_data.hls = safe or stats
+            local hs = input_data.hls
+            if hs and hs.state then
+                input_data.health_state = hs.state
+                if hs.last_error and hs.last_error ~= "" then
+                    input_data.health_reason = hs.last_error
+                elseif hs.state == "running" then
                     input_data.last_error = nil
                     input_data.health_reason = nil
                 end

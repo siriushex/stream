@@ -2102,6 +2102,7 @@ const elements = {
   adapterCSymbolrate: $('#adapter-c-symbolrate'),
   adapterAtscFrequency: $('#adapter-atsc-frequency'),
   adapterAutoSignalSearchEnabled: $('#adapter-auto-signal-search-enabled'),
+  adapterAutoSignalBody: $('#adapter-auto-signal-body'),
   adapterAutoSignalWindowSec: $('#adapter-auto-signal-window-sec'),
   adapterAutoSignalBitrateMode: $('#adapter-auto-signal-bitrate-mode'),
   adapterAutoSignalBitrateMinKbps: $('#adapter-auto-signal-bitrate-min-kbps'),
@@ -2113,6 +2114,7 @@ const elements = {
   adapterAutoSignalSwitchCooldownSec: $('#adapter-auto-signal-switch-cooldown-sec'),
   adapterAutoSignalMinStreams: $('#adapter-auto-signal-min-streams'),
   adapterAutoSignalTypeFlipEnabled: $('#adapter-auto-signal-type-flip-enabled'),
+  adapterAutoSignalTypeFlipBody: $('#adapter-auto-signal-type-flip-body'),
   adapterAutoSignalTypeFlipWaitSec: $('#adapter-auto-signal-type-flip-wait-sec'),
   adapterAutoSignalCandidateTargets: $('#adapter-auto-signal-candidate-targets'),
   adapterAutoSignalCandidateProfiles: $('#adapter-auto-signal-candidate-profiles'),
@@ -18301,7 +18303,10 @@ function getDvbAdapterMap() {
 
 function renderAdapterIndexSelect(selectedAdapter) {
   if (!elements.adapterIndex) return '';
-  const adapterValue = normalizeAdapterValue(selectedAdapter || elements.adapterIndex.value);
+  const selectedAdapterValue = selectedAdapter !== undefined && selectedAdapter !== null
+    ? selectedAdapter
+    : elements.adapterIndex.value;
+  const adapterValue = normalizeAdapterValue(selectedAdapterValue);
   const adapterMap = getDvbAdapterMap();
   const adapters = Array.from(adapterMap.keys()).sort((a, b) => Number(a) - Number(b));
 
@@ -18319,9 +18324,19 @@ function renderAdapterIndexSelect(selectedAdapter) {
   }
 
   adapters.forEach((value) => {
+    const items = adapterMap.get(value) || [];
+    const total = items.length;
+    const busyCount = items.filter((item) => item && item.busy === true).length;
+    const freeCount = items.filter((item) => item && item.error !== true && item.busy !== true).length;
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = `adapter${value}`;
+    let suffix = '';
+    if (busyCount > 0 && freeCount <= 0) {
+      suffix = ' (busy)';
+    } else if (busyCount > 0) {
+      suffix = ` (busy ${busyCount}/${total})`;
+    }
+    option.textContent = `adapter${value}${suffix}`;
     elements.adapterIndex.appendChild(option);
   });
 
@@ -18339,7 +18354,10 @@ function renderAdapterIndexSelect(selectedAdapter) {
 
 function renderAdapterDeviceSelect(adapterValue, selectedDevice) {
   if (!elements.adapterDevice) return;
-  const deviceValue = normalizeAdapterValue(selectedDevice || elements.adapterDevice.value);
+  const selectedDeviceValue = selectedDevice !== undefined && selectedDevice !== null
+    ? selectedDevice
+    : elements.adapterDevice.value;
+  const deviceValue = normalizeAdapterValue(selectedDeviceValue);
   const adapterMap = getDvbAdapterMap();
   const items = adapterValue ? (adapterMap.get(String(adapterValue)) || []) : [];
   const devices = Array.from(new Set(items.map((item) => normalizeAdapterValue(item.device || 0))))
@@ -18359,9 +18377,11 @@ function renderAdapterDeviceSelect(adapterValue, selectedDevice) {
   }
 
   devices.forEach((value) => {
+    const deviceItem = items.find((item) => normalizeAdapterValue(item && item.device) === value) || null;
+    const isBusy = !!(deviceItem && deviceItem.busy === true);
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = `fe${value}`;
+    option.textContent = isBusy ? `fe${value} (busy)` : `fe${value}`;
     elements.adapterDevice.appendChild(option);
   });
 
@@ -18502,7 +18522,7 @@ function updateAdapterBusyWarningFromFields() {
   const fields = [elements.adapterIndex, elements.adapterDevice, elements.adapterType]
     .map((input) => input && input.closest('.field'))
     .filter(Boolean);
-  fields.forEach((field) => field.classList.toggle('warn', isBusy));
+  fields.forEach((field) => field.classList.remove('warn'));
   if (elements.adapterBusyWarning) {
     if (isBusy) {
       elements.adapterBusyWarning.textContent = 'Selected adapter is busy. Choose a free adapter or release it.';
@@ -19040,7 +19060,7 @@ async function createStreamsFromScan(adapterId) {
 function renderAdapterAutoSignalStatus(payload, adapterId) {
   if (!elements.adapterAutoSignalStatus) return;
   if (!payload || typeof payload !== 'object') {
-    elements.adapterAutoSignalStatus.textContent = 'Auto-search status: unavailable';
+    elements.adapterAutoSignalStatus.textContent = 'Backup adapter status: unavailable';
     return;
   }
   const enabled = payload.enabled === true;
@@ -19060,7 +19080,7 @@ function renderAdapterAutoSignalStatus(payload, adapterId) {
     }
   }
   elements.adapterAutoSignalStatus.textContent =
-    `Auto-search: ${enabled ? 'ON' : 'OFF'} · leader=${leader ? 'yes' : 'no'} · queue=${queueDepth} · ${active}` +
+    `Backup adapter: ${enabled ? 'ON' : 'OFF'} · leader=${leader ? 'yes' : 'no'} · queue=${queueDepth} · ${active}` +
     (frozenSec > 0 ? ` · frozen ${frozenSec}s` : '') +
     adapterTail;
 }
@@ -19070,10 +19090,49 @@ function syncAdapterAutoSignalControls() {
   if (elements.adapterAutoSignalSearchEnabled) {
     elements.adapterAutoSignalSearchEnabled.setAttribute('aria-checked', autoSearchEnabled ? 'true' : 'false');
   }
+  if (elements.adapterAutoSignalBody) {
+    elements.adapterAutoSignalBody.hidden = !autoSearchEnabled;
+  }
+
+  const autoSearchDependentControls = [
+    elements.adapterAutoSignalWindowSec,
+    elements.adapterAutoSignalBitrateMode,
+    elements.adapterAutoSignalBitrateMinKbps,
+    elements.adapterAutoSignalBaselineWindowSec,
+    elements.adapterAutoSignalBaselineDropRatioPct,
+    elements.adapterAutoSignalCcDeltaThreshold,
+    elements.adapterAutoSignalProbeSec,
+    elements.adapterAutoSignalConfirmSec,
+    elements.adapterAutoSignalSwitchCooldownSec,
+    elements.adapterAutoSignalMinStreams,
+    elements.adapterAutoSignalCandidateTargets,
+    elements.adapterAutoSignalCandidateProfiles,
+    elements.adapterAutoSignalRefresh,
+    elements.adapterAutoSignalTrigger,
+    elements.adapterAutoSignalUnfreeze,
+    elements.adapterAutoSignalQueueClear,
+  ];
+  autoSearchDependentControls.forEach((control) => {
+    if (!control) return;
+    control.disabled = !autoSearchEnabled;
+  });
+
   const typeFlipEnabled = !!(elements.adapterAutoSignalTypeFlipEnabled && elements.adapterAutoSignalTypeFlipEnabled.checked);
   if (elements.adapterAutoSignalTypeFlipEnabled) {
     elements.adapterAutoSignalTypeFlipEnabled.setAttribute('aria-checked', typeFlipEnabled ? 'true' : 'false');
   }
+  const showTypeFlipBody = typeFlipEnabled;
+  if (elements.adapterAutoSignalTypeFlipBody) {
+    elements.adapterAutoSignalTypeFlipBody.hidden = !showTypeFlipBody;
+  }
+  if (elements.adapterAutoSignalTypeFlipWaitSec) {
+    elements.adapterAutoSignalTypeFlipWaitSec.disabled = !showTypeFlipBody;
+  }
+
+  if (autoSearchEnabled) {
+    refreshAdapterAutoSignalCandidateProfiles();
+  }
+
   syncToggleTargets();
 }
 
@@ -19083,7 +19142,7 @@ async function loadAdapterAutoSignalStatus(adapterId) {
     const payload = await apiJson('/api/v1/dvb-auto-search/status');
     renderAdapterAutoSignalStatus(payload, adapterId);
   } catch (err) {
-    elements.adapterAutoSignalStatus.textContent = `Auto-search status error: ${formatNetworkError(err) || err.message || 'request failed'}`;
+    elements.adapterAutoSignalStatus.textContent = `Backup adapter status error: ${formatNetworkError(err) || err.message || 'request failed'}`;
   }
 }
 
@@ -19099,19 +19158,19 @@ async function triggerAdapterAutoSignal(adapterId, dryRun) {
     }),
   });
   const status = String((payload && payload.status) || 'ok');
-  setStatus(`Auto-search trigger: ${status}`);
+  setStatus(`Backup adapter trigger: ${status}`);
   await loadAdapterAutoSignalStatus(adapterId);
 }
 
 async function clearAdapterAutoSignalQueue(adapterId) {
   await apiJson('/api/v1/dvb-auto-search/queue/clear', { method: 'POST' });
-  setStatus('Auto-search queue cleared');
+  setStatus('Backup adapter queue cleared');
   await loadAdapterAutoSignalStatus(adapterId);
 }
 
 async function unfreezeAdapterAutoSignal(adapterId) {
   await apiJson('/api/v1/dvb-auto-search/unfreeze', { method: 'POST' });
-  setStatus('Auto-search unfreezed');
+  setStatus('Backup adapter unfreezed');
   await loadAdapterAutoSignalStatus(adapterId);
 }
 
@@ -19767,7 +19826,7 @@ function openAdapterEditor(adapter, isNew) {
     elements.adapterAutoSignalMinStreams.value = config.auto_signal_min_streams !== undefined ? config.auto_signal_min_streams : '';
   }
   if (elements.adapterAutoSignalTypeFlipEnabled) {
-    elements.adapterAutoSignalTypeFlipEnabled.checked = config.auto_signal_type_flip_enabled !== false;
+    elements.adapterAutoSignalTypeFlipEnabled.checked = config.auto_signal_type_flip_enabled === true;
   }
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     elements.adapterAutoSignalTypeFlipWaitSec.value = config.auto_signal_type_flip_wait_sec !== undefined ? config.auto_signal_type_flip_wait_sec : '';
@@ -19824,7 +19883,7 @@ function closeAdapterEditor() {
     elements.adapterTitle.textContent = 'Adapter settings';
   }
   if (elements.adapterAutoSignalStatus) {
-    elements.adapterAutoSignalStatus.textContent = 'Auto-search status: n/a';
+    elements.adapterAutoSignalStatus.textContent = 'Backup adapter status: n/a';
   }
   setAdapterEditorActive(false);
   renderAdapterList();
@@ -37631,7 +37690,7 @@ function bindEvents() {
       const adapter = state.adapterEditing && state.adapterEditing.adapter;
       const adapterId = adapter && adapter.id;
       triggerAdapterAutoSignal(adapterId, false).catch((err) => {
-        setStatus(formatNetworkError(err) || err.message || 'Auto-search trigger failed');
+        setStatus(formatNetworkError(err) || err.message || 'Backup adapter trigger failed');
       });
     });
   }

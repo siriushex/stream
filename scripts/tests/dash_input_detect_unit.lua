@@ -44,5 +44,25 @@ do
   assert_true(resolve_effective_input_format(cfg) == "dash", "input_type override should apply regardless of URL scheme")
 end
 
+do
+  local cfg = parse_url("http://example.com/live/channel")
+  cfg.dash_strategy = "auto_max"
+  assert_true(resolve_effective_input_format(cfg) == "dash",
+    "dash_* options should force effective dash for extensionless urls")
+end
+
+do
+  local cfg = parse_url("http://example.com/live/channel")
+  cfg.hls_segment_retries = 3
+  assert_true(resolve_effective_input_format(cfg) == "hls",
+    "hls_* options should force effective hls for extensionless urls")
+end
+
+do
+  local cfg = parse_url("http://example.com/live/list.m3u")
+  assert_true(cfg and cfg.format == "http", "expected http format")
+  assert_true(resolve_effective_input_format(cfg) == "hls", "m3u playlist should resolve to hls")
+end
+
 print("dash_input_detect_unit: ok")
 astra.exit()

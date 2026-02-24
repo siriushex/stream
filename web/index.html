@@ -444,20 +444,19 @@
                 </div>
 
                 <div class="form-subsection">
-                  <div class="panel-title">Auto signal search</div>
-                  <label class="switchline">
-                    <span>Enable auto signal search for this adapter</span>
+                  <div class="panel-title">Backup adapter</div>
+                  <label class="switchline switchline-start">
                     <span class="switch">
                       <input
                         type="checkbox"
                         id="adapter-auto-signal-search-enabled"
-                        data-toggle-target="adapter-auto-signal-body"
                         role="switch"
-                        aria-label="Enable auto signal search for this adapter"
+                        aria-label="Backup adapter"
                         aria-checked="false"
                       />
                       <span class="switch-slider"></span>
                     </span>
+                    <span>Backup adapter</span>
                   </label>
                   <div id="adapter-auto-signal-body" hidden>
                     <div class="form-grid">
@@ -505,24 +504,6 @@
                         <span>Min streams</span>
                         <input type="number" id="adapter-auto-signal-min-streams" placeholder="1" />
                       </label>
-                      <label class="switchline">
-                        <span>Satellite type flip recovery (S2->S->S2)</span>
-                        <span class="switch">
-                          <input
-                            type="checkbox"
-                            id="adapter-auto-signal-type-flip-enabled"
-                            data-toggle-target="adapter-auto-signal-type-flip-wait-field"
-                            role="switch"
-                            aria-label="Satellite type flip recovery (S2->S->S2)"
-                            aria-checked="false"
-                          />
-                          <span class="switch-slider"></span>
-                        </span>
-                      </label>
-                      <label class="field" id="adapter-auto-signal-type-flip-wait-field" hidden>
-                        <span>Type flip wait (sec)</span>
-                        <input type="number" id="adapter-auto-signal-type-flip-wait-sec" placeholder="30" />
-                      </label>
                     </div>
                     <label class="field">
                       <span>Candidate FE targets (optional)</span>
@@ -534,13 +515,33 @@
                     </label>
                     <div class="form-hint" id="adapter-auto-signal-candidate-hint">Profiles are generated automatically from current tune params and free FE targets.</div>
                     <div class="form-hint">Only free FE candidates are used. Profiles must include adapter/device and tune params.</div>
-                    <div class="form-hint" id="adapter-auto-signal-status">Auto-search status: n/a</div>
+                    <div class="form-hint" id="adapter-auto-signal-status">Backup adapter status: n/a</div>
                     <div class="toolbar-row">
                       <button class="btn ghost" type="button" id="adapter-auto-signal-refresh">Refresh status</button>
                       <button class="btn ghost" type="button" id="adapter-auto-signal-trigger">Trigger now</button>
                       <button class="btn ghost" type="button" id="adapter-auto-signal-unfreeze">Unfreeze</button>
                       <button class="btn ghost danger" type="button" id="adapter-auto-signal-queue-clear">Clear queue</button>
                     </div>
+                  </div>
+                  <label class="switchline switchline-start">
+                    <span class="switch">
+                      <input
+                        type="checkbox"
+                        id="adapter-auto-signal-type-flip-enabled"
+                        role="switch"
+                        aria-label="Satellite type flip recovery (S2->S->S2)"
+                        aria-checked="false"
+                      />
+                      <span class="switch-slider"></span>
+                    </span>
+                    <span>Satellite type flip recovery (S2->S->S2)</span>
+                  </label>
+                  <div id="adapter-auto-signal-type-flip-body" hidden>
+                    <label class="field" id="adapter-auto-signal-type-flip-wait-field">
+                      <span>Type flip wait (sec)</span>
+                      <input type="number" id="adapter-auto-signal-type-flip-wait-sec" placeholder="20" />
+                    </label>
+                    <div class="form-hint">Works independently from backup adapter. Sequence: S2 hold 10s -> S hold (this value) -> S2 confirm 180s. Trigger: CC >= 120 over 60s.</div>
                   </div>
                 </div>
               </div>

@@ -2660,7 +2660,7 @@ select {
 }
 
 .adapter-busy-warning {
-  color: var(--danger);
+  color: var(--warning);
 }
 
 .adapter-busy-warning:empty {
@@ -3530,6 +3530,12 @@ details.fold[open] > .fold-summary::after {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
+}
+
+.switchline.switchline-start {
+  justify-content: flex-start;
+  width: auto;
+  gap: 8px;
 }
 
 .switch {

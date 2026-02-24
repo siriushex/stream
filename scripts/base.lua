@@ -679,7 +679,20 @@ local function is_hls_playlist_path(path)
     local raw = tostring(path)
     local clean = raw:match("^[^%?]+") or raw
     clean = clean:lower()
-    return clean:match("%.m3u8$") ~= nil
+    return clean:match("%.m3u8$") ~= nil or clean:match("%.m3u$") ~= nil
+end
+
+local function conf_has_any_key(conf, keys)
+    if type(conf) ~= "table" or type(keys) ~= "table" then
+        return false
+    end
+    for _, key in ipairs(keys) do
+        local v = conf[key]
+        if v ~= nil and tostring(v) ~= "" then
+            return true
+        end
+    end
+    return false
 end
 
 function resolve_effective_input_format(conf)
@@ -690,6 +703,22 @@ function resolve_effective_input_format(conf)
     local forced = normalize_input_type(conf.input_type)
     if forced then
         return forced
+    end
+
+    -- Auto-detect by protocol-specific options, even when URL has no extension.
+    -- This keeps config canonical (http/https URL + options) and avoids mandatory manual type selection.
+    if conf_has_any_key(conf, {
+        "dash_strategy", "dash_representation_id", "dash_audio_id", "dash_max_height",
+        "dash_headers", "dash_cookies", "dash_referer", "dash_user_agent",
+        "dash_enable_cenc", "dash_cenc_key", "dash_rw_timeout_ms",
+    }) then
+        return "dash"
+    end
+    if conf_has_any_key(conf, {
+        "hls_max_segments", "hls_max_gap_segments", "hls_segment_retries",
+        "hls_max_parallel", "hls_bitrate_window_sec", "hls_size_probe_interval_sec",
+    }) then
+        return "hls"
     end
 
     local format = tostring(conf.format or ""):lower()
@@ -3703,7 +3732,9 @@ local function hls_parse_media(content, base_url, base_dir)
             elseif line == "#EXT-X-DISCONTINUITY" then
                 current.discontinuity = true
             elseif line:find("#EXTINF:") == 1 then
-                current.duration = tonumber(line:sub(9)) or 0
+                local raw = line:sub(9)
+                local num = raw and raw:match("^%s*([%d%.]+)")
+                current.duration = tonumber(num) or 0
             elseif line:sub(1, 1) ~= "#" then
                 current.uri = hls_resolve_url(base_url, base_dir, line)
                 current.seq = seq
@@ -3767,9 +3798,194 @@ local function hls_emit_stats(instance)
     end
     local payload = {}
     for k, v in pairs(instance.hls) do
-        payload[k] = v
+        if k ~= "bitrate_samples" then
+            payload[k] = v
+        end
     end
+    payload.bitrate_samples_count = type(instance.hls.bitrate_samples) == "table" and #instance.hls.bitrate_samples or 0
     instance.config.on_hls_stats(payload)
+end
+
+local function hls_extract_header_value(headers, name)
+    if type(headers) ~= "table" then
+        return nil
+    end
+    local needle = tostring(name or ""):lower()
+    if needle == "" then
+        return nil
+    end
+    local direct = headers[needle] or headers[name]
+    if direct ~= nil then
+        return direct
+    end
+    for k, v in pairs(headers) do
+        if type(k) == "string" and k:lower() == needle then
+            return v
+        end
+        if type(v) == "string" then
+            local hk, hv = v:match("^%s*([^:]+)%s*:%s*(.-)%s*$")
+            if hk and hv and hk:lower() == needle then
+                return hv
+            end
+        end
+    end
+    return nil
+end
+
+local function hls_extract_content_length(response)
+    if not response then
+        return nil
+    end
+    local headers = response.headers or {}
+    local content_length = tonumber(hls_extract_header_value(headers, "content-length"))
+    if content_length and content_length > 0 then
+        return content_length
+    end
+
+    local content_range = tostring(hls_extract_header_value(headers, "content-range") or "")
+    if content_range ~= "" then
+        local total = content_range:match("/(%d+)%s*$")
+        if total then
+            local num = tonumber(total)
+            if num and num > 0 then
+                return num
+            end
+        end
+    end
+    return nil
+end
+
+local function hls_push_bitrate_sample(instance, bits, duration)
+    if not instance or not instance.hls then
+        return
+    end
+    bits = tonumber(bits) or 0
+    duration = tonumber(duration) or 0
+    if bits <= 0 or duration <= 0 then
+        return
+    end
+    local hls = instance.hls
+    local now = os.time()
+    local sample = {
+        ts = now,
+        bits = bits,
+        duration = duration,
+    }
+
+    local samples = hls.bitrate_samples
+    if type(samples) ~= "table" then
+        samples = {}
+        hls.bitrate_samples = samples
+    end
+    table.insert(samples, sample)
+
+    hls.bitrate_bits_sum = (tonumber(hls.bitrate_bits_sum) or 0) + sample.bits
+    hls.bitrate_duration_sum = (tonumber(hls.bitrate_duration_sum) or 0) + sample.duration
+
+    local window_sec = tonumber(hls.bitrate_window_sec) or 90
+    if window_sec < 30 then
+        window_sec = 30
+    elseif window_sec > 600 then
+        window_sec = 600
+    end
+    while #samples > 0 do
+        local head = samples[1]
+        local duration_sum = tonumber(hls.bitrate_duration_sum) or 0
+        local stale_age_limit = math.max(window_sec * 3, 600)
+        local is_stale = head and ((now - (tonumber(head.ts) or now)) > stale_age_limit)
+        if not head or (duration_sum <= window_sec and not is_stale) then
+            break
+        end
+        table.remove(samples, 1)
+        hls.bitrate_bits_sum = math.max(0, (tonumber(hls.bitrate_bits_sum) or 0) - (tonumber(head.bits) or 0))
+        hls.bitrate_duration_sum = math.max(0,
+            (tonumber(hls.bitrate_duration_sum) or 0) - (tonumber(head.duration) or 0))
+    end
+
+    local bits_sum = tonumber(hls.bitrate_bits_sum) or 0
+    local duration_sum = tonumber(hls.bitrate_duration_sum) or 0
+    if duration_sum > 0 then
+        hls.bitrate_kbps = math.floor((bits_sum / 1000) / duration_sum + 0.5)
+    end
+end
+
+local function hls_probe_segment_size(instance, item, seg_conf, base_headers)
+    if not instance or not instance.hls or not item or not seg_conf then
+        return
+    end
+    local hls = instance.hls
+    local now = os.time()
+    local interval = tonumber(hls.size_probe_interval_sec) or 30
+    if interval < 10 then
+        interval = 10
+    elseif interval > 300 then
+        interval = 300
+    end
+    if hls.size_probe_pending then
+        return
+    end
+    if hls.size_probe_last_ts and (now - hls.size_probe_last_ts) < interval then
+        return
+    end
+    hls.size_probe_pending = true
+    hls.size_probe_last_ts = now
+
+    local headers = {}
+    if type(base_headers) == "table" then
+        for _, v in ipairs(base_headers) do
+            headers[#headers + 1] = v
+        end
+    end
+    headers[#headers + 1] = "Range: bytes=0-0"
+
+    http_request({
+        host = seg_conf.host,
+        port = seg_conf.port,
+        path = seg_conf.path,
+        ssl = (seg_conf.format == "https"),
+        headers = headers,
+        connect_timeout_ms = instance.net_cfg and instance.net_cfg.connect_timeout_ms or nil,
+        read_timeout_ms = instance.net_cfg and instance.net_cfg.read_timeout_ms or nil,
+        stall_timeout_ms = instance.net_cfg and instance.net_cfg.stall_timeout_ms or nil,
+        callback = function(_, response)
+            hls.size_probe_pending = false
+            if not response then
+                return
+            end
+            local code = tonumber(response.code) or 0
+            if code ~= 200 and code ~= 206 then
+                return
+            end
+            local bytes = hls_extract_content_length(response)
+            local duration = tonumber(item.duration)
+            if not duration or duration <= 0 then
+                duration = tonumber(hls.target_duration) or 0
+            end
+            if bytes and bytes > 0 and duration > 0 then
+                hls_push_bitrate_sample(instance, bytes * 8, duration)
+                hls_emit_stats(instance)
+            end
+        end,
+    })
+end
+
+local function hls_update_segment_bitrate(instance, item, response, seg_conf, base_headers)
+    if not instance or not instance.hls or not item then
+        return
+    end
+    local duration = tonumber(item.duration)
+    if not duration or duration <= 0 then
+        duration = tonumber(instance.hls.target_duration) or 0
+    end
+    if duration <= 0 then
+        return
+    end
+    local content_length = hls_extract_content_length(response)
+    if content_length and content_length > 0 then
+        hls_push_bitrate_sample(instance, content_length * 8, duration)
+    else
+        hls_probe_segment_size(instance, item, seg_conf, base_headers)
+    end
 end
 
 local function hls_set_state(instance, state, reason)
@@ -3917,6 +4133,7 @@ local function hls_start_next_segment(instance)
                 return
             end
 
+            hls_update_segment_bitrate(instance, item, response, seg_conf, headers)
             instance.segment_ok = true
             if instance.net then
                 net_mark_ok(instance.net)
@@ -4163,7 +4380,17 @@ local function hls_stop(instance)
     end
 end
 
+local start_bridge_input
+
 init_input_module.hls = function(conf)
+    local bridge_enabled = truthy(conf.hls_bridge) or truthy(conf.bridge) or truthy(conf.ffmpeg)
+    if not bridge_enabled then
+        bridge_enabled = setting_bool("hls_bridge_enabled", false)
+    end
+    if bridge_enabled then
+        return start_bridge_input(conf, false)
+    end
+
     if conf.format == "https" and not https_native_supported() then
         log.error("[hls] https is not supported (OpenSSL not available)")
         return nil
@@ -4205,6 +4432,14 @@ init_input_module.hls = function(conf)
                 max_gap_segments = hls_cfg_number(conf, "hls_max_gap_segments", hls_defaults.max_gap_segments),
                 segment_retries = hls_cfg_number(conf, "hls_segment_retries", hls_defaults.segment_retries),
                 max_parallel = hls_cfg_number(conf, "hls_max_parallel", hls_defaults.max_parallel),
+                bitrate_window_sec = hls_cfg_number(conf, "hls_bitrate_window_sec", 90),
+                bitrate_kbps = nil,
+                bitrate_samples = {},
+                bitrate_bits_sum = 0,
+                bitrate_duration_sum = 0,
+                size_probe_interval_sec = hls_cfg_number(conf, "hls_size_probe_interval_sec", 30),
+                size_probe_last_ts = nil,
+                size_probe_pending = false,
             },
             transmit = transmit({ instance_id = instance_id }),
             playlist_conf = {
@@ -4232,7 +4467,15 @@ init_input_module.hls = function(conf)
     return instance.transmit
 end
 
-kill_input_module.hls = function(module)
+kill_input_module.hls = function(module, conf)
+    if conf and conf.__bridge_udp_conf then
+        stop_bridge_process(conf)
+        kill_input_module.udp(module, conf.__bridge_udp_conf)
+        conf.__bridge_udp_conf = nil
+        conf.__bridge_args = nil
+        return
+    end
+
     local instance_id = module.__options.instance_id
     local instance = hls_input_instance_list[instance_id]
     if not instance then
@@ -4246,7 +4489,7 @@ kill_input_module.hls = function(module)
     end
 end
 
-local function start_bridge_input(conf, is_rtsp)
+start_bridge_input = function(conf, is_rtsp)
     if not process or type(process.spawn) ~= "function" then
         log.error("[" .. conf.name .. "] process module not available")
         return nil
@@ -4278,6 +4521,11 @@ local function start_bridge_input(conf, is_rtsp)
         "-loglevel",
         conf.bridge_log_level or "warning",
     }
+    local ua = conf.user_agent or conf.ua
+    if ua and ua ~= "" then
+        args[#args + 1] = "-user_agent"
+        args[#args + 1] = tostring(ua)
+    end
     if is_rtsp and conf.rtsp_transport then
         args[#args + 1] = "-rtsp_transport"
         args[#args + 1] = tostring(conf.rtsp_transport)
