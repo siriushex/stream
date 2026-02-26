@@ -3803,13 +3803,15 @@ function dvb_autosearch_adapter_cfg(row)
         type_flip_wait_sec = clamp_number(cfg.auto_signal_type_flip_wait_sec, 5, 120) or 20,
         type_flip_confirm_sec = clamp_number(cfg.auto_signal_type_flip_confirm_sec, 30, 600) or 180,
         type_flip_cc_window_sec = clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600) or 60,
-        type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 120,
-        -- Standalone type-flip trigger (S2->S->S2) is based on no_data faults + PES sum.
+        type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 50,
+        -- Standalone type-flip trigger (S2->S->S2) uses CC+PES deltas over a 60s window.
         type_flip_fault_window_sec = clamp_number(cfg.auto_signal_type_flip_fault_window_sec, 10, 600)
             or clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600)
             or 60,
+        -- Legacy no_data threshold is kept for backward compatibility but no longer used
+        -- by standalone type-flip trigger logic.
         type_flip_no_data_threshold = clamp_number(cfg.auto_signal_type_flip_no_data_threshold, 1, 100000) or 40,
-        type_flip_pes_threshold = clamp_number(cfg.auto_signal_type_flip_pes_threshold, 1, 100000) or 40,
+        type_flip_pes_threshold = clamp_number(cfg.auto_signal_type_flip_pes_threshold, 1, 100000) or 50,
     }
 end
 
@@ -3935,7 +3937,7 @@ function dvb_autosearch_degradation(adapter_id, row, opts)
     local window_sec = clamp_number(opts.window_sec, 10, 3600) or cfg.window_sec
     local cc_threshold = clamp_number(opts.cc_threshold, 1, 100000) or cfg.cc_delta_threshold
     local cc_only = normalize_bool(opts.cc_only, false)
-    local no_data_pes_only = normalize_bool(opts.no_data_pes_only, false)
+    local cc_pes_only = normalize_bool(opts.cc_pes_only, false) or normalize_bool(opts.no_data_pes_only, false)
     local window_from = now - window_sec
     local base_from = now - cfg.baseline_window_sec
     local since_ts = tonumber(opts.since_ts) or 0
@@ -3965,49 +3967,46 @@ function dvb_autosearch_degradation(adapter_id, row, opts)
     local avg_kbps = (tonumber(latest.bitrate_kbps) or 0) / math.max(1, streams)
     local window_span_sec = math.max(1, (tonumber(window[#window].ts) or now) - (tonumber(window[1].ts) or now))
 
-    if no_data_pes_only then
-        local no_data_threshold = clamp_number(opts.no_data_threshold, 1, 100000) or cfg.type_flip_no_data_threshold or 40
-        local pes_threshold = clamp_number(opts.pes_threshold, 1, 100000) or cfg.type_flip_pes_threshold or 40
-
-        local no_data_fault_delta = 0
+    if cc_pes_only then
+        local cc_sum_threshold = clamp_number(opts.cc_threshold, 1, 100000) or cfg.type_flip_cc_threshold or 50
+        local pes_threshold = clamp_number(opts.pes_threshold, 1, 100000) or cfg.type_flip_pes_threshold or 50
+        local cc_delta = 0
+        local pes_delta = 0
         for i = 2, #window do
-            local prev_total = tonumber(window[i - 1].no_data_fault_total)
-            local cur_total = tonumber(window[i].no_data_fault_total)
-            if prev_total ~= nil and cur_total ~= nil then
-                local step = cur_total - prev_total
-                if step >= 0 then
-                    no_data_fault_delta = no_data_fault_delta + step
-                else
-                    no_data_fault_delta = no_data_fault_delta + math.max(0, cur_total)
-                end
+            local prev_cc = tonumber(window[i - 1].cc_total) or 0
+            local cur_cc = tonumber(window[i].cc_total) or 0
+            local cc_step = cur_cc - prev_cc
+            if cc_step >= 0 then
+                cc_delta = cc_delta + cc_step
             else
-                no_data_fault_delta = no_data_fault_delta + math.max(0, tonumber(window[i].no_data_fault_events) or 0)
+                cc_delta = cc_delta + math.max(0, cur_cc)
+            end
+
+            local prev_pes = tonumber(window[i - 1].pes_total) or 0
+            local cur_pes = tonumber(window[i].pes_total) or 0
+            local pes_step = cur_pes - prev_pes
+            if pes_step >= 0 then
+                pes_delta = pes_delta + pes_step
+            else
+                pes_delta = pes_delta + math.max(0, cur_pes)
             end
         end
 
-        local pes_peak_sum = 0
-        for _, item in ipairs(window) do
-            local pes = tonumber(item.pes_total) or 0
-            if pes > pes_peak_sum then
-                pes_peak_sum = pes
-            end
-        end
-
-        local no_data_bad = no_data_fault_delta > no_data_threshold
-        local pes_bad = pes_peak_sum > pes_threshold
-        local degraded = no_data_bad and pes_bad
-        local reason = degraded and "no_data_pes" or "ok"
+        local cc_bad = cc_delta > cc_sum_threshold
+        local pes_bad = pes_delta > pes_threshold
+        local degraded = cc_bad and pes_bad
+        local reason = degraded and "cc_pes" or "ok"
         return degraded, reason, {
             streams = streams,
             streams_on_air = tonumber(latest.streams_on_air) or 0,
             avg_bitrate_kbps = avg_kbps,
-            no_data_fault_delta = no_data_fault_delta,
-            no_data_fault_threshold = no_data_threshold,
-            pes_peak_sum = pes_peak_sum,
+            cc_delta = cc_delta,
+            cc_threshold = cc_sum_threshold,
+            pes_delta = pes_delta,
             pes_threshold = pes_threshold,
             window_sec = window_sec,
             window_span_sec = window_span_sec,
-            no_data_bad = no_data_bad,
+            cc_bad = cc_bad,
             pes_bad = pes_bad,
         }
     end
@@ -4445,10 +4444,10 @@ function dvb_autosearch_step_task(task)
                 since_ts = task.switch_applied_ts,
             }
             if task.type_flip_only then
-                confirm_opts.window_sec = task.cfg and task.cfg.type_flip_fault_window_sec or 60
-                confirm_opts.no_data_threshold = task.cfg and task.cfg.type_flip_no_data_threshold or 40
-                confirm_opts.pes_threshold = task.cfg and task.cfg.type_flip_pes_threshold or 40
-                confirm_opts.no_data_pes_only = true
+                confirm_opts.window_sec = 60
+                confirm_opts.cc_threshold = task.cfg and task.cfg.type_flip_cc_threshold or 50
+                confirm_opts.pes_threshold = task.cfg and task.cfg.type_flip_pes_threshold or 50
+                confirm_opts.cc_pes_only = true
             end
             still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row, confirm_opts)
         end
@@ -4714,10 +4713,10 @@ function dvb_autosearch_tick()
                         local degraded, reason, details = nil, "ok", {}
                         if type_flip_only then
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
-                                window_sec = cfg.type_flip_fault_window_sec,
-                                no_data_threshold = cfg.type_flip_no_data_threshold,
+                                window_sec = 60,
+                                cc_threshold = cfg.type_flip_cc_threshold,
                                 pes_threshold = cfg.type_flip_pes_threshold,
-                                no_data_pes_only = true,
+                                cc_pes_only = true,
                             })
                         else
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
@@ -4860,10 +4859,10 @@ local function trigger_dvb_autosearch(server, client, request)
     local degraded, reason, details = nil, "ok", {}
     if type_flip_only then
         degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
-            window_sec = cfg.type_flip_fault_window_sec,
-            no_data_threshold = cfg.type_flip_no_data_threshold,
+            window_sec = 60,
+            cc_threshold = cfg.type_flip_cc_threshold,
             pes_threshold = cfg.type_flip_pes_threshold,
-            no_data_pes_only = true,
+            cc_pes_only = true,
         })
     else
         degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)

@@ -28,10 +28,10 @@ assert_equal(cfg_default.type_flip_s2_hold_sec, 10, "type flip pre-hold default 
 assert_equal(cfg_default.type_flip_wait_sec, 20, "type flip wait default should be 20 sec")
 assert_equal(cfg_default.type_flip_confirm_sec, 180, "type flip confirm default should be 180 sec")
 assert_equal(cfg_default.type_flip_cc_window_sec, 60, "type flip cc window default should be 60 sec")
-assert_equal(cfg_default.type_flip_cc_threshold, 120, "type flip cc threshold default should be 120")
+assert_equal(cfg_default.type_flip_cc_threshold, 50, "type flip cc threshold default should be 50")
 assert_equal(cfg_default.type_flip_fault_window_sec, 60, "type flip fault window default should be 60 sec")
 assert_equal(cfg_default.type_flip_no_data_threshold, 40, "type flip no_data threshold default should be 40")
-assert_equal(cfg_default.type_flip_pes_threshold, 40, "type flip pes threshold default should be 40")
+assert_equal(cfg_default.type_flip_pes_threshold, 50, "type flip pes threshold default should be 50")
 
 local cfg_override = dvb_autosearch_adapter_cfg({
     id = "a1",
@@ -70,10 +70,10 @@ local task = {
         type_flip_wait_sec = 20,
         type_flip_confirm_sec = 180,
         type_flip_cc_window_sec = 60,
-        type_flip_cc_threshold = 120,
+        type_flip_cc_threshold = 50,
         type_flip_fault_window_sec = 60,
         type_flip_no_data_threshold = 40,
-        type_flip_pes_threshold = 40,
+        type_flip_pes_threshold = 50,
     },
     state = "running",
     candidates = {},
@@ -120,10 +120,10 @@ dvb_autosearch_build_candidates = function(_)
         type_flip_wait_sec = 20,
         type_flip_confirm_sec = 180,
         type_flip_cc_window_sec = 60,
-        type_flip_cc_threshold = 120,
+        type_flip_cc_threshold = 50,
         type_flip_fault_window_sec = 60,
         type_flip_no_data_threshold = 40,
-        type_flip_pes_threshold = 40,
+        type_flip_pes_threshold = 50,
         probe_sec = 30,
         confirm_sec = 60,
         bitrate_min_kbps = 500,
