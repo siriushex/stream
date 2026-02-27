@@ -10892,6 +10892,25 @@ function getInputLabel(input, index) {
   return `Input ${index + 1}`;
 }
 
+function getInputKindLabelFromUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  if (lower.includes('/dvr/play/')) return 'DVR';
+  if (lower.includes('input_type=dvr')) return 'DVR';
+  if (lower.includes('/play/') && (lower.includes('dvr_server_id=') || lower.includes('dvr_stream_id='))) {
+    return 'DVR';
+  }
+  return '';
+}
+
+function getInputLabelWithKind(input, index) {
+  const label = getInputLabel(input, index);
+  const url = input && input.url ? input.url : '';
+  const kind = getInputKindLabelFromUrl(url);
+  return kind ? `[${kind}] ${label}` : label;
+}
+
 function getActiveInputIndex(stats) {
   if (!stats) return null;
   if (Number.isFinite(stats.active_input_index)) {
@@ -10907,7 +10926,7 @@ function getActiveInputLabel(inputs, activeIndex) {
   if (!Number.isFinite(activeIndex)) return '';
   const input = inputs[activeIndex];
   if (!input) return '';
-  return `#${activeIndex + 1} ${getInputLabel(input, activeIndex)}`;
+  return `#${activeIndex + 1} ${getInputLabelWithKind(input, activeIndex)}`;
 }
 
 function getInputState(input, index, activeIndex) {
@@ -16150,7 +16169,7 @@ function renderTileInputs(container, inputs, activeIndex) {
 
     const label = document.createElement('span');
     label.className = 'tile-input-label';
-    label.textContent = `#${index + 1} ${getInputLabel(input, index)}`;
+    label.textContent = `#${index + 1} ${getInputLabelWithKind(input, index)}`;
     if (input && input.url) {
       label.title = input.url;
     }
@@ -16439,13 +16458,26 @@ function renderInputList() {
     idx.className = 'list-index';
     idx.textContent = `#${index + 1}`;
 
+    const kindBadge = document.createElement('span');
+    kindBadge.className = 'input-kind-badge input-kind-badge-inline';
+
     const input = document.createElement('input');
     input.className = 'list-input';
     input.type = 'text';
     input.value = value || '';
     input.dataset.role = 'input';
+
+    const syncKindBadge = () => {
+      const kindLabel = getInputKindLabelFromUrl(input.value);
+      kindBadge.textContent = kindLabel;
+      kindBadge.hidden = !kindLabel;
+      kindBadge.classList.toggle('is-dvr', kindLabel === 'DVR');
+    };
+
+    syncKindBadge();
     input.addEventListener('input', () => {
       state.inputs[index] = input.value;
+      syncKindBadge();
     });
 
     const reorder = document.createElement('div');
@@ -16483,6 +16515,7 @@ function renderInputList() {
     remove.textContent = 'x';
 
     row.appendChild(idx);
+    row.appendChild(kindBadge);
     row.appendChild(input);
     row.appendChild(reorder);
     row.appendChild(settingsBtn);
@@ -25743,7 +25776,7 @@ function updateTileInputs(container, stats) {
       ref.badge.textContent = stateValue;
     }
 
-    const labelText = `#${index + 1} ${getInputLabel(input, index)}`;
+    const labelText = `#${index + 1} ${getInputLabelWithKind(input, index)}`;
     if (ref.label.textContent !== labelText) {
       ref.label.textContent = labelText;
     }
@@ -35463,6 +35496,7 @@ function buildInputStatusRow(input, index, activeIndex) {
 
   const url = input.url || '';
   const label = getInputLabel(input, index);
+  const kindLabel = getInputKindLabelFromUrl(url);
 
   const head = document.createElement('div');
   head.className = 'input-status-head';
@@ -35470,6 +35504,12 @@ function buildInputStatusRow(input, index, activeIndex) {
   const badge = document.createElement('span');
   badge.className = 'input-badge';
   badge.textContent = state;
+
+  const kindBadge = document.createElement('span');
+  kindBadge.className = 'input-kind-badge';
+  kindBadge.textContent = kindLabel;
+  kindBadge.hidden = !kindLabel;
+  kindBadge.classList.toggle('is-dvr', kindLabel === 'DVR');
 
   const title = document.createElement('span');
   title.className = 'input-label';
@@ -35485,6 +35525,7 @@ function buildInputStatusRow(input, index, activeIndex) {
   bitrateEl.textContent = bitrate;
 
   head.appendChild(badge);
+  head.appendChild(kindBadge);
   head.appendChild(title);
   head.appendChild(bitrateEl);
 
