@@ -41,8 +41,10 @@ local client = {}
 local calls = {
   lite_ids = 0,
   lite = 0,
+  one_lite = 0,
   full_ids = 0,
   full = 0,
+  one_full = 0,
 }
 local last_ids = nil
 
@@ -51,7 +53,14 @@ runtime.list_status_lite_ids = function(ids)
   calls.lite_ids = calls.lite_ids + 1
   last_ids = ids
   return {
-    s1 = { on_air = true, bitrate = 1000 },
+    s1 = {
+      on_air = true,
+      bitrate = 1000,
+      transcode = {
+        output_cc_errors = 5,
+        output_pes_errors = 2,
+      },
+    },
     s2 = { on_air = false, bitrate = 0 },
   }
 end
@@ -74,11 +83,47 @@ runtime.list_status = function()
     all = { on_air = true, bitrate = 3000, outputs_status = {} },
   }
 end
+runtime.get_stream_status_lite = function(id)
+  calls.one_lite = calls.one_lite + 1
+  if tostring(id) == "single" then
+    return {
+      on_air = true,
+      bitrate = 777,
+      transcode = {
+        output_cc_errors = 7,
+        output_pes_errors = 4,
+      },
+    }
+  end
+  return nil
+end
+runtime.get_stream_status = function(id)
+  calls.one_full = calls.one_full + 1
+  if tostring(id) == "single-full" then
+    return {
+      on_air = true,
+      bitrate = 3333,
+      outputs_status = {},
+    }
+  end
+  return nil
+end
 
 local function make_request(query)
   return {
     method = "GET",
     path = "/api/v1/stream-status",
+    addr = "127.0.0.1",
+    headers = {},
+    query = query or {},
+    content = "",
+  }
+end
+
+local function make_path_request(path, query)
+  return {
+    method = "GET",
+    path = path,
     addr = "127.0.0.1",
     headers = {},
     query = query or {},
@@ -99,6 +144,9 @@ api.handle_request(server, client, make_request({
 assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 for lite ids request")
 local lite_payload = decode_sent()
 assert_true(type(lite_payload.s1) == "table" and type(lite_payload.s2) == "table", "expected ids payload")
+assert_true(type(lite_payload.s1.transcode) == "table", "expected transcode payload in lite response")
+assert_true(tonumber(lite_payload.s1.transcode.output_cc_errors) == 5, "expected output_cc_errors in lite response")
+assert_true(tonumber(lite_payload.s1.transcode.output_pes_errors) == 2, "expected output_pes_errors in lite response")
 assert_true(calls.lite_ids == 1, "expected list_status_lite_ids call")
 assert_true(calls.lite == 0, "lite all-list must not be used when ids are provided")
 assert_true(type(last_ids) == "table" and #last_ids == 2, "expected deduplicated ids list")
@@ -120,6 +168,24 @@ assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 for lite f
 local full_lite_payload = decode_sent()
 assert_true(type(full_lite_payload.all) == "table", "expected full lite payload")
 assert_true(calls.lite >= 1, "expected list_status_lite call for full-list request")
+
+api.handle_request(server, client, make_path_request("/api/v1/stream-status/single", {
+  lite = "1",
+}))
+assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 for single lite request")
+local single_lite_payload = decode_sent()
+assert_true(type(single_lite_payload.transcode) == "table", "expected transcode payload for single lite")
+assert_true(tonumber(single_lite_payload.transcode.output_cc_errors) == 7,
+  "expected output_cc_errors for single lite")
+assert_true(tonumber(single_lite_payload.transcode.output_pes_errors) == 4,
+  "expected output_pes_errors for single lite")
+assert_true(calls.one_lite == 1, "expected get_stream_status_lite call")
+
+api.handle_request(server, client, make_path_request("/api/v1/stream-status/single-full"))
+assert_true(sent ~= nil and tonumber(sent.code) == 200, "expected 200 for single full request")
+local single_full_payload = decode_sent()
+assert_true(type(single_full_payload.outputs_status) == "table", "expected single full payload from full status")
+assert_true(calls.one_full == 1, "expected get_stream_status call")
 
 log.info("[unit] stream_status_ids_api_unit ok")
 astra.exit()

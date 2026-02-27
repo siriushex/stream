@@ -144,6 +144,7 @@ dofile(script_path("base.lua"))
 dofile(script_path("auth.lua"))
 dofile(script_path("stream.lua"))
 dofile(script_path("config.lua"))
+dofile(script_path("dvr.lua"))
 local transcode_supported = astra and astra.features and astra.features.transcode == true
 if transcode_supported then
     dofile(script_path("transcode.lua"))
@@ -1213,6 +1214,8 @@ local function http_play_stream_id(path)
         prefix = "/stream/"
     elseif path:sub(1, 6) == "/play/" then
         prefix = "/play/"
+    elseif path:sub(1, 10) == "/dvr/play/" then
+        prefix = "/dvr/play/"
     elseif path:sub(1, 7) == "/input/" then
         prefix = "/input/"
     else
@@ -1682,6 +1685,9 @@ WantedBy=multi-user.target
     end
     if ai_observability and ai_observability.configure then
         ai_observability.configure()
+    end
+    if dvr and dvr.configure then
+        dvr.configure()
     end
     if system_metrics and system_metrics.configure then
         system_metrics.configure()
@@ -2318,6 +2324,32 @@ WantedBy=multi-user.target
         end)
     end
 
+    local function is_internal_play_request(req)
+        if not req or not req.query then
+            return false
+        end
+        local flag = req.query.internal or req.query._internal
+        if flag == nil then
+            return false
+        end
+        local text = tostring(flag):lower()
+        if not (text == "1" or text == "true" or text == "yes" or text == "on") then
+            return false
+        end
+        local ip = tostring(req.addr or "")
+        local lower = ip:lower()
+        if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.") then
+            local headers = req.headers or {}
+            if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                or headers["forwarded"] or headers["Forwarded"]
+                or headers["x-real-ip"] or headers["X-Real-IP"] then
+                return false
+            end
+            return true
+        end
+        return false
+    end
+
 	    local function http_play_stream(server, client, request)
 	        local client_data = server:data(client)
 
@@ -2387,31 +2419,6 @@ WantedBy=multi-user.target
 
 	        -- В режиме http_upstream успешный ответ должен быть одним server:send() с upstream.
 	        -- Для отказов используем server:abort(), иначе upstream-модуль вернёт 500.
-	        local function is_internal_play_request(req)
-	            if not req or not req.query then
-	                return false
-	            end
-	            local flag = req.query.internal or req.query._internal
-	            if flag == nil then
-	                return false
-	            end
-	            local text = tostring(flag):lower()
-	            if not (text == "1" or text == "true" or text == "yes" or text == "on") then
-	                return false
-	            end
-	            local ip = tostring(req.addr or "")
-	            local lower = ip:lower()
-	            if ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.") then
-	                local headers = req.headers or {}
-	                if headers["x-forwarded-for"] or headers["X-Forwarded-For"]
-	                    or headers["forwarded"] or headers["Forwarded"]
-	                    or headers["x-real-ip"] or headers["X-Real-IP"] then
-	                    return false
-	                end
-	                return true
-	            end
-	            return false
-	        end
 
 		        local internal = is_internal_play_request(request)
 		        -- When http_play_allow is disabled we still allow internal loopback consumers
@@ -2710,8 +2717,251 @@ WantedBy=multi-user.target
 	            return nil
 	        end
 
-				        allow_stream(nil)
-				    end
+                        allow_stream(nil)
+                    end
+
+    local function http_dvr_play_stream(server, client, request)
+        local client_data = server:data(client)
+
+        if not request then
+            local dvr_output = client_data and client_data.dvr_output_data or nil
+            if dvr_output then
+                local sid = tostring(dvr_output.stream_id or "")
+                local seg_start_ts = tonumber(dvr_output.seg_start_ts) or 0
+                local segment = type(dvr_output.segment) == "table" and dvr_output.segment or nil
+                local lock_bytes = 0
+                if dvr and dvr.read_lock_bytes then
+                    lock_bytes = dvr.read_lock_bytes(dvr_output.lock_path)
+                end
+                local elapsed = os.time() - (tonumber(dvr_output.start_ts) or os.time())
+                if elapsed < 0 then
+                    elapsed = 0
+                end
+
+                if dvr_output.input then
+                    pcall(function()
+                        kill_input(dvr_output.input)
+                    end)
+                end
+
+                if sid ~= "" and seg_start_ts > 0 and dvr and dvr.backup_commit_progress then
+                    local played_sec = elapsed
+                    if dvr.estimate_segment_played_sec then
+                        played_sec = dvr.estimate_segment_played_sec(segment, lock_bytes, elapsed)
+                    end
+                    local force_skip = false
+                    if dvr and type(dvr.should_force_skip_stalled_segment) == "function" then
+                        force_skip = dvr.should_force_skip_stalled_segment(segment, elapsed, played_sec) == true
+                    end
+                    if force_skip then
+                        log.warning("[dvr-play] stalled segment detected, skip: stream="
+                            .. sid .. " seg_start_ts=" .. tostring(seg_start_ts)
+                            .. " elapsed=" .. tostring(elapsed)
+                            .. " played=" .. tostring(played_sec))
+                    end
+                    local progress_ok, progress_err = dvr.backup_commit_progress(sid, {
+                        seg_start_ts = seg_start_ts,
+                        played_sec = played_sec,
+                        skip = force_skip,
+                        segment_guard_sec = tonumber(dvr_output.segment_guard_sec) or 3,
+                        allow_cycle_restart = true,
+                        include_partial = true,
+                        min_partial_sec = tonumber(dvr_output.min_partial_sec) or 30,
+                        start_mode = dvr_output.backup_start_mode,
+                        start_offset_hours = dvr_output.backup_start_offset_hours,
+                    })
+                    if not progress_ok then
+                        log.error("[dvr-play] progress commit failed: stream="
+                            .. sid .. " err=" .. tostring(progress_err))
+                    end
+                end
+            end
+
+            client_data.dvr_output_data = nil
+            http_output_client(server, client, nil)
+            if client_data.auth_session_id and auth and auth.unregister_client then
+                auth.unregister_client(client_data.auth_session_id, server, client)
+                client_data.auth_session_id = nil
+            end
+            client_data.output_data = nil
+            return nil
+        end
+
+        local internal = is_internal_play_request(request)
+        if not http_play_allow and not internal then
+            server:abort(client, 404)
+            return nil
+        end
+        if not http_auth_check(request) then
+            server:abort(client, 401)
+            return nil
+        end
+
+        local raw_stream_id = http_play_stream_id(request.path)
+        if not raw_stream_id then
+            server:abort(client, 404)
+            return nil
+        end
+        local stream_id = raw_stream_id
+        local base = raw_stream_id:match("^(.+)~[0-9]+$")
+        if base and base ~= "" then
+            stream_id = base
+        end
+
+        local entry = runtime.streams[stream_id]
+        local row = config and config.get_stream and config.get_stream(stream_id) or nil
+        if not entry and not row then
+            server:abort(client, 404)
+            return nil
+        end
+        local stream_cfg = (entry and entry.channel and entry.channel.config) or (row and row.config) or nil
+        local stream_name = (stream_cfg and stream_cfg.name) or stream_id
+        local settings = dvr and dvr.settings_for_stream and dvr.settings_for_stream(stream_cfg or {}) or {
+            segment_guard_sec = 3,
+            min_partial_sec = 30,
+        }
+
+        local function send_unavailable(message)
+            server:send(client, {
+                code = 503,
+                headers = {
+                    "Content-Type: text/plain",
+                    "Cache-Control: no-store",
+                    "Pragma: no-cache",
+                    "Retry-After: 1",
+                    "Connection: close",
+                },
+                content = tostring(message or "dvr backup unavailable"),
+            })
+        end
+
+        local function allow_stream(session)
+            if not dvr or not dvr.backup_select_segment then
+                send_unavailable("dvr module unavailable")
+                return
+            end
+            local selected, select_err = dvr.backup_select_segment(stream_id, {
+                allow_cycle_restart = true,
+                include_partial = true,
+                min_partial_sec = settings.min_partial_sec,
+                start_mode = settings.backup_start_mode,
+                start_offset_hours = settings.backup_start_offset_hours,
+            })
+            if not selected or type(selected) ~= "table" or type(selected.segment) ~= "table" then
+                send_unavailable(select_err or "no dvr segments")
+                return
+            end
+            local segment = selected.segment
+            local seg_start_ts = tonumber(segment.seg_start_ts) or 0
+            local seg_path = tostring(segment.path or "")
+            if seg_start_ts <= 0 or seg_path == "" then
+                send_unavailable("invalid dvr segment")
+                return
+            end
+            local paths = dvr.segment_paths and dvr.segment_paths(stream_id, seg_start_ts, {
+                archive_path = settings and settings.archive_path or nil,
+            }) or {}
+            local lock_path = tostring(paths.lock_path or "")
+            local source_url = "file://" .. seg_path
+            local use_lock = dvr and dvr.should_use_segment_lock and dvr.should_use_segment_lock(segment, lock_path)
+            if use_lock then
+                source_url = source_url .. "#lock=" .. lock_path
+            end
+            local input_conf = parse_url(source_url)
+            if not input_conf then
+                send_unavailable("segment parse failed")
+                return
+            end
+            input_conf.name = "[dvr-play " .. tostring(stream_id) .. "]"
+            input_conf.loop = false
+            local input = init_input(input_conf)
+            if not input or not input.tail then
+                send_unavailable("segment open failed")
+                return
+            end
+
+            client_data.output_data = {}
+            http_output_client(server, client, request, client_data.output_data)
+            if session and session.session_id and auth and auth.register_client then
+                auth.register_client(session.session_id, server, client)
+                client_data.auth_session_id = session.session_id
+            end
+
+            client_data.dvr_output_data = {
+                input = input,
+                stream_id = stream_id,
+                seg_start_ts = seg_start_ts,
+                segment = segment,
+                lock_path = lock_path,
+                start_ts = os.time(),
+                segment_guard_sec = settings.segment_guard_sec,
+                min_partial_sec = settings.min_partial_sec,
+                backup_start_mode = settings.backup_start_mode,
+                backup_start_offset_hours = settings.backup_start_offset_hours,
+            }
+
+            local buffer_size = math.max(128, http_play_buffer_kb)
+            if http_play_buffer_cap_kb and http_play_buffer_cap_kb > 0 then
+                buffer_size = math.min(buffer_size, math.floor(http_play_buffer_cap_kb))
+            end
+            local buffer_fill = math.floor(buffer_size / 4)
+            if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+            end
+            local query = request and request.query or nil
+            if query then
+                local qbuf = tonumber(query.buf_kb or query.buffer_kb or query.buf)
+                if qbuf and qbuf > 0 then
+                    buffer_size = math.max(128, math.floor(qbuf))
+                    buffer_fill = math.floor(buffer_size / 4)
+                    if http_play_buffer_fill_kb and http_play_buffer_fill_kb > 0 then
+                        buffer_fill = math.min(buffer_fill, math.floor(http_play_buffer_fill_kb))
+                    end
+                end
+                local qfill = tonumber(query.buf_fill_kb or query.fill_kb or query.buf_fill)
+                if qfill and qfill > 0 then
+                    buffer_fill = math.min(buffer_size, math.floor(qfill))
+                end
+            end
+
+            server:send(client, {
+                upstream = input.tail:stream(),
+                buffer_size = buffer_size,
+                buffer_fill = buffer_fill,
+                ts_rewrite_cc_enabled = true,
+            }, "video/MP2T")
+        end
+
+        if auth and auth.check_play then
+            if internal then
+                allow_stream(nil)
+                return nil
+            end
+            local headers = request.headers or {}
+            auth.check_play({
+                stream_id = stream_id,
+                stream_name = stream_name,
+                stream_cfg = stream_cfg,
+                proto = "http_ts",
+                request = request,
+                ip = request.addr,
+                token = auth.get_token and auth.get_token(request) or nil,
+                user_agent = header_value(headers, "user-agent") or "",
+                referer = header_value(headers, "referer") or "",
+                uri = build_request_uri(request),
+            }, function(allowed, session)
+                if not allowed then
+                    auth_reject_or_redirect(server, client, session)
+                    return
+                end
+                allow_stream(session)
+            end)
+            return nil
+        end
+
+        allow_stream(nil)
+        return nil
+    end
 
         local function http_input_stream(server, client, request)
 	            local client_data = server:data(client)
@@ -4109,6 +4359,7 @@ WantedBy=multi-user.target
 	        -- /input is internal-only (loopback + ?internal=1 + no forwarded headers) but it must be reachable
 	        -- on the http_play server too, because many deployments expose only http_play_port to ffmpeg.
         local input_upstream = http_upstream({ callback = safe_callback("http_input_stream", http_input_stream) })
+        local dvr_play_upstream = http_upstream({ callback = safe_callback("http_dvr_play_stream", http_dvr_play_stream) })
         table.insert(routes, { http_play_playlist_name, http_play_playlist })
         table.insert(routes, { xspf_path, http_play_xspf })
         table.insert(routes, { "/play/playlist.m3u8", http_play_playlist })
@@ -4118,6 +4369,7 @@ WantedBy=multi-user.target
             local upstream = http_upstream({ callback = safe_callback("http_play_stream", http_play_stream) })
             table.insert(routes, { "/stream/*", upstream })
             table.insert(routes, { "/play/*", upstream })
+            table.insert(routes, { "/dvr/play/*", dvr_play_upstream })
         end
         table.insert(routes, { "/input/*", input_upstream })
         if include_hls_route and http_play_hls then
@@ -4134,6 +4386,7 @@ WantedBy=multi-user.target
     end
 
     local play_upstream = http_upstream({ callback = safe_callback("http_play_stream", http_play_stream) })
+    local dvr_play_upstream = http_upstream({ callback = safe_callback("http_dvr_play_stream", http_dvr_play_stream) })
     local input_upstream = http_upstream({ callback = safe_callback("http_input_stream", http_input_stream) })
     local live_upstream = http_upstream({ callback = safe_callback("http_live_stream", http_live_stream) })
 
@@ -4156,6 +4409,7 @@ WantedBy=multi-user.target
     if not http_play_allow then
         table.insert(main_routes, { "/stream/*", play_upstream })
         table.insert(main_routes, { "/play/*", play_upstream })
+        table.insert(main_routes, { "/dvr/play/*", dvr_play_upstream })
     end
 
     table.insert(main_routes, { "/preview/*", safe_callback("preview_route_handler", preview_route_handler) })

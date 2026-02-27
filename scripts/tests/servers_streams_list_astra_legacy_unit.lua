@@ -95,10 +95,10 @@ http_request = function(req)
     return reply(404, { error = "not found" })
   end
   if req.path == "/base/api/stream-status/a1?t=1" and req.method == "GET" then
-    return reply(200, { onair = true, bitrate = 1111, input_id = 0 })
+    return reply(200, { onair = true, bitrate = 1111, input_id = 0, cc_errors = 2, pes_errors = 1, updated_at = 1700000010 })
   end
   if req.path == "/base/api/stream-status/b2?t=1" and req.method == "GET" then
-    return reply(200, { onair = false, bitrate = 0, input_id = 1 })
+    return reply(200, { onair = false, bitrate = 0, input_id = 1, cc_errors = 0, pes_errors = 0, updated_at = 1700000011 })
   end
   if req.path == "/base/api/v1/stream-status/a1?t=1" and req.method == "GET" then
     return reply(404, { error = "not found" })
@@ -143,6 +143,8 @@ assert_true(type(payload.items) == "table" and #payload.items == 2, "expected it
 assert_true(payload.items[1].id == "a1", "expected sorted first id")
 assert_true(payload.items[1].on_air == true, "expected per-stream status fallback on_air=true")
 assert_true(tonumber(payload.items[1].bitrate_kbps) == 1111, "expected per-stream status bitrate")
+assert_true(tonumber(payload.items[1].cc_errors) == 2, "expected per-stream status cc_errors")
+assert_true(tonumber(payload.items[1].pes_errors) == 1, "expected per-stream status pes_errors")
 assert_true(payload.items[2].id == "b2", "expected sorted second id")
 assert_true(payload.items[2].on_air == false, "expected per-stream status fallback on_air=false")
 

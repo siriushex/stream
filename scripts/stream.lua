@@ -207,6 +207,41 @@ local function setting_string(key, fallback)
     return tostring(value)
 end
 
+local function dvr_setting_alias(keys, fallback)
+    for _, key in ipairs(keys or {}) do
+        local value = get_setting(key)
+        if value ~= nil then
+            return value
+        end
+    end
+    return fallback
+end
+
+local function dvr_safe_stream_id(value)
+    local s = tostring(value or "")
+    if s == "" then
+        return "stream"
+    end
+    s = s:gsub("[^%w%-%_%.]", "_")
+    if s == "" then
+        s = "stream"
+    end
+    return s
+end
+
+local function ensure_dir(path)
+    if not path or path == "" then
+        return
+    end
+    if utils and type(utils.stat) == "function" then
+        local stat = utils.stat(path)
+        if stat and stat.type == "directory" then
+            return
+        end
+    end
+    os.execute("mkdir -p '" .. tostring(path):gsub("'", "'\\''") .. "'")
+end
+
 local function join_path(base, suffix)
     if not base or base == "" then
         return suffix or ""
@@ -798,6 +833,49 @@ local function normalize_backup_type(value, has_multiple)
         return "active"
     end
     return "disabled"
+end
+
+local function stream_boolish(value)
+    if value == true or value == 1 then
+        return true
+    end
+    local text = tostring(value or ""):lower()
+    return text == "1" or text == "true" or text == "yes" or text == "on"
+end
+
+local function stream_input_contains_dvr_play(input_list)
+    if type(input_list) ~= "table" then
+        return false
+    end
+    for _, entry in ipairs(input_list) do
+        local url = nil
+        if type(entry) == "string" then
+            url = entry
+        elseif type(entry) == "table" then
+            if type(entry.source_url) == "string" and entry.source_url ~= "" then
+                url = entry.source_url
+            elseif type(entry.url) == "string" and entry.url ~= "" then
+                url = entry.url
+            elseif type(entry.config) == "table" and type(entry.config.url) == "string" and entry.config.url ~= "" then
+                url = entry.config.url
+            end
+        end
+        if type(url) == "string" and url:find("/dvr/play/", 1, true) ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local function should_force_dvr_backup_passive(channel_config, input_list)
+    if type(channel_config) ~= "table" then
+        return false
+    end
+    local dvr_cfg = type(channel_config.dvr) == "table" and channel_config.dvr or nil
+    if type(dvr_cfg) ~= "table" or not stream_boolish(dvr_cfg.backup_enabled) then
+        return false
+    end
+    return stream_input_contains_dvr_play(input_list)
 end
 
 local function is_active_backup_mode(mode)
@@ -2733,6 +2811,64 @@ local function schedule_probe(channel_data, now, keep_connected)
     fo.next_probe_ts = now + probe_interval
 end
 
+local function collect_active_warm_targets_for_keep(channel_data, keep_connected)
+    local fo = channel_data and channel_data.failover or nil
+    if not fo or not is_active_backup_mode(fo.mode) then
+        return {}
+    end
+    local warm_max = tonumber(fo.warm_max) or 0
+    if warm_max <= 0 or fo.global_state == "INACTIVE" then
+        return {}
+    end
+
+    local warm_targets = {}
+    local active_id = tonumber(channel_data.active_input_id or 0) or 0
+    local count = 0
+    for idx, _ in ipairs(channel_data.input or {}) do
+        if idx ~= active_id then
+            keep_connected[idx] = true
+            warm_targets[idx] = true
+            count = count + 1
+            if count >= warm_max then
+                break
+            end
+        end
+    end
+
+    return warm_targets
+end
+
+-- Unit-test helper: resolve 1-based standby input IDs that should stay warm
+-- in active backup mode for current failover settings.
+function stream_resolve_warm_standby_inputs(input_count, active_input_id, mode, warm_max, global_state)
+    local total = math.floor(tonumber(input_count) or 0)
+    if total < 0 then
+        total = 0
+    end
+    local channel_data = {
+        active_input_id = math.floor(tonumber(active_input_id) or 0),
+        input = {},
+        failover = {
+            mode = mode,
+            warm_max = warm_max,
+            global_state = global_state,
+        },
+    }
+    for idx = 1, total do
+        channel_data.input[idx] = {}
+    end
+
+    local keep_connected = {}
+    local warm_targets = collect_active_warm_targets_for_keep(channel_data, keep_connected)
+    local list = {}
+    for idx = 1, total do
+        if warm_targets[idx] then
+            table.insert(list, idx)
+        end
+    end
+    return list
+end
+
 local function update_connections(channel_data, now)
     local fo = channel_data.failover
     if not fo then
@@ -2744,6 +2880,8 @@ local function update_connections(channel_data, now)
     if active_id > 0 then
         keep_connected[active_id] = true
     end
+
+    local warm_targets = collect_active_warm_targets_for_keep(channel_data, keep_connected)
 
     if fo.mode == "passive" then
         -- passive mode keeps only the active input
@@ -2762,9 +2900,10 @@ local function update_connections(channel_data, now)
 
     for idx, input_data in ipairs(channel_data.input) do
         if keep_connected[idx] then
-            local ok = channel_prepare_input(channel_data, idx, { warm = false })
+            local warm = warm_targets[idx] == true
+            local ok = channel_prepare_input(channel_data, idx, { warm = warm })
             if ok then
-                input_data.warm = nil
+                input_data.warm = warm and true or nil
             else
                 input_data.warm = nil
             end
@@ -4104,6 +4243,9 @@ function validate_stream_config(cfg, opts)
 
     local input_count = (type(inputs) == "table") and #inputs or 0
     local backup_type = normalize_backup_type(cfg.backup_type, input_count > 1)
+    if backup_type ~= "passive" and should_force_dvr_backup_passive(cfg, inputs) then
+        backup_type = "passive"
+    end
     local function check_nonneg(value, label)
         if value ~= nil and value < 0 then
             return nil, label .. " must be >= 0"
@@ -6983,6 +7125,9 @@ function make_channel(channel_config)
 
     local has_backups = #channel_data.input > 1
     local backup_type = normalize_backup_type(channel_config.backup_type, has_backups)
+    if backup_type ~= "passive" and should_force_dvr_backup_passive(channel_config, channel_data.input) then
+        backup_type = "passive"
+    end
     channel_config.backup_type = backup_type
     local no_data_timeout = read_number_opt(channel_config, "no_data_timeout_sec") or 3
     local probe_interval = read_number_opt(channel_config, "probe_interval_sec") or 3

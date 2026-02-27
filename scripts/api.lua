@@ -491,6 +491,55 @@ do
     end
 end
 
+local dvr_store = nil
+do
+    local function load_dvr_store()
+        local injected = rawget(_G, "__stream_dvr")
+        if type(injected) == "table" then
+            return injected
+        end
+        if type(rawget(_G, "dvr")) == "table" then
+            return rawget(_G, "dvr")
+        end
+        local ok, mod = pcall(require, "dvr")
+        if ok and type(mod) == "table" then
+            return mod
+        end
+        local candidates = {
+            "scripts/dvr.lua",
+            "dvr.lua",
+        }
+        local dbg = (type(debug) == "table") and debug or nil
+        local src = dbg and dbg.getinfo and dbg.getinfo(1, "S")
+        if src and type(src.source) == "string" and src.source:sub(1, 1) == "@" then
+            local api_path = src.source:sub(2)
+            local api_dir = api_path:match("^(.*[\\/])[^\\/]+$")
+            if api_dir and api_dir ~= "" then
+                table.insert(candidates, api_dir .. "dvr.lua")
+            end
+        end
+        local last_err = ""
+        for _, path in ipairs(candidates) do
+            local loaded, payload = pcall(dofile, path)
+            if loaded and type(payload) == "table" then
+                return payload
+            end
+            if type(rawget(_G, "dvr")) == "table" then
+                return rawget(_G, "dvr")
+            end
+            last_err = tostring(payload)
+        end
+        return nil, last_err
+    end
+
+    local mod, err = load_dvr_store()
+    if type(mod) == "table" then
+        dvr_store = mod
+    else
+        log.warning("[dvr] module unavailable: " .. tostring(err))
+    end
+end
+
 local function is_state_change(method)
     return method == "POST" or method == "PUT" or method == "DELETE" or method == "PATCH"
 end
@@ -1514,9 +1563,106 @@ local function apply_config_change(server, client, request, opts)
     json_response(server, client, 200, body)
 end
 
+function api._collect_stream_status_lite_map(ids)
+    local map = {}
+    if type(ids) ~= "table" or #ids == 0 then
+        return map
+    end
+    if runtime and type(runtime.list_status_lite_ids) == "function" then
+        local ok_runtime, runtime_map = pcall(runtime.list_status_lite_ids, ids)
+        if ok_runtime and type(runtime_map) == "table" then
+            map = runtime_map
+        end
+    elseif runtime and type(runtime.list_status_lite) == "function" then
+        local ok_runtime, runtime_map = pcall(runtime.list_status_lite)
+        if ok_runtime and type(runtime_map) == "table" then
+            for _, sid in ipairs(ids) do
+                if type(runtime_map[sid]) == "table" then
+                    map[sid] = runtime_map[sid]
+                end
+            end
+        end
+    end
+    if dvr_store and type(dvr_store.list_runtime_status) == "function" then
+        local ok_dvr, dvr_map = pcall(dvr_store.list_runtime_status, ids)
+        if ok_dvr and type(dvr_map) == "table" then
+            for sid, row in pairs(dvr_map) do
+                if type(row) == "table" then
+                    if type(map[sid]) ~= "table" then
+                        map[sid] = row
+                    else
+                        local merged = map[sid]
+                        if merged.on_air == nil then merged.on_air = row.on_air end
+                        if merged.bitrate_kbps == nil then merged.bitrate_kbps = row.bitrate_kbps or row.bitrate end
+                        if merged.raw_bitrate_kbps == nil then
+                            merged.raw_bitrate_kbps = row.raw_bitrate_kbps or row.bitrate_kbps or row.bitrate
+                        end
+                        if merged.cc_errors == nil then merged.cc_errors = row.cc_errors end
+                        if merged.pes_errors == nil then merged.pes_errors = row.pes_errors end
+                        if merged.active_input_id == nil then merged.active_input_id = row.active_input_id end
+                        if merged.active_input_index == nil then merged.active_input_index = row.active_input_index end
+                        if merged.active_input_url == nil then merged.active_input_url = row.active_input_url end
+                        if merged.uptime_sec == nil then merged.uptime_sec = row.uptime_sec end
+                        if merged.updated_at == nil then merged.updated_at = row.updated_at end
+                        if (merged.last_error == nil or tostring(merged.last_error or "") == "")
+                            and tostring(row.last_error or "") ~= ""
+                        then
+                            merged.last_error = row.last_error
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return map
+end
+
+function api._apply_stream_runtime_status(item, status)
+    if type(item) ~= "table" then
+        return
+    end
+    if type(status) == "table" then
+        item.on_air = status.on_air == true
+        item.bitrate_kbps = tonumber(status.bitrate_kbps or status.bitrate) or 0
+        item.raw_bitrate_kbps = tonumber(status.raw_bitrate_kbps or status.bitrate_kbps or status.bitrate) or 0
+        item.cc_errors = tonumber(status.cc_errors) or 0
+        item.pes_errors = tonumber(status.pes_errors) or 0
+        item.uptime_sec = tonumber(status.uptime_sec or status.uptime) or 0
+        if status.active_input_id ~= nil then
+            item.active_input = tonumber(status.active_input_id) or status.active_input_id
+        elseif status.active_input ~= nil then
+            item.active_input = tonumber(status.active_input) or status.active_input
+        end
+        if status.active_input_url ~= nil then
+            item.active_input_url = tostring(status.active_input_url or "")
+        end
+        item.last_error = status.last_error and tostring(status.last_error) or nil
+        item.updated_at = tonumber(status.updated_at) or os.time()
+    end
+    if item.on_air == nil then item.on_air = false end
+    if item.bitrate_kbps == nil then item.bitrate_kbps = 0 end
+    if item.raw_bitrate_kbps == nil then item.raw_bitrate_kbps = 0 end
+    if item.cc_errors == nil then item.cc_errors = 0 end
+    if item.pes_errors == nil then item.pes_errors = 0 end
+    if item.uptime_sec == nil then item.uptime_sec = 0 end
+    if item.active_input_url == nil then item.active_input_url = "" end
+    if item.updated_at == nil then item.updated_at = os.time() end
+end
+
 local function list_streams(server, client)
     local rows = config.list_streams()
     local result = {}
+    local seen_ids = {}
+    local dvr_rows_by_id = {}
+    if dvr_store and type(dvr_store.list_streams) == "function" then
+        local dvr_rows = dvr_store.list_streams({ limit = 10000 }) or {}
+        for _, dvr_row in ipairs(dvr_rows) do
+            local sid = tostring(dvr_row and dvr_row.stream_id or "")
+            if sid ~= "" then
+                dvr_rows_by_id[sid] = dvr_row
+            end
+        end
+    end
     local shard_active = sharding
         and type(sharding.is_active) == "function"
         and sharding.is_active()
@@ -1534,6 +1680,17 @@ local function list_streams(server, client)
             enabled = (tonumber(row.enabled) or 0) ~= 0,
             config = row.config,
         }
+        local dvr_row = dvr_rows_by_id[tostring(row.id)]
+        if type(dvr_row) == "table" then
+            item.dvr = {
+                record_enabled = dvr_row.record_enabled == true,
+                recording_paused = dvr_row.recording_paused == true,
+                retention_days = tonumber(dvr_row.retention_days) or 0,
+                last_mode = tostring(dvr_row.last_mode or "LIVE"),
+                last_state_seq = tonumber(dvr_row.last_state_seq) or 0,
+                updated_ts = tonumber(dvr_row.updated_ts) or 0,
+            }
+        end
         if shard_get_port then
             local port = shard_get_port(row.id)
             if port then
@@ -1546,36 +1703,183 @@ local function list_streams(server, client)
                 item.shard_index = idx
             end
         end
+        seen_ids[tostring(row.id)] = true
         table.insert(result, item)
+    end
+
+    local dvr_only_ids = {}
+    for sid, _ in pairs(dvr_rows_by_id) do
+        if not seen_ids[sid] then
+            dvr_only_ids[#dvr_only_ids + 1] = sid
+        end
+    end
+    table.sort(dvr_only_ids)
+    for _, sid in ipairs(dvr_only_ids) do
+        local dvr_row = dvr_rows_by_id[sid]
+        local source_url = tostring(dvr_row and dvr_row.source_url or "")
+        local name = tostring(dvr_row and dvr_row.name or sid)
+        local archive_path = dvr_row and dvr_row.archive_path or nil
+        if archive_path ~= nil then
+            archive_path = tostring(archive_path)
+            if archive_path == "" then
+                archive_path = nil
+            end
+        end
+        local dvr_meta = {
+            record_enabled = dvr_row and dvr_row.record_enabled == true or false,
+            recording_paused = dvr_row and dvr_row.recording_paused == true or false,
+            retention_days = tonumber(dvr_row and dvr_row.retention_days) or 0,
+            last_mode = tostring((dvr_row and dvr_row.last_mode) or "LIVE"),
+            last_state_seq = tonumber(dvr_row and dvr_row.last_state_seq) or 0,
+            updated_ts = tonumber(dvr_row and dvr_row.updated_ts) or 0,
+        }
+        local cfg = type(dvr_row and dvr_row.config) == "table" and deep_copy(dvr_row.config) or {
+            id = sid,
+            name = name,
+            type = "spts",
+            input = source_url ~= "" and { source_url } or {},
+            dvr = {},
+        }
+        cfg.id = sid
+        if tostring(cfg.name or "") == "" then
+            cfg.name = name
+        end
+        if tostring(cfg.type or "") == "" then
+            cfg.type = "spts"
+        end
+        if source_url ~= "" then
+            if type(cfg.input) ~= "table" then
+                cfg.input = {}
+            end
+            cfg.input[1] = source_url
+        elseif type(cfg.input) ~= "table" then
+            cfg.input = {}
+        end
+        local cfg_dvr_existing = type(cfg.dvr) == "table" and cfg.dvr or {}
+        cfg_dvr_existing.enabled = dvr_meta.record_enabled == true
+        cfg_dvr_existing.retention_days = dvr_meta.retention_days
+        cfg_dvr_existing.source_url = source_url
+        if archive_path then
+            cfg_dvr_existing.path = archive_path
+            cfg_dvr_existing.archive_path = archive_path
+        end
+        cfg.dvr = cfg_dvr_existing
+        table.insert(result, {
+            id = sid,
+            enabled = dvr_meta.record_enabled == true,
+            dvr_only = true,
+            dvr = dvr_meta,
+            config = cfg,
+        })
+    end
+    local ids = {}
+    for _, item in ipairs(result) do
+        local sid = tostring(item and item.id or "")
+        if sid ~= "" then
+            ids[#ids + 1] = sid
+        end
+    end
+    local status_map = api._collect_stream_status_lite_map(ids)
+    for _, item in ipairs(result) do
+        local sid = tostring(item and item.id or "")
+        api._apply_stream_runtime_status(item, status_map[sid])
     end
     json_response(server, client, 200, result)
 end
 
 local function get_stream(server, client, id)
     local row = config.get_stream(id)
-    if not row then
+    local dvr_row = nil
+    if dvr_store and type(dvr_store.get_stream) == "function" then
+        dvr_row = dvr_store.get_stream(id)
+    end
+    if not row and type(dvr_row) ~= "table" then
         return error_response(server, client, 404, "stream not found")
     end
-    local payload = {
-        id = row.id,
-        enabled = (tonumber(row.enabled) or 0) ~= 0,
-        config = row.config,
-    }
+
+    local payload = nil
+    if row then
+        payload = {
+            id = row.id,
+            enabled = (tonumber(row.enabled) or 0) ~= 0,
+            config = row.config,
+        }
+    else
+        local source_url = tostring(dvr_row and dvr_row.source_url or "")
+        local name = tostring(dvr_row and dvr_row.name or id)
+        local archive_path = dvr_row and dvr_row.archive_path or nil
+        if archive_path ~= nil then
+            archive_path = tostring(archive_path)
+            if archive_path == "" then
+                archive_path = nil
+            end
+        end
+        local cfg = type(dvr_row and dvr_row.config) == "table" and deep_copy(dvr_row.config) or {
+            id = id,
+            name = name,
+            type = "spts",
+            input = source_url ~= "" and { source_url } or {},
+            dvr = {},
+        }
+        cfg.id = id
+        if tostring(cfg.name or "") == "" then
+            cfg.name = name
+        end
+        if tostring(cfg.type or "") == "" then
+            cfg.type = "spts"
+        end
+        if source_url ~= "" then
+            if type(cfg.input) ~= "table" then
+                cfg.input = {}
+            end
+            cfg.input[1] = source_url
+        elseif type(cfg.input) ~= "table" then
+            cfg.input = {}
+        end
+        local cfg_dvr_existing = type(cfg.dvr) == "table" and cfg.dvr or {}
+        cfg_dvr_existing.enabled = dvr_row and dvr_row.record_enabled == true or false
+        cfg_dvr_existing.retention_days = tonumber(dvr_row and dvr_row.retention_days) or 0
+        cfg_dvr_existing.source_url = source_url
+        if archive_path then
+            cfg_dvr_existing.path = archive_path
+            cfg_dvr_existing.archive_path = archive_path
+        end
+        cfg.dvr = cfg_dvr_existing
+        payload = {
+            id = id,
+            enabled = dvr_row and dvr_row.record_enabled == true or false,
+            dvr_only = true,
+            config = cfg,
+        }
+    end
+
+    if type(dvr_row) == "table" then
+        payload.dvr = {
+            record_enabled = dvr_row.record_enabled == true,
+            recording_paused = dvr_row.recording_paused == true,
+            retention_days = tonumber(dvr_row.retention_days) or 0,
+            last_mode = tostring(dvr_row.last_mode or "LIVE"),
+            last_state_seq = tonumber(dvr_row.last_state_seq) or 0,
+            updated_ts = tonumber(dvr_row.updated_ts) or 0,
+        }
+    end
     local shard_active = sharding
         and type(sharding.is_active) == "function"
         and sharding.is_active()
-    if shard_active and type(sharding.get_stream_shard_port) == "function" then
+    if row and shard_active and type(sharding.get_stream_shard_port) == "function" then
         local port = sharding.get_stream_shard_port(id)
         if port then
             payload.shard_port = port
         end
     end
-    if shard_active and type(sharding.get_stream_shard_index) == "function" then
+    if row and shard_active and type(sharding.get_stream_shard_index) == "function" then
         local idx = sharding.get_stream_shard_index(id)
         if idx ~= nil then
             payload.shard_index = idx
         end
     end
+    local status_map = api._collect_stream_status_lite_map({ tostring(id) })
+    api._apply_stream_runtime_status(payload, status_map[tostring(id)])
     json_response(server, client, 200, payload)
 end
 
@@ -1658,6 +1962,121 @@ local function apply_stream_row_sharded_safe(row, force)
         return true
     end
     return ok, err
+end
+
+local function boolish(value)
+    if value == true or value == 1 then
+        return true
+    end
+    local text = tostring(value or ""):lower()
+    return text == "1" or text == "true" or text == "yes" or text == "on"
+end
+
+local function build_local_dvr_play_url(stream_id)
+    local http_port = tonumber(config and config.get_setting and config.get_setting("http_port") or nil) or 8000
+    local play_port = tonumber(config and config.get_setting and config.get_setting("http_play_port") or nil) or http_port
+    if not play_port or play_port < 1 or play_port > 65535 then
+        play_port = http_port
+    end
+    return "http://127.0.0.1:" .. tostring(play_port) .. "/dvr/play/" .. tostring(stream_id) .. "?internal=1"
+end
+
+local function ensure_stream_dvr_backup_input(cfg, stream_id)
+    if type(cfg) ~= "table" then
+        return
+    end
+    local dvr_cfg = type(cfg.dvr) == "table" and cfg.dvr or nil
+    if type(dvr_cfg) ~= "table" or not boolish(dvr_cfg.backup_enabled) then
+        return
+    end
+    if type(cfg.input) ~= "table" then
+        cfg.input = {}
+    end
+    local backup_input_url = build_local_dvr_play_url(stream_id)
+    local legacy_backup_input_url = backup_input_url:gsub("%?internal=1$", "")
+    local exists = false
+    for idx = #cfg.input, 1, -1 do
+        local raw = tostring(cfg.input[idx] or "")
+        if raw == backup_input_url then
+            if exists then
+                table.remove(cfg.input, idx)
+            else
+                exists = true
+            end
+        elseif raw == legacy_backup_input_url then
+            table.remove(cfg.input, idx)
+        end
+    end
+    if not exists then
+        table.insert(cfg.input, backup_input_url)
+    end
+    -- DVR backup input must be failover-only; active backup mode keeps
+    -- /dvr/play running even while primary input is healthy.
+    if tostring(cfg.backup_type or ""):lower() ~= "passive" then
+        cfg.backup_type = "passive"
+    end
+end
+
+function api._dvr_parse_input_binding(cfg, stream_id)
+    if type(cfg) ~= "table" or type(cfg.input) ~= "table" then
+        return nil
+    end
+    for _, raw in ipairs(cfg.input) do
+        if type(raw) == "string" and raw ~= "" then
+            local parsed = parse_url(raw)
+            if type(parsed) == "table" then
+                local input_type = tostring(parsed.input_type or ""):lower()
+                local server_id = api._dvr_trim_text(parsed.dvr_server_id or parsed.server_id)
+                if input_type == "dvr" and server_id ~= "" then
+                    local path = tostring(parsed.path or "")
+                    local remote_stream_id = api._dvr_trim_text(parsed.dvr_stream_id)
+                    if remote_stream_id == "" then
+                        remote_stream_id = api._dvr_trim_text(path:match("^/dvr/play/([^/?#]+)"))
+                        if remote_stream_id == "" then
+                            remote_stream_id = api._dvr_trim_text(path:match("^/play/([^/?#]+)"))
+                        end
+                    end
+                    if remote_stream_id == "" then
+                        remote_stream_id = api._dvr_trim_text(stream_id)
+                    end
+                    return {
+                        server_id = server_id,
+                        remote_stream_id = remote_stream_id,
+                    }
+                end
+            end
+        end
+    end
+    return nil
+end
+
+function api._dvr_apply_binding_from_inputs(cfg, stream_id)
+    local binding = api._dvr_parse_input_binding(cfg, stream_id)
+    if type(binding) ~= "table" then
+        return
+    end
+    local entry = api._dvr_find_server_entry(binding.server_id)
+    if type(entry) ~= "table" then
+        return
+    end
+    local stype = tostring(entry.api_type or entry.type or ""):lower()
+    if stype ~= "dvr_v1" and stype ~= "dvr-v1" and stype ~= "dvr" then
+        return
+    end
+    local dvr_cfg = type(cfg.dvr) == "table" and cfg.dvr or {}
+    local mode = api._dvr_trim_text(dvr_cfg.mode):lower()
+    local server_id = api._dvr_trim_text(dvr_cfg.remote_server_id)
+    if mode ~= "remote" or server_id == "" then
+        dvr_cfg.mode = "remote"
+        dvr_cfg.remote_server_id = binding.server_id
+    end
+    if api._dvr_trim_text(dvr_cfg.remote_stream_id) == "" then
+        dvr_cfg.remote_stream_id = binding.remote_stream_id
+    end
+    if dvr_cfg.remote_channel_enabled == nil then
+        dvr_cfg.remote_channel_enabled = true
+    end
+    cfg.dvr = dvr_cfg
 end
 
 local function ensure_stream_sharding_map_assignments(stream_ids)
@@ -1799,6 +2218,8 @@ local function upsert_stream(server, client, id, request)
     if type(sanitize_stream_config) == "function" then
         sanitize_stream_config(cfg)
     end
+    api._dvr_apply_binding_from_inputs(cfg, id)
+    ensure_stream_dvr_backup_input(cfg, id)
     apply_config_change(server, client, request, {
         comment = "stream " .. id,
         -- Streams are user-facing and often edited live; keep on-disk JSON in sync
@@ -1834,6 +2255,19 @@ local function upsert_stream(server, client, id, request)
                     epg.export_all("stream change")
                 end
             end
+            api._dvr_sync_remote_stream_after_upsert(id, cfg, request, function(sync_ok, _payload, sync_err)
+                if sync_ok then
+                    return
+                end
+                local message = tostring(sync_err or "remote dvr sync failed")
+                log.warning("[dvr] remote stream sync failed for " .. tostring(id) .. ": " .. message)
+                if config and type(config.add_alert) == "function" then
+                    config.add_alert("WARNING", tostring(id), "DVR_REMOTE_SYNC_FAILED", message, {
+                        stream_id = tostring(id),
+                        stage = "stream_upsert_after",
+                    })
+                end
+            end)
         end,
     })
 end
@@ -5800,39 +6234,102 @@ local function build_stream_status_path(lite, ids)
 end
 
 local function collect_runtime_stream_status(lite, ids)
-    if type(ids) == "table" and #ids > 0 then
-        if lite and runtime.list_status_lite_ids then
-            return runtime.list_status_lite_ids(ids) or {}
+    local function merge_dvr_status(target, source)
+        if type(target) ~= "table" or type(source) ~= "table" then
+            return
         end
-        if (not lite) and runtime.list_status_ids then
-            return runtime.list_status_ids(ids) or {}
-        end
-
-        local status = {}
-        for _, sid in ipairs(ids) do
-            local id = tostring(sid or "")
-            if id ~= "" then
-                local entry = nil
-                if lite and runtime.get_stream_status_lite then
-                    entry = runtime.get_stream_status_lite(id)
-                elseif runtime.get_stream_status then
-                    entry = runtime.get_stream_status(id)
-                end
-                if entry then
-                    status[id] = entry
+        for sid, row in pairs(source) do
+            if type(row) == "table" then
+                if type(target[sid]) ~= "table" then
+                    target[sid] = row
+                else
+                    local merged = target[sid]
+                    if merged.on_air == nil then
+                        merged.on_air = row.on_air
+                    end
+                    if merged.bitrate == nil then
+                        merged.bitrate = row.bitrate
+                    end
+                    if merged.bitrate_kbps == nil then
+                        merged.bitrate_kbps = row.bitrate_kbps or row.bitrate
+                    end
+                    if merged.raw_bitrate_kbps == nil then
+                        merged.raw_bitrate_kbps = row.raw_bitrate_kbps or row.bitrate_kbps or row.bitrate
+                    end
+                    if merged.cc_errors == nil then
+                        merged.cc_errors = row.cc_errors
+                    end
+                    if merged.pes_errors == nil then
+                        merged.pes_errors = row.pes_errors
+                    end
+                    if merged.active_input_id == nil then
+                        merged.active_input_id = row.active_input_id
+                    end
+                    if merged.active_input_index == nil then
+                        merged.active_input_index = row.active_input_index
+                    end
+                    if merged.active_input_url == nil then
+                        merged.active_input_url = row.active_input_url
+                    end
+                    if merged.last_error == nil or tostring(merged.last_error or "") == "" then
+                        merged.last_error = row.last_error
+                    end
+                    if merged.uptime_sec == nil then
+                        merged.uptime_sec = row.uptime_sec
+                    end
+                    if merged.updated_at == nil then
+                        merged.updated_at = row.updated_at
+                    end
                 end
             end
         end
+    end
+
+    local function get_dvr_runtime(ids_filter)
+        if not (dvr_store and type(dvr_store.list_runtime_status) == "function") then
+            return {}
+        end
+        local ok, rows = pcall(dvr_store.list_runtime_status, ids_filter)
+        if not ok or type(rows) ~= "table" then
+            return {}
+        end
+        return rows
+    end
+
+    if type(ids) == "table" and #ids > 0 then
+        local status = {}
+        if lite and runtime.list_status_lite_ids then
+            status = runtime.list_status_lite_ids(ids) or {}
+        elseif (not lite) and runtime.list_status_ids then
+            status = runtime.list_status_ids(ids) or {}
+        else
+            for _, sid in ipairs(ids) do
+                local id = tostring(sid or "")
+                if id ~= "" then
+                    local entry = nil
+                    if lite and runtime.get_stream_status_lite then
+                        entry = runtime.get_stream_status_lite(id)
+                    elseif runtime.get_stream_status then
+                        entry = runtime.get_stream_status(id)
+                    end
+                    if entry then
+                        status[id] = entry
+                    end
+                end
+            end
+        end
+        merge_dvr_status(status, get_dvr_runtime(ids))
         return status
     end
 
+    local status = {}
     if lite and runtime.list_status_lite then
-        return runtime.list_status_lite() or {}
+        status = runtime.list_status_lite() or {}
+    elseif runtime.list_status then
+        status = runtime.list_status() or {}
     end
-    if runtime.list_status then
-        return runtime.list_status() or {}
-    end
-    return {}
+    merge_dvr_status(status, get_dvr_runtime(nil))
+    return status
 end
 
 local function list_stream_status(server, client, request)
@@ -5988,6 +6485,14 @@ local function get_stream_status(server, client, request, id)
         status = runtime.get_stream_status_lite(id)
     elseif runtime.get_stream_status then
         status = runtime.get_stream_status(id)
+    end
+    if not status then
+        if dvr_store and type(dvr_store.get_runtime_status) == "function" then
+            local ok_dvr, dvr_status = pcall(dvr_store.get_runtime_status, id)
+            if ok_dvr and type(dvr_status) == "table" then
+                status = dvr_status
+            end
+        end
     end
     if not status then
         -- If requested on the master shard, proxy to the owning shard.
@@ -8276,11 +8781,15 @@ local function resolve_server_entry(body)
     if type(body) ~= "table" then
         return nil, "invalid json"
     end
-    if body.id and config and config.get_setting then
+    local server_id = body.id
+    if server_id == nil or tostring(server_id or "") == "" then
+        server_id = body.server_id
+    end
+    if server_id and config and config.get_setting then
         local list = config.get_setting("servers")
         if type(list) == "table" then
             for _, item in ipairs(list) do
-                if type(item) == "table" and tostring(item.id or "") == tostring(body.id or "") then
+                if type(item) == "table" and tostring(item.id or "") == tostring(server_id or "") then
                     local merged = {}
                     for k, v in pairs(item) do
                         merged[k] = v
@@ -8427,6 +8936,23 @@ function get_server_id(entry)
         return nil
     end
     return slug
+end
+
+local function normalize_server_api_type(value)
+    local raw = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+    if raw == "" or raw == "auto" then
+        return "auto"
+    end
+    if raw == "stream_v1" or raw == "stream-v1" or raw == "stream" then
+        return "stream_v1"
+    end
+    if raw == "astra_legacy" or raw == "astra-legacy" or raw == "astra" or raw == "legacy" then
+        return "astra_legacy"
+    end
+    if raw == "dvr_v1" or raw == "dvr-v1" or raw == "dvr" then
+        return "dvr_v1"
+    end
+    return "auto"
 end
 
 function build_server_path(cfg, path)
@@ -9176,6 +9702,14 @@ local function ensure_remote_servers_available(server, client)
     return false
 end
 
+local function ensure_dvr_available(server, client)
+    if dvr_store and type(dvr_store.upsert_stream) == "function" then
+        return true
+    end
+    error_response(server, client, 500, "dvr api is unavailable")
+    return false
+end
+
 local function check_remote_action_rate_limit(server, client, request, action, server_id)
     local ip = (request and request.addr) or "unknown"
     local limit = setting_number("rate_limit_remote_actions_per_min", 60)
@@ -9232,6 +9766,13 @@ local function server_status_list(server, client, request)
                 end
                 if extra.remote_version then
                     row.remote_version = extra.remote_version
+                end
+            end
+            local server_type = normalize_server_api_type(entry and (entry.api_type or entry.type) or "")
+            if server_type == "dvr_v1" and dvr_store and type(dvr_store.get_remote_sync_health) == "function" then
+                local health_ok, health = pcall(dvr_store.get_remote_sync_health, id)
+                if health_ok and type(health) == "table" then
+                    row.dvr_sync = health
                 end
             end
             table.insert(results, row)
@@ -9561,6 +10102,1916 @@ function api._servers_action_stream(server, client, request)
             message = tostring(entry.id or body.id or "") .. ":" .. tostring(action),
         })
         json_response(server, client, 200, payload or { status = "ok", action = action })
+    end)
+end
+
+function api._dvr_trim_text(value)
+    return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+function api._dvr_clone_json_table(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    local ok_encode, encoded = pcall(json.encode, value)
+    if not ok_encode or type(encoded) ~= "string" or encoded == "" then
+        return nil
+    end
+    local ok_decode, decoded = pcall(json.decode, encoded)
+    if not ok_decode or type(decoded) ~= "table" then
+        return nil
+    end
+    return decoded
+end
+
+function api._dvr_build_stream_config(stream_id, name, source_url, archive_path, retention_days, record_enabled, base_config)
+    local sid = api._dvr_trim_text(stream_id)
+    local src = api._dvr_trim_text(source_url)
+    local title = api._dvr_trim_text(name)
+    if title == "" then
+        title = sid
+    end
+    local keep_days = math.max(1, math.floor(tonumber(retention_days) or 3))
+    local enabled = record_enabled == true
+
+    local base = api._dvr_clone_json_table(base_config) or {}
+    local stream_type = api._dvr_trim_text(base.type)
+    if stream_type == "" then
+        stream_type = "spts"
+    end
+
+    -- Remote DVR channel must stay minimal and deterministic:
+    -- one ingest source URL + local DVR metadata only.
+    local cfg = {
+        id = sid,
+        name = title,
+        type = stream_type,
+        input = {},
+        enable = enabled,
+        enabled = enabled,
+        backup_type = "disabled",
+    }
+    if src ~= "" then
+        cfg.input[1] = src
+    end
+
+    local dvr_cfg = {}
+    dvr_cfg.enabled = enabled
+    dvr_cfg.retention_days = keep_days
+    dvr_cfg.source_url = src
+    dvr_cfg.mode = "local"
+    dvr_cfg.backup_enabled = false
+    if archive_path and api._dvr_trim_text(archive_path) ~= "" then
+        dvr_cfg.path = archive_path
+        dvr_cfg.archive_path = archive_path
+    end
+    cfg.dvr = dvr_cfg
+    return cfg
+end
+
+function api._dvr_collect_stream_status_map(stream_ids)
+    local ids = {}
+    if type(stream_ids) == "table" then
+        for _, value in ipairs(stream_ids) do
+            local sid = api._dvr_trim_text(value)
+            if sid ~= "" then
+                ids[#ids + 1] = sid
+            end
+        end
+    end
+    if #ids == 0 then
+        return {}
+    end
+    local map = {}
+    if runtime and type(runtime.list_status_lite_ids) == "function" then
+        local ok_runtime, runtime_map = pcall(runtime.list_status_lite_ids, ids)
+        if ok_runtime and type(runtime_map) == "table" then
+            map = runtime_map
+        end
+    end
+    if dvr_store and type(dvr_store.list_runtime_status) == "function" then
+        local ok_dvr, dvr_map = pcall(dvr_store.list_runtime_status, ids)
+        if ok_dvr and type(dvr_map) == "table" then
+            for sid, row in pairs(dvr_map) do
+                if type(row) == "table" then
+                    if type(map[sid]) ~= "table" then
+                        map[sid] = row
+                    else
+                        local merged = map[sid]
+                        if merged.on_air == nil then
+                            merged.on_air = row.on_air
+                        end
+                        if merged.bitrate_kbps == nil then
+                            merged.bitrate_kbps = row.bitrate_kbps or row.bitrate
+                        end
+                        if merged.raw_bitrate_kbps == nil then
+                            merged.raw_bitrate_kbps = row.raw_bitrate_kbps or row.bitrate_kbps or row.bitrate
+                        end
+                        if merged.cc_errors == nil then
+                            merged.cc_errors = row.cc_errors
+                        end
+                        if merged.pes_errors == nil then
+                            merged.pes_errors = row.pes_errors
+                        end
+                        if merged.active_input_id == nil then
+                            merged.active_input_id = row.active_input_id
+                        end
+                        if merged.active_input_index == nil then
+                            merged.active_input_index = row.active_input_index
+                        end
+                        if merged.active_input_url == nil then
+                            merged.active_input_url = row.active_input_url
+                        end
+                        if merged.uptime_sec == nil then
+                            merged.uptime_sec = row.uptime_sec
+                        end
+                        if merged.updated_at == nil then
+                            merged.updated_at = row.updated_at
+                        end
+                        if (merged.last_error == nil or api._dvr_trim_text(merged.last_error) == "")
+                            and api._dvr_trim_text(row.last_error) ~= ""
+                        then
+                            merged.last_error = row.last_error
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return map
+end
+
+function api._dvr_apply_stream_status_row(item, status)
+    if type(item) ~= "table" or type(status) ~= "table" then
+        return
+    end
+    item.on_air = status.on_air == true
+    item.bitrate_kbps = tonumber(status.bitrate_kbps or status.bitrate) or 0
+    item.raw_bitrate_kbps = tonumber(status.raw_bitrate_kbps or status.bitrate_kbps or status.bitrate) or 0
+    item.cc_errors = tonumber(status.cc_errors) or 0
+    item.pes_errors = tonumber(status.pes_errors) or 0
+    item.uptime_sec = tonumber(status.uptime_sec or status.uptime) or 0
+    if status.active_input_id ~= nil then
+        item.active_input = tonumber(status.active_input_id) or status.active_input_id
+    elseif status.active_input ~= nil then
+        item.active_input = tonumber(status.active_input) or status.active_input
+    end
+    if status.active_input_url ~= nil then
+        item.active_input_url = tostring(status.active_input_url or "")
+    end
+    item.last_error = status.last_error and tostring(status.last_error) or nil
+    item.updated_at = tonumber(status.updated_at) or os.time()
+end
+
+function api._dvr_collect_stream_ids(raw_ids)
+    if type(raw_ids) ~= "table" then
+        return {}
+    end
+    local ids = {}
+    local seen = {}
+    for _, value in ipairs(raw_ids) do
+        local sid = api._dvr_trim_text(value)
+        if sid ~= "" and not seen[sid] then
+            ids[#ids + 1] = sid
+            seen[sid] = true
+        end
+    end
+    return ids
+end
+
+function api._dvr_normalize_origin_base_url(value)
+    local raw = api._dvr_trim_text(value)
+    if raw == "" then
+        return nil, "origin_url is required"
+    end
+    if not raw:find("://", 1, true) then
+        raw = "http://" .. raw
+    end
+    local parsed = parse_url(raw)
+    if not parsed or not parsed.host then
+        return nil, "invalid origin_url"
+    end
+    local scheme = tostring(parsed.format or "http"):lower()
+    if scheme ~= "http" and scheme ~= "https" then
+        return nil, "origin_url must be http or https"
+    end
+    local port = tonumber(parsed.port) or (scheme == "https" and 443 or 80)
+    local path = tostring(parsed.path or "")
+    if path == "/" then
+        path = ""
+    else
+        path = path:gsub("/+$", "")
+    end
+    return scheme .. "://" .. tostring(parsed.host) .. ":" .. tostring(port) .. path
+end
+
+function api._dvr_is_self_origin_for_server(entry, normalized_origin_url)
+    if type(entry) ~= "table" then
+        return false
+    end
+    local target_host = api._dvr_trim_text(entry.host):lower()
+    if target_host == "" then
+        return false
+    end
+    local target_proto = api._dvr_trim_text(entry.proto):lower()
+    if target_proto ~= "https" then
+        target_proto = "http"
+    end
+    local target_port = tonumber(entry.port)
+    if not target_port then
+        target_port = target_proto == "https" and 443 or 80
+    end
+
+    local parsed_origin = parse_url(api._dvr_trim_text(normalized_origin_url))
+    if not parsed_origin then
+        return false
+    end
+    local origin_host = api._dvr_trim_text(parsed_origin.host):lower()
+    if origin_host == "" then
+        return false
+    end
+    local origin_proto = api._dvr_trim_text(parsed_origin.format or "http"):lower()
+    if origin_proto ~= "https" then
+        origin_proto = "http"
+    end
+    local origin_port = tonumber(parsed_origin.port)
+    if not origin_port then
+        origin_port = origin_proto == "https" and 443 or 80
+    end
+
+    return origin_host == target_host and origin_port == target_port
+end
+
+function api._dvr_encode_uri_component(value)
+    local text = tostring(value or "")
+    return (text:gsub("([^%w%-_%.~])", function(ch)
+        return string.format("%%%02X", string.byte(ch))
+    end))
+end
+
+function api._dvr_build_origin_play_url(origin_base, stream_id)
+    local base = tostring(origin_base or ""):gsub("/+$", "")
+    return base .. "/play/" .. api._dvr_encode_uri_component(stream_id)
+end
+
+function api._dvr_resolve_origin_url_from_entry(entry)
+    local cfg, err = normalize_server_host(entry)
+    if not cfg then
+        return nil, err
+    end
+    local base_path = tostring(cfg.base_path or ""):gsub("/+$", "")
+    return tostring(cfg.scheme or "http") .. "://" .. tostring(cfg.host) .. ":" .. tostring(cfg.port) .. base_path
+end
+
+function api._dvr_first_token(raw)
+    if raw == nil then
+        return nil
+    end
+    if type(raw) == "table" then
+        for _, value in ipairs(raw) do
+            local token = api._dvr_trim_text(value)
+            if token ~= "" then
+                return token
+            end
+        end
+        return nil
+    end
+    local text = tostring(raw or "")
+    for token in text:gmatch("([^,;]+)") do
+        local trimmed = api._dvr_trim_text(token)
+        if trimmed ~= "" then
+            return trimmed
+        end
+    end
+    return nil
+end
+
+function api._dvr_select_origin_play_token(body, entry)
+    local explicit = nil
+    if type(body) == "table" then
+        explicit = api._dvr_trim_text(body.origin_play_token or body.origin_token or body.play_token)
+        if explicit ~= "" then
+            return explicit, "request"
+        end
+    end
+
+    if type(entry) == "table" then
+        local from_entry = api._dvr_trim_text(entry.origin_play_token or entry.origin_token or entry.play_token)
+        if from_entry ~= "" then
+            return from_entry, "server"
+        end
+    end
+
+    local global_token = api._dvr_first_token(config and config.get_setting and config.get_setting("dvr_origin_play_token"))
+    if global_token and global_token ~= "" then
+        return global_token, "setting:dvr_origin_play_token"
+    end
+
+    local http_auth_token = api._dvr_first_token(config and config.get_setting and config.get_setting("http_auth_tokens"))
+    if http_auth_token and http_auth_token ~= "" then
+        return http_auth_token, "setting:http_auth_tokens"
+    end
+    return nil, "none"
+end
+
+function api._dvr_build_origin_play_url_with_token(origin_base, stream_id, token)
+    local url = api._dvr_build_origin_play_url(origin_base, stream_id)
+    local play_token = api._dvr_trim_text(token)
+    if play_token == "" then
+        return url
+    end
+    local separator = url:find("?", 1, true) and "&" or "?"
+    return url .. separator .. "token=" .. api._dvr_encode_uri_component(play_token)
+end
+
+function api._dvr_select_origin_basic_auth(body, target_entry, origin_entry)
+    local function pick(login, password, source)
+        local user = api._dvr_trim_text(login)
+        if user == "" then
+            return nil, nil, nil
+        end
+        local pass = api._dvr_trim_text(password)
+        return user, pass, source
+    end
+
+    if type(body) == "table" then
+        local explicit_user = body.origin_login or body.origin_user or body.origin_username
+        local explicit_pass = body.origin_password or body.origin_pass
+        local user, pass, source = pick(explicit_user, explicit_pass, "request")
+        if user then
+            return user, pass, source
+        end
+    end
+
+    if type(origin_entry) == "table" then
+        local user, pass, source = pick(origin_entry.login, origin_entry.password, "origin_server")
+        if user then
+            return user, pass, source
+        end
+    end
+
+    if type(target_entry) == "table" then
+        local user, pass, source = pick(target_entry.origin_login, target_entry.origin_password, "server_origin")
+        if user then
+            return user, pass, source
+        end
+        user, pass, source = pick(target_entry.login, target_entry.password, "server")
+        if user then
+            return user, pass, source
+        end
+    end
+
+    return nil, nil, "none"
+end
+
+function api._dvr_build_origin_play_url_with_auth(origin_base, stream_id, token, login, password)
+    local play_token = api._dvr_trim_text(token)
+    local user = api._dvr_trim_text(login)
+    if user == "" then
+        return api._dvr_build_origin_play_url_with_token(origin_base, stream_id, play_token)
+    end
+
+    local parsed = parse_url(origin_base)
+    if not parsed or not parsed.host then
+        return api._dvr_build_origin_play_url_with_token(origin_base, stream_id, play_token)
+    end
+    local scheme = tostring(parsed.format or "http"):lower()
+    if scheme ~= "http" and scheme ~= "https" then
+        scheme = "http"
+    end
+    local host = tostring(parsed.host or "")
+    if host == "" then
+        return api._dvr_build_origin_play_url_with_token(origin_base, stream_id, play_token)
+    end
+    local port = tonumber(parsed.port) or (scheme == "https" and 443 or 80)
+    local path = tostring(parsed.path or "")
+    if path == "/" then
+        path = ""
+    else
+        path = path:gsub("/+$", "")
+    end
+
+    local auth = api._dvr_encode_uri_component(user)
+    local pass = api._dvr_trim_text(password)
+    if pass ~= "" then
+        auth = auth .. ":" .. api._dvr_encode_uri_component(pass)
+    end
+    local base = scheme .. "://" .. auth .. "@" .. host .. ":" .. tostring(port) .. path
+    return api._dvr_build_origin_play_url_with_token(base, stream_id, play_token)
+end
+
+function api._dvr_resolve_origin_url_from_request(request)
+    local headers = request and request.headers or nil
+    if type(headers) ~= "table" then
+        return nil
+    end
+
+    local host = api._dvr_trim_text(get_header(headers, "x-forwarded-host") or get_header(headers, "host"))
+    if host == "" then
+        return nil
+    end
+    host = (host:match("^([^,%s]+)") or host)
+    if host == "" then
+        return nil
+    end
+
+    local proto = api._dvr_trim_text(
+        get_header(headers, "x-forwarded-proto")
+        or get_header(headers, "x-forwarded-scheme")
+        or get_header(headers, "x-scheme")
+    )
+    if proto == "" then
+        proto = "http"
+    else
+        proto = proto:match("^([^,%s]+)") or proto
+    end
+    proto = tostring(proto):lower()
+    if proto ~= "http" and proto ~= "https" then
+        proto = "http"
+    end
+
+    local normalized, _ = api._dvr_normalize_origin_base_url(proto .. "://" .. host)
+    return normalized
+end
+
+function api._dvr_find_server_entry(server_id)
+    local sid = api._dvr_trim_text(server_id)
+    if sid == "" then
+        return nil
+    end
+    if not (config and type(config.get_setting) == "function") then
+        return nil
+    end
+    local rows = config.get_setting("servers")
+    if type(rows) ~= "table" then
+        return nil
+    end
+    for _, item in ipairs(rows) do
+        if type(item) == "table" and api._dvr_trim_text(item.id) == sid then
+            return item
+        end
+    end
+    return nil
+end
+
+function api._dvr_is_stream_not_found_error(message, code)
+    if tonumber(code) == 404 then
+        return true
+    end
+    local text = tostring(message or ""):lower()
+    return text:find("stream not found", 1, true) ~= nil
+end
+
+function api._dvr_sync_remote_stream_after_upsert(stream_id, cfg, request, callback)
+    callback = callback or function() end
+    local sid = api._dvr_trim_text(stream_id)
+    if sid == "" then
+        callback(false, nil, "stream id is required")
+        return
+    end
+    if not remote_servers then
+        callback(false, nil, "remote servers unavailable")
+        return
+    end
+    if type(cfg) ~= "table" then
+        callback(true, { skipped = true, reason = "missing config" })
+        return
+    end
+    local dvr_cfg = type(cfg.dvr) == "table" and cfg.dvr or nil
+    if type(dvr_cfg) ~= "table" then
+        callback(true, { skipped = true, reason = "dvr config missing" })
+        return
+    end
+    if api._dvr_trim_text(dvr_cfg.mode):lower() ~= "remote" then
+        callback(true, { skipped = true, reason = "dvr mode is not remote" })
+        return
+    end
+    local server_id = api._dvr_trim_text(dvr_cfg.remote_server_id)
+    if server_id == "" then
+        callback(false, nil, "remote dvr server is not selected")
+        return
+    end
+    if type(remote_servers.dvr_bulk_record) ~= "function" then
+        callback(false, nil, "remote dvr bulk record api unavailable")
+        return
+    end
+    local entry = api._dvr_find_server_entry(server_id)
+    if type(entry) ~= "table" then
+        callback(false, nil, "remote dvr server not found: " .. server_id)
+        return
+    end
+    local stype = normalize_server_api_type(entry.api_type or entry.type)
+    if stype ~= "dvr_v1" then
+        callback(false, nil, "target server must have type DVR")
+        return
+    end
+
+    local retention_days = math.max(1, math.floor(tonumber(dvr_cfg.retention_days) or 3))
+    local archive_path = api._dvr_trim_text(dvr_cfg.path or dvr_cfg.archive_path)
+    if archive_path == "" then
+        archive_path = nil
+    end
+    local remote_channel_enabled = true
+    if dvr_cfg.remote_channel_enabled ~= nil then
+        remote_channel_enabled = boolish(dvr_cfg.remote_channel_enabled)
+    end
+    local archive_enabled = boolish(dvr_cfg.enabled) or boolish(dvr_cfg.archive_enabled)
+    local backup_enabled = boolish(dvr_cfg.backup_enabled)
+    local remote_stream_id = api._dvr_trim_text(dvr_cfg.remote_stream_id)
+    if remote_stream_id == "" then
+        remote_stream_id = sid
+    end
+    local should_record = remote_channel_enabled and (archive_enabled or backup_enabled)
+
+    local origin_url = api._dvr_resolve_origin_url_from_request(request) or ""
+    if origin_url == "" then
+        local default_port = tonumber(config and config.get_setting and config.get_setting("http_play_port") or nil)
+            or tonumber(config and config.get_setting and config.get_setting("http_port") or nil)
+            or 8000
+        origin_url = "http://127.0.0.1:" .. tostring(default_port)
+    end
+    local normalized_origin, origin_err = api._dvr_normalize_origin_base_url(origin_url)
+    if not normalized_origin then
+        callback(false, nil, origin_err or "invalid origin url")
+        return
+    end
+    local origin_play_token, _ = api._dvr_select_origin_play_token(dvr_cfg, entry)
+    local origin_login, origin_password = api._dvr_select_origin_basic_auth(dvr_cfg, entry, nil)
+    if api._dvr_trim_text(origin_play_token) ~= "" then
+        origin_login = nil
+        origin_password = nil
+    end
+    local source_url = api._dvr_build_origin_play_url_with_auth(
+        normalized_origin,
+        sid,
+        origin_play_token,
+        origin_login,
+        origin_password
+    )
+    local stream_name = api._dvr_trim_text(cfg.name or sid)
+    local stream_payload = {
+        stream_id = remote_stream_id,
+        name = stream_name ~= "" and stream_name or sid,
+        source_url = source_url,
+        record_enabled = should_record,
+        retention_days = retention_days,
+        segment_sec = 3600,
+        config = api._dvr_build_stream_config(
+            remote_stream_id,
+            stream_name,
+            source_url,
+            archive_path,
+            retention_days,
+            should_record,
+            cfg
+        ),
+    }
+    if archive_path then
+        stream_payload.archive_path = archive_path
+    end
+
+    local function run_bulk_record()
+        remote_servers.dvr_bulk_record(entry, {
+            stream_ids = { remote_stream_id },
+            record_enabled = should_record,
+            retention_days = retention_days,
+        }, function(ok_record, payload_record, record_err, record_code)
+            if not ok_record then
+                if (not remote_channel_enabled)
+                    and api._dvr_is_stream_not_found_error(record_err, record_code)
+                then
+                    return callback(true, {
+                        ok = true,
+                        skipped = true,
+                        warning = "remote stream not found",
+                    })
+                end
+                return callback(false, nil, tostring(record_err or "remote dvr record sync failed"))
+            end
+            if remote_channel_enabled
+                and dvr_store
+                and type(dvr_store.upsert_remote_link) == "function"
+            then
+                dvr_store.upsert_remote_link({
+                    stream_id = sid,
+                    dvr_server_id = server_id,
+                    dvr_stream_id = remote_stream_id,
+                    source_play_url = source_url,
+                    updated_ts = os.time(),
+                })
+            end
+            callback(true, payload_record or {
+                ok = true,
+                affected = 1,
+            })
+        end)
+    end
+
+    if not remote_channel_enabled then
+        run_bulk_record()
+        return
+    end
+
+    if type(remote_servers.dvr_upsert_streams) ~= "function" then
+        callback(false, nil, "remote dvr import api unavailable")
+        return
+    end
+    remote_servers.dvr_upsert_streams(entry, { stream_payload }, function(ok_import, payload_import, import_err)
+        if not ok_import then
+            return callback(false, nil, tostring(import_err or "remote dvr import failed"))
+        end
+        run_bulk_record()
+    end)
+end
+
+function api._dvr_get_storage_candidates(refresh)
+    if not dvr_store or type(dvr_store.storage_candidates) ~= "function" then
+        return {
+            recommended_path = nil,
+            candidates = {},
+        }
+    end
+    local payload = dvr_store.storage_candidates({
+        refresh = refresh == true,
+    })
+    if type(payload) ~= "table" then
+        return {
+            recommended_path = nil,
+            candidates = {},
+        }
+    end
+    local candidates = type(payload.candidates) == "table" and payload.candidates or {}
+    local recommended = api._dvr_trim_text(payload.recommended_path)
+    if recommended == "" and #candidates > 0 then
+        recommended = api._dvr_trim_text(candidates[1] and candidates[1].path)
+    end
+    if recommended == "" then
+        recommended = nil
+    end
+    return {
+        recommended_path = recommended,
+        candidates = candidates,
+    }
+end
+
+function api._dvr_health(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    json_response(server, client, 200, {
+        status = "ok",
+        service = "dvr_v1",
+        version = astra.version,
+        ts = os.time(),
+    })
+end
+
+function api._dvr_storage_candidates_get(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local refresh = false
+    if request and request.query and request.query.refresh ~= nil then
+        refresh = tostring(request.query.refresh or "") == "1"
+            or tostring(request.query.refresh or ""):lower() == "true"
+    end
+    local payload = api._dvr_get_storage_candidates(refresh)
+    json_response(server, client, 200, {
+        ok = true,
+        recommended_path = payload.recommended_path,
+        candidates = payload.candidates,
+    })
+end
+
+function api._dvr_streams_upsert(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id or body.id)
+    local source_url = api._dvr_trim_text(body.source_url)
+    local archive_path = api._dvr_trim_text(body.archive_path or body.path)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    if source_url == "" then
+        return error_response(server, client, 400, "source_url is required")
+    end
+    if archive_path == "" then
+        local storage = api._dvr_get_storage_candidates(false)
+        archive_path = api._dvr_trim_text(storage and storage.recommended_path)
+    end
+    if archive_path == "" then
+        archive_path = nil
+    end
+    local retention_days = tonumber(body.retention_days) or 3
+    local record_enabled = body.record_enabled == true or body.record_enabled == 1 or body.record_enabled == "1"
+    local base_config = nil
+    if type(body.config) == "table" then
+        base_config = body.config
+    elseif body.config_json ~= nil then
+        local text = api._dvr_trim_text(body.config_json)
+        if text ~= "" then
+            local ok_cfg, decoded_cfg = pcall(json.decode, text)
+            if ok_cfg and type(decoded_cfg) == "table" then
+                base_config = decoded_cfg
+            end
+        end
+    end
+    local normalized_config = api._dvr_build_stream_config(
+        stream_id,
+        body.name or stream_id,
+        source_url,
+        archive_path,
+        retention_days,
+        record_enabled,
+        base_config
+    )
+    local res, err = dvr_store.upsert_stream({
+        stream_id = stream_id,
+        name = body.name or stream_id,
+        source_url = source_url,
+        archive_path = archive_path,
+        config = normalized_config,
+        retention_days = math.max(1, math.floor(retention_days)),
+        record_enabled = record_enabled,
+        segment_sec = 3600,
+        recording_paused = body.recording_paused == true,
+        last_mode = body.last_mode,
+        last_state_seq = body.last_state_seq,
+        last_reason = body.last_reason,
+    })
+    if not res then
+        return error_response(server, client, 400, tostring(err or "upsert failed"))
+    end
+    local item = dvr_store.get_stream(stream_id)
+    json_response(server, client, 200, {
+        ok = true,
+        status = "ok",
+        stream_id = stream_id,
+        created = res.created == true,
+        updated = res.updated == true,
+        item = item,
+    })
+end
+
+function api._dvr_streams_get(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local stream_id = request and request.query and request.query.stream_id or nil
+    if (not stream_id or stream_id == "") and request and request.method == "POST" then
+        local body = parse_json_body(request)
+        if body then
+            stream_id = body.stream_id or body.id
+        end
+    end
+    stream_id = api._dvr_trim_text(stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local item = dvr_store.get_stream(stream_id)
+    if not item then
+        return error_response(server, client, 404, "stream not found")
+    end
+    item.config = api._dvr_build_stream_config(
+        stream_id,
+        item.name or stream_id,
+        item.source_url,
+        item.archive_path,
+        item.retention_days,
+        item.record_enabled == true,
+        item.config
+    )
+    local status_map = api._dvr_collect_stream_status_map({ stream_id })
+    local status = status_map[stream_id]
+    if type(status) == "table" then
+        api._dvr_apply_stream_status_row(item, status)
+    end
+    json_response(server, client, 200, { ok = true, item = item })
+end
+
+function api._dvr_streams_list(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request) or {}
+    local include_status = body.include_status ~= false
+    local stream_ids = type(body.stream_ids) == "table" and body.stream_ids or nil
+    local limit = tonumber(body.limit) or 5000
+    local items = dvr_store.list_streams({
+        stream_ids = stream_ids,
+        limit = limit,
+    }) or {}
+    local ids = {}
+    for _, item in ipairs(items) do
+        ids[#ids + 1] = item.stream_id
+        item.config = api._dvr_build_stream_config(
+            item.stream_id,
+            item.name or item.stream_id,
+            item.source_url,
+            item.archive_path,
+            item.retention_days,
+            item.record_enabled == true,
+            item.config
+        )
+    end
+    if include_status then
+        local status_map = api._dvr_collect_stream_status_map(ids)
+        for _, item in ipairs(items) do
+            local status = status_map[item.stream_id]
+            if type(status) == "table" then
+                api._dvr_apply_stream_status_row(item, status)
+            end
+        end
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        status = "ok",
+        items = items,
+        total = #items,
+        api_type_effective = "dvr_v1",
+    })
+end
+
+function api._dvr_streams_delete(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id or body.id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local ok, err = dvr_store.delete_stream(stream_id)
+    if not ok then
+        return error_response(server, client, 400, tostring(err or "delete failed"))
+    end
+    json_response(server, client, 200, { ok = true, status = "ok", stream_id = stream_id })
+end
+
+function api._dvr_streams_bulk_record(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_ids = type(body.stream_ids) == "table" and body.stream_ids or {}
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    local has_record_enabled = body.record_enabled ~= nil
+    local record_enabled = nil
+    if has_record_enabled then
+        record_enabled = body.record_enabled == true or body.record_enabled == 1 or body.record_enabled == "1"
+    end
+    if not has_record_enabled and body.retention_days == nil then
+        return error_response(server, client, 400, "record_enabled or retention_days is required")
+    end
+    local result = dvr_store.bulk_record({
+        stream_ids = stream_ids,
+        record_enabled = record_enabled,
+        retention_days = body.retention_days,
+    })
+    json_response(server, client, 200, result or {
+        ok = false,
+        affected = 0,
+        errors = { { error = "bulk record failed" } },
+    })
+end
+
+function api._dvr_ingest_state(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local result, err = dvr_store.apply_ingest_state(body)
+    if not result then
+        return error_response(server, client, 400, tostring(err or "ingest-state failed"))
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        applied = result.applied == true,
+        ignored_duplicate = result.ignored_duplicate == true,
+        current_mode = result.mode or "LIVE",
+        recording_paused = result.recording_paused == true,
+        state = result,
+    })
+end
+
+function api._dvr_backup_state_get(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local stream_id = api._dvr_trim_text(request and request.query and request.query.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local state_row = dvr_store.get_backup_state_for_api(stream_id)
+    json_response(server, client, 200, state_row or { stream_id = stream_id, mode = "LIVE" })
+end
+
+function api._dvr_archive_get(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local stream_id = api._dvr_trim_text(request and request.query and request.query.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local from_ts = tonumber(request and request.query and request.query.from)
+    local to_ts = tonumber(request and request.query and request.query.to)
+    local include_partial = (request and request.query and request.query.include_partial) == "1"
+    local limit = tonumber(request and request.query and request.query.limit) or 1000
+    local items = dvr_store.list_segments(stream_id, from_ts, to_ts, include_partial, limit) or {}
+    json_response(server, client, 200, {
+        items = items,
+        total = #items,
+    })
+end
+
+function api._dvr_backup_cursor_reset(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local state_row, err = dvr_store.cursor_reset(stream_id)
+    if not state_row then
+        return error_response(server, client, 400, tostring(err or "cursor reset failed"))
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        state = state_row,
+    })
+end
+
+function api._dvr_backup_cycle_rebuild(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local state_row, err = dvr_store.rebuild_cycle_and_set_cursor(stream_id, {
+        include_partial = body.include_partial ~= false,
+        min_partial_sec = body.min_partial_sec,
+        start_mode = body.start_mode,
+        start_offset_hours = body.start_offset_hours,
+        now_ts = body.now_ts,
+    })
+    if not state_row then
+        return error_response(server, client, 400, tostring(err or "cycle rebuild failed"))
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        cycle_id = state_row.cycle_id,
+        first_seg_start_ts = state_row.cursor_seg_start_ts,
+        state = state_row,
+    })
+end
+
+function api._dvr_backup_cursor_reset_bulk(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_ids = api._dvr_collect_stream_ids(body.stream_ids)
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    local items = {}
+    local failed = {}
+    local affected = 0
+    for _, stream_id in ipairs(stream_ids) do
+        local state_row, err = dvr_store.cursor_reset(stream_id)
+        if state_row then
+            affected = affected + 1
+            items[#items + 1] = {
+                stream_id = stream_id,
+                state = state_row,
+            }
+        else
+            failed[#failed + 1] = {
+                stream_id = stream_id,
+                error = tostring(err or "cursor reset failed"),
+            }
+        end
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        total = #stream_ids,
+        affected = affected,
+        failed = failed,
+        items = items,
+    })
+end
+
+function api._dvr_backup_cycle_rebuild_bulk(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_ids = api._dvr_collect_stream_ids(body.stream_ids)
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    local items = {}
+    local failed = {}
+    local affected = 0
+    local include_partial = body.include_partial ~= false
+    local min_partial_sec = body.min_partial_sec
+    local start_mode = body.start_mode
+    local start_offset_hours = body.start_offset_hours
+    local now_ts = body.now_ts
+    for _, stream_id in ipairs(stream_ids) do
+        local state_row, err = dvr_store.rebuild_cycle_and_set_cursor(stream_id, {
+            include_partial = include_partial,
+            min_partial_sec = min_partial_sec,
+            start_mode = start_mode,
+            start_offset_hours = start_offset_hours,
+            now_ts = now_ts,
+        })
+        if state_row then
+            affected = affected + 1
+            items[#items + 1] = {
+                stream_id = stream_id,
+                cycle_id = state_row.cycle_id,
+                first_seg_start_ts = state_row.cursor_seg_start_ts,
+                state = state_row,
+            }
+        else
+            failed[#failed + 1] = {
+                stream_id = stream_id,
+                error = tostring(err or "cycle rebuild failed"),
+            }
+        end
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        total = #stream_ids,
+        affected = affected,
+        failed = failed,
+        items = items,
+    })
+end
+
+function api._dvr_backup_next_segment(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = nil
+    local stream_id = api._dvr_trim_text(request and request.query and request.query.stream_id)
+    if request and request.method == "POST" then
+        body = parse_json_body(request)
+        if body and stream_id == "" then
+            stream_id = api._dvr_trim_text(body.stream_id)
+        end
+    end
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local include_partial = true
+    local min_partial_sec = nil
+    local allow_cycle_restart = true
+    local start_mode = nil
+    local start_offset_hours = nil
+    local now_ts = nil
+    if request and request.query then
+        if request.query.include_partial ~= nil then
+            include_partial = request.query.include_partial ~= "0"
+        end
+        min_partial_sec = tonumber(request.query.min_partial_sec)
+        if request.query.allow_cycle_restart ~= nil then
+            allow_cycle_restart = request.query.allow_cycle_restart ~= "0"
+        end
+        if request.query.start_mode ~= nil then
+            start_mode = tostring(request.query.start_mode)
+        end
+        if request.query.start_offset_hours ~= nil then
+            start_offset_hours = tonumber(request.query.start_offset_hours)
+        end
+        if request.query.now_ts ~= nil then
+            now_ts = tonumber(request.query.now_ts)
+        end
+    end
+    if body then
+        if body.include_partial ~= nil then
+            include_partial = body.include_partial ~= false
+        end
+        if body.min_partial_sec ~= nil then
+            min_partial_sec = tonumber(body.min_partial_sec)
+        end
+        if body.allow_cycle_restart ~= nil then
+            allow_cycle_restart = body.allow_cycle_restart ~= false
+        end
+        if body.start_mode ~= nil then
+            start_mode = tostring(body.start_mode)
+        end
+        if body.start_offset_hours ~= nil then
+            start_offset_hours = tonumber(body.start_offset_hours)
+        end
+        if body.now_ts ~= nil then
+            now_ts = tonumber(body.now_ts)
+        end
+    end
+    local selected, err = dvr_store.backup_select_segment(stream_id, {
+        include_partial = include_partial,
+        min_partial_sec = min_partial_sec,
+        allow_cycle_restart = allow_cycle_restart,
+        start_mode = start_mode,
+        start_offset_hours = start_offset_hours,
+        now_ts = now_ts,
+    })
+    if not selected then
+        return error_response(server, client, 404, tostring(err or "no backup segment available"))
+    end
+    json_response(server, client, 200, {
+        ok = true,
+        stream_id = stream_id,
+        cycle_restarted = selected.cycle_restarted == true,
+        segment = selected.segment,
+        state = selected.state,
+    })
+end
+
+function api._dvr_backup_progress(server, client, request)
+    if not require_admin(request) then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local result, err = dvr_store.backup_commit_progress(stream_id, {
+        seg_start_ts = body.seg_start_ts,
+        played_sec = body.played_sec,
+        done = body.done,
+        skip = body.skip,
+        include_partial = body.include_partial,
+        min_partial_sec = body.min_partial_sec,
+        allow_cycle_restart = body.allow_cycle_restart,
+        segment_guard_sec = body.segment_guard_sec,
+        start_mode = body.start_mode,
+        start_offset_hours = body.start_offset_hours,
+        now_ts = body.now_ts,
+    })
+    if not result then
+        return error_response(server, client, 400, tostring(err or "progress commit failed"))
+    end
+    json_response(server, client, 200, result)
+end
+
+function api._dvr_resolve_server_entry(body)
+    local entry, err = resolve_server_entry(body)
+    if not entry then
+        return nil, err
+    end
+    local stype = normalize_server_api_type(entry.api_type or entry.type)
+    if stype ~= "dvr_v1" then
+        return nil, "target server must have type DVR"
+    end
+    return entry
+end
+
+function api._servers_dvr_storage_candidates(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    remote_servers.dvr_storage_candidates(entry, {
+        refresh = body.refresh == true,
+    }, function(ok, payload, action_err, action_code)
+        if not ok then
+            local text = tostring(action_err or "storage candidates failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, action_code)
+                or api._servers_classify_error_status(text, action_code)
+            return error_response(server, client, code, text)
+        end
+        local data = type(payload) == "table" and payload or {}
+        json_response(server, client, 200, {
+            ok = true,
+            recommended_path = api._dvr_trim_text(data.recommended_path),
+            candidates = type(data.candidates) == "table" and data.candidates or {},
+        })
+    end)
+end
+
+function api._servers_dvr_import_streams(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    local origin_url = api._dvr_trim_text(body.origin_url)
+    local origin_entry = nil
+    if origin_url == "" and body.origin_server_id and config and config.get_setting then
+        local servers = config.get_setting("servers")
+        if type(servers) == "table" then
+            for _, item in ipairs(servers) do
+                if tostring(item and item.id or "") == tostring(body.origin_server_id) then
+                    origin_entry = item
+                    origin_url = api._dvr_resolve_origin_url_from_entry(item) or ""
+                    break
+                end
+            end
+        end
+    end
+    if origin_url == "" then
+        origin_url = api._dvr_resolve_origin_url_from_request(request) or ""
+    end
+    local normalized_origin, origin_err = api._dvr_normalize_origin_base_url(origin_url)
+    if not normalized_origin then
+        return error_response(server, client, 400, origin_err or "invalid origin_url")
+    end
+    if body.allow_self_origin ~= true
+        and api._dvr_is_self_origin_for_server(entry, normalized_origin)
+    then
+        return error_response(server, client, 400,
+            "origin_url points to selected DVR server; choose origin stream server")
+    end
+    local rows = config and config.list_streams and config.list_streams() or {}
+    local descriptors = {}
+    local selected_ids = {}
+    local origin_play_token, origin_play_token_source = api._dvr_select_origin_play_token(body, entry)
+    local origin_login, origin_password, origin_auth_source = api._dvr_select_origin_basic_auth(body, entry, origin_entry)
+    if api._dvr_trim_text(origin_play_token) ~= "" then
+        origin_login = nil
+        origin_password = nil
+        origin_auth_source = "token"
+    end
+    local explicit_archive_path = api._dvr_trim_text(body.archive_path or body.path)
+    if type(body.stream_ids) == "table" and #body.stream_ids > 0 then
+        for _, value in ipairs(body.stream_ids) do
+            local sid = api._dvr_trim_text(value)
+            if sid ~= "" then
+                selected_ids[sid] = true
+            end
+        end
+    end
+    local import_all = body.import_all == true or next(selected_ids) == nil
+    for _, row in ipairs(rows) do
+        local cfg_row = type(row and row.config) == "table" and row.config or {}
+        local sid_row = api._dvr_trim_text(row and row.id)
+        local sid_cfg = api._dvr_trim_text(cfg_row and cfg_row.id)
+        local sid_effective = sid_row
+        local selected = import_all
+
+        if not import_all then
+            if sid_row ~= "" and selected_ids[sid_row] == true then
+                sid_effective = sid_row
+                selected = true
+            elseif sid_cfg ~= "" and selected_ids[sid_cfg] == true then
+                sid_effective = sid_cfg
+                selected = true
+            end
+        else
+            if sid_effective == "" then
+                sid_effective = sid_cfg
+            end
+        end
+
+        if selected and sid_effective ~= "" then
+            local dvr_cfg = type(cfg_row.dvr) == "table" and cfg_row.dvr or {}
+            descriptors[#descriptors + 1] = {
+                stream_id = sid_effective,
+                name = api._dvr_trim_text(cfg_row.name or sid_effective),
+                source_url = api._dvr_build_origin_play_url_with_auth(
+                    normalized_origin,
+                    sid_effective,
+                    origin_play_token,
+                    origin_login,
+                    origin_password
+                ),
+                local_archive_path = api._dvr_trim_text(dvr_cfg.path or dvr_cfg.archive_path),
+                config = api._dvr_clone_json_table(cfg_row),
+            }
+        end
+    end
+    if #descriptors == 0 then
+        return error_response(server, client, 400, "no streams selected")
+    end
+
+    local function build_import_items(default_archive_path)
+        local items = {}
+        for _, item in ipairs(descriptors) do
+            local archive_path = explicit_archive_path
+            if archive_path == "" then
+                archive_path = item.local_archive_path
+            end
+            if archive_path == "" then
+                archive_path = api._dvr_trim_text(default_archive_path)
+            end
+            local retention_days = tonumber(body.retention_days) or 3
+            local payload = {
+                stream_id = item.stream_id,
+                name = item.name,
+                source_url = item.source_url,
+                record_enabled = false,
+                retention_days = retention_days,
+                segment_sec = 3600,
+                config = api._dvr_build_stream_config(
+                    item.stream_id,
+                    item.name,
+                    item.source_url,
+                    archive_path ~= "" and archive_path or nil,
+                    retention_days,
+                    false,
+                    item.config
+                ),
+            }
+            if archive_path ~= "" then
+                payload.archive_path = archive_path
+            end
+            items[#items + 1] = payload
+        end
+        return items
+    end
+
+    local function execute_import(default_archive_path, storage_source, storage_warning)
+        local selected = build_import_items(default_archive_path)
+        remote_servers.dvr_upsert_streams(entry, selected, function(ok, payload, upsert_err, upsert_code)
+            if not ok then
+                local text = tostring(upsert_err or "import failed")
+                local code = remote_servers.classify_error_status
+                    and remote_servers.classify_error_status(text, upsert_code)
+                    or api._servers_classify_error_status(text, upsert_code)
+                return error_response(server, client, code, text)
+            end
+            local imported = tonumber(payload and payload.imported) or 0
+            local failed = type(payload and payload.failed) == "table" and payload.failed or {}
+            local failed_map = {}
+            for _, item in ipairs(failed) do
+                local fsid = api._dvr_trim_text(item and item.stream_id)
+                if fsid ~= "" then
+                    failed_map[fsid] = true
+                end
+            end
+            for _, row in ipairs(selected) do
+                if not failed_map[row.stream_id] then
+                    dvr_store.upsert_remote_link({
+                        stream_id = row.stream_id,
+                        dvr_server_id = tostring(entry.id or body.id or ""),
+                        dvr_stream_id = row.stream_id,
+                        source_play_url = row.source_url,
+                        updated_ts = os.time(),
+                    })
+                end
+            end
+            json_response(server, client, 200, {
+                ok = true,
+                total = #selected,
+                imported = imported,
+                skipped = math.max(0, #selected - imported - #failed),
+                failed = failed,
+                origin_url = normalized_origin,
+                archive_default_path = default_archive_path,
+                archive_path_source = storage_source,
+                origin_play_token_source = origin_play_token_source,
+                origin_auth_source = origin_auth_source,
+                storage_warning = storage_warning,
+            })
+        end)
+    end
+
+    local auto_archive_path = body.auto_archive_path ~= false
+    if explicit_archive_path ~= "" or auto_archive_path == false then
+        return execute_import(nil, explicit_archive_path ~= "" and "request" or "disabled", nil)
+    end
+
+    remote_servers.dvr_storage_candidates(entry, {
+        refresh = body.storage_refresh == true,
+    }, function(ok_storage, storage_payload, storage_err)
+        local recommended = nil
+        if ok_storage and type(storage_payload) == "table" then
+            recommended = api._dvr_trim_text(storage_payload.recommended_path)
+        end
+        if recommended == "" then
+            recommended = nil
+        end
+        local storage_warning = nil
+        local storage_source = nil
+        if recommended then
+            storage_source = "remote_auto"
+        elseif not ok_storage then
+            storage_warning = tostring(storage_err or "remote storage detection failed")
+            storage_source = "fallback"
+        else
+            storage_source = "none"
+        end
+        execute_import(recommended, storage_source, storage_warning)
+    end)
+end
+
+function api._servers_dvr_record_bulk(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    local stream_ids = type(body.stream_ids) == "table" and body.stream_ids or {}
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    local has_record_enabled = body.record_enabled ~= nil
+    local record_enabled = nil
+    if has_record_enabled then
+        record_enabled = body.record_enabled == true or body.record_enabled == 1 or body.record_enabled == "1"
+    end
+    if not has_record_enabled and body.retention_days == nil then
+        return error_response(server, client, 400, "record_enabled or retention_days is required")
+    end
+    remote_servers.dvr_bulk_record(entry, {
+        stream_ids = stream_ids,
+        record_enabled = record_enabled,
+        retention_days = body.retention_days,
+    }, function(ok, payload, action_err, action_code)
+        if not ok then
+            local text = tostring(action_err or "record bulk failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, action_code)
+                or api._servers_classify_error_status(text, action_code)
+            return error_response(server, client, code, text)
+        end
+        json_response(server, client, 200, payload or { ok = true, affected = 0 })
+    end)
+end
+
+function api._servers_dvr_backup_cursor_reset(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    local stream_ids = type(body.stream_ids) == "table" and body.stream_ids or {}
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    remote_servers.dvr_backup_cursor_reset(entry, {
+        stream_ids = stream_ids,
+    }, function(ok, payload, action_err, action_code)
+        if not ok then
+            local text = tostring(action_err or "backup cursor reset failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, action_code)
+                or api._servers_classify_error_status(text, action_code)
+            return error_response(server, client, code, text)
+        end
+        json_response(server, client, 200, payload or {
+            ok = true,
+            total = #stream_ids,
+            affected = 0,
+            failed = {},
+            items = {},
+        })
+    end)
+end
+
+function api._servers_dvr_backup_cycle_rebuild(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    local stream_ids = type(body.stream_ids) == "table" and body.stream_ids or {}
+    if #stream_ids == 0 then
+        return error_response(server, client, 400, "stream_ids is required")
+    end
+    remote_servers.dvr_backup_cycle_rebuild(entry, {
+        stream_ids = stream_ids,
+        include_partial = body.include_partial,
+        min_partial_sec = body.min_partial_sec,
+        start_mode = body.start_mode,
+        start_offset_hours = body.start_offset_hours,
+        now_ts = body.now_ts,
+    }, function(ok, payload, action_err, action_code)
+        if not ok then
+            local text = tostring(action_err or "backup cycle rebuild failed")
+            local code = remote_servers.classify_error_status
+                and remote_servers.classify_error_status(text, action_code)
+                or api._servers_classify_error_status(text, action_code)
+            return error_response(server, client, code, text)
+        end
+        json_response(server, client, 200, payload or {
+            ok = true,
+            total = #stream_ids,
+            affected = 0,
+            failed = {},
+            items = {},
+        })
+    end)
+end
+
+function api._dvr_outbox_next_delay_sec(retries)
+    local n = tonumber(retries) or 0
+    if n <= 0 then
+        return 3
+    end
+    local delay = 3 * (2 ^ math.min(n, 6))
+    if delay > 300 then
+        delay = 300
+    end
+    return delay
+end
+
+function api._dvr_outbox_try_send_one(row, callback)
+    callback = callback or function() end
+    if type(row) ~= "table" then
+        return callback(false, "invalid outbox row")
+    end
+    local servers = config and config.get_setting and config.get_setting("servers") or {}
+    local target = nil
+    for _, entry in ipairs(servers or {}) do
+        if tostring(entry and entry.id or "") == tostring(row.dvr_server_id or "") then
+            target = entry
+            break
+        end
+    end
+    if not target then
+        local err = "dvr server not found: " .. tostring(row.dvr_server_id or "")
+        dvr_store.outbox_mark_retry(row.id, err, api._dvr_outbox_next_delay_sec(row.retries))
+        return callback(false, err)
+    end
+    remote_servers.dvr_ingest_state(target, row.payload, function(ok, payload, send_err, send_code)
+        if ok then
+            dvr_store.outbox_mark_sent(row.id)
+            dvr_store.upsert_remote_sync_state({
+                stream_id = row.payload and row.payload.stream_id,
+                dvr_server_id = row.dvr_server_id,
+                last_state_seq = row.payload and row.payload.state_seq,
+                last_mode = row.payload and row.payload.mode,
+                updated_ts = os.time(),
+            })
+            return callback(true, payload)
+        end
+        local err = tostring(send_err or "dvr sync failed")
+        local retry_delay = api._dvr_outbox_next_delay_sec((tonumber(row.retries) or 0) + 1)
+        dvr_store.outbox_mark_retry(row.id, err, retry_delay)
+        return callback(false, err, send_code)
+    end)
+end
+
+function api._dvr_outbox_flush(limit)
+    if not dvr_store or type(dvr_store.list_outbox_ready) ~= "function" then
+        return
+    end
+    local items = dvr_store.list_outbox_ready(limit or 20) or {}
+    for _, row in ipairs(items) do
+        if row and row.event_type == "ingest_state" then
+            api._dvr_outbox_try_send_one(row, function() end)
+        else
+            dvr_store.outbox_mark_sent(row.id)
+        end
+    end
+end
+
+function api._dvr_local_mode_hint(stream_id)
+    if not dvr_store or type(dvr_store.get_stream) ~= "function" then
+        return nil
+    end
+    local sid = api._dvr_trim_text(stream_id)
+    if sid == "" then
+        return nil
+    end
+    local row = dvr_store.get_stream(sid)
+    if type(row) ~= "table" then
+        return nil
+    end
+    local mode = api._dvr_trim_text(row.last_mode):upper()
+    if mode ~= "LIVE" and mode ~= "FAIL_CONFIRMED" and mode ~= "DVR_ACTIVE" and mode ~= "RECOVERING_TO_LIVE" then
+        return nil
+    end
+    local updated_ts = tonumber(row.updated_ts) or 0
+    local now = os.time()
+    if updated_ts > 0 and (now - updated_ts) > 30 then
+        return nil
+    end
+    local reason = api._dvr_trim_text(row.last_reason)
+    if reason == "" then
+        reason = nil
+    end
+    return {
+        mode = mode,
+        reason = reason,
+    }
+end
+
+function api._dvr_mode_from_status(stream_id, status)
+    local hint = api._dvr_local_mode_hint(stream_id)
+    if hint then
+        return hint.mode, hint.reason or "local_state"
+    end
+    if type(status) ~= "table" then
+        return "DVR_ACTIVE", "status_missing"
+    end
+    if status.on_air ~= true then
+        local last_error = api._dvr_trim_text(status.last_error)
+        if last_error == "" then
+            last_error = "no_data"
+        end
+        return "DVR_ACTIVE", last_error
+    end
+    return "LIVE", "on_air"
+end
+
+function api._dvr_auto_sync_tick()
+    if not dvr_store then
+        return
+    end
+    if not (dvr_store.list_remote_links and dvr_store.get_remote_sync_state and dvr_store.enqueue_remote_outbox) then
+        return
+    end
+    local links = dvr_store.list_remote_links()
+    if type(links) ~= "table" or #links == 0 then
+        return
+    end
+    local ids = {}
+    local seen = {}
+    for _, link in ipairs(links) do
+        local stream_id = api._dvr_trim_text(link and link.stream_id)
+        if stream_id ~= "" and not seen[stream_id] then
+            ids[#ids + 1] = stream_id
+            seen[stream_id] = true
+        end
+    end
+    if #ids == 0 then
+        return
+    end
+    local status_map = {}
+    if runtime and runtime.list_status_lite_ids then
+        status_map = runtime.list_status_lite_ids(ids) or {}
+    end
+    for _, link in ipairs(links) do
+        local stream_id = api._dvr_trim_text(link and link.stream_id)
+        local dvr_server_id = api._dvr_trim_text(link and link.dvr_server_id)
+        if stream_id ~= "" and dvr_server_id ~= "" then
+            local mode, reason = api._dvr_mode_from_status(stream_id, status_map[stream_id])
+            local sync_state = dvr_store.get_remote_sync_state(stream_id, dvr_server_id)
+            local last_mode = sync_state and api._dvr_trim_text(sync_state.last_mode):upper() or ""
+            if last_mode ~= mode then
+                local last_seq = tonumber(sync_state and sync_state.last_state_seq) or 0
+                dvr_store.enqueue_remote_outbox({
+                    stream_id = stream_id,
+                    dvr_server_id = dvr_server_id,
+                    event_type = "ingest_state",
+                    payload = {
+                        stream_id = stream_id,
+                        mode = mode,
+                        reason = reason,
+                        ts = os.time(),
+                        state_seq = last_seq + 1,
+                    },
+                })
+            end
+        end
+    end
+end
+
+function api._servers_dvr_sync_state(server, client, request)
+    local admin = require_admin(request)
+    if not admin then
+        return error_response(server, client, 403, "forbidden")
+    end
+    if not ensure_remote_servers_available(server, client) then
+        return
+    end
+    if not ensure_dvr_available(server, client) then
+        return
+    end
+    local body = parse_json_body(request)
+    if not body then
+        return error_response(server, client, 400, "invalid json")
+    end
+    local entry, err = api._dvr_resolve_server_entry(body)
+    if not entry then
+        return error_response(server, client, 400, err or "server not found")
+    end
+    local stream_id = api._dvr_trim_text(body.stream_id)
+    if stream_id == "" then
+        return error_response(server, client, 400, "stream_id is required")
+    end
+    local mode = api._dvr_trim_text(body.mode):upper()
+    if mode == "" then
+        return error_response(server, client, 400, "mode is required")
+    end
+    local server_id = api._dvr_trim_text(body.id)
+    local queue_enabled = server_id ~= ""
+    local dvr_server_id = queue_enabled and tostring(entry.id or body.id or "") or ""
+    local sync_state = nil
+    if queue_enabled then
+        sync_state = dvr_store.get_remote_sync_state(stream_id, dvr_server_id)
+    end
+    local next_seq = tonumber(body.state_seq)
+    if not next_seq or next_seq <= 0 then
+        if queue_enabled then
+            next_seq = (tonumber(sync_state and sync_state.last_state_seq) or 0) + 1
+        else
+            -- Ad-hoc sync has no persisted outbox state; use a high monotonic-ish
+            -- sequence to avoid immediate duplicate rejection on remote.
+            next_seq = os.time()
+        end
+    end
+    local payload = {
+        stream_id = stream_id,
+        mode = mode,
+        reason = body.reason,
+        ts = os.time(),
+        state_seq = math.floor(next_seq),
+    }
+    if not queue_enabled then
+        if body.defer == true then
+            return error_response(server, client, 400, "defer requires saved server id")
+        end
+        remote_servers.dvr_ingest_state(entry, payload, function(sent_ok, sent_payload, sent_err, sent_code)
+            if not sent_ok then
+                local text = tostring(sent_err or "dvr sync failed")
+                local code = remote_servers.classify_error_status
+                    and remote_servers.classify_error_status(text, sent_code)
+                    or api._servers_classify_error_status(text, sent_code)
+                return error_response(server, client, code, text)
+            end
+            json_response(server, client, 200, {
+                ok = true,
+                queued = false,
+                sent = true,
+                state_seq = payload.state_seq,
+                remote = sent_payload,
+            })
+        end)
+        return
+    end
+    local queued, queue_err = dvr_store.enqueue_remote_outbox({
+        stream_id = stream_id,
+        dvr_server_id = dvr_server_id,
+        event_type = "ingest_state",
+        payload = payload,
+    })
+    if not queued then
+        return error_response(server, client, 500, tostring(queue_err or "outbox enqueue failed"))
+    end
+
+    local deferred = body.defer == true
+    if deferred then
+        return json_response(server, client, 200, {
+            ok = true,
+            queued = true,
+            sent = false,
+            outbox_id = queued.id,
+            state_seq = payload.state_seq,
+        })
+    end
+
+    api._dvr_outbox_try_send_one({
+        id = queued.id,
+        dvr_server_id = dvr_server_id,
+        retries = 0,
+        event_type = "ingest_state",
+        payload = payload,
+    }, function(sent_ok, sent_payload, sent_err)
+        json_response(server, client, 200, {
+            ok = true,
+            queued = true,
+            sent = sent_ok == true,
+            outbox_id = queued.id,
+            state_seq = payload.state_seq,
+            error = sent_ok and nil or tostring(sent_err or ""),
+            remote = sent_ok and sent_payload or nil,
+        })
     end)
 end
 
@@ -10743,6 +13194,24 @@ function api.handle_request(server, client, request)
         -- Backward-compatible alias.
         return api._servers_list_streams(server, client, request)
     end
+    if path == "/api/v1/servers/dvr/import-streams" and method == "POST" then
+        return api._servers_dvr_import_streams(server, client, request)
+    end
+    if path == "/api/v1/servers/dvr/storage/candidates" and method == "POST" then
+        return api._servers_dvr_storage_candidates(server, client, request)
+    end
+    if path == "/api/v1/servers/dvr/sync-state" and method == "POST" then
+        return api._servers_dvr_sync_state(server, client, request)
+    end
+    if path == "/api/v1/servers/dvr/record/bulk" and method == "POST" then
+        return api._servers_dvr_record_bulk(server, client, request)
+    end
+    if path == "/api/v1/servers/dvr/backup/cursor/reset" and method == "POST" then
+        return api._servers_dvr_backup_cursor_reset(server, client, request)
+    end
+    if path == "/api/v1/servers/dvr/backup/cycle/rebuild" and method == "POST" then
+        return api._servers_dvr_backup_cycle_rebuild(server, client, request)
+    end
     if path == "/api/v1/servers/pull-streams" and method == "POST" then
         return api._servers_pull_streams(server, client, request)
     end
@@ -10751,6 +13220,54 @@ function api.handle_request(server, client, request)
     end
     if path == "/api/v1/servers/test" and method == "POST" then
         return server_test(server, client, request)
+    end
+    if path == "/api/v1/dvr/health" and method == "GET" then
+        return api._dvr_health(server, client, request)
+    end
+    if path == "/api/v1/dvr/storage/candidates" and method == "GET" then
+        return api._dvr_storage_candidates_get(server, client, request)
+    end
+    if path == "/api/v1/dvr/streams/list" and method == "POST" then
+        return api._dvr_streams_list(server, client, request)
+    end
+    if path == "/api/v1/dvr/streams/get" and (method == "GET" or method == "POST") then
+        return api._dvr_streams_get(server, client, request)
+    end
+    if path == "/api/v1/dvr/streams/upsert" and method == "POST" then
+        return api._dvr_streams_upsert(server, client, request)
+    end
+    if path == "/api/v1/dvr/streams/delete" and method == "POST" then
+        return api._dvr_streams_delete(server, client, request)
+    end
+    if path == "/api/v1/dvr/streams/bulk-record" and method == "POST" then
+        return api._dvr_streams_bulk_record(server, client, request)
+    end
+    if path == "/api/v1/dvr/ingest-state" and method == "POST" then
+        return api._dvr_ingest_state(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/state" and method == "GET" then
+        return api._dvr_backup_state_get(server, client, request)
+    end
+    if path == "/api/v1/dvr/archive" and method == "GET" then
+        return api._dvr_archive_get(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/cursor/reset" and method == "POST" then
+        return api._dvr_backup_cursor_reset(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/cursor/reset-bulk" and method == "POST" then
+        return api._dvr_backup_cursor_reset_bulk(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/cycle/rebuild" and method == "POST" then
+        return api._dvr_backup_cycle_rebuild(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/cycle/rebuild-bulk" and method == "POST" then
+        return api._dvr_backup_cycle_rebuild_bulk(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/next-segment" and (method == "GET" or method == "POST") then
+        return api._dvr_backup_next_segment(server, client, request)
+    end
+    if path == "/api/v1/dvr/backup/progress" and method == "POST" then
+        return api._dvr_backup_progress(server, client, request)
     end
     if path == "/api/v1/import" and method == "POST" then
         return import_config(server, client, request)
@@ -10809,6 +13326,42 @@ function api.start(opts)
             db_exec_safe("DELETE FROM dvb_scan_jobs WHERE finished_ts > 0 AND finished_ts < " .. tostring(cutoff) .. ";")
             db_exec_safe("DELETE FROM dvb_scan_grid WHERE job_id NOT IN (SELECT id FROM dvb_scan_jobs);")
             db_exec_safe("DELETE FROM dvb_scan_channels WHERE job_id NOT IN (SELECT id FROM dvb_scan_jobs);")
+        end,
+    })
+
+    if api._dvr_outbox_timer then
+        pcall(function()
+            api._dvr_outbox_timer:close()
+        end)
+        api._dvr_outbox_timer = nil
+    end
+    api._dvr_outbox_timer = timer({
+        interval = 2,
+        callback = function()
+            local ok, err = pcall(function()
+                api._dvr_outbox_flush(20)
+            end)
+            if not ok then
+                log.warning("[dvr] outbox flush failed: " .. tostring(err))
+            end
+        end,
+    })
+
+    if api._dvr_sync_timer then
+        pcall(function()
+            api._dvr_sync_timer:close()
+        end)
+        api._dvr_sync_timer = nil
+    end
+    api._dvr_sync_timer = timer({
+        interval = 5,
+        callback = function()
+            local ok, err = pcall(function()
+                api._dvr_auto_sync_tick()
+            end)
+            if not ok then
+                log.warning("[dvr] auto sync tick failed: " .. tostring(err))
+            end
         end,
     })
 

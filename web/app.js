@@ -572,6 +572,7 @@ const state = {
   streamDvrLocalPathTouched: false,
   streamDvrRemoteStorageByServer: {},
   streamDvrRemoteStorageInFlight: {},
+  streamDvrRemoteEnsureInFlight: false,
   softcams: [],
   softcamEditing: null,
   softcamIdAuto: false,
@@ -1332,6 +1333,10 @@ const elements = {
   serverLogin: $('#server-login'),
   serverPassword: $('#server-password'),
   serverPasswordHint: $('#server-password-hint'),
+  serverOriginAuthBlock: $('#server-origin-auth-block'),
+  serverOriginLogin: $('#server-origin-login'),
+  serverOriginPassword: $('#server-origin-password'),
+  serverOriginPasswordHint: $('#server-origin-password-hint'),
   serverSave: $('#server-save'),
   serverCancel: $('#server-cancel'),
   serverClose: $('#server-close'),
@@ -1591,6 +1596,9 @@ const elements = {
   streamDvrSummary: $('#stream-dvr-summary'),
   streamDvrMode: $('#stream-dvr-mode'),
   streamDvrModeHint: $('#stream-dvr-mode-hint'),
+  streamDvrBackupStartFields: $('#stream-dvr-backup-start-fields'),
+  streamDvrBackupStartMode: $('#stream-dvr-backup-start-mode'),
+  streamDvrBackupStartOffsetHours: $('#stream-dvr-backup-start-offset-hours'),
   streamDvrRetentionDays: $('#stream-dvr-retention-days'),
   streamDvrPath: $('#stream-dvr-path'),
   streamDvrPathList: $('#stream-dvr-path-list'),
@@ -2054,6 +2062,9 @@ const elements = {
   inputFileName: $('#input-file-name'),
   inputFileLoop: $('#input-file-loop'),
   inputStreamId: $('#input-stream-id'),
+  inputDvrServerId: $('#input-dvr-server-id'),
+  inputDvrStreamId: $('#input-dvr-stream-id'),
+  inputDvrMode: $('#input-dvr-mode'),
   inputPnr: $('#input-pnr'),
   inputSetPnr: $('#input-set-pnr'),
   inputSetTsid: $('#input-set-tsid'),
@@ -5912,6 +5923,8 @@ function normalizeServers(value) {
     const enabled = entry.enabled !== undefined ? entry.enabled !== false : entry.enable !== false;
     const login = entry.login || entry.user || '';
     const password = entry.password || entry.pass || '';
+    const originLogin = entry.origin_login || entry.origin_user || '';
+    const originPassword = entry.origin_password || entry.origin_pass || '';
     const apiType = normalizeServerApiType(entry.api_type || entry.type);
     const insecure = entry.insecure === true || entry.insecure === 1 || entry.insecure === '1'
       || entry.tls_insecure === true || entry.tls_insecure === 1 || entry.tls_insecure === '1';
@@ -5922,6 +5935,8 @@ function normalizeServers(value) {
       port: Number.isFinite(port) ? port : undefined,
       login,
       password,
+      origin_login: originLogin,
+      origin_password: originPassword,
       enabled,
       api_type: apiType,
       type: apiType,
@@ -5929,9 +5944,17 @@ function normalizeServers(value) {
       enable: entry.enable,
       user: entry.user,
       pass: entry.pass,
+      origin_user: entry.origin_user,
+      origin_pass: entry.origin_pass,
     });
   });
   return out;
+}
+
+function updateServerOriginAuthVisibility() {
+  if (!elements.serverOriginAuthBlock || !elements.serverType) return;
+  const apiType = normalizeServerApiType(elements.serverType.value || 'auto');
+  elements.serverOriginAuthBlock.hidden = apiType !== 'dvr_v1';
 }
 
 function slugifySoftcamId(name) {
@@ -8950,11 +8973,21 @@ function openServerModal(server) {
   if (elements.serverInsecure) elements.serverInsecure.checked = server ? server.insecure === true : false;
   if (elements.serverLogin) elements.serverLogin.value = server ? (server.login || server.user || '') : '';
   if (elements.serverPassword) elements.serverPassword.value = '';
+  if (elements.serverOriginLogin) {
+    elements.serverOriginLogin.value = server ? (server.origin_login || server.origin_user || '') : '';
+  }
+  if (elements.serverOriginPassword) elements.serverOriginPassword.value = '';
   if (elements.serverPasswordHint) {
     elements.serverPasswordHint.textContent = server && (server.password || server.pass)
       ? 'Password set (stored)'
       : 'Password not set';
   }
+  if (elements.serverOriginPasswordHint) {
+    elements.serverOriginPasswordHint.textContent = server && (server.origin_password || server.origin_pass)
+      ? 'Origin password set (stored)'
+      : 'Origin password not set';
+  }
+  updateServerOriginAuthVisibility();
   if (elements.serverError) elements.serverError.textContent = '';
   setOverlay(elements.serverOverlay, true);
 }
@@ -9192,6 +9225,8 @@ async function saveServer() {
   const port = toNumber(elements.serverPort && elements.serverPort.value);
   const login = elements.serverLogin ? elements.serverLogin.value.trim() : '';
   const password = elements.serverPassword ? elements.serverPassword.value : '';
+  const originLogin = elements.serverOriginLogin ? elements.serverOriginLogin.value.trim() : '';
+  const originPassword = elements.serverOriginPassword ? elements.serverOriginPassword.value : '';
   const enabled = elements.serverEnabled ? elements.serverEnabled.checked : true;
   const insecure = elements.serverInsecure ? elements.serverInsecure.checked : false;
   if (!id) throw new Error('Server id is required');
@@ -9217,6 +9252,10 @@ async function saveServer() {
         user: login || existing.user || '',
         password: password || existing.password || existing.pass || '',
         pass: password || existing.pass || existing.password || '',
+        origin_login: originLogin || existing.origin_login || existing.origin_user || '',
+        origin_user: originLogin || existing.origin_user || existing.origin_login || '',
+        origin_password: originPassword || existing.origin_password || existing.origin_pass || '',
+        origin_pass: originPassword || existing.origin_pass || existing.origin_password || '',
         enabled,
         enable: enabled,
         api_type: apiType,
@@ -9233,6 +9272,10 @@ async function saveServer() {
         user: login,
         password,
         pass: password,
+        origin_login: originLogin,
+        origin_user: originLogin,
+        origin_password: originPassword,
+        origin_pass: originPassword,
         enabled,
         enable: enabled,
         api_type: apiType,
@@ -9253,6 +9296,10 @@ async function saveServer() {
       user: login,
       password,
       pass: password,
+      origin_login: originLogin,
+      origin_user: originLogin,
+      origin_password: originPassword,
+      origin_pass: originPassword,
       enabled,
       enable: enabled,
       api_type: apiType,
@@ -9271,6 +9318,10 @@ async function saveServer() {
       user: login || existing.user || '',
       password: password || (existing && (existing.password || existing.pass)) || '',
       pass: password || (existing && (existing.pass || existing.password)) || '',
+      origin_login: originLogin || existing.origin_login || existing.origin_user || '',
+      origin_user: originLogin || existing.origin_user || existing.origin_login || '',
+      origin_password: originPassword || (existing && (existing.origin_password || existing.origin_pass)) || '',
+      origin_pass: originPassword || (existing && (existing.origin_pass || existing.origin_password)) || '',
       enabled,
       enable: enabled,
       api_type: apiType,
@@ -10203,7 +10254,87 @@ function updateStreamBackupFields() {
 
 function listDvrServers() {
   const servers = Array.isArray(state.servers) ? state.servers : [];
-  return servers.filter((server) => server && isDvrServer(server));
+  return servers.filter((server) => server && isDvrServer(server) && server.enabled !== false);
+}
+
+function isLoopbackHost(hostname) {
+  const host = String(hostname || '').trim().toLowerCase();
+  if (!host) return false;
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
+function isSameInstanceDvrServer(server) {
+  if (!server) return false;
+  const address = formatServerAddress(server);
+  if (!address) return false;
+  let target;
+  try {
+    target = new URL(address);
+  } catch (_err) {
+    return false;
+  }
+  const page = (typeof window !== 'undefined' && window.location) ? window.location : null;
+  if (!page) return false;
+  const targetPort = String(target.port || (target.protocol === 'https:' ? '443' : '80'));
+  const pagePort = String(page.port || (page.protocol === 'https:' ? '443' : '80'));
+  if (targetPort !== pagePort) return false;
+  const targetHost = String(target.hostname || '').toLowerCase();
+  const pageHost = String(page.hostname || '').toLowerCase();
+  if (targetHost === pageHost) return true;
+  return isLoopbackHost(targetHost);
+}
+
+function pickPreferredDvrServerId(servers) {
+  const rows = Array.isArray(servers) ? servers : [];
+  if (!rows.length) return '';
+  const sorted = rows
+    .slice()
+    .sort((left, right) => compareTextNatural(left.name || left.id, right.name || right.id));
+  const nonLocal = sorted.find((server) => !isSameInstanceDvrServer(server));
+  if (nonLocal && nonLocal.id) {
+    return String(nonLocal.id || '').trim();
+  }
+  return String((sorted[0] && sorted[0].id) || '').trim();
+}
+
+function getDvrServerById(serverId) {
+  const sid = String(serverId || '').trim();
+  if (!sid) return null;
+  const rows = listDvrServers();
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (String((row && row.id) || '').trim() === sid) return row;
+  }
+  return null;
+}
+
+function populateInputDvrServerOptions(selectedId = '') {
+  if (!elements.inputDvrServerId) return;
+  clearNode(elements.inputDvrServerId);
+  const servers = listDvrServers();
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = servers.length ? '— select DVR server —' : '— no DVR servers configured —';
+  elements.inputDvrServerId.appendChild(none);
+  const sorted = servers
+    .slice()
+    .sort((left, right) => compareTextNatural(left.name || left.id, right.name || right.id));
+  sorted.forEach((server) => {
+    const option = document.createElement('option');
+    const sid = String((server && server.id) || '').trim();
+    const name = String((server && server.name) || sid).trim();
+    const address = formatServerAddress(server);
+    option.value = sid;
+    option.textContent = address ? `${name} · ${address}` : name;
+    elements.inputDvrServerId.appendChild(option);
+  });
+  elements.inputDvrServerId.disabled = sorted.length === 0;
+  if (selectedId) {
+    elements.inputDvrServerId.value = selectedId;
+  } else if (sorted.length) {
+    const preferred = pickPreferredDvrServerId(sorted);
+    if (preferred) elements.inputDvrServerId.value = preferred;
+  }
 }
 
 function getStreamDvrDefaultArchivePath() {
@@ -10244,16 +10375,18 @@ function populateStreamDvrServerOptions(selectedId = '') {
   none.textContent = '— select DVR server —';
   elements.streamDvrServerId.appendChild(none);
 
-  servers
+  const sortedServers = servers
     .slice()
-    .sort((left, right) => compareTextNatural(left.name || left.id, right.name || right.id))
-    .forEach((server) => {
+    .sort((left, right) => compareTextNatural(left.name || left.id, right.name || right.id));
+
+  sortedServers.forEach((server) => {
       const opt = document.createElement('option');
       const sid = String(server.id || '').trim();
       const name = String(server.name || sid || '').trim();
       const address = formatServerAddress(server);
       opt.value = sid;
-      opt.textContent = address ? `${name} · ${address}` : name;
+      const localTag = isSameInstanceDvrServer(server) ? ' · same instance' : '';
+      opt.textContent = address ? `${name} · ${address}${localTag}` : `${name}${localTag}`;
       elements.streamDvrServerId.appendChild(opt);
     });
 
@@ -10262,7 +10395,7 @@ function populateStreamDvrServerOptions(selectedId = '') {
     elements.streamDvrServerId.value = selectedId;
   }
   if (!elements.streamDvrServerId.value && servers.length) {
-    elements.streamDvrServerId.value = String(servers[0].id || '').trim();
+    elements.streamDvrServerId.value = pickPreferredDvrServerId(sortedServers);
   }
   if (elements.streamDvrConfigBlock && !elements.streamDvrConfigBlock.hidden) {
     updateStreamDvrFields();
@@ -10521,10 +10654,26 @@ function updateStreamDvrFields() {
   const archiveEnabled = Boolean(elements.streamDvrEnabled && elements.streamDvrEnabled.checked);
   const backupEnabled = Boolean(elements.streamDvrBackupEnabled && elements.streamDvrBackupEnabled.checked);
   const configured = archiveEnabled || backupEnabled;
+  const backupStartMode = String((elements.streamDvrBackupStartMode && elements.streamDvrBackupStartMode.value) || 'sequential')
+    .trim()
+    .toLowerCase() === 'time_offset'
+    ? 'time_offset'
+    : 'sequential';
+  const showBackupStartFields = configured && backupEnabled;
 
   if (elements.streamDvrConfigBlock) {
     elements.streamDvrConfigBlock.classList.toggle('hidden', !configured);
     elements.streamDvrConfigBlock.hidden = !configured;
+  }
+  if (elements.streamDvrBackupStartFields) {
+    elements.streamDvrBackupStartFields.classList.toggle('hidden', !showBackupStartFields);
+    elements.streamDvrBackupStartFields.hidden = !showBackupStartFields;
+  }
+  if (elements.streamDvrBackupStartMode) {
+    elements.streamDvrBackupStartMode.disabled = !showBackupStartFields;
+  }
+  if (elements.streamDvrBackupStartOffsetHours) {
+    elements.streamDvrBackupStartOffsetHours.disabled = !showBackupStartFields || backupStartMode !== 'time_offset';
   }
   if (!elements.streamDvrMode) return;
 
@@ -10556,11 +10705,12 @@ function updateStreamDvrFields() {
   if (elements.streamDvrRemoteStorageRefresh) {
     elements.streamDvrRemoteStorageRefresh.disabled = !remote || noServers;
   }
-  if (elements.streamDvrRemoteChannelEnabled) {
-    elements.streamDvrRemoteChannelEnabled.disabled = !remote || noServers;
-  }
   const hasSavedStream = !!(state.editing && state.editing.stream && state.editing.stream.id && state.editing.isNew !== true);
   const remoteEditor = !!(state.editing && state.editing.remote && state.editing.remote.serverId);
+  const remoteSwitchReady = remote && !noServers && hasSavedStream && !remoteEditor;
+  if (elements.streamDvrRemoteChannelEnabled) {
+    elements.streamDvrRemoteChannelEnabled.disabled = !remoteSwitchReady;
+  }
   const remoteReady = !remote || (!noServers && String((elements.streamDvrServerId && elements.streamDvrServerId.value) || '').trim() !== '');
   const actionsEnabled = configured && backupEnabled && hasSavedStream && !remoteEditor && remoteReady
     && (!remote || remoteChannelEnabled);
@@ -10587,11 +10737,22 @@ function updateStreamDvrFields() {
       setStreamDvrModeHintText('Add a DVR server first, then select it here. Save will not block broadcast if DVR is unavailable.', true);
       return;
     }
+    if (!hasSavedStream) {
+      setStreamDvrSummaryText('Remote DVR mode is selected. Save stream first to enable remote channel ON/OFF provisioning.', true);
+      setStreamDvrModeHintText('After first save, choose DVR server and enable remote channel provisioning.', true);
+      return;
+    }
+    if (remoteEditor) {
+      setStreamDvrSummaryText('Remote stream editor mode: local DVR provisioning controls are disabled.', true);
+      setStreamDvrModeHintText('Open this stream on the origin instance to control DVR provisioning.', true);
+      return;
+    }
     const selected = String((elements.streamDvrServerId && elements.streamDvrServerId.value) || '').trim();
     const server = listDvrServers().find((item) => String(item && item.id || '').trim() === selected);
     const serverLabel = server
       ? (String(server.name || server.id || '').trim() || selected)
       : (selected || 'selected DVR server');
+    const sameInstance = !!(server && isSameInstanceDvrServer(server));
     const remotePathValue = String((elements.streamDvrRemotePath && elements.streamDvrRemotePath.value) || '').trim();
     if (selected) {
       loadStreamDvrRemoteStorageCandidates(selected, { applyRecommended: true }).catch(() => {});
@@ -10611,7 +10772,11 @@ function updateStreamDvrFields() {
         setStreamDvrSummaryText(`Remote DVR selected: ${serverLabel}. Remote channel provisioning is OFF.`, true);
       }
     }
-    setStreamDvrModeHintText('Use remote mode when archive storage is on a dedicated DVR node.', false);
+    if (sameInstance) {
+      setStreamDvrModeHintText('Selected DVR server points to same instance. Choose another DVR node for distributed mode.', true);
+    } else {
+      setStreamDvrModeHintText('Use remote mode when archive storage is on a dedicated DVR node.', false);
+    }
     return;
   }
 
@@ -10880,6 +11045,7 @@ function buildStreamTile(stream) {
           <span class="stream-status-dot"></span>
           <span data-role="tile-compact-status-label">${statusInfo.label}</span>
         </div>
+        <span class="tile-compact-dvr stream-dvr-badge${statusInfo.dvrBackup ? '' : ' is-hidden'}" data-role="tile-compact-dvr"${statusInfo.dvrBackup ? '' : ' hidden'}>${statusInfo.dvrLabel || 'DVR'}</span>
         <div class="tile-compact-shard${shard.label ? '' : ' is-hidden'}" data-role="tile-compact-shard"${shard.label ? '' : ' hidden'}>${shard.label || ''}</div>
         <div class="tile-compact-input" data-role="tile-compact-input">${compactInputText}</div>
         <div class="tile-compact-input-summary" data-role="tile-compact-input-summary">${inputSummaryText}</div>
@@ -11372,6 +11538,20 @@ function formatStreamIssuesStatusLabel(stats) {
   return `PES ${pes}`;
 }
 
+function isDvrBackupActive(stream, stats, activeInput) {
+  const runtime = (stream && typeof stream.dvr === 'object' && stream.dvr)
+    || (stats && typeof stats.dvr === 'object' && stats.dvr)
+    || null;
+  const mode = String((runtime && runtime.last_mode) || '').toUpperCase();
+  if (mode === 'DVR_ACTIVE') return true;
+  const activeUrl = String(
+    (stats && stats.active_input_url)
+    || (activeInput && activeInput.url)
+    || '',
+  );
+  return activeUrl.includes('/dvr/play/');
+}
+
 function getStreamStatusInfo(stream, stats) {
   if (stream.enabled === false) {
     return { label: 'Disabled', className: 'disabled' };
@@ -11379,6 +11559,9 @@ function getStreamStatusInfo(stream, stats) {
   const { activeInput } = getActiveInputStats(stats);
   const liveState = resolveDisplayLiveState(stream && stream.id, stats, activeInput, true);
   const hasQualityIssues = hasStreamQualityIssues(stats);
+  if (isDvrBackupActive(stream, stats, activeInput)) {
+    return { label: 'Error', className: 'warn', dvrBackup: true, dvrLabel: 'DVR' };
+  }
   if (stats && stats.transcode_state) {
     if (liveState.stale && !liveState.displayLive) {
       return { label: 'Syncing', className: 'pending' };
@@ -13769,6 +13952,9 @@ function parseInputUrl(url) {
     format: '',
     transport_format: '',
     dash_transport: '',
+    dvr_mode: '',
+    dvr_server_id: '',
+    dvr_stream_id: '',
     options: {},
     dvbId: '',
     iface: '',
@@ -13847,6 +14033,34 @@ function parseInputUrl(url) {
       out.host = hostPart;
     }
     out.transport_format = baseTransport;
+    const dvrInputType = String((out.options && out.options.input_type) || '').toLowerCase() === 'dvr';
+    const pathLower = String(out.path || '').toLowerCase();
+    if (dvrInputType || pathLower.startsWith('/dvr/play/') || pathLower.startsWith('/play/')) {
+      const isArchivePath = pathLower.startsWith('/dvr/play/');
+      const isPlayPath = pathLower.startsWith('/play/');
+      if (dvrInputType || isArchivePath || (isPlayPath && out.options && out.options.dvr_server_id)) {
+        out.format = 'dvr';
+        out.dvr_mode = String((out.options && out.options.dvr_mode) || (isArchivePath ? 'archive' : 'play')).toLowerCase();
+        if (out.dvr_mode !== 'archive') out.dvr_mode = 'play';
+        out.dvr_server_id = String((out.options && (out.options.dvr_server_id || out.options.server_id)) || '');
+        const rawStreamId = String((out.options && out.options.dvr_stream_id) || '');
+        if (rawStreamId) {
+          out.dvr_stream_id = rawStreamId;
+        } else {
+          const match = String(out.path || '').match(/^\/(?:dvr\/play|play)\/([^/?#]+)/i);
+          if (match && match[1]) {
+            try {
+              out.dvr_stream_id = decodeURIComponent(match[1]);
+            } catch (_err) {
+              out.dvr_stream_id = match[1];
+            }
+          } else {
+            out.dvr_stream_id = '';
+          }
+        }
+        return out;
+      }
+    }
     const inputType = String((out.options && out.options.input_type) || '').toLowerCase();
     const explicitInputType = inputType && inputType !== 'auto' ? inputType : '';
     const dashDetected = (baseTransport === 'dash')
@@ -13896,6 +14110,17 @@ function buildInputUrl(data) {
   let base = '';
   if (format === 'dvb') {
     base = `dvb://${data.dvbId || ''}`;
+  } else if (format === 'dvr') {
+    const scheme = String(data.dvr_scheme || data.transport_format || 'http').toLowerCase() === 'https' ? 'https' : 'http';
+    const host = String(data.host || '').trim();
+    const port = data.port ? `:${data.port}` : '';
+    const streamId = encodeURIComponent(String(data.dvr_stream_id || data.streamId || '').trim());
+    const mode = String(data.dvr_mode || data.dvrMode || '').toLowerCase() === 'archive' ? 'archive' : 'play';
+    const autoPath = mode === 'archive'
+      ? `/dvr/play/${streamId}`
+      : `/play/${streamId}`;
+    const path = data.path ? String(data.path) : autoPath;
+    base = `${scheme}://${host}${port}${path}`;
   } else if (format === 'udp' || format === 'rtp') {
     const iface = data.iface ? `${data.iface}@` : '';
     const addr = data.addr || '';
@@ -13936,6 +14161,12 @@ function buildInputUrl(data) {
   };
 
   const o = data.options || data;
+  if (format === 'dvr') {
+    addOpt('input_type', 'dvr');
+    addOpt('dvr_server_id', o.dvr_server_id || data.dvr_server_id || data.dvrServerId);
+    addOpt('dvr_stream_id', o.dvr_stream_id || data.dvr_stream_id || data.streamId || data.dvrStreamId);
+    addOpt('dvr_mode', o.dvr_mode || data.dvr_mode || data.dvrMode);
+  }
   if (format === 'dash' && o.input_type === undefined) {
     addOpt('input_type', 'dash');
   }
@@ -18803,6 +19034,7 @@ function fillInputFormFromParsed(parsed, index) {
   elements.inputType.value = format;
   const effectiveFormat = isInputRadioType(format) ? 'udp' : format;
   const group = isInputRadioType(format) ? 'radio'
+    : (effectiveFormat === 'dvr') ? 'dvr'
     : (effectiveFormat === 'rtp') ? 'udp'
       : ((effectiveFormat === 'http' || effectiveFormat === 'https' || effectiveFormat === 'hls' || effectiveFormat === 'dash') ? 'http'
         : (effectiveFormat === 'srt' || effectiveFormat === 'rtsp' ? 'bridge' : effectiveFormat));
@@ -18868,8 +19100,11 @@ function fillInputFormFromParsed(parsed, index) {
     'playout_min_fill_ms',
     'playout_target_fill_ms',
     'playout_max_fill_ms',
-    'playout_max_buffer_mb',
-    'hls_max_segments',
+      'playout_max_buffer_mb',
+      'dvr_server_id',
+      'dvr_stream_id',
+      'dvr_mode',
+      'hls_max_segments',
     'hls_max_gap_segments',
     'hls_segment_retries',
     'hls_max_parallel',
@@ -19023,6 +19258,15 @@ function fillInputFormFromParsed(parsed, index) {
   elements.inputFileLoop.checked = asBool(opts.loop);
   if (elements.inputStreamId) {
     elements.inputStreamId.value = parsed.streamId || '';
+  }
+  if (elements.inputDvrServerId) {
+    populateInputDvrServerOptions(parsed.dvr_server_id || '');
+  }
+  if (elements.inputDvrStreamId) {
+    elements.inputDvrStreamId.value = parsed.dvr_stream_id || '';
+  }
+  if (elements.inputDvrMode) {
+    elements.inputDvrMode.value = String(parsed.dvr_mode || '').toLowerCase() === 'archive' ? 'archive' : 'play';
   }
 
   elements.inputPnr.value = opts.pnr || '';
@@ -19746,6 +19990,38 @@ function readInputForm(opts = {}) {
   if (format === 'dvb') {
     data.dvbId = elements.inputDvbId.value.trim();
     if (!data.dvbId && !allowPartial) throw new Error('DVB adapter id is required');
+  } else if (format === 'dvr') {
+    const serverId = String(elements.inputDvrServerId && elements.inputDvrServerId.value || '').trim();
+    const streamId = String(elements.inputDvrStreamId && elements.inputDvrStreamId.value || '').trim();
+    const mode = String(elements.inputDvrMode && elements.inputDvrMode.value || 'play').trim().toLowerCase() === 'archive'
+      ? 'archive'
+      : 'play';
+    const server = getDvrServerById(serverId);
+    const address = formatServerAddress(server);
+    let parsedAddress = null;
+    if (address) {
+      try {
+        parsedAddress = new URL(address);
+      } catch (_err) {
+        parsedAddress = null;
+      }
+    }
+    data.dvr_server_id = serverId;
+    data.dvr_stream_id = streamId;
+    data.dvr_mode = mode;
+    data.host = parsedAddress ? String(parsedAddress.hostname || '') : '';
+    data.port = parsedAddress ? String(parsedAddress.port || (parsedAddress.protocol === 'https:' ? '443' : '80')) : '';
+    data.transport_format = parsedAddress && String(parsedAddress.protocol || '').toLowerCase() === 'https:' ? 'https' : 'http';
+    data.path = mode === 'archive'
+      ? `/dvr/play/${encodeURIComponent(streamId)}`
+      : `/play/${encodeURIComponent(streamId)}`;
+    options.input_type = 'dvr';
+    addString('dvr_server_id', serverId);
+    addString('dvr_stream_id', streamId);
+    addString('dvr_mode', mode);
+    if (!serverId && !allowPartial) throw new Error('DVR server is required');
+    if (!streamId && !allowPartial) throw new Error('DVR stream ID is required');
+    if (!data.host && !allowPartial) throw new Error('DVR server address is invalid');
   } else if (format === 'udp' || format === 'rtp') {
     data.iface = elements.inputUdpIface.value.trim();
     data.addr = elements.inputUdpAddr.value.trim();
@@ -24268,6 +24544,16 @@ function openEditor(stream, isNew, opts) {
   if (elements.streamDvrBackupEnabled) {
     elements.streamDvrBackupEnabled.checked = dvrBackupEnabled;
   }
+  if (elements.streamDvrBackupStartMode) {
+    const startMode = String(dvrConfig.backup_start_mode || '').trim().toLowerCase();
+    elements.streamDvrBackupStartMode.value = startMode === 'time_offset' ? 'time_offset' : 'sequential';
+  }
+  if (elements.streamDvrBackupStartOffsetHours) {
+    const startOffset = toNumber(dvrConfig.backup_start_offset_hours);
+    elements.streamDvrBackupStartOffsetHours.value = (startOffset !== undefined && Number.isFinite(startOffset))
+      ? Math.floor(startOffset)
+      : -24;
+  }
   if (elements.streamDvrRetentionDays) {
     elements.streamDvrRetentionDays.value = dvrConfig.retention_days || '';
   }
@@ -24393,6 +24679,7 @@ function openEditor(stream, isNew, opts) {
   updateEditorTranscodeStatus();
   resetPngtsStateFromStream(stream);
   resetRadioStateFromStream(stream);
+  ensureEditorRemoteDvrChannelOnOpen().catch(() => {});
 }
 
 function closeEditor() {
@@ -25021,6 +25308,13 @@ function readStreamForm() {
     const remotePath = String((elements.streamDvrRemotePath && elements.streamDvrRemotePath.value) || '').trim();
     const remoteServerId = String((elements.streamDvrServerId && elements.streamDvrServerId.value) || '').trim();
     const remoteChannelEnabled = Boolean(elements.streamDvrRemoteChannelEnabled && elements.streamDvrRemoteChannelEnabled.checked);
+    const backupStartMode = String((elements.streamDvrBackupStartMode && elements.streamDvrBackupStartMode.value) || 'sequential')
+      .trim()
+      .toLowerCase() === 'time_offset'
+      ? 'time_offset'
+      : 'sequential';
+    const backupStartOffsetRaw = toNumber(elements.streamDvrBackupStartOffsetHours && elements.streamDvrBackupStartOffsetHours.value);
+    const backupStartOffsetHours = backupStartOffsetRaw !== undefined ? Math.floor(backupStartOffsetRaw) : undefined;
 
     const requested =
       hadDvrConfig
@@ -25035,6 +25329,17 @@ function readStreamForm() {
       const dvrConfig = existingDvr ? { ...existingDvr } : {};
       dvrConfig.enabled = archiveEnabled;
       dvrConfig.backup_enabled = backupEnabled;
+      if (backupEnabled) {
+        dvrConfig.backup_start_mode = backupStartMode;
+        if (backupStartMode === 'time_offset') {
+          dvrConfig.backup_start_offset_hours = backupStartOffsetHours !== undefined ? backupStartOffsetHours : -24;
+        } else {
+          delete dvrConfig.backup_start_offset_hours;
+        }
+      } else {
+        delete dvrConfig.backup_start_mode;
+        delete dvrConfig.backup_start_offset_hours;
+      }
 
       if (retentionDays !== undefined) {
         if (retentionDays < 1) {
@@ -25487,6 +25792,7 @@ function getTileRefs(tile) {
     metaEl: tile.querySelector('.tile-meta'),
     compactStatus: tile.querySelector('[data-role="tile-compact-status"]'),
     compactStatusLabel: null,
+    compactDvr: tile.querySelector('[data-role="tile-compact-dvr"]'),
     compactShard: tile.querySelector('[data-role="tile-compact-shard"]'),
     compactInput: tile.querySelector('[data-role="tile-compact-input"]'),
     compactSummary: tile.querySelector('[data-role="tile-compact-input-summary"]'),
@@ -25690,6 +25996,13 @@ function updateTiles() {
       if (refs.compactStatusLabel && refs.compactStatusLabel.textContent !== statusInfo.label) {
         refs.compactStatusLabel.textContent = statusInfo.label;
       }
+    }
+    if (refs && refs.compactDvr) {
+      const showDvrBadge = statusInfo.dvrBackup === true;
+      const text = statusInfo.dvrLabel || 'DVR';
+      if (refs.compactDvr.textContent !== text) refs.compactDvr.textContent = text;
+      refs.compactDvr.hidden = !showDvrBadge;
+      refs.compactDvr.classList.toggle('is-hidden', !showDvrBadge);
     }
     if (refs && refs.compactInput) {
       const text = activeLabel ? `Active input: ${activeLabel}` : 'Active input: -';
@@ -27280,6 +27593,7 @@ async function syncStreamDvrRemoteConfig(streamId, streamConfig, opts = {}) {
 
   const remoteChannelEnabled = toBoolish(dvrCfg.remote_channel_enabled, true);
   const archiveEnabled = toBoolish(dvrCfg.enabled, toBoolish(dvrCfg.archive_enabled, false));
+  const backupEnabled = toBoolish(dvrCfg.backup_enabled, false);
   const retentionDays = Math.floor(Number(dvrCfg.retention_days));
   const remoteArchivePath = String(dvrCfg.path || dvrCfg.archive_path || '').trim();
   const originUrl = String(
@@ -27317,10 +27631,11 @@ async function syncStreamDvrRemoteConfig(streamId, streamConfig, opts = {}) {
       }
     }
 
+    const shouldRecord = remoteChannelEnabled && (archiveEnabled || backupEnabled);
     const payloadRecord = {
       id: serverId,
       stream_ids: [sid],
-      record_enabled: remoteChannelEnabled ? archiveEnabled : false,
+      record_enabled: shouldRecord,
     };
     if (Number.isFinite(retentionDays) && retentionDays >= 1) {
       payloadRecord.retention_days = retentionDays;
@@ -27465,13 +27780,25 @@ function getEditorRemoteDvrProvisionContext() {
 }
 
 function buildEditorDvrConfigForRemoteSync(remoteChannelEnabled) {
+  const backupStartMode = String((elements.streamDvrBackupStartMode && elements.streamDvrBackupStartMode.value) || 'sequential')
+    .trim()
+    .toLowerCase() === 'time_offset'
+    ? 'time_offset'
+    : 'sequential';
+  const backupStartOffsetRaw = toNumber(elements.streamDvrBackupStartOffsetHours && elements.streamDvrBackupStartOffsetHours.value);
   const dvrConfig = {
     mode: 'remote',
     remote_server_id: String((elements.streamDvrServerId && elements.streamDvrServerId.value) || '').trim(),
     enabled: Boolean(elements.streamDvrEnabled && elements.streamDvrEnabled.checked),
     backup_enabled: Boolean(elements.streamDvrBackupEnabled && elements.streamDvrBackupEnabled.checked),
     remote_channel_enabled: remoteChannelEnabled === true,
+    backup_start_mode: backupStartMode,
   };
+  if (backupStartMode === 'time_offset') {
+    dvrConfig.backup_start_offset_hours = backupStartOffsetRaw !== undefined
+      ? Math.floor(backupStartOffsetRaw)
+      : -24;
+  }
   const remotePath = String((elements.streamDvrRemotePath && elements.streamDvrRemotePath.value) || '').trim();
   if (remotePath) {
     dvrConfig.path = remotePath;
@@ -27499,9 +27826,110 @@ async function applyEditorRemoteDvrChannelEnabled(remoteChannelEnabled) {
     streamId: ctx.streamId,
     serverId: ctx.serverId,
     remoteChannelEnabled: remoteChannelEnabled === true,
+    syncConfig,
     skipped: result.skipped === true,
     warning: result.warning || '',
   };
+}
+
+async function persistEditorRemoteDvrConfig(syncConfig) {
+  const ctx = getEditorRemoteDvrProvisionContext();
+  if (!ctx.ok) {
+    throw new Error(ctx.error || 'Remote DVR config save is unavailable');
+  }
+  const current = (state.editing && state.editing.stream && state.editing.stream.config
+    && typeof state.editing.stream.config === 'object')
+    ? state.editing.stream.config
+    : {};
+  const nextConfig = JSON.parse(JSON.stringify(current));
+  const nextDvr = (syncConfig && syncConfig.dvr && typeof syncConfig.dvr === 'object')
+    ? { ...syncConfig.dvr }
+    : {};
+  nextConfig.dvr = nextDvr;
+  await apiJson(`/api/v1/streams/${ctx.streamId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      id: ctx.streamId,
+      config: nextConfig,
+    }),
+  });
+  const updated = {
+    id: ctx.streamId,
+    enabled: state.editing && state.editing.stream
+      ? state.editing.stream.enabled !== false
+      : true,
+    config: nextConfig,
+  };
+  upsertStreamInState(updated);
+  if (state.editing && state.editing.stream && state.editing.stream.id === ctx.streamId) {
+    state.editing.stream = {
+      ...state.editing.stream,
+      enabled: updated.enabled,
+      config: nextConfig,
+    };
+  }
+}
+
+function isRemoteStreamNotFoundError(err) {
+  const status = Number(err && err.status);
+  const payloadError = String(err && err.payload && err.payload.error || '').toLowerCase();
+  const message = String(err && err.message || '').toLowerCase();
+  if (status === 404) return true;
+  if (payloadError.includes('stream not found')) return true;
+  if (message.includes('stream not found')) return true;
+  return false;
+}
+
+async function ensureEditorRemoteDvrChannelOnOpen() {
+  if (state.streamDvrRemoteEnsureInFlight) return;
+  if (!state.editing || !state.editing.stream || state.editing.isNew) return;
+  if (state.editing.remote && state.editing.remote.serverId) return;
+
+  const mode = String((elements.streamDvrMode && elements.streamDvrMode.value) || 'local').trim().toLowerCase();
+  if (mode !== 'remote') return;
+
+  const remoteChannelEnabled = Boolean(elements.streamDvrRemoteChannelEnabled && elements.streamDvrRemoteChannelEnabled.checked);
+  if (!remoteChannelEnabled) return;
+
+  const serverId = String((elements.streamDvrServerId && elements.streamDvrServerId.value) || '').trim();
+  const streamId = String(state.editing.stream.id || '').trim();
+  if (!serverId || !streamId) return;
+
+  state.streamDvrRemoteEnsureInFlight = true;
+  try {
+    await apiJson('/api/v1/servers/streams/get', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: serverId,
+        stream_id: streamId,
+      }),
+    });
+  } catch (err) {
+    if (!isRemoteStreamNotFoundError(err)) {
+      return;
+    }
+    const ctx = getEditorRemoteDvrProvisionContext();
+    if (!ctx.ok || String(ctx.streamId || '') !== streamId || String(ctx.serverId || '') !== serverId) {
+      return;
+    }
+    const result = await applyEditorRemoteDvrChannelEnabled(true);
+    const ctxAfterApply = getEditorRemoteDvrProvisionContext();
+    if (!ctxAfterApply.ok || String(ctxAfterApply.streamId || '') !== streamId || String(ctxAfterApply.serverId || '') !== serverId) {
+      return;
+    }
+    try {
+      await persistEditorRemoteDvrConfig(result.syncConfig);
+    } catch (persistErr) {
+      setStatus(`Remote DVR self-heal created ${streamId}, local save failed: ${formatNetworkError(persistErr) || persistErr.message || 'unknown error'}`);
+      return;
+    }
+    const warning = result && result.warning ? ` (${result.warning})` : '';
+    setStatus(`Remote DVR self-heal created ${streamId}${warning}`);
+    boostStatusPolling();
+    scheduleStreamSync();
+  } finally {
+    state.streamDvrRemoteEnsureInFlight = false;
+  }
 }
 
 async function resetEditorStreamDvrBackupCursor() {
@@ -28140,6 +28568,10 @@ function buildStreamTableRow(stream, modelOverride) {
   status.appendChild(statusText);
   const sub = createEl('div', 'stream-cell-sub stream-status-row');
   sub.appendChild(status);
+  const dvrBadge = createEl('span', 'stream-dvr-badge', model.statusInfo.dvrLabel || 'DVR');
+  dvrBadge.dataset.role = 'stream-status-dvr';
+  dvrBadge.hidden = model.statusInfo.dvrBackup !== true;
+  sub.appendChild(dvrBadge);
   const shardBadge = createEl('span', 'stream-shard-badge', model.shardLabel || '');
   shardBadge.dataset.role = 'stream-shard';
   shardBadge.hidden = !model.shardLabel;
@@ -28235,6 +28667,7 @@ function buildStreamTableRow(stream, modelOverride) {
     check,
     nameBtn,
     status,
+    dvrBadge,
     shardBadge,
     sourceBadge,
     health,
@@ -28264,6 +28697,11 @@ function updateStreamTableRow(row, stream) {
     status.className = `stream-status-badge ${model.statusInfo.className}`;
     const textNode = status.querySelector('span:last-child');
     if (textNode) textNode.textContent = model.statusInfo.label;
+  }
+  const dvrBadge = refs.dvrBadge || row.querySelector('[data-role="stream-status-dvr"]');
+  if (dvrBadge) {
+    dvrBadge.textContent = model.statusInfo.dvrLabel || 'DVR';
+    dvrBadge.hidden = model.statusInfo.dvrBackup !== true;
   }
   const shardBadge = refs.shardBadge || row.querySelector('[data-role="stream-shard"]');
   if (shardBadge) {
@@ -28386,6 +28824,7 @@ function buildStreamCompactRow(stream, modelOverride) {
     model.name,
     sourceTitle,
     `Status: ${model.statusInfo.label}`,
+    model.statusInfo.dvrBackup ? 'DVR backup active' : null,
     model.shardLabel ? `${model.shardLabel}` : null,
     `Input: ${model.inputUrl || '-'}`,
     `Input bitrate: ${model.inputBitrate}`,
@@ -28395,6 +28834,9 @@ function buildStreamCompactRow(stream, modelOverride) {
   ].filter(Boolean).join('\n');
 
   const dot = createEl('span', `stream-status-dot ${model.statusInfo.className}`);
+  const dvrBadge = createEl('span', 'stream-dvr-badge stream-compact-dvr', model.statusInfo.dvrLabel || 'DVR');
+  dvrBadge.dataset.role = 'stream-compact-dvr';
+  dvrBadge.hidden = model.statusInfo.dvrBackup !== true;
   const nameBtn = createEl('button', 'stream-compact-name', model.name);
   nameBtn.dataset.action = 'edit';
   const rate = createEl(
@@ -28411,6 +28853,7 @@ function buildStreamCompactRow(stream, modelOverride) {
   toggleBtn.dataset.action = 'toggle';
 
   row.appendChild(dot);
+  row.appendChild(dvrBadge);
   row.appendChild(nameBtn);
   row.appendChild(rate);
   row.appendChild(clients);
@@ -28467,6 +28910,7 @@ function updateStreamCompactRows() {
       model.name,
       titleSourceLine,
       `Status: ${model.statusInfo.label}`,
+      model.statusInfo.dvrBackup ? 'DVR backup active' : null,
       model.shardLabel ? `${model.shardLabel}` : null,
       `Input: ${model.inputUrl || '-'}`,
       `Input bitrate: ${model.inputBitrate}`,
@@ -28477,6 +28921,11 @@ function updateStreamCompactRows() {
     const dot = row.querySelector('.stream-status-dot');
     if (dot) {
       dot.className = `stream-status-dot ${model.statusInfo.className}`;
+    }
+    const dvrBadge = row.querySelector('[data-role="stream-compact-dvr"]');
+    if (dvrBadge) {
+      dvrBadge.textContent = model.statusInfo.dvrLabel || 'DVR';
+      dvrBadge.hidden = model.statusInfo.dvrBackup !== true;
     }
     const rate = row.querySelector('.stream-compact-rate');
     if (rate) {
@@ -37949,6 +38398,9 @@ function bindEvents() {
   if (elements.serverName) {
     elements.serverName.addEventListener('input', handleServerNameInput);
   }
+  if (elements.serverType) {
+    elements.serverType.addEventListener('change', updateServerOriginAuthVisibility);
+  }
   if (elements.serverForm) {
     elements.serverForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -39107,6 +39559,16 @@ function bindEvents() {
       updateStreamDvrFields();
     });
   }
+  if (elements.streamDvrBackupStartMode) {
+    elements.streamDvrBackupStartMode.addEventListener('change', () => {
+      updateStreamDvrFields();
+    });
+  }
+  if (elements.streamDvrBackupStartOffsetHours) {
+    elements.streamDvrBackupStartOffsetHours.addEventListener('input', () => {
+      updateStreamDvrFields();
+    });
+  }
   if (elements.streamDvrMode) {
     elements.streamDvrMode.addEventListener('change', () => {
       updateStreamDvrFields();
@@ -39149,11 +39611,29 @@ function bindEvents() {
   }
   if (elements.streamDvrRemoteChannelEnabled) {
     elements.streamDvrRemoteChannelEnabled.addEventListener('change', async () => {
-      updateStreamDvrFields();
-      const mode = String((elements.streamDvrMode && elements.streamDvrMode.value) || 'local').trim().toLowerCase();
-      if (mode !== 'remote') return;
       const desired = elements.streamDvrRemoteChannelEnabled.checked === true;
       const previous = !desired;
+      if (desired && elements.streamDvrMode) {
+        const mode = String(elements.streamDvrMode.value || 'local').trim().toLowerCase();
+        if (mode !== 'remote') {
+          elements.streamDvrMode.value = 'remote';
+        }
+      }
+      updateStreamDvrFields();
+      const mode = String((elements.streamDvrMode && elements.streamDvrMode.value) || 'local').trim().toLowerCase();
+      if (mode !== 'remote') {
+        return;
+      }
+      if (desired && elements.streamDvrServerId) {
+        const selectedServerId = String(elements.streamDvrServerId.value || '').trim();
+        if (!selectedServerId) {
+          const servers = listDvrServers();
+          if (servers.length > 0) {
+            elements.streamDvrServerId.value = pickPreferredDvrServerId(servers);
+            updateStreamDvrFields();
+          }
+        }
+      }
       const ctx = getEditorRemoteDvrProvisionContext();
       if (!ctx.ok) {
         elements.streamDvrRemoteChannelEnabled.checked = previous;
@@ -39164,13 +39644,18 @@ function bindEvents() {
       setStreamEditorBusy(true, desired ? 'Enabling remote DVR channel...' : 'Disabling remote DVR channel...');
       try {
         const result = await applyEditorRemoteDvrChannelEnabled(desired);
-        const persistedHint = ' Save stream to persist this value.';
+        let persistWarning = '';
+        try {
+          await persistEditorRemoteDvrConfig(result.syncConfig);
+        } catch (persistErr) {
+          persistWarning = ` Local save failed: ${formatNetworkError(persistErr) || persistErr.message || 'unknown error'}`;
+        }
         if (result.remoteChannelEnabled) {
-          setStatus(`Remote DVR channel enabled for ${result.streamId}.${persistedHint}`);
+          setStatus(`Remote DVR channel enabled for ${result.streamId}.${persistWarning}`);
         } else if (result.warning) {
-          setStatus(`Remote DVR channel disabled for ${result.streamId} (${result.warning}).${persistedHint}`);
+          setStatus(`Remote DVR channel disabled for ${result.streamId} (${result.warning}).${persistWarning}`);
         } else {
-          setStatus(`Remote DVR channel disabled for ${result.streamId}.${persistedHint}`);
+          setStatus(`Remote DVR channel disabled for ${result.streamId}.${persistWarning}`);
         }
         boostStatusPolling();
         scheduleStreamSync();
@@ -40269,12 +40754,20 @@ function bindEvents() {
       const type = elements.inputType.value;
       const effectiveType = isInputRadioType(type) ? 'udp' : type;
       const group = isInputRadioType(type) ? 'radio'
+        : (effectiveType === 'dvr') ? 'dvr'
         : (effectiveType === 'rtp') ? 'udp'
           : ((effectiveType === 'http' || effectiveType === 'https' || effectiveType === 'hls' || effectiveType === 'dash') ? 'http'
             : (effectiveType === 'srt' || effectiveType === 'rtsp' ? 'bridge' : effectiveType));
       setInputGroup(group);
       setInputAdvancedFoldVisibility(effectiveType);
       setInputRadioVisibility(type);
+      if (effectiveType === 'dvr') {
+        const selectedServer = String((elements.inputDvrServerId && elements.inputDvrServerId.value) || '').trim();
+        populateInputDvrServerOptions(selectedServer);
+        if (elements.inputDvrStreamId && !String(elements.inputDvrStreamId.value || '').trim()) {
+          elements.inputDvrStreamId.value = String((elements.streamId && elements.streamId.value) || '').trim();
+        }
+      }
       if (effectiveType === 'dash') {
         syncDashPortDefault(false);
       }

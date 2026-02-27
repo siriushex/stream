@@ -563,6 +563,20 @@ select {
   border: 1px solid rgba(31, 125, 224, 0.35);
 }
 
+.stream-dvr-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(31, 125, 224, 0.1);
+  border: 1px solid rgba(31, 125, 224, 0.35);
+}
+
 .stream-status-badge {
   display: inline-flex;
   align-items: center;
@@ -611,6 +625,25 @@ select {
 
 .stream-status-badge.disabled .stream-status-dot {
   background: var(--muted);
+}
+
+.server-status-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: var(--muted);
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.server-status-meta.ok {
+  color: var(--muted);
+}
+
+.server-status-meta.warn {
+  color: var(--danger);
 }
 
 .stream-input-url,
@@ -922,6 +955,7 @@ select {
 }
 
 .tile-compact-status,
+.tile-compact-dvr,
 .tile-compact-shard,
 .tile-compact-input,
 .tile-compact-input-summary {
@@ -991,6 +1025,7 @@ select {
 }
 
 .tile.is-compact .tile-compact-status,
+.tile.is-compact .tile-compact-dvr,
 .tile.is-compact .tile-compact-shard,
 .tile.is-compact .tile-compact-input,
 .tile.is-compact .tile-compact-input-summary {
@@ -1008,6 +1043,7 @@ select {
 }
 
 .tile.is-expanded .tile-compact-status,
+.tile.is-expanded .tile-compact-dvr,
 .tile.is-expanded .tile-compact-shard,
 .tile.is-expanded .tile-compact-input,
 .tile.is-expanded .tile-compact-input-summary {
@@ -1327,12 +1363,14 @@ select {
 }
 
 #server-streams-table .table-row {
-  min-width: 1360px;
+  min-width: 1490px;
   grid-template-columns:
+    minmax(36px, 40px)
     minmax(120px, 1fr)
     minmax(160px, 1.3fr)
     minmax(90px, 0.7fr)
     minmax(70px, 0.6fr)
+    minmax(80px, 0.6fr)
     minmax(70px, 0.6fr)
     minmax(90px, 0.7fr)
     minmax(90px, 0.8fr)
@@ -1345,6 +1383,22 @@ select {
   border-radius: 0;
   background: transparent;
   padding: 8px 10px;
+  align-items: center;
+}
+
+#server-streams-table .table-row.selected {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.server-stream-select-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.server-streams-selection {
+  margin-right: 8px;
+  white-space: nowrap;
 }
 
 .server-stream-actions {
@@ -1403,6 +1457,12 @@ select {
   border-bottom: 1px solid var(--border);
 }
 
+#server-streams-table .table-row.header .server-stream-sort-btn {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 12px;
+}
+
 #server-streams-table .table-row > div {
   min-width: 0;
   white-space: nowrap;
@@ -1410,16 +1470,16 @@ select {
   text-overflow: ellipsis;
 }
 
-#server-streams-table .table-row > div:nth-child(2),
-#server-streams-table .table-row > div:nth-child(9) {
+#server-streams-table .table-row > div:nth-child(3),
+#server-streams-table .table-row > div:nth-child(11) {
   white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
 
-#server-streams-table .table-row > div:nth-child(10),
-#server-streams-table .table-row > div:nth-child(11) {
+#server-streams-table .table-row > div:nth-child(12),
+#server-streams-table .table-row > div:nth-child(13) {
   overflow: visible;
 }
 
@@ -4401,6 +4461,48 @@ button.stream-audio-fix-toggle:disabled {
   background: var(--panel-3);
 }
 
+.stream-dvr-switches {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.stream-dvr-toggle {
+  align-items: flex-start;
+}
+
+.stream-dvr-toggle .switch {
+  margin-top: 1px;
+  flex: 0 0 auto;
+}
+
+.stream-dvr-toggle-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.stream-dvr-toggle-title {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stream-dvr-toggle-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stream-dvr-summary,
+.stream-dvr-mode-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stream-dvr-summary.is-warn,
+.stream-dvr-mode-hint.is-warn {
+  color: var(--warning);
+}
+
 @media (max-width: 768px) {
   .stream-transcode-setting {
     align-items: flex-start;
@@ -4415,6 +4517,10 @@ button.stream-audio-fix-toggle:disabled {
   .stream-transcode-setting-row {
     justify-content: space-between;
     flex-wrap: wrap;
+  }
+
+  .stream-dvr-toggle {
+    gap: 10px;
   }
 }
 

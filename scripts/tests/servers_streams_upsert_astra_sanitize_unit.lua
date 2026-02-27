@@ -70,6 +70,14 @@ http_request = function(req)
             audio_fix = { enabled = false },
             transcode = { enabled = false },
             http_keep_active = -1,
+            dvr = { enabled = true, retention_days = 3 },
+            backup_adapter = true,
+            auto_signal_search_enabled = true,
+            satellite_type_flip_recovery = true,
+            runtime = { marker = "x" },
+            stats = { marker = "y" },
+            remote = { marker = "z" },
+            map = "video=214, audio=314udp://10.0.0.2:1234",
           },
         },
       })
@@ -123,6 +131,13 @@ api.handle_request(server, client, make_request("/api/v1/servers/streams/upsert"
       backup_initial_delay_sec = 5,
       group = "grp-1",
       auth_enabled = true,
+      dvr = { enabled = true, retention_days = 7 },
+      auto_signal_search_enabled = true,
+      satellite_type_flip_recovery = true,
+      runtime = { marker = "next" },
+      stats = { marker = "next" },
+      remote = { marker = "next" },
+      map = "video=214, audio=314udp://10.0.0.2:1234",
     },
   },
 }))
@@ -142,6 +157,13 @@ assert_true(set_stream_payload.backup_return_delay_sec == nil, "expected stream-
 assert_true(set_stream_payload.backup_initial_delay_sec == nil, "expected stream-only key backup_initial_delay_sec stripped")
 assert_true(set_stream_payload.group == nil, "expected stream-only key group stripped")
 assert_true(set_stream_payload.auth_enabled == nil, "expected stream-only key auth_enabled stripped")
+assert_true(set_stream_payload.dvr == nil, "expected stream-only key dvr stripped")
+assert_true(set_stream_payload.auto_signal_search_enabled == nil, "expected stream-only key auto_signal_search_enabled stripped")
+assert_true(set_stream_payload.satellite_type_flip_recovery == nil, "expected stream-only key satellite_type_flip_recovery stripped")
+assert_true(set_stream_payload.runtime == nil, "expected stream-only key runtime stripped")
+assert_true(set_stream_payload.stats == nil, "expected stream-only key stats stripped")
+assert_true(set_stream_payload.remote == nil, "expected stream-only key remote stripped")
+assert_true(set_stream_payload.map == "video=214, audio=314", "expected map value sanitized from accidental URL tail")
 
 log.info("[unit] servers_streams_upsert_astra_sanitize_unit ok")
 astra.exit()

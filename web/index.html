@@ -103,6 +103,11 @@
                 <button class="btn ghost tiny" type="button" id="stream-table-clear-btn">Clear</button>
                 <button class="btn ghost tiny" type="button" id="stream-table-bulk-enable">Enable</button>
                 <button class="btn ghost tiny" type="button" id="stream-table-bulk-disable">Disable</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-dvr-enable">DVR ON</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-dvr-disable">DVR OFF</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-dvr-retention">DVR retention</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-dvr-reset-cursor">DVR reset cursor</button>
+                <button class="btn ghost tiny" type="button" id="stream-table-bulk-dvr-rebuild-cycle">DVR rebuild cycle</button>
                 <button class="btn danger tiny" type="button" id="stream-table-bulk-delete">Delete</button>
               </div>
             </div>
@@ -1862,6 +1867,7 @@
         <button class="tab" data-tab="remap" data-tab-scope="stream-editor">Remap</button>
         <button class="tab" data-tab="mpts" data-tab-scope="stream-editor">MPTS</button>
         <button class="tab" data-tab="backup" data-tab-scope="stream-editor">Backup</button>
+        <button class="tab" data-tab="dvr" data-tab-scope="stream-editor">DVR</button>
         <button class="tab" data-tab="transcode" data-tab-scope="stream-editor">Transcode</button>
         <button class="tab" data-tab="epg" data-tab-scope="stream-editor">EPG</button>
         <button class="tab" data-tab="auth" data-tab-scope="stream-editor">Auth</button>
@@ -2462,6 +2468,123 @@
           </div>
           <div class="form-hint">
             If backup mode is empty and input list has &gt;1 item, active mode is used by default.
+          </div>
+        </div>
+        <div class="tab-content" data-tab-content="dvr" data-tab-scope="stream-editor">
+          <div class="form-subsection stream-dvr-switches">
+            <label class="switchline stream-dvr-toggle">
+              <span class="stream-dvr-toggle-copy">
+                <span class="stream-dvr-toggle-title">DVR archive recording</span>
+                <span class="stream-dvr-toggle-hint">Store hourly archive segments for this stream.</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="stream-dvr-enabled" role="switch" aria-label="Enable DVR archive recording"
+                  aria-checked="false" />
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <label class="switchline stream-dvr-toggle">
+              <span class="stream-dvr-toggle-copy">
+                <span class="stream-dvr-toggle-title">DVR backup playback</span>
+                <span class="stream-dvr-toggle-hint">Switch to DVR archive when active source has no data.</span>
+              </span>
+              <span class="switch">
+                <input type="checkbox" id="stream-dvr-backup-enabled" role="switch"
+                  aria-label="Enable DVR backup playback on source fail" aria-checked="false" />
+                <span class="switch-slider"></span>
+              </span>
+            </label>
+            <div class="form-hint stream-dvr-summary" id="stream-dvr-summary">
+              DVR is disabled. Enable archive recording and/or backup to configure storage.
+            </div>
+          </div>
+          <div class="form-subsection hidden" id="stream-dvr-config-block" hidden>
+            <div class="form-grid">
+              <label class="field">
+                <span>DVR mode</span>
+                <select id="stream-dvr-mode">
+                  <option value="local">Local archive</option>
+                  <option value="remote">DVR server</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Retention (days)</span>
+                <input type="number" id="stream-dvr-retention-days" min="1" placeholder="Default: 3" />
+              </label>
+            </div>
+            <div class="form-grid hidden" id="stream-dvr-backup-start-fields" hidden>
+              <label class="field">
+                <span>Backup start mode</span>
+                <select id="stream-dvr-backup-start-mode">
+                  <option value="sequential">Sequential (last unplayed)</option>
+                  <option value="time_offset">Time offset from now</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Backup start offset (hours)</span>
+                <input type="number" id="stream-dvr-backup-start-offset-hours" placeholder="-24" />
+              </label>
+            </div>
+            <div class="form-hint stream-dvr-mode-hint" id="stream-dvr-mode-hint">
+              Local mode stores archive on this server.
+            </div>
+            <div id="stream-dvr-local-fields">
+              <label class="field">
+                <span>Archive path</span>
+                <input type="text" id="stream-dvr-path" list="stream-dvr-path-list" placeholder="/var/lib/stream/dvr/<stream_id>" />
+                <datalist id="stream-dvr-path-list"></datalist>
+              </label>
+              <div class="form-actions compact">
+                <button class="btn ghost" type="button" id="stream-dvr-local-storage-refresh">Detect local disks</button>
+              </div>
+              <div class="form-hint" id="stream-dvr-local-storage-hint">Leave empty to use default path under server data directory.</div>
+            </div>
+            <div id="stream-dvr-remote-fields" class="hidden" hidden>
+              <div class="form-grid">
+                <label class="field">
+                  <span>DVR server</span>
+                  <select id="stream-dvr-server-id"></select>
+                </label>
+                <label class="field">
+                  <span>Archive path on DVR server</span>
+                  <input type="text" id="stream-dvr-remote-path" list="stream-dvr-remote-path-list"
+                    placeholder="/media/<disk>/stream-dvr" />
+                  <datalist id="stream-dvr-remote-path-list"></datalist>
+                </label>
+                <div class="field">
+                  <span>Manage DVR servers</span>
+                  <button class="btn ghost" type="button" id="stream-dvr-open-servers">Open Settings → Servers</button>
+                </div>
+                <div class="field">
+                  <span>Storage detection</span>
+                  <button class="btn ghost" type="button" id="stream-dvr-remote-storage-refresh">Detect disks</button>
+                </div>
+              </div>
+              <label class="switchline stream-dvr-toggle">
+                <span class="stream-dvr-toggle-copy">
+                  <span class="stream-dvr-toggle-title">Remote DVR channel (ON/OFF)</span>
+                  <span class="stream-dvr-toggle-hint">ON creates/updates channel on selected DVR server. OFF disables recording for this channel on DVR.</span>
+                </span>
+                <span class="switch">
+                  <input type="checkbox" id="stream-dvr-remote-channel-enabled" role="switch"
+                    aria-label="Enable remote DVR channel provisioning" aria-checked="false" />
+                  <span class="switch-slider"></span>
+                </span>
+              </label>
+              <div class="form-hint">
+                ON immediately creates/updates this channel on selected DVR server. If path is empty, remote DVR auto-selects recommended storage.
+              </div>
+              <div class="form-hint">
+                OFF keeps remote mode selected, but sends record OFF on remote DVR for this stream.
+              </div>
+            </div>
+            <div class="form-actions compact">
+              <button class="btn ghost" type="button" id="stream-dvr-backup-reset-cursor">Reset backup cursor</button>
+              <button class="btn ghost" type="button" id="stream-dvr-backup-rebuild-cycle">Rebuild backup cycle</button>
+            </div>
+            <div class="form-hint">
+              Actions apply to this stream in current DVR mode (local or selected DVR server).
+            </div>
           </div>
         </div>
         <div class="tab-content" data-tab-content="transcode" data-tab-scope="stream-editor">
@@ -3554,6 +3677,7 @@
                 <option value="hls">HLS</option>
                 <option value="dash">DASH (MPD)</option>
                 <option value="stream">Stream</option>
+                <option value="dvr">DVR</option>
                 <option value="file">MPEG-TS File</option>
               </select>
             </label>
@@ -3842,6 +3966,29 @@
                   <input type="text" id="input-stream-id" placeholder="stream_1" />
                 </label>
                 <div class="form-hint">Uses another stream as input: <code>stream://&lt;id&gt;</code></div>
+              </div>
+
+              <div class="input-group" data-group="dvr">
+                <label class="field">
+                  <span>DVR server</span>
+                  <select id="input-dvr-server-id">
+                    <option value="">— select DVR server —</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>DVR stream ID</span>
+                  <input type="text" id="input-dvr-stream-id" placeholder="stream_1" />
+                </label>
+                <label class="field">
+                  <span>DVR source mode</span>
+                  <select id="input-dvr-mode">
+                    <option value="play">Live (/play/&lt;id&gt;)</option>
+                    <option value="archive">Archive (/dvr/play/&lt;id&gt;)</option>
+                  </select>
+                </label>
+                <div class="form-hint">
+                  Stored as HTTP input with <code>#input_type=dvr</code>. Save auto-initializes remote DVR link if server is configured.
+                </div>
               </div>
 
               <div class="input-group" data-group="radio">
@@ -4564,6 +4711,7 @@
 	            <option value="auto" selected>Auto</option>
 	            <option value="stream_v1">Stream API v1</option>
 	            <option value="astra_legacy">Astra legacy</option>
+	            <option value="dvr_v1">DVR API v1</option>
 	          </select>
 	        </label>
         <label class="field">
@@ -4587,6 +4735,17 @@
           <input type="password" id="server-password" placeholder="(leave empty to keep)" />
           <small class="form-hint" id="server-password-hint"></small>
         </label>
+        <div id="server-origin-auth-block" hidden>
+          <label class="field">
+            <span>Origin login (optional)</span>
+            <input type="text" id="server-origin-login" placeholder="admin" />
+          </label>
+          <label class="field">
+            <span>Origin password (optional)</span>
+            <input type="password" id="server-origin-password" placeholder="(leave empty to keep)" />
+            <small class="form-hint" id="server-origin-password-hint"></small>
+          </label>
+        </div>
         <div class="modal-footer">
           <div class="footer-actions">
             <button class="btn" type="submit" id="server-save">Save</button>
@@ -4614,15 +4773,19 @@
 	        </label>
 	        <div class="table" id="server-streams-table">
 	          <div class="table-row header">
-	            <div>ID</div>
-	            <div>Name</div>
-	            <div>Type</div>
-	            <div>Enabled</div>
-	            <div>On Air</div>
-	            <div>Bitrate</div>
-	            <div>Uptime</div>
-	            <div>Input</div>
-	            <div>Last error</div>
+	            <div class="server-stream-select-cell">
+	              <input type="checkbox" id="server-streams-select-all" aria-label="Select all streams" />
+	            </div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="id">ID</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="name">Name</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="type">Type</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="enabled">Enabled</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="retention">Retention</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="on_air">On Air</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="bitrate">Bitrate</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="uptime">Uptime</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="input">Input</button></div>
+	            <div><button class="stream-table-sort-btn server-stream-sort-btn" type="button" data-action="server-stream-sort" data-sort-key="last_error">Last error</button></div>
 	            <div>Capabilities</div>
 	            <div></div>
 	          </div>
@@ -4631,7 +4794,14 @@
 	      </div>
 	      <div class="modal-footer">
 	        <div class="footer-actions">
+	          <span class="muted server-streams-selection" id="server-streams-selection-count">Selected: 0</span>
 	          <button class="btn ghost" type="button" id="server-streams-refresh">Refresh</button>
+	          <button class="btn ghost" type="button" id="server-streams-import">Import channels</button>
+	          <button class="btn ghost" type="button" id="server-streams-record-on">Enable record</button>
+	          <button class="btn ghost" type="button" id="server-streams-record-off">Disable record</button>
+	          <button class="btn ghost" type="button" id="server-streams-retention">Set retention</button>
+	          <button class="btn ghost" type="button" id="server-streams-backup-reset">Reset backup cursor</button>
+	          <button class="btn ghost" type="button" id="server-streams-backup-rebuild">Rebuild backup cycle</button>
 	          <button class="btn ghost" type="button" id="server-streams-new">New remote stream</button>
 	          <button class="btn" type="button" id="server-streams-cancel">Close</button>
 	          <div class="form-note" id="server-streams-error"></div>

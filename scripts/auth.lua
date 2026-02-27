@@ -407,6 +407,23 @@ local function parse_auth_backend_ref(spec)
     return name
 end
 
+local function normalize_params_map(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    local out = {}
+    for k, v in pairs(value) do
+        local key = tostring(k or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if key ~= "" and v ~= nil then
+            out[key] = tostring(v)
+        end
+    end
+    if next(out) == nil then
+        return nil
+    end
+    return out
+end
+
 local function normalize_backend_list(value)
     if value == nil then
         return {}
@@ -423,7 +440,7 @@ local function normalize_backend_list(value)
                     out[#out + 1] = {
                         url = tostring(url),
                         timeout_ms = tonumber(item.timeout_ms or item.timeout) or nil,
-                        params = type(item.params) == "table" and item.params or nil,
+                        params = normalize_params_map(item.params or item.static_params),
                     }
                 end
             end
@@ -448,6 +465,128 @@ local function normalize_backend_mode(value)
     return "parallel"
 end
 
+local function normalize_portal_url(value)
+    local text = tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return ""
+    end
+    text = text:gsub("[;,%s]+$", "")
+    if text == "" then
+        return ""
+    end
+    if text:find("^https?://", 1, false) == nil then
+        text = "http://" .. text
+    end
+    return text
+end
+
+local function detect_portal_provider(portal_url, explicit_provider)
+    local explicit = tostring(explicit_provider or ""):lower()
+    if explicit == "ministra" or explicit == "tms" or explicit == "generic" then
+        return explicit
+    end
+    local text = tostring(portal_url or ""):lower()
+    if text:find("/stalker_portal/server/api/chk_flussonic_tmp_link.php", 1, true) then
+        return "ministra"
+    end
+    if text:find("/stalker_portal", 1, true) then
+        return "ministra"
+    end
+    if text:find("/api/drm/auth_token", 1, true) or text:find("/api/drm/", 1, true) then
+        return "tms"
+    end
+    return "generic"
+end
+
+local function split_url_parts(url)
+    local base, path, suffix = tostring(url or ""):match("^(https?://[^/%?#]+)([^?#]*)(.*)$")
+    if not base then
+        return nil
+    end
+    return base, path or "", suffix or ""
+end
+
+local function resolve_portal_endpoint(portal_url, provider)
+    local url = normalize_portal_url(portal_url)
+    if url == "" then
+        return nil
+    end
+    local base, path, suffix = split_url_parts(url)
+    if not base then
+        return nil
+    end
+    local p = detect_portal_provider(url, provider)
+    local normalized_path = path ~= "" and path or "/"
+
+    if p == "ministra" then
+        local low = normalized_path:lower()
+        if not low:find("/stalker_portal/server/api/chk_flussonic_tmp_link.php", 1, true) then
+            local idx = low:find("/stalker_portal", 1, true)
+            local root = idx and normalized_path:sub(1, idx - 1) or ""
+            if root == "" then
+                normalized_path = "/stalker_portal/server/api/chk_flussonic_tmp_link.php"
+            else
+                normalized_path = root .. "/stalker_portal/server/api/chk_flussonic_tmp_link.php"
+            end
+        end
+        return base .. normalized_path .. suffix, p
+    end
+
+    if p == "tms" then
+        if normalized_path:lower():find("/api/drm/auth_token", 1, true) == nil then
+            normalized_path = "/api/drm/auth_token"
+        end
+        return base .. normalized_path .. suffix, p
+    end
+
+    return base .. normalized_path .. suffix, p
+end
+
+local function normalize_auth_backend_cfg(cfg)
+    if type(cfg) ~= "table" then
+        return cfg
+    end
+    local normalized = {}
+    for k, v in pairs(cfg) do
+        normalized[k] = v
+    end
+    local portal_params = normalize_params_map(normalized.portal_params)
+    normalized.portal_params = portal_params
+
+    local normalized_backends = normalize_backend_list(normalized.backends)
+    if #normalized_backends == 0 then
+        local endpoint, detected_provider = resolve_portal_endpoint(normalized.portal_url, normalized.provider)
+        if endpoint and endpoint ~= "" then
+            local primary = { url = endpoint }
+            if portal_params then
+                primary.params = portal_params
+            end
+            normalized_backends = { primary }
+            normalized.backends = normalized_backends
+            if not normalized.provider or tostring(normalized.provider):gsub("%s+", "") == "" or tostring(normalized.provider):lower() == "auto" then
+                normalized.provider = detected_provider
+            end
+        end
+    else
+        normalized.backends = normalized_backends
+        if portal_params and normalized_backends[1] and type(normalized_backends[1]) == "table" then
+            local first = normalized_backends[1]
+            if first.params == nil then
+                first.params = portal_params
+            end
+        end
+    end
+
+    if normalized.session_keys_default == nil then
+        local provider = detect_portal_provider(normalized.portal_url, normalized.provider)
+        if provider == "ministra" or provider == "tms" then
+            normalized.session_keys_default = { "ip", "name", "proto", "token", "header.x-playback-session-id" }
+        end
+    end
+
+    return normalized
+end
+
 local function resolve_backend(mode, stream_cfg)
     local spec = ""
     if stream_cfg and mode == "play" and stream_cfg.on_play and stream_cfg.on_play ~= "" then
@@ -468,6 +607,7 @@ local function resolve_backend(mode, stream_cfg)
     if backend_name then
         local backends = get_auth_backends_setting()
         local cfg = backends and backends[backend_name] or nil
+        cfg = normalize_auth_backend_cfg(cfg)
         return {
             kind = "auth_backend",
             name = backend_name,
@@ -1762,6 +1902,7 @@ local function backend_desc_for_cached_entry(entry)
     if name and name ~= "" then
         local backends = get_auth_backends_setting()
         local cfg = backends and backends[name] or nil
+        cfg = normalize_auth_backend_cfg(cfg)
         return {
             kind = "auth_backend",
             name = name,

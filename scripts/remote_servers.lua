@@ -122,12 +122,114 @@ local ASTRA_STRIP_TOP_LEVEL_KEYS = {
     auth_token_param = true,
     auth_allow_default = true,
     group = true,
+    dvr = true,
+    observability = true,
+    backup_adapter = true,
+    backup_adapter_enabled = true,
+    backup_adapter_config = true,
+    backup_adapter_candidates = true,
+    auto_signal_search_enabled = true,
+    auto_signal_window_sec = true,
+    auto_signal_bitrate_mode = true,
+    auto_signal_bitrate_min_kbps = true,
+    auto_signal_baseline_window_sec = true,
+    auto_signal_baseline_drop_ratio_pct = true,
+    auto_signal_cc_delta_threshold = true,
+    auto_signal_probe_sec = true,
+    auto_signal_confirm_sec = true,
+    auto_signal_switch_cooldown_sec = true,
+    auto_signal_min_streams = true,
+    auto_signal_candidate_profiles = true,
+    satellite_type_flip_recovery = true,
+    type_flip_wait_sec = true,
+    runtime = true,
+    stats = true,
+    remote = true,
+    ui = true,
+    issues = true,
 }
+
+local function sanitize_stream_url_list(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+    local out = {}
+    for _, item in ipairs(value) do
+        if type(item) ~= "string" then
+            goto continue
+        end
+        local s = trim(item)
+        if s ~= "" then
+            out[#out + 1] = s
+        end
+        ::continue::
+    end
+    return out
+end
+
+local function redact_url_credentials(url)
+    local value = trim(url)
+    if value == "" then
+        return ""
+    end
+    local scheme_end = value:find("://", 1, true)
+    if not scheme_end then
+        return value
+    end
+    local auth_start = scheme_end + 3
+    local path_start = value:find("/", auth_start, true)
+    if not path_start then
+        path_start = #value + 1
+    end
+    local at_pos = value:find("@", auth_start, true)
+    if at_pos and at_pos < path_start then
+        return value:sub(1, auth_start - 1) .. value:sub(at_pos + 1)
+    end
+    return value
+end
+
+local function sanitize_astra_map_value(value)
+    if value == nil then
+        return nil
+    end
+    local map_text = trim(value)
+    if map_text == "" then
+        return ""
+    end
+    -- Guard against accidental concatenation like:
+    -- "video=214, audio=314udp://..."
+    local proto_pos = map_text:find("[%a][%w+%-%.]*://")
+    if proto_pos and proto_pos > 1 then
+        local prefix = trim(map_text:sub(1, proto_pos - 1))
+        prefix = trim(prefix:gsub("[,;]+$", ""))
+        if prefix ~= "" then
+            map_text = prefix
+        end
+    end
+    return map_text
+end
 
 local function sanitize_stream_cfg_for_astra(stream_cfg)
     local out = type(stream_cfg) == "table" and deep_copy(stream_cfg) or {}
     for key, _ in pairs(ASTRA_STRIP_TOP_LEVEL_KEYS) do
         out[key] = nil
+    end
+    local input = sanitize_stream_url_list(out.input)
+    if input ~= nil then
+        out.input = input
+    end
+    local output = sanitize_stream_url_list(out.output)
+    if output ~= nil then
+        out.output = output
+    end
+    if out.map ~= nil then
+        out.map = sanitize_astra_map_value(out.map)
+    end
+    if out.id ~= nil then
+        out.id = trim(out.id)
+    end
+    if out.name ~= nil then
+        out.name = trim(out.name)
     end
     return out
 end
@@ -251,6 +353,9 @@ local function normalize_api_type(value)
     end
     if v == "astra_legacy" or v == "astra-legacy" or v == "astra" or v == "legacy" then
         return "astra_legacy"
+    end
+    if v == "dvr_v1" or v == "dvr-v1" or v == "dvr" then
+        return "dvr_v1"
     end
     return "auto"
 end
@@ -496,6 +601,26 @@ local ASTRA_LEGACY_CAPABILITIES = {
     full_editor = true,
 }
 
+local DVR_V1_CAPABILITIES = {
+    streams_list = true,
+    streams_get = true,
+    streams_upsert = true,
+    streams_delete = true,
+    action_enable = true,
+    action_disable = true,
+    action_restart = false,
+    action_switch_input = false,
+    full_editor = false,
+    dvr_streams_upsert = true,
+    dvr_streams_bulk_record = true,
+    dvr_ingest_state = true,
+    dvr_archive_read = true,
+    dvr_backup_state_read = true,
+    dvr_backup_cursor_reset = true,
+    dvr_backup_cycle_rebuild = true,
+    dvr_storage_candidates = true,
+}
+
 local session_cache = {}
 local streams_cache = {}
 
@@ -720,6 +845,36 @@ local function detect_stream_v1(cfg, callback)
     end)
 end
 
+local function detect_dvr_v1(cfg, callback)
+    stream_v1_login(cfg, function(ok_login, auth, login_err, login_code)
+        if not ok_login then
+            return callback(false, nil, login_err, login_code)
+        end
+        stream_v1_request(cfg, auth, {
+            method = "GET",
+            path = "/api/v1/dvr/health",
+        }, function(ok, data, err, code)
+            if not ok then
+                if is_auth_error(code) then
+                    return callback(false, nil, "login/password incorrect", code)
+                end
+                return callback(false, nil, err or "dvr_v1 probe failed", code)
+            end
+            local version = ""
+            if type(data) == "table" then
+                version = trim(data.version or data.stream_version or "")
+            end
+            callback(true, {
+                api_type_effective = "dvr_v1",
+                remote_version = version,
+                auth_mode = auth and auth.auth_mode or "none",
+                capabilities = DVR_V1_CAPABILITIES,
+                auth = auth,
+            })
+        end)
+    end)
+end
+
 local function ensure_cesbo_client_loaded()
     if type(CesboApiClient) == "table" and type(CesboApiClient.new) == "function" then
         return true
@@ -886,6 +1041,14 @@ local function detect_adapter(cfg, callback, opts)
             commit(ctx)
         end)
     end
+    if api_type == "dvr_v1" then
+        return detect_dvr_v1(cfg, function(ok, ctx, err, code)
+            if not ok then
+                return callback(false, nil, err, code)
+            end
+            commit(ctx)
+        end)
+    end
 
     detect_stream_v1(cfg, function(ok_stream, stream_ctx, stream_err, stream_code)
         if ok_stream then
@@ -1016,6 +1179,34 @@ local function apply_stream_status(item, st)
     if bitrate_num ~= nil then
         item.bitrate_kbps = bitrate_num
     end
+    local raw_bitrate_num = tonumber(st.raw_bitrate_kbps or st.raw_bitrate or st.bitrate_raw)
+    if raw_bitrate_num ~= nil then
+        item.raw_bitrate_kbps = raw_bitrate_num
+    end
+    local cc_errors = tonumber(st.cc_errors)
+    if cc_errors ~= nil then
+        item.cc_errors = cc_errors
+    end
+    local pes_errors = tonumber(st.pes_errors)
+    if pes_errors ~= nil then
+        item.pes_errors = pes_errors
+    end
+    local clients_count = tonumber(st.clients_count or st.clients)
+    if clients_count ~= nil then
+        item.clients_count = clients_count
+    end
+    local updated_at = tonumber(st.updated_at or st.updated)
+    if updated_at ~= nil then
+        item.updated_at = updated_at
+    end
+    local updated_raw_at = tonumber(st.updated_raw_at or st.updated_at_raw)
+    if updated_raw_at ~= nil then
+        item.updated_raw_at = updated_raw_at
+    end
+    local scrambled = boolish(st.scrambled, nil)
+    if scrambled ~= nil then
+        item.scrambled = scrambled == true
+    end
     item.uptime_sec = tonumber(st.uptime or st.uptime_sec)
     item.active_input = st.input_id or st.active_input or st.input or nil
     if item.active_input ~= nil and tonumber(item.active_input) == nil then
@@ -1023,6 +1214,16 @@ local function apply_stream_status(item, st)
         if parsed_input ~= nil then
             item.active_input = parsed_input
         end
+    end
+    if type(st.inputs) == "table" then
+        item.inputs = deep_copy(st.inputs)
+    end
+    if type(st.transcode) == "table" then
+        item.transcode = deep_copy(st.transcode)
+    end
+    local transcode_state = trim(st.transcode_state or st.transcode_status or (type(st.transcode) == "table" and st.transcode.state) or "")
+    if transcode_state ~= "" then
+        item.transcode_state = transcode_state
     end
     item.last_error = trim(st.last_error or st.error or "")
 end
@@ -1247,6 +1448,283 @@ local function stream_v1_action(cfg, adapter_ctx, stream_id, action, input_index
     end
 
     callback(false, nil, "unsupported action", 400)
+end
+
+local function normalize_dvr_stream_item(row)
+    if type(row) ~= "table" then
+        return nil
+    end
+    local id = trim(row.stream_id or row.id)
+    if id == "" then
+        return nil
+    end
+    local name = trim(row.name or id)
+    local record_enabled = boolish(row.record_enabled, boolish(row.enabled, false))
+    local retention_days = tonumber(row.retention_days)
+    local archive_path = trim(row.archive_path or row.path)
+    local cfg = nil
+    if type(row.config) == "table" then
+        cfg = deep_copy(row.config)
+    elseif row.config_json ~= nil then
+        local ok_cfg, decoded_cfg = decode_json_safe(tostring(row.config_json))
+        if ok_cfg and type(decoded_cfg) == "table" then
+            cfg = decoded_cfg
+        end
+    end
+    if type(cfg) ~= "table" then
+        cfg = {}
+    end
+    local source_url_raw = trim(row.source_url or "")
+    if source_url_raw == "" and type(cfg.dvr) == "table" then
+        source_url_raw = trim(cfg.dvr.source_url or "")
+    end
+    if source_url_raw == "" and type(cfg.input) == "table" and cfg.input[1] then
+        source_url_raw = trim(cfg.input[1])
+    end
+    local source_url = redact_url_credentials(source_url_raw)
+    cfg.id = id
+    if trim(cfg.name) == "" then
+        cfg.name = name ~= "" and name or id
+    end
+    if trim(cfg.type) == "" then
+        cfg.type = "spts"
+    end
+    if type(cfg.input) == "table" then
+        for idx, input_url in ipairs(cfg.input) do
+            if type(input_url) == "string" then
+                cfg.input[idx] = redact_url_credentials(input_url)
+            end
+        end
+    end
+    if source_url ~= "" then
+        if type(cfg.input) ~= "table" then
+            cfg.input = {}
+        end
+        cfg.input[1] = source_url
+    elseif type(cfg.input) ~= "table" then
+        cfg.input = {}
+    end
+    local cfg_dvr = type(cfg.dvr) == "table" and cfg.dvr or {}
+    if cfg_dvr.source_url ~= nil then
+        cfg_dvr.source_url = redact_url_credentials(trim(cfg_dvr.source_url))
+    end
+    cfg_dvr.enabled = record_enabled == true
+    cfg_dvr.retention_days = retention_days and math.max(1, math.floor(retention_days)) or 3
+    cfg_dvr.source_url = source_url
+    if archive_path ~= "" then
+        cfg_dvr.path = archive_path
+        cfg_dvr.archive_path = archive_path
+    end
+    cfg.dvr = cfg_dvr
+    local bitrate_kbps = tonumber(row.bitrate_kbps or row.bitrate)
+    local raw_bitrate_kbps = tonumber(
+        row.raw_bitrate_kbps or row.raw_bitrate or row.bitrate_raw or row.bitrate_kbps or row.bitrate
+    )
+    local cc_errors = tonumber(row.cc_errors)
+    local pes_errors = tonumber(row.pes_errors)
+    local updated_at = tonumber(row.updated_at or row.updated)
+    local active_input = row.active_input
+    if active_input == nil then
+        active_input = row.active_input_id
+    end
+    active_input = tonumber(active_input) or active_input
+    local active_input_url = redact_url_credentials(trim(row.active_input_url or row.input_url or ""))
+    local last_error = trim(row.last_error or row.error or "")
+    local on_air = row.on_air == true
+    if row.on_air == nil and row.status ~= nil then
+        local status_text = trim(row.status):lower()
+        if status_text == "ok" or status_text == "on_air" or status_text == "online" then
+            on_air = true
+        elseif status_text == "offline" or status_text == "down" then
+            on_air = false
+        end
+    end
+    local item = {
+        id = id,
+        name = name ~= "" and name or id,
+        type = "dvr",
+        enabled = record_enabled == true,
+        on_air = on_air == true,
+        bitrate_kbps = bitrate_kbps,
+        raw_bitrate_kbps = raw_bitrate_kbps,
+        cc_errors = cc_errors,
+        pes_errors = pes_errors,
+        uptime_sec = tonumber(row.uptime_sec),
+        active_input = active_input,
+        active_input_url = active_input_url ~= "" and active_input_url or nil,
+        last_error = last_error,
+        updated_at = updated_at,
+        dvr = {
+            stream_id = id,
+            source_url = source_url,
+            archive_path = archive_path,
+            record_enabled = record_enabled == true,
+            recording_paused = boolish(row.recording_paused, false) == true,
+            retention_days = retention_days and math.max(1, math.floor(retention_days)) or 3,
+            status = trim(row.status or ""),
+            last_mode = trim(row.last_mode or ""),
+            last_state_seq = tonumber(row.last_state_seq),
+            updated_ts = tonumber(row.updated_ts) or updated_at,
+        },
+        config = cfg,
+    }
+    return item
+end
+
+local function dvr_v1_list_streams(cfg, adapter_ctx, include_status, callback)
+    stream_v1_request(cfg, adapter_ctx.auth, {
+        method = "POST",
+        path = "/api/v1/dvr/streams/list",
+        body = {
+            include_status = include_status ~= false,
+        },
+    }, function(ok, data, err, code)
+        if not ok then
+            return callback(false, nil, err, code)
+        end
+        local rows = {}
+        if type(data) == "table" and type(data.items) == "table" then
+            rows = data.items
+        elseif type(data) == "table" then
+            rows = data
+        end
+        local items = {}
+        for _, row in ipairs(rows or {}) do
+            local normalized = normalize_dvr_stream_item(row)
+            if normalized then
+                items[#items + 1] = normalized
+            end
+        end
+        table.sort(items, function(a, b)
+            return tostring(a.id or "") < tostring(b.id or "")
+        end)
+        callback(true, items)
+    end)
+end
+
+local function dvr_v1_get_stream(cfg, adapter_ctx, stream_id, callback)
+    stream_v1_request(cfg, adapter_ctx.auth, {
+        method = "POST",
+        path = "/api/v1/dvr/streams/get",
+        body = {
+            stream_id = stream_id,
+        },
+    }, function(ok, data, err, code)
+        if not ok then
+            return callback(false, nil, err, code)
+        end
+        local row = type(data) == "table" and (data.item or data) or {}
+        local normalized = normalize_dvr_stream_item(row)
+        if not normalized then
+            return callback(false, nil, "stream not found", 404)
+        end
+        callback(true, normalized)
+    end)
+end
+
+local function dvr_stream_payload_from_generic(stream)
+    local id = trim(stream and stream.id)
+    if id == "" then
+        return nil, "stream.id is required"
+    end
+    local cfg_row = type(stream.config) == "table" and deep_copy(stream.config) or {}
+    local dvr_cfg = type(cfg_row.dvr) == "table" and cfg_row.dvr or {}
+    local source_url = trim(dvr_cfg.source_url)
+    if source_url == "" and type(cfg_row.input) == "table" and cfg_row.input[1] then
+        source_url = trim(cfg_row.input[1])
+    end
+    if source_url == "" then
+        return nil, "dvr source_url is required"
+    end
+    local retention_days = tonumber(dvr_cfg.retention_days) or 3
+    if retention_days < 1 then
+        retention_days = 1
+    end
+    local archive_path = trim(dvr_cfg.path or dvr_cfg.archive_path)
+    if archive_path == "" then
+        archive_path = nil
+    end
+    cfg_row.id = id
+    if trim(cfg_row.name) == "" then
+        cfg_row.name = trim(cfg_row.name or stream.name or id)
+    end
+    if trim(cfg_row.type) == "" then
+        cfg_row.type = "spts"
+    end
+    if type(cfg_row.input) ~= "table" then
+        cfg_row.input = {}
+    end
+    cfg_row.input[1] = source_url
+    local cfg_dvr = type(cfg_row.dvr) == "table" and cfg_row.dvr or {}
+    cfg_dvr.enabled = stream.enabled ~= false and dvr_cfg.enabled ~= false
+    cfg_dvr.retention_days = math.floor(retention_days)
+    cfg_dvr.source_url = source_url
+    if archive_path then
+        cfg_dvr.path = archive_path
+        cfg_dvr.archive_path = archive_path
+    end
+    cfg_row.dvr = cfg_dvr
+    return {
+        stream_id = id,
+        name = trim(cfg_row.name or stream.name or id),
+        source_url = source_url,
+        archive_path = archive_path,
+        record_enabled = stream.enabled ~= false and dvr_cfg.enabled ~= false,
+        retention_days = math.floor(retention_days),
+        segment_sec = 3600,
+        config = cfg_row,
+    }
+end
+
+local function dvr_v1_upsert_stream(cfg, adapter_ctx, stream, _mode, callback)
+    local payload, payload_err = dvr_stream_payload_from_generic(stream)
+    if not payload then
+        return callback(false, nil, payload_err, 400)
+    end
+    stream_v1_request(cfg, adapter_ctx.auth, {
+        method = "POST",
+        path = "/api/v1/dvr/streams/upsert",
+        body = payload,
+    }, function(ok, data, err, code)
+        if not ok then
+            return callback(false, nil, err, code)
+        end
+        callback(true, data or { status = "ok" })
+    end)
+end
+
+local function dvr_v1_delete_stream(cfg, adapter_ctx, stream_id, callback)
+    stream_v1_request(cfg, adapter_ctx.auth, {
+        method = "POST",
+        path = "/api/v1/dvr/streams/delete",
+        body = {
+            stream_id = stream_id,
+        },
+    }, function(ok, data, err, code)
+        if not ok then
+            return callback(false, nil, err, code)
+        end
+        callback(true, data or { status = "ok" })
+    end)
+end
+
+local function dvr_v1_action(cfg, adapter_ctx, stream_id, action, _input_index, callback)
+    if action ~= "enable" and action ~= "disable" then
+        return callback(false, nil, "unsupported action", 400)
+    end
+    stream_v1_request(cfg, adapter_ctx.auth, {
+        method = "POST",
+        path = "/api/v1/dvr/streams/bulk-record",
+        body = {
+            stream_ids = { tostring(stream_id) },
+            record_enabled = action == "enable",
+        },
+    }, function(ok, data, err, code)
+        if not ok then
+            return callback(false, nil, err, code)
+        end
+        callback(true, data or { status = "ok" })
+    end)
 end
 
 local function astra_list_streams(cfg, adapter_ctx, include_status, callback)
@@ -1689,6 +2167,9 @@ function remote_servers.list_streams(entry, opts, callback)
         if cached.api_type_effective == "stream_v1" then
             return stream_v1_list_streams(cfg, ctx, include_status, done)
         end
+        if cached.api_type_effective == "dvr_v1" then
+            return dvr_v1_list_streams(cfg, ctx, include_status, done)
+        end
         return astra_list_streams(cfg, ctx, include_status, done)
     end)
 end
@@ -1716,17 +2197,47 @@ function remote_servers.get_stream(entry, stream_id, callback)
                 local code = classify_error_status(err2, code2)
                 return callback(false, nil, err2 or "get failed", code)
             end
-            callback(true, {
+            local out = {
                 id = item.id,
                 enabled = item.enabled ~= false,
                 config = item.config or {},
                 capabilities = cached.capabilities or {},
                 api_type_effective = cached.api_type_effective,
                 remote_version = cached.remote_version or "",
-            })
+            }
+            local passthrough_keys = {
+                "name",
+                "type",
+                "on_air",
+                "bitrate_kbps",
+                "raw_bitrate_kbps",
+                "cc_errors",
+                "pes_errors",
+                "uptime_sec",
+                "active_input",
+                "active_input_url",
+                "last_error",
+                "updated_at",
+                "transcode_state",
+            }
+            for _, key in ipairs(passthrough_keys) do
+                if item[key] ~= nil then
+                    out[key] = item[key]
+                end
+            end
+            if type(item.transcode) == "table" then
+                out.transcode = item.transcode
+            end
+            if type(item.dvr) == "table" then
+                out.dvr = item.dvr
+            end
+            callback(true, out)
         end
         if cached.api_type_effective == "stream_v1" then
             return stream_v1_get_stream(cfg, ctx, sid, done)
+        end
+        if cached.api_type_effective == "dvr_v1" then
+            return dvr_v1_get_stream(cfg, ctx, sid, done)
         end
         return astra_get_stream(cfg, ctx, sid, done)
     end)
@@ -1772,6 +2283,9 @@ function remote_servers.upsert_stream(entry, stream, mode, callback)
         if cached.api_type_effective == "stream_v1" then
             return stream_v1_upsert_stream(cfg, ctx, stream, op_mode, done)
         end
+        if cached.api_type_effective == "dvr_v1" then
+            return dvr_v1_upsert_stream(cfg, ctx, stream, op_mode, done)
+        end
         return astra_upsert_stream(cfg, ctx, stream, op_mode, done)
     end)
 end
@@ -1809,6 +2323,9 @@ function remote_servers.delete_stream(entry, stream_id, callback)
         end
         if cached.api_type_effective == "stream_v1" then
             return stream_v1_delete_stream(cfg, ctx, sid, done)
+        end
+        if cached.api_type_effective == "dvr_v1" then
+            return dvr_v1_delete_stream(cfg, ctx, sid, done)
         end
         return astra_delete_stream(cfg, ctx, sid, done)
     end)
@@ -1870,7 +2387,382 @@ function remote_servers.action(entry, stream_id, action, opts, callback)
         if cached.api_type_effective == "stream_v1" then
             return stream_v1_action(cfg, ctx, sid, act, input_index, done)
         end
+        if cached.api_type_effective == "dvr_v1" then
+            return dvr_v1_action(cfg, ctx, sid, act, input_index, done)
+        end
         return astra_action(cfg, ctx, sid, act, input_index, done)
+    end)
+end
+
+function remote_servers.dvr_upsert_streams(entry, items, callback)
+    if type(items) ~= "table" then
+        return callback(false, nil, "items payload required", 400)
+    end
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        local pending = 0
+        local imported = 0
+        local failed = {}
+        local function done_if_finished()
+            if pending > 0 then
+                return
+            end
+            callback(true, {
+                status = "ok",
+                imported = imported,
+                failed = failed,
+                total = #items,
+                capabilities = cached.capabilities or {},
+                api_type_effective = cached.api_type_effective,
+            })
+        end
+        for _, item in ipairs(items) do
+            pending = pending + 1
+            stream_v1_request(cfg, ctx.auth, {
+                method = "POST",
+                path = "/api/v1/dvr/streams/upsert",
+                body = item,
+            }, function(ok_call, data_call, err_call, code_call)
+                if ok_call then
+                    imported = imported + 1
+                else
+                    failed[#failed + 1] = {
+                        stream_id = trim(item and item.stream_id),
+                        error = err_call or "upsert failed",
+                        code = code_call,
+                    }
+                end
+                pending = pending - 1
+                done_if_finished()
+            end)
+        end
+        if pending == 0 then
+            done_if_finished()
+        end
+    end)
+end
+
+function remote_servers.dvr_storage_candidates(entry, payload, callback)
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        local query = ""
+        if type(payload) == "table" and payload.refresh == true then
+            query = "?refresh=1"
+        end
+        stream_v1_request(cfg, ctx.auth, {
+            method = "GET",
+            path = "/api/v1/dvr/storage/candidates" .. query,
+        }, function(ok_call, data_call, err_call, code_call)
+            if not ok_call then
+                return callback(false, nil, err_call or "storage candidates failed", code_call)
+            end
+            callback(true, data_call or {
+                ok = true,
+                recommended_path = nil,
+                candidates = {},
+            })
+        end)
+    end)
+end
+
+function remote_servers.dvr_bulk_record(entry, payload, callback)
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        stream_v1_request(cfg, ctx.auth, {
+            method = "POST",
+            path = "/api/v1/dvr/streams/bulk-record",
+            body = payload,
+        }, function(ok_call, data_call, err_call, code_call)
+            if not ok_call then
+                return callback(false, nil, err_call or "bulk record failed", code_call)
+            end
+            callback(true, data_call or { status = "ok" })
+        end)
+    end)
+end
+
+function remote_servers.dvr_ingest_state(entry, payload, callback)
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        stream_v1_request(cfg, ctx.auth, {
+            method = "POST",
+            path = "/api/v1/dvr/ingest-state",
+            body = payload,
+        }, function(ok_call, data_call, err_call, code_call)
+            if not ok_call then
+                return callback(false, nil, err_call or "sync state failed", code_call)
+            end
+            callback(true, data_call or { status = "ok" })
+        end)
+    end)
+end
+
+local function normalize_dvr_stream_ids(stream_ids)
+    local out = {}
+    local seen = {}
+    if type(stream_ids) ~= "table" then
+        return out
+    end
+    for _, value in ipairs(stream_ids) do
+        local sid = trim(value)
+        if sid ~= "" and not seen[sid] then
+            seen[sid] = true
+            out[#out + 1] = sid
+        end
+    end
+    return out
+end
+
+local function dvr_bulk_call_per_stream(entry, stream_ids, request_builder, callback)
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ids = normalize_dvr_stream_ids(stream_ids)
+        if #ids == 0 then
+            return callback(false, nil, "stream_ids is required", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        local pending = #ids
+        local affected = 0
+        local failed = {}
+        local details = {}
+        local function done_if_finished()
+            if pending > 0 then
+                return
+            end
+            callback(true, {
+                ok = true,
+                total = #ids,
+                affected = affected,
+                failed = failed,
+                items = details,
+            })
+        end
+        for _, sid in ipairs(ids) do
+            local req = request_builder(sid) or {}
+            stream_v1_request(cfg, ctx.auth, req, function(ok_call, data_call, err_call, code_call)
+                if ok_call then
+                    affected = affected + 1
+                    details[#details + 1] = {
+                        stream_id = sid,
+                        ok = true,
+                        data = data_call,
+                    }
+                else
+                    failed[#failed + 1] = {
+                        stream_id = sid,
+                        error = err_call or "request failed",
+                        code = code_call,
+                    }
+                    details[#details + 1] = {
+                        stream_id = sid,
+                        ok = false,
+                        error = err_call or "request failed",
+                        code = code_call,
+                    }
+                end
+                pending = pending - 1
+                done_if_finished()
+            end)
+        end
+    end)
+end
+
+local function dvr_backup_cursor_reset_per_stream(entry, payload, callback)
+    payload = type(payload) == "table" and payload or {}
+    return dvr_bulk_call_per_stream(entry, payload.stream_ids, function(stream_id)
+        return {
+            method = "POST",
+            path = "/api/v1/dvr/backup/cursor/reset",
+            body = {
+                stream_id = stream_id,
+            },
+        }
+    end, callback)
+end
+
+local function dvr_backup_cycle_rebuild_per_stream(entry, payload, callback)
+    payload = type(payload) == "table" and payload or {}
+    local include_partial = payload.include_partial
+    local min_partial_sec = payload.min_partial_sec
+    local start_mode = payload.start_mode
+    local start_offset_hours = payload.start_offset_hours
+    local now_ts = payload.now_ts
+    return dvr_bulk_call_per_stream(entry, payload.stream_ids, function(stream_id)
+        local body = {
+            stream_id = stream_id,
+        }
+        if include_partial ~= nil then
+            body.include_partial = include_partial
+        end
+        if min_partial_sec ~= nil then
+            body.min_partial_sec = min_partial_sec
+        end
+        if start_mode ~= nil then
+            body.start_mode = start_mode
+        end
+        if start_offset_hours ~= nil then
+            body.start_offset_hours = start_offset_hours
+        end
+        if now_ts ~= nil then
+            body.now_ts = now_ts
+        end
+        return {
+            method = "POST",
+            path = "/api/v1/dvr/backup/cycle/rebuild",
+            body = body,
+        }
+    end, callback)
+end
+
+function remote_servers.dvr_backup_cursor_reset(entry, payload, callback)
+    payload = type(payload) == "table" and payload or {}
+    local ids = normalize_dvr_stream_ids(payload.stream_ids)
+    if #ids == 0 then
+        return callback(false, nil, "stream_ids is required", 400)
+    end
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        stream_v1_request(cfg, ctx.auth, {
+            method = "POST",
+            path = "/api/v1/dvr/backup/cursor/reset-bulk",
+            body = { stream_ids = ids },
+        }, function(ok_call, data_call, err_call, code_call)
+            if ok_call then
+                return callback(true, data_call or { ok = true, total = #ids, affected = 0, failed = {}, items = {} })
+            end
+            if tonumber(code_call) == 404 then
+                return dvr_backup_cursor_reset_per_stream(entry, { stream_ids = ids }, callback)
+            end
+            return callback(false, nil, err_call or "backup cursor reset failed", code_call)
+        end)
+    end)
+end
+
+function remote_servers.dvr_backup_cycle_rebuild(entry, payload, callback)
+    payload = type(payload) == "table" and payload or {}
+    local ids = normalize_dvr_stream_ids(payload.stream_ids)
+    if #ids == 0 then
+        return callback(false, nil, "stream_ids is required", 400)
+    end
+    local cfg, err = remote_servers.normalize(entry)
+    if not cfg then
+        return callback(false, nil, err or "invalid server", 400)
+    end
+    local include_partial = payload.include_partial
+    local min_partial_sec = payload.min_partial_sec
+    local start_mode = payload.start_mode
+    local start_offset_hours = payload.start_offset_hours
+    local now_ts = payload.now_ts
+    detect_adapter(cfg, function(ok, cached, detect_err, detect_code)
+        if not ok then
+            local code = classify_error_status(detect_err, detect_code)
+            return callback(false, nil, detect_err or "probe failed", code)
+        end
+        if cached.api_type_effective ~= "dvr_v1" then
+            return callback(false, nil, "target server is not DVR API", 400)
+        end
+        local ctx = cached.adapter_ctx or {}
+        local body = { stream_ids = ids }
+        if include_partial ~= nil then
+            body.include_partial = include_partial
+        end
+        if min_partial_sec ~= nil then
+            body.min_partial_sec = min_partial_sec
+        end
+        if start_mode ~= nil then
+            body.start_mode = start_mode
+        end
+        if start_offset_hours ~= nil then
+            body.start_offset_hours = start_offset_hours
+        end
+        if now_ts ~= nil then
+            body.now_ts = now_ts
+        end
+        stream_v1_request(cfg, ctx.auth, {
+            method = "POST",
+            path = "/api/v1/dvr/backup/cycle/rebuild-bulk",
+            body = body,
+        }, function(ok_call, data_call, err_call, code_call)
+            if ok_call then
+                return callback(true, data_call or { ok = true, total = #ids, affected = 0, failed = {}, items = {} })
+            end
+            if tonumber(code_call) == 404 then
+                return dvr_backup_cycle_rebuild_per_stream(entry, {
+                    stream_ids = ids,
+                    include_partial = include_partial,
+                    min_partial_sec = min_partial_sec,
+                    start_mode = start_mode,
+                    start_offset_hours = start_offset_hours,
+                    now_ts = now_ts,
+                }, callback)
+            end
+            return callback(false, nil, err_call or "backup cycle rebuild failed", code_call)
+        end)
     end)
 end
 

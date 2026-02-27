@@ -91,10 +91,10 @@ http_request = function(req)
 
   -- Per-stream endpoints are still available and should be used as fallback.
   if req.path == "/base/api/stream-status/a1?t=1" and req.method == "GET" then
-    return reply(200, { onair = true, bitrate = "1111Kbit/s", input_id = 1 })
+    return reply(200, { onair = true, bitrate = "1111Kbit/s", input_id = 1, cc_errors = 5, pes_errors = 1 })
   end
   if req.path == "/base/api/stream-status/b2?t=1" and req.method == "GET" then
-    return reply(200, { onair = true, bitrate = "2.222Mbit/s", input_id = 1 })
+    return reply(200, { onair = true, bitrate = "2.222Mbit/s", input_id = 1, cc_errors = 0, pes_errors = 0 })
   end
   if req.path == "/base/api/v1/stream-status/a1?t=1" and req.method == "GET" then
     return reply(404, { error = "not found" })
@@ -143,7 +143,8 @@ assert_true(by_id.a1 and tonumber(by_id.a1.bitrate_kbps) == 1111, "expected fall
 assert_true(by_id.b2 and tonumber(by_id.b2.bitrate_kbps) == 2222, "expected fallback bitrate for b2")
 assert_true(by_id.a1 and by_id.a1.on_air == true, "expected on_air true for a1")
 assert_true(by_id.b2 and by_id.b2.on_air == true, "expected on_air true for b2")
+assert_true(by_id.a1 and tonumber(by_id.a1.cc_errors) == 5, "expected cc_errors for a1")
+assert_true(by_id.a1 and tonumber(by_id.a1.pes_errors) == 1, "expected pes_errors for a1")
 
 log.info("[unit] servers_streams_list_astra_status_auth_fallback_unit ok")
 astra.exit()
-

@@ -246,6 +246,152 @@ do
     end)
 end
 
+-- 6) Portal-only backend config: Ministra endpoint is auto-resolved
+do
+    config._settings = {
+        auth_backends = {
+            main = {
+                provider = "ministra",
+                portal_url = "http://name.com/stalker_portal",
+                allow_default = false,
+            },
+        },
+        auth_allow_no_token = true,
+    }
+    responses_by_host["name.com"] = function(req)
+        local path = tostring(req and req.path or "")
+        if path:find("^/stalker_portal/server/api/chk_flussonic_tmp_link%.php%?") then
+            return { code = 200, headers = {} }
+        end
+        return { code = 404, headers = {} }
+    end
+
+    local ctx = {
+        stream_id = "test",
+        stream_name = "Test",
+        stream_cfg = { on_play = "auth://main" },
+        proto = "http_ts",
+        request = make_request({ ["user-agent"] = "UA" }, { token = "m1" }),
+        ip = "1.2.3.4",
+    }
+    auth.check_play(ctx, function(allowed, entry)
+        assert_eq(allowed, true, "portal-only ministra allow")
+        assert_eq(entry.status, "ALLOW", "portal-only ministra status")
+    end)
+end
+
+-- 6b) Portal-only backend config: TMS endpoint is auto-resolved
+do
+    config._settings = {
+        auth_backends = {
+            main = {
+                provider = "tms",
+                portal_url = "http://name.com/",
+                allow_default = false,
+            },
+        },
+        auth_allow_no_token = true,
+    }
+    responses_by_host["name.com"] = function(req)
+        local path = tostring(req and req.path or "")
+        if path:find("^/api/drm/auth_token%?") then
+            return { code = 200, headers = {} }
+        end
+        return { code = 404, headers = {} }
+    end
+
+    local ctx = {
+        stream_id = "test",
+        stream_name = "Test",
+        stream_cfg = { on_play = "auth://main" },
+        proto = "http_ts",
+        request = make_request({ ["user-agent"] = "UA" }, { token = "tms1" }),
+        ip = "1.2.3.4",
+    }
+    auth.check_play(ctx, function(allowed, entry)
+        assert_eq(allowed, true, "portal-only tms allow")
+        assert_eq(entry.status, "ALLOW", "portal-only tms status")
+    end)
+end
+
+-- 6c) Portal-only backend config: static portal_params are propagated
+do
+    config._settings = {
+        auth_backends = {
+            main = {
+                provider = "tms",
+                portal_url = "http://name.com/",
+                portal_params = {
+                    token = "abc",
+                    foo = "bar",
+                },
+                allow_default = false,
+            },
+        },
+        auth_allow_no_token = true,
+    }
+    responses_by_host["name.com"] = function(req)
+        local path = tostring(req and req.path or "")
+        if path:find("^/api/drm/auth_token%?") and path:find("token=abc", 1, true) and path:find("foo=bar", 1, true) then
+            return { code = 200, headers = {} }
+        end
+        return { code = 404, headers = {} }
+    end
+
+    local ctx = {
+        stream_id = "test",
+        stream_name = "Test",
+        stream_cfg = { on_play = "auth://main" },
+        proto = "http_ts",
+        request = make_request({ ["user-agent"] = "UA" }, { token = "tms2" }),
+        ip = "1.2.3.4",
+    }
+    auth.check_play(ctx, function(allowed, entry)
+        assert_eq(allowed, true, "portal-only params allow")
+        assert_eq(entry.status, "ALLOW", "portal-only params status")
+    end)
+end
+
+-- 6d) backend list + portal_params: first backend receives params when params are absent
+do
+    config._settings = {
+        auth_backends = {
+            main = {
+                provider = "tms",
+                portal_url = "http://name.com/",
+                portal_params = {
+                    token = "from_portal",
+                },
+                backends = {
+                    { url = "http://name.com/api/drm/auth_token" },
+                },
+                allow_default = false,
+            },
+        },
+        auth_allow_no_token = true,
+    }
+    responses_by_host["name.com"] = function(req)
+        local path = tostring(req and req.path or "")
+        if path:find("^/api/drm/auth_token%?") and path:find("token=from_portal", 1, true) then
+            return { code = 200, headers = {} }
+        end
+        return { code = 404, headers = {} }
+    end
+
+    local ctx = {
+        stream_id = "test",
+        stream_name = "Test",
+        stream_cfg = { on_play = "auth://main" },
+        proto = "http_ts",
+        request = make_request({ ["user-agent"] = "UA" }, { token = "tms3" }),
+        ip = "1.2.3.4",
+    }
+    auth.check_play(ctx, function(allowed, entry)
+        assert_eq(allowed, true, "backend list + portal params allow")
+        assert_eq(entry.status, "ALLOW", "backend list + portal params status")
+    end)
+end
+
 -- 7) Token source: query/header/cookie + Bearer parsing
 do
     local req = make_request({ ["authorization"] = "Bearer XYZ" }, {})

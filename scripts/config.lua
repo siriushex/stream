@@ -758,6 +758,136 @@ config.migrations = {
     CREATE INDEX IF NOT EXISTS dvb_scan_channels_job_name_idx
         ON dvb_scan_channels(job_id, name);
     ]],
+    [[
+    CREATE TABLE IF NOT EXISTS dvr_segments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_id TEXT NOT NULL,
+        seg_start_ts INTEGER NOT NULL,
+        seg_end_ts INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL DEFAULT 0,
+        is_complete INTEGER NOT NULL DEFAULT 0,
+        created_ts INTEGER NOT NULL DEFAULT 0,
+        updated_ts INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_backup_state (
+        stream_id TEXT PRIMARY KEY,
+        mode TEXT NOT NULL DEFAULT 'LIVE',
+        cycle_id TEXT,
+        cursor_seg_start_ts INTEGER NOT NULL DEFAULT 0,
+        cursor_offset_sec INTEGER NOT NULL DEFAULT 0,
+        last_reason TEXT,
+        updated_ts INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_backup_cycle_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_id TEXT NOT NULL,
+        cycle_id TEXT NOT NULL,
+        seg_start_ts INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        played_sec INTEGER NOT NULL DEFAULT 0,
+        updated_ts INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(stream_id, cycle_id, seg_start_ts)
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts INTEGER NOT NULL,
+        stream_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        message TEXT,
+        details_json TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS dvr_segments_stream_start_idx
+        ON dvr_segments(stream_id, seg_start_ts);
+    CREATE UNIQUE INDEX IF NOT EXISTS dvr_segments_stream_seg_unique
+        ON dvr_segments(stream_id, seg_start_ts);
+    CREATE INDEX IF NOT EXISTS dvr_segments_stream_created_idx
+        ON dvr_segments(stream_id, created_ts);
+    CREATE INDEX IF NOT EXISTS dvr_segments_stream_complete_idx
+        ON dvr_segments(stream_id, is_complete, seg_start_ts);
+
+    CREATE INDEX IF NOT EXISTS dvr_backup_cycle_stream_cycle_status_idx
+        ON dvr_backup_cycle_items(stream_id, cycle_id, status);
+    CREATE INDEX IF NOT EXISTS dvr_backup_cycle_stream_cycle_seg_idx
+        ON dvr_backup_cycle_items(stream_id, cycle_id, seg_start_ts);
+
+    CREATE INDEX IF NOT EXISTS dvr_events_stream_ts_idx
+        ON dvr_events(stream_id, ts);
+    CREATE INDEX IF NOT EXISTS dvr_events_code_ts_idx
+        ON dvr_events(code, ts);
+    ]],
+    [[
+    ALTER TABLE dvr_backup_state ADD COLUMN recording_paused INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE dvr_backup_state ADD COLUMN last_state_seq INTEGER NOT NULL DEFAULT 0;
+
+    CREATE TABLE IF NOT EXISTS dvr_streams (
+        stream_id TEXT PRIMARY KEY,
+        name TEXT,
+        source_url TEXT NOT NULL,
+        record_enabled INTEGER NOT NULL DEFAULT 0,
+        retention_days INTEGER NOT NULL DEFAULT 3,
+        segment_sec INTEGER NOT NULL DEFAULT 3600,
+        recording_paused INTEGER NOT NULL DEFAULT 0,
+        last_state_seq INTEGER NOT NULL DEFAULT 0,
+        last_mode TEXT,
+        last_reason TEXT,
+        created_ts INTEGER NOT NULL DEFAULT 0,
+        updated_ts INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_remote_links (
+        stream_id TEXT NOT NULL,
+        dvr_server_id TEXT NOT NULL,
+        dvr_stream_id TEXT NOT NULL,
+        source_play_url TEXT NOT NULL,
+        updated_ts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (stream_id, dvr_server_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_remote_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        stream_id TEXT NOT NULL,
+        dvr_server_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        retries INTEGER NOT NULL DEFAULT 0,
+        next_retry_ts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_ts INTEGER NOT NULL DEFAULT 0,
+        updated_ts INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS dvr_remote_sync_state (
+        stream_id TEXT NOT NULL,
+        dvr_server_id TEXT NOT NULL,
+        last_state_seq INTEGER NOT NULL DEFAULT 0,
+        last_mode TEXT,
+        updated_ts INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (stream_id, dvr_server_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS dvr_streams_record_enabled_idx
+        ON dvr_streams(record_enabled, stream_id);
+    CREATE INDEX IF NOT EXISTS dvr_remote_links_server_idx
+        ON dvr_remote_links(dvr_server_id, stream_id);
+    CREATE INDEX IF NOT EXISTS dvr_remote_outbox_next_retry_idx
+        ON dvr_remote_outbox(next_retry_ts, id);
+    CREATE INDEX IF NOT EXISTS dvr_remote_outbox_server_idx
+        ON dvr_remote_outbox(dvr_server_id, id);
+    CREATE INDEX IF NOT EXISTS dvr_remote_sync_server_idx
+        ON dvr_remote_sync_state(dvr_server_id, stream_id);
+    ]],
+    [[
+    ALTER TABLE dvr_streams ADD COLUMN archive_path TEXT;
+    ]],
+    [[
+    ALTER TABLE dvr_streams ADD COLUMN config_json TEXT;
+    ]],
 }
 
 function config.init(opts)

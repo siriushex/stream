@@ -93,7 +93,7 @@ http_request = function(req)
   -- Partial aggregate map: only one stream has status here.
   if req.path == "/base/api/stream-status?t=1" and req.method == "GET" then
     return reply(200, {
-      a1 = { onair = true, bitrate = "1111Kbit/s", input_id = 1 },
+      a1 = { onair = true, bitrate = "1111Kbit/s", input_id = 1, cc_errors = 3, pes_errors = 1, updated_at = 1700000000 },
     })
   end
   if req.path == "/base/api/v1/stream-status?t=1" and req.method == "GET" then
@@ -104,7 +104,20 @@ http_request = function(req)
     return reply(200, { onair = true, bitrate = "1111Kbit/s", input_id = 1 })
   end
   if req.path == "/base/api/stream-status/b2?t=1" and req.method == "GET" then
-    return reply(200, { onair = true, bitrate = "2.222Mbit/s", input = "input #2" })
+    return reply(200, {
+      onair = true,
+      bitrate = "2.222Mbit/s",
+      input = "input #2",
+      cc_errors = 4,
+      pes_errors = 2,
+      transcode_state = "RUNNING",
+      transcode = {
+        output_bitrate_kbps = 1800,
+        output_cc_errors = 9,
+        output_pes_errors = 5,
+      },
+      updated_at = 1700000005,
+    })
   end
   if req.path == "/base/api/stream-status/c3?t=1" and req.method == "GET" then
     return reply(200, { onair = false, bitrate = "0Kbit/s", input_id = 1 })
@@ -156,8 +169,16 @@ for _, item in ipairs(payload.items) do
   by_id[item.id] = item
 end
 assert_true(by_id.a1 and tonumber(by_id.a1.bitrate_kbps) == 1111, "expected aggregate status for a1")
+assert_true(by_id.a1 and tonumber(by_id.a1.cc_errors) == 3, "expected aggregate cc_errors for a1")
+assert_true(by_id.a1 and tonumber(by_id.a1.pes_errors) == 1, "expected aggregate pes_errors for a1")
 assert_true(by_id.b2 and tonumber(by_id.b2.bitrate_kbps) == 2222, "expected per-stream status enrichment for b2")
 assert_true(by_id.b2 and tonumber(by_id.b2.active_input) == 2, "expected active_input parsed from string")
+assert_true(by_id.b2 and tonumber(by_id.b2.cc_errors) == 4, "expected per-stream cc_errors for b2")
+assert_true(by_id.b2 and tonumber(by_id.b2.pes_errors) == 2, "expected per-stream pes_errors for b2")
+assert_true(by_id.b2 and by_id.b2.transcode_state == "RUNNING", "expected transcode_state for b2")
+assert_true(by_id.b2 and type(by_id.b2.transcode) == "table", "expected transcode table for b2")
+assert_true(by_id.b2 and by_id.b2.transcode and tonumber(by_id.b2.transcode.output_cc_errors) == 9, "expected transcode output_cc_errors for b2")
+assert_true(by_id.b2 and by_id.b2.transcode and tonumber(by_id.b2.transcode.output_pes_errors) == 5, "expected transcode output_pes_errors for b2")
 assert_true(by_id.c3 and by_id.c3.on_air == false, "expected per-stream on_air for c3")
 
 local used_per_stream_b2 = false

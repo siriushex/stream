@@ -1221,6 +1221,47 @@ local function dp_normalize_backup_type(value, has_multiple)
     return "disabled"
 end
 
+local function dp_boolish(value)
+    if value == true or value == 1 then
+        return true
+    end
+    local text = tostring(value or ""):lower()
+    return text == "1" or text == "true" or text == "yes" or text == "on"
+end
+
+local function dp_input_contains_dvr_play(input_list)
+    if type(input_list) ~= "table" then
+        return false
+    end
+    for _, entry in ipairs(input_list) do
+        local url = nil
+        if type(entry) == "string" then
+            url = entry
+        elseif type(entry) == "table" then
+            if type(entry.url) == "string" and entry.url ~= "" then
+                url = entry.url
+            elseif type(entry.source_url) == "string" and entry.source_url ~= "" then
+                url = entry.source_url
+            end
+        end
+        if type(url) == "string" and url:find("/dvr/play/", 1, true) ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
+local function dp_should_force_dvr_backup_passive(cfg)
+    if type(cfg) ~= "table" then
+        return false
+    end
+    local dvr_cfg = type(cfg.dvr) == "table" and cfg.dvr or nil
+    if type(dvr_cfg) ~= "table" or not dp_boolish(dvr_cfg.backup_enabled) then
+        return false
+    end
+    return dp_input_contains_dvr_play(cfg.input)
+end
+
 local function dp_read_number_opt(obj, key1, key2)
     if type(obj) ~= "table" then
         return nil
@@ -1238,6 +1279,9 @@ local function dp_backup_conf_from_stream_cfg(cfg, inputs_count)
         return nil
     end
     local backup_type = dp_normalize_backup_type(cfg and cfg.backup_type, inputs_count > 1)
+    if backup_type ~= "passive" and dp_should_force_dvr_backup_passive(cfg) then
+        backup_type = "passive"
+    end
     if backup_type == "disabled" then
         return nil
     end

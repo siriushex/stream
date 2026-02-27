@@ -1762,7 +1762,8 @@ function http_auth_check(request)
     -- - explicit query flag (?internal=1)
     -- - /play/*, /live/*, /input/* only
     local path = request and request.path or ""
-    if path:sub(1, 6) == "/play/" or path:sub(1, 6) == "/live/" or path:sub(1, 7) == "/input/" then
+    if path:sub(1, 6) == "/play/" or path:sub(1, 10) == "/dvr/play/"
+        or path:sub(1, 6) == "/live/" or path:sub(1, 7) == "/input/" then
         local ip = request and request.addr or ""
         local headers = request and request.headers or {}
         local query = request and request.query or nil
@@ -1873,6 +1874,22 @@ function init_input(conf)
     if conf.pnr ~= nil then
         if conf.cam and conf.cam ~= true then conf.cas = true end
 
+        local function normalize_filter_csv(value)
+            if value == nil then
+                return nil
+            end
+            if type(value) == "table" then
+                return value
+            end
+            if type(value) == "string" then
+                return string.split(value, ",")
+            end
+            return nil
+        end
+
+        local filter_list = normalize_filter_csv(conf.filter)
+        local filter_keep_list = normalize_filter_csv(conf["filter~"])
+
         instance.channel = channel({
             upstream = instance.tail:stream(),
             name = conf.name,
@@ -1888,8 +1905,8 @@ function init_input(conf)
             service_provider = conf.service_provider,
             service_name = conf.service_name,
             map = conf.map,
-            filter = string.split(conf.filter, ","),
-            ["filter~"] = string.split(conf["filter~"], ","),
+            filter = filter_list,
+            ["filter~"] = filter_keep_list,
             no_reload = conf.no_reload,
         })
         instance.tail = instance.channel
@@ -5431,6 +5448,10 @@ function build_dash_bridge_args(conf, selection, dns_ctx)
     local rw_timeout_us = math.floor(math.max(1, rw_timeout_ms) * 1000)
     args[#args + 1] = "-rw_timeout"
     args[#args + 1] = tostring(rw_timeout_us)
+    -- Emit structured progress to stderr. dash_poll_bridge tracks out_time_us
+    -- to detect real media flow and avoid false no-data restarts.
+    args[#args + 1] = "-progress"
+    args[#args + 1] = "pipe:2"
 
     local ua = conf.dash_user_agent or conf.user_agent or conf.ua
     if ua and tostring(ua) ~= "" then
@@ -5775,7 +5796,26 @@ local function dash_poll_bridge(state)
     if state.proc then
         local chunk = state.proc:read_stderr()
         if chunk and chunk ~= "" then
+            local now_ts = os.time()
             for line in tostring(chunk):gmatch("[^\r\n]+") do
+                local out_time_us = tonumber(tostring(line):match("^out_time_us=(%-?%d+)$"))
+                if out_time_us and out_time_us > 0 then
+                    local prev_out = tonumber(state.last_out_time_us) or 0
+                    if out_time_us > prev_out then
+                        state.last_out_time_us = out_time_us
+                        if state.net then
+                            state.net.last_recv_ts = now_ts
+                            if state.net.state ~= "running" then
+                                net_mark_ok(state.net)
+                                net_emit(state.conf, state.net)
+                            end
+                        end
+                        dash_update_status(state, {
+                            last_out_time_us = out_time_us,
+                            last_progress_ts = now_ts,
+                        })
+                    end
+                end
                 dash_tail_push(state, line)
             end
         end
@@ -5912,6 +5952,8 @@ init_input_module.dash = function(conf)
             max_no_data_sec = nil,
             run_age_sec = nil,
             no_data_age_sec = nil,
+            last_out_time_us = nil,
+            last_progress_ts = nil,
         },
     }
     conf.__dash_status = state.status

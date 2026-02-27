@@ -8647,6 +8647,36 @@ function transcode.get_status_lite(id)
     if not (input_bitrate_kbps and input_bitrate_kbps > 0) then
         input_bitrate_kbps = pick_loop_channel_input_bitrate_kbps(job)
     end
+    local output_cc_errors = 0
+    local output_pes_errors = 0
+    local output_scrambled = false
+    local output_updated_at = 0
+    for _, output_state in ipairs(job.output_monitors or {}) do
+        local cc_errors = tonumber(output_state and output_state.cc_errors) or 0
+        local pes_errors = tonumber(output_state and output_state.pes_errors) or 0
+        if cc_errors > 0 then
+            output_cc_errors = output_cc_errors + cc_errors
+        end
+        if pes_errors > 0 then
+            output_pes_errors = output_pes_errors + pes_errors
+        end
+        local scr_errors = tonumber(output_state and output_state.scrambled_errors) or 0
+        if (output_state and output_state.scrambled_active == true) or scr_errors > 0 then
+            output_scrambled = true
+        end
+        local ts = tonumber(output_state and output_state.cc_errors_ts)
+            or tonumber(output_state and output_state.pes_errors_ts)
+            or tonumber(output_state and output_state.scrambled_errors_ts)
+            or tonumber(output_state and output_state.last_probe_ts)
+            or 0
+        if ts > output_updated_at then
+            output_updated_at = ts
+        end
+    end
+    local updated_at = tonumber(job.last_progress_ts) or tonumber(job.start_ts) or 0
+    if output_updated_at > updated_at then
+        updated_at = output_updated_at
+    end
     return {
         id = job.id,
         name = job.name,
@@ -8679,9 +8709,12 @@ function transcode.get_status_lite(id)
         error_since_ts = job.error_since_ts,
         error_rearm_ts = job.error_rearm_ts,
         error_reason = job.error_reason,
+        output_cc_errors = output_cc_errors,
+        output_pes_errors = output_pes_errors,
+        output_scrambled = output_scrambled,
         gpu_overload_active = job.gpu_overload_active or false,
         gpu_overload_reason = job.gpu_overload_reason,
-        updated_at = job.last_progress_ts or job.start_ts,
+        updated_at = updated_at,
     }
 end
 
