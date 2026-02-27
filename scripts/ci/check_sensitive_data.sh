@@ -74,7 +74,7 @@ trap cleanup EXIT
 
 violations=0
 
-path_block_re='(^|/)(data(_[^/]+)?|site|stream-diag-[^/]+)(/|$)|(^|/)\.env(\..*)?$|(^|/)(id_rsa|id_ed25519)(\.pub)?$|(^|/).*\.(log|db|sqlite|sqlite3|pem|key|p12|pfx)$'
+path_block_re='(^|/)(data(_[^/]+)?|site|stream-diag-[^/]+)(/|$)|(^|/)\.env(\..*)?$|(^|/)(id_rsa|id_ed25519)(\.pub)?$|(^|/).*\.(log|db|sqlite|sqlite3|pem|key|p12|pfx)$|(^|/)(AGENTS\.md|AI_NOTES\.md|Stream\.sublime-project|generate_art\.py|scenario_writer\.py|hlssplitter_20200305\.tar\.bz2|astra-241024|astra-250612|astra-linux-amd64|astra-linux-ubuntu22\.04|astra-macos-arm64)$'
 
 declare -a content_checks=(
   '-----BEGIN [A-Z ]*PRIVATE KEY-----|Private key material'
