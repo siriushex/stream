@@ -48,8 +48,14 @@ __pycache__/
 # Perf tool outputs.
 /tools/perf/results/
 
-# Keep repository code-only (no local docs/manuals/log dumps/ops notes).
-/docs/
+# Keep repository code-only (no local docs/manuals/log dumps/ops notes),
+# but allow governance docs required by AGENTS.md workflow.
+/docs/*
+!/docs/ARCHITECTURE.md
+!/docs/INVARIANTS.md
+!/docs/PLAN.md
+!/docs/DEVOPS.md
+!/docs/SECURITY_REVIEW.md
 /site/
 /overrides/
 /mkdocs.yml
@@ -75,3 +81,22 @@ __pycache__/
 flussonic.conf
 *.db
 *.sqlite
+
+# Private/local-only governance and operator notes (do not publish).
+/AGENTS.md
+/AI_NOTES.md
+
+# Local IDE/project artifacts.
+/Stream.sublime-project
+
+# Local helper scripts and archives not required for source build.
+/generate_art.py
+/scenario_writer.py
+/hlssplitter_20200305.tar.bz2
+
+# Local binaries (publish via releases/site, not source repo).
+/astra-241024
+/astra-250612
+/astra-linux-amd64
+/astra-linux-ubuntu22.04
+/astra-macos-arm64
