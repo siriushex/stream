@@ -5411,6 +5411,10 @@ button.stream-audio-fix-toggle:disabled {
   min-width: 40px;
 }
 
+.input-kind-badge-inline.is-empty {
+  visibility: hidden;
+}
+
 .input-status-row.state-active .input-badge {
   color: var(--success);
   border-color: var(--success);

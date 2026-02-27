@@ -16469,9 +16469,9 @@ function renderInputList() {
 
     const syncKindBadge = () => {
       const kindLabel = getInputKindLabelFromUrl(input.value);
-      kindBadge.textContent = kindLabel;
-      kindBadge.hidden = !kindLabel;
+      kindBadge.textContent = kindLabel || 'DVR';
       kindBadge.classList.toggle('is-dvr', kindLabel === 'DVR');
+      kindBadge.classList.toggle('is-empty', !kindLabel);
     };
 
     syncKindBadge();
