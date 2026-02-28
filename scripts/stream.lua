@@ -860,11 +860,40 @@ local function stream_input_contains_dvr_play(input_list)
                 url = entry.config.url
             end
         end
-        if type(url) == "string" and url:find("/dvr/play/", 1, true) ~= nil then
+        if type(url) == "string"
+            and (url:find("/dvr/play/", 1, true) ~= nil
+                or url:find("/dvr/internal/play/", 1, true) ~= nil)
+        then
             return true
         end
     end
     return false
+end
+
+local function stream_is_dvr_play_url(url)
+    local text = tostring(url or "")
+    if text == "" then
+        return false
+    end
+    return text:find("/dvr/play/", 1, true) ~= nil
+        or text:find("/dvr/internal/play/", 1, true) ~= nil
+end
+
+local function stream_resolve_input_url(entry)
+    if type(entry) ~= "table" then
+        return nil
+    end
+    if type(entry.source_url) == "string" and entry.source_url ~= "" then
+        return entry.source_url
+    end
+    if type(entry.url) == "string" and entry.url ~= "" then
+        return entry.url
+    end
+    local cfg = type(entry.config) == "table" and entry.config or nil
+    if cfg and type(cfg.url) == "string" and cfg.url ~= "" then
+        return cfg.url
+    end
+    return nil
 end
 
 local function should_force_dvr_backup_passive(channel_config, input_list)
@@ -2744,17 +2773,23 @@ end
 
 local function schedule_probe(channel_data, now, keep_connected)
     local fo = channel_data.failover
-    if not fo or not is_active_backup_mode(fo.mode) then
+    if not fo then
+        return
+    end
+    local active_id = channel_data.active_input_id or 0
+    local active_input = active_id > 0 and channel_data.input and channel_data.input[active_id] or nil
+    local active_url = stream_resolve_input_url(active_input)
+    local passive_dvr_recovery_probe = fo.mode == "passive"
+        and active_id > 1
+        and stream_is_dvr_play_url(active_url)
+
+    if not is_active_backup_mode(fo.mode) and not passive_dvr_recovery_probe then
         return
     end
     -- В Active Backup не делаем фоновые probing, пока активный вход OK:
     -- это лишняя нагрузка и противоречит принципу "следующие входы не трогаем, пока текущий работает".
-    local active_id = channel_data.active_input_id or 0
-    if active_id > 0 then
-        local active_input = channel_data.input and channel_data.input[active_id] or nil
-        if active_input and active_input.is_ok then
-            return
-        end
+    if active_id > 0 and active_input and active_input.is_ok and not passive_dvr_recovery_probe then
+        return
     end
     local probe_interval = tonumber(fo.probe_interval) or 0
     if probe_interval <= 0
@@ -2785,7 +2820,10 @@ local function schedule_probe(channel_data, now, keep_connected)
 
     local candidates = {}
     for idx, input_data in ipairs(channel_data.input) do
-        if not keep_connected[idx] and not input_data.input then
+        if not keep_connected[idx]
+            and not input_data.input
+            and (not passive_dvr_recovery_probe or idx < active_id)
+        then
             table.insert(candidates, idx)
         end
     end
@@ -3017,8 +3055,8 @@ local function channel_failover_tick(channel_data)
     end
 
     if passive_mode then
-        fo.return_pending = nil
         if active_id == 0 then
+            fo.return_pending = nil
             if fo.passive_state ~= "FAILOVER_SEARCH" then
                 log.info("[stream " .. get_stream_label(channel_data) .. "] passive: no active input, searching")
             end
@@ -3039,15 +3077,43 @@ local function channel_failover_tick(channel_data)
         end
         local active_input = active_id > 0 and channel_data.input[active_id] or nil
         local active_ok = active_input and active_input.is_ok
+        local active_url = stream_resolve_input_url(active_input)
+        local active_is_dvr_backup = active_id > 1 and stream_is_dvr_play_url(active_url)
         if active_ok then
-            if fo.passive_state ~= "RUNNING_OK" then
-                log.info("[stream " .. get_stream_label(channel_data) .. "] passive: input #" ..
-                    tostring(active_id) .. " OK, staying until fault")
-            end
+            local prev_passive_state = fo.passive_state
             fo.passive_state = "RUNNING_OK"
             fo.passive_cycle_start_id = nil
-            fo.next_probe_ts = nil
+            if active_is_dvr_backup then
+                local target_id = 1
+                local target = channel_data.input[target_id]
+                if target and target.is_ok and target.ok_since and (now - target.ok_since) >= fo.stable_ok then
+                    if not fo.return_pending or fo.return_pending.target ~= target_id then
+                        fo.return_pending = {
+                            target = target_id,
+                            ready_at = now + fo.return_delay,
+                            reason = "dvr_backup_return_primary",
+                        }
+                        log.info("[stream " .. get_stream_label(channel_data) .. "] passive: primary recovered, scheduling return from DVR backup")
+                    end
+                else
+                    if fo.return_pending and fo.return_pending.target == target_id then
+                        fo.return_pending = nil
+                    end
+                end
+                if fo.return_pending and fo.return_pending.target == target_id and now >= fo.return_pending.ready_at then
+                    channel_activate_input(channel_data, fo.return_pending.target, fo.return_pending.reason)
+                    fo.return_pending = nil
+                end
+            else
+                if prev_passive_state ~= "RUNNING_OK" then
+                    log.info("[stream " .. get_stream_label(channel_data) .. "] passive: input #" ..
+                        tostring(active_id) .. " OK, staying until fault")
+                end
+                fo.return_pending = nil
+                fo.next_probe_ts = nil
+            end
         else
+            fo.return_pending = nil
             if fo.passive_state ~= "FAILOVER_SEARCH" then
                 local reason = active_input and active_input.last_error or "no_data"
                 log.info("[stream " .. get_stream_label(channel_data) .. "] passive: active input fault (" ..

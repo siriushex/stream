@@ -153,7 +153,8 @@ Fallback: при недоступности отдельной БД чтение
     - `/api/v1/dvr/backup/cycle/rebuild-bulk`.
 - Local single-server mode:
   - `dvr.configure()` запускает локальный writer/retention tick;
-  - `/dvr/play/<stream_id>` отдает архивный сегмент через backup cycle/cursor (`anti-repeat`);
+  - `/dvr/internal/play/<stream_id>` (и legacy `/dvr/play/<stream_id>?internal=1`) отдает архивный сегмент через backup cycle/cursor (`anti-repeat`);
+  - `/dvr/archive/play/<stream_id>` отдает архивный сегмент stateless (без изменения backup cursor/cycle);
   - при disconnect `backup_commit_progress` фиксирует прогресс сегмента (lock+duration estimate), что дает resume без повтора внутри цикла.
   - backup-start policy поддерживает два режима:
     - `sequential` (дефолт, с последнего непроигранного сегмента),

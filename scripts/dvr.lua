@@ -567,6 +567,75 @@ function dvr.settings_for_stream(stream_cfg)
         backup_start_offset_hours = 0
     end
 
+    local backup_fail_checks = dvr_number(cfg.backup_fail_checks, nil, 1)
+    if backup_fail_checks == nil then
+        backup_fail_checks = dvr_number(
+            dvr_setting_alias({ "dvr_backup_fail_checks", "dvr.backup_fail_checks" }, 3),
+            3,
+            1
+        )
+    end
+
+    local backup_recover_checks = dvr_number(cfg.backup_recover_checks, nil, 1)
+    if backup_recover_checks == nil then
+        backup_recover_checks = dvr_number(
+            dvr_setting_alias({ "dvr_backup_recover_checks", "dvr.backup_recover_checks" }, 5),
+            5,
+            1
+        )
+    end
+
+    local backup_min_rearm_sec = dvr_number(cfg.backup_min_rearm_sec, nil, 0)
+    if backup_min_rearm_sec == nil then
+        backup_min_rearm_sec = dvr_number(
+            dvr_setting_alias({ "dvr_backup_min_rearm_sec", "dvr.backup_min_rearm_sec" }, 120),
+            120,
+            0
+        )
+    end
+
+    local min_free_gb = dvr_number(cfg.min_free_gb, nil, 0)
+    if min_free_gb == nil then
+        min_free_gb = dvr_number(
+            dvr_setting_alias({ "dvr_min_free_gb", "dvr.min_free_gb" }, 0),
+            0,
+            0
+        )
+    end
+
+    local max_storage_gb = dvr_number(cfg.max_storage_gb, nil, 0)
+    if max_storage_gb == nil then
+        max_storage_gb = dvr_number(
+            dvr_setting_alias({ "dvr_max_storage_gb", "dvr.max_storage_gb" }, 0),
+            0,
+            0
+        )
+    end
+
+    local high_watermark_pct = dvr_number(cfg.high_watermark_pct, nil, 0)
+    if high_watermark_pct == nil then
+        high_watermark_pct = dvr_number(
+            dvr_setting_alias({ "dvr_high_watermark_pct", "dvr.high_watermark_pct" }, 0),
+            0,
+            0
+        )
+    end
+    if high_watermark_pct > 100 then
+        high_watermark_pct = 100
+    end
+
+    local low_watermark_pct = dvr_number(cfg.low_watermark_pct, nil, 0)
+    if low_watermark_pct == nil then
+        low_watermark_pct = dvr_number(
+            dvr_setting_alias({ "dvr_low_watermark_pct", "dvr.low_watermark_pct" }, 0),
+            0,
+            0
+        )
+    end
+    if low_watermark_pct > 100 then
+        low_watermark_pct = 100
+    end
+
     local archive_path = dvr_normalize_archive_path(cfg.path or cfg.archive_path)
     if not archive_path then
         archive_path = dvr_normalize_archive_path(
@@ -588,6 +657,13 @@ function dvr.settings_for_stream(stream_cfg)
         min_partial_sec = math.floor(min_partial_sec),
         backup_start_mode = backup_start_mode,
         backup_start_offset_hours = backup_start_offset_hours,
+        backup_fail_checks = math.floor(backup_fail_checks),
+        backup_recover_checks = math.floor(backup_recover_checks),
+        backup_min_rearm_sec = math.floor(backup_min_rearm_sec),
+        min_free_gb = tonumber(min_free_gb) or 0,
+        max_storage_gb = tonumber(max_storage_gb) or 0,
+        high_watermark_pct = tonumber(high_watermark_pct) or 0,
+        low_watermark_pct = tonumber(low_watermark_pct) or 0,
     }
 end
 
@@ -715,6 +791,85 @@ function dvr.list_segments(stream_id, from_ts, to_ts, include_partial, limit)
         row.is_complete = tonumber(row.is_complete) == 1
     end
     return rows
+end
+
+function dvr.select_archive_segment(stream_id, opts)
+    opts = opts or {}
+    local sid = dvr_trim(stream_id)
+    if sid == "" then
+        return nil, "stream_id is required"
+    end
+    local include_partial = dvr_bool(opts.include_partial, false) == true
+    local from_ts = tonumber(opts.from_ts)
+    local min_partial_sec = math.floor(dvr_number(opts.min_partial_sec, 30, 1))
+    local where = {
+        "stream_id='" .. dvr_sql_escape(sid) .. "'",
+    }
+    if include_partial then
+        where[#where + 1] = "(is_complete=1 OR (is_complete=0 AND (seg_end_ts - seg_start_ts) >= " .. min_partial_sec .. "))"
+    else
+        where[#where + 1] = "is_complete=1"
+    end
+    if from_ts and from_ts > 0 then
+        where[#where + 1] = "seg_start_ts<=" .. math.floor(from_ts)
+    end
+    local where_sql = table.concat(where, " AND ")
+    local rows = dvr_db_query("SELECT * FROM dvr_segments WHERE " .. where_sql ..
+        " ORDER BY seg_start_ts DESC LIMIT 1;") or {}
+    if #rows == 0 and dvr_bool(opts.fallback_oldest, true) == true then
+        local where_oldest = {
+            "stream_id='" .. dvr_sql_escape(sid) .. "'",
+        }
+        if include_partial then
+            where_oldest[#where_oldest + 1] = "(is_complete=1 OR (is_complete=0 AND (seg_end_ts - seg_start_ts) >= " .. min_partial_sec .. "))"
+        else
+            where_oldest[#where_oldest + 1] = "is_complete=1"
+        end
+        rows = dvr_db_query("SELECT * FROM dvr_segments WHERE " .. table.concat(where_oldest, " AND ") ..
+            " ORDER BY seg_start_ts ASC LIMIT 1;") or {}
+    end
+    if #rows == 0 then
+        return nil, "no segments"
+    end
+    local row = rows[1]
+    row.seg_start_ts = tonumber(row.seg_start_ts) or 0
+    row.seg_end_ts = tonumber(row.seg_end_ts) or row.seg_start_ts
+    row.size_bytes = tonumber(row.size_bytes) or 0
+    row.is_complete = tonumber(row.is_complete) == 1
+    local path = dvr_trim(row.path)
+    local size = math.floor(tonumber(row.size_bytes) or 0)
+    if size <= 0 and path ~= "" and utils and type(utils.stat) == "function" then
+        local st = utils.stat(path)
+        if st and not st.error then
+            size = math.floor(tonumber(st.size) or 0)
+        end
+    end
+    if size <= 0 and path ~= "" and path:sub(-8) == ".part.ts" and utils and type(utils.stat) == "function" then
+        local alt_path = path:sub(1, -9) .. ".ts"
+        local alt_st = utils.stat(alt_path)
+        local alt_size = (alt_st and not alt_st.error) and math.floor(tonumber(alt_st.size) or 0) or 0
+        if alt_size > 0 then
+            path = alt_path
+            size = alt_size
+        end
+    end
+    if size <= 0 then
+        return nil, "segment not found"
+    end
+    row.path = path
+    row.size_bytes = size
+    local offset_sec = 0
+    if from_ts and from_ts > row.seg_start_ts then
+        offset_sec = math.floor(from_ts - row.seg_start_ts)
+    end
+    if offset_sec < 0 then
+        offset_sec = 0
+    end
+    return {
+        stream_id = sid,
+        segment = row,
+        cursor_offset_sec = offset_sec,
+    }
 end
 
 function dvr.cleanup_segments(stream_id, retention_days, keep_seg_start_ts)
@@ -990,6 +1145,53 @@ function dvr.get_backup_state_for_api(stream_id)
     if state and tonumber(state.cursor_seg_start_ts) and tonumber(state.cursor_seg_start_ts) > 0 then
         current = dvr.get_segment(sid, tonumber(state.cursor_seg_start_ts))
     end
+    local seg_meta_rows = dvr_db_query("SELECT " ..
+        "COUNT(*) AS total, " ..
+        "SUM(CASE WHEN is_complete=1 THEN 1 ELSE 0 END) AS complete_total, " ..
+        "MAX(seg_end_ts) AS last_seg_end_ts, " ..
+        "MAX(updated_ts) AS last_write_ts " ..
+        "FROM dvr_segments WHERE stream_id='" .. dvr_sql_escape(sid) .. "';") or {}
+    local seg_meta = seg_meta_rows[1] or {}
+    local segments_total = tonumber(seg_meta.total) or 0
+    local segments_ready = tonumber(seg_meta.complete_total) or 0
+    local last_seg_end_ts = tonumber(seg_meta.last_seg_end_ts) or 0
+    local last_write_ts = tonumber(seg_meta.last_write_ts) or 0
+    local archive_lag_sec = 0
+    if last_seg_end_ts > 0 then
+        archive_lag_sec = math.max(0, os.time() - last_seg_end_ts)
+    end
+
+    local storage = nil
+    local stream_row = dvr.get_stream(sid)
+    local archive_root = dvr_normalize_archive_path(stream_row and stream_row.archive_path or nil)
+    if not archive_root and config and type(config.get_stream) == "function" then
+        local local_row = config.get_stream(sid)
+        if local_row and type(local_row.config) == "table" then
+            local local_settings = dvr.settings_for_stream(local_row.config)
+            archive_root = dvr_normalize_archive_path(local_settings and local_settings.archive_path or nil)
+        end
+    end
+    if not archive_root then
+        local data_dir = (config and config.data_dir) or "./data"
+        archive_root = dvr_join_path(data_dir, "dvr")
+    end
+    local st = dvr_statvfs(archive_root)
+    if st then
+        storage = {
+            archive_path = archive_root,
+            free_bytes = tonumber(st.avail_bytes) or 0,
+            total_bytes = tonumber(st.total_bytes) or 0,
+            used_percent = tonumber(st.used_percent) or 0,
+        }
+    else
+        storage = {
+            archive_path = archive_root,
+            free_bytes = 0,
+            total_bytes = 0,
+            used_percent = 0,
+        }
+    end
+
     return {
         stream_id = sid,
         mode = state.mode or "LIVE",
@@ -1005,6 +1207,12 @@ function dvr.get_backup_state_for_api(stream_id)
         done_count = counts.done or 0,
         playing_count = counts.playing or 0,
         skipped_count = counts.skipped or 0,
+        segments_total = segments_total,
+        segments_ready = segments_ready,
+        last_segment_end_ts = last_seg_end_ts,
+        last_write_ts = last_write_ts,
+        archive_lag_sec = archive_lag_sec,
+        storage = storage,
     }
 end
 
@@ -2260,7 +2468,11 @@ local dvr_local_writer_state = dvr_local_writer_state or {
     remote_streams = {},
     remote_runtime = {},
     fault_since = {},
+    fault_checks = {},
     recover_since = {},
+    recover_checks = {},
+    last_switch_ts = {},
+    storage_blocked = {},
     stream_touch = {},
     remote_open_fail_ts = {},
     remote_open_retry_until = {},
@@ -2364,7 +2576,10 @@ local function dvr_with_internal_loopback_flag(raw_url)
         return text
     end
     local path = dvr_trim(parsed.path)
-    if path:find("^/play/") ~= 1 and path:find("^/dvr/play/") ~= 1 then
+    if path:find("^/play/") ~= 1
+        and path:find("^/dvr/play/") ~= 1
+        and path:find("^/dvr/internal/play/") ~= 1
+    then
         return text
     end
     local sep = text:find("%?", 1, true) and "&" or "?"
@@ -2377,6 +2592,9 @@ function dvr.is_local_backup_input_url(raw)
         return false
     end
     text = text:lower()
+    if text:find("/dvr/internal/play/", 1, true) ~= nil then
+        return true
+    end
     return text:find("/dvr/play/", 1, true) ~= nil
 end
 
@@ -2438,6 +2656,7 @@ local function dvr_update_local_state(stream_id, stream_cfg, settings, mode, pau
         return
     end
     local state = dvr.get_backup_state(sid)
+    local prev_mode = tostring(state.mode or "LIVE")
     local normalized_mode = tostring(mode or "LIVE")
     local normalized_paused = paused == true
     local normalized_reason = reason and tostring(reason) or nil
@@ -2449,6 +2668,12 @@ local function dvr_update_local_state(stream_id, stream_cfg, settings, mode, pau
         and tostring(state.last_reason or "") == tostring(normalized_reason or "")
     then
         return
+    end
+
+    if prev_mode ~= normalized_mode then
+        dvr_local_writer_state.last_switch_ts[sid] = os.time()
+        dvr_local_writer_state.fault_checks[sid] = 0
+        dvr_local_writer_state.recover_checks[sid] = 0
     end
 
     dvr.save_backup_state(sid, {
@@ -2581,8 +2806,12 @@ local function dvr_writer_finalize(writer, reason)
     end
 
     local elapsed = now - (tonumber(writer.seg_start_ts) or now)
+    if elapsed < 0 then
+        elapsed = 0
+    end
     local complete = elapsed >= (3600 - (tonumber(writer.segment_guard_sec) or 3))
-    if reason == "paused" or reason == "offline" or reason == "disabled" then
+    local is_gap = (reason == "paused" or reason == "offline" or reason == "storage_guard")
+    if is_gap or reason == "disabled" then
         complete = false
     end
     local size = dvr_writer_stat_size(final_path)
@@ -2612,6 +2841,17 @@ local function dvr_writer_finalize(writer, reason)
         created_ts = writer.created_ts,
         updated_ts = now,
     })
+    if is_gap then
+        dvr.add_event(writer.stream_id, "DVR_RECORD_GAP", "WARN",
+            "recording paused with incomplete segment", {
+                seg_start_ts = writer.seg_start_ts,
+                seg_end_ts = now,
+                duration_sec = elapsed,
+                path = final_path,
+                reason = reason,
+                incomplete = true,
+            })
+    end
     dvr.cleanup_segments(writer.stream_id, writer.retention_days, nil)
 end
 
@@ -2684,7 +2924,117 @@ local function dvr_writer_open_remote(stream_row, settings, now)
     return writer
 end
 
-local function dvr_writer_flush_and_cleanup(writer, now)
+local function dvr_storage_usage_bytes(stream_id)
+    local sid = dvr_trim(stream_id)
+    if sid == "" then
+        return 0
+    end
+    local rows = dvr_db_query("SELECT SUM(size_bytes) AS total FROM dvr_segments WHERE stream_id='" ..
+        dvr_sql_escape(sid) .. "';") or {}
+    local total = tonumber(rows[1] and rows[1].total) or 0
+    if total < 0 then
+        total = 0
+    end
+    return math.floor(total)
+end
+
+local function dvr_cleanup_oldest_segment(stream_id, keep_seg_start_ts)
+    local sid = dvr_trim(stream_id)
+    if sid == "" then
+        return false
+    end
+    local where = "stream_id='" .. dvr_sql_escape(sid) .. "'"
+    if tonumber(keep_seg_start_ts) then
+        where = where .. " AND seg_start_ts<>" .. math.floor(tonumber(keep_seg_start_ts))
+    end
+    local rows = dvr_db_query("SELECT id, path FROM dvr_segments WHERE " .. where ..
+        " ORDER BY seg_start_ts ASC LIMIT 1;") or {}
+    if #rows == 0 then
+        return false
+    end
+    local row = rows[1]
+    if row.path and row.path ~= "" then
+        pcall(os.remove, tostring(row.path))
+    end
+    local id = tonumber(row.id) or 0
+    if id <= 0 then
+        return false
+    end
+    local ok = dvr_db_exec("DELETE FROM dvr_segments WHERE id=" .. id .. ";")
+    return ok == true
+end
+
+local function dvr_storage_guard(stream_id, settings, keep_seg_start_ts)
+    if type(settings) ~= "table" then
+        return false, nil
+    end
+    local min_free_bytes = math.floor(math.max(0, tonumber(settings.min_free_gb) or 0) * 1024 * 1024 * 1024)
+    local max_usage_bytes = math.floor(math.max(0, tonumber(settings.max_storage_gb) or 0) * 1024 * 1024 * 1024)
+    local high_pct = math.max(0, math.floor(tonumber(settings.high_watermark_pct) or 0))
+    local low_pct = math.max(0, math.floor(tonumber(settings.low_watermark_pct) or 0))
+    if low_pct <= 0 or low_pct > high_pct then
+        low_pct = math.max(1, high_pct - 5)
+    end
+    local archive_root = dvr_normalize_archive_path(settings.archive_path)
+    if not archive_root then
+        local data_dir = (config and config.data_dir) or "./data"
+        archive_root = dvr_join_path(data_dir, "dvr")
+    end
+
+    local function need_cleanup()
+        local st = dvr_statvfs(archive_root)
+        local usage = dvr_storage_usage_bytes(stream_id)
+        local reason = nil
+        if max_usage_bytes > 0 and usage >= max_usage_bytes then
+            reason = "max_storage"
+        end
+        if not reason and min_free_bytes > 0 and st and st.avail_bytes < min_free_bytes then
+            reason = "min_free"
+        end
+        if not reason and high_pct > 0 and st and st.used_percent and st.used_percent >= high_pct then
+            reason = "high_watermark"
+        end
+        return reason, st, usage
+    end
+
+    local reason, st, usage = need_cleanup()
+    if not reason then
+        return false, {
+            reason = nil,
+            free_bytes = st and st.avail_bytes or 0,
+            total_bytes = st and st.total_bytes or 0,
+            used_percent = st and st.used_percent or 0,
+            usage_bytes = usage or 0,
+        }
+    end
+
+    local deleted = 0
+    for _ = 1, 256 do
+        local removed = dvr_cleanup_oldest_segment(stream_id, keep_seg_start_ts)
+        if not removed then
+            break
+        end
+        deleted = deleted + 1
+        reason, st, usage = need_cleanup()
+        if not reason then
+            break
+        end
+        if st and st.used_percent and high_pct > 0 and st.used_percent <= low_pct then
+            break
+        end
+    end
+    reason, st, usage = need_cleanup()
+    return reason ~= nil, {
+        reason = reason,
+        deleted = deleted,
+        free_bytes = st and st.avail_bytes or 0,
+        total_bytes = st and st.total_bytes or 0,
+        used_percent = st and st.used_percent or 0,
+        usage_bytes = usage or 0,
+    }
+end
+
+local function dvr_writer_flush_and_cleanup(writer, now, settings)
     local flush_sec = math.max(1, tonumber(writer.writer_flush_sec) or 5)
     if (now - (tonumber(writer.last_flush_ts) or 0)) >= flush_sec then
         writer.last_flush_ts = now
@@ -2694,7 +3044,14 @@ local function dvr_writer_flush_and_cleanup(writer, now)
     if (now - (tonumber(writer.last_cleanup_ts) or 0)) >= 60 then
         writer.last_cleanup_ts = now
         dvr.cleanup_segments(writer.stream_id, writer.retention_days, writer.seg_start_ts)
+        local blocked, storage = dvr_storage_guard(writer.stream_id, settings, writer.seg_start_ts)
+        if blocked then
+            dvr.add_event(writer.stream_id, "DVR_STORAGE_GUARD", "ERROR",
+                "storage pressure, recording paused", storage or {})
+            return nil, "storage_guard"
+        end
     end
+    return true
 end
 
 local function dvr_remote_writer_update_status(sid, writer, source_url, settings, now, forced_error)
@@ -2880,7 +3237,13 @@ local function dvr_remote_writer_tick(stream_row, default_settings)
             })
     end
 
-    dvr_writer_flush_and_cleanup(writer, now)
+    local flush_ok, flush_err = dvr_writer_flush_and_cleanup(writer, now, settings)
+    if not flush_ok then
+        dvr_writer_finalize(writer, flush_err or "storage_guard")
+        dvr_local_writer_state.remote_streams[sid] = nil
+        dvr_remote_writer_update_status(sid, nil, source_url, settings, now, flush_err or "storage_guard")
+        return
+    end
     dvr_remote_writer_update_status(sid, writer, source_url, settings, now, nil)
 end
 
@@ -2949,10 +3312,16 @@ local function dvr_local_detect_mode(stream_id, stream_cfg, status, settings)
     local on_air = status and status.on_air == true
     local last_error = tostring(status and status.last_error or "")
     local now = os.time()
+    local fail_checks_required = math.max(1, math.floor(tonumber(settings and settings.backup_fail_checks) or 3))
+    local recover_checks_required = math.max(1, math.floor(tonumber(settings and settings.backup_recover_checks) or 5))
+    local min_rearm_sec = math.max(0, math.floor(tonumber(settings and settings.backup_min_rearm_sec) or 120))
+    local last_switch_ts = tonumber(dvr_local_writer_state.last_switch_ts[sid]) or 0
 
     if dvr.is_local_backup_input_url(active_url) then
         dvr_local_writer_state.fault_since[sid] = nil
         dvr_local_writer_state.recover_since[sid] = nil
+        dvr_local_writer_state.fault_checks[sid] = 0
+        dvr_local_writer_state.recover_checks[sid] = 0
         return "DVR_ACTIVE", true, "local_backup_input_active"
     end
 
@@ -2965,17 +3334,23 @@ local function dvr_local_detect_mode(stream_id, stream_cfg, status, settings)
                 recover_since = now
                 dvr_local_writer_state.recover_since[sid] = recover_since
             end
+            local recover_checks = (tonumber(dvr_local_writer_state.recover_checks[sid]) or 0) + 1
+            dvr_local_writer_state.recover_checks[sid] = recover_checks
             local elapsed = now - recover_since
             local stable_sec = math.max(1, tonumber(settings.backup_recover_stable_sec) or 30)
             dvr_local_writer_state.fault_since[sid] = nil
-            if elapsed >= stable_sec then
+            dvr_local_writer_state.fault_checks[sid] = 0
+            if elapsed >= stable_sec and recover_checks >= recover_checks_required then
                 dvr_local_writer_state.recover_since[sid] = nil
+                dvr_local_writer_state.recover_checks[sid] = 0
                 return "LIVE", false, "recover_stable"
             end
             return "RECOVERING_TO_LIVE", true, "recovering_to_live"
         end
         dvr_local_writer_state.fault_since[sid] = nil
         dvr_local_writer_state.recover_since[sid] = nil
+        dvr_local_writer_state.fault_checks[sid] = 0
+        dvr_local_writer_state.recover_checks[sid] = 0
         return "LIVE", false, nil
     end
 
@@ -2991,18 +3366,28 @@ local function dvr_local_detect_mode(stream_id, stream_cfg, status, settings)
     end
     if has_no_data and settings.backup_enabled then
         dvr_local_writer_state.recover_since[sid] = nil
+        dvr_local_writer_state.recover_checks[sid] = 0
         local fault_since = dvr_local_writer_state.fault_since[sid]
         if not fault_since then
             fault_since = now
             dvr_local_writer_state.fault_since[sid] = fault_since
         end
+        local fault_checks = (tonumber(dvr_local_writer_state.fault_checks[sid]) or 0) + 1
+        dvr_local_writer_state.fault_checks[sid] = fault_checks
         local elapsed = now - fault_since
-        if elapsed >= math.max(1, tonumber(settings.backup_trigger_no_data_sec) or 8) then
+        if min_rearm_sec > 0 and last_switch_ts > 0 and (now - last_switch_ts) < min_rearm_sec then
+            return "LIVE", false, "rearm_cooldown"
+        end
+        if elapsed >= math.max(1, tonumber(settings.backup_trigger_no_data_sec) or 8)
+            and fault_checks >= fail_checks_required
+        then
             return "FAIL_CONFIRMED", false, "no_data_confirmed"
         end
     else
         dvr_local_writer_state.fault_since[sid] = nil
         dvr_local_writer_state.recover_since[sid] = nil
+        dvr_local_writer_state.fault_checks[sid] = 0
+        dvr_local_writer_state.recover_checks[sid] = 0
     end
 
     return "LIVE", false, nil
@@ -3020,6 +3405,7 @@ local function dvr_local_writer_tick(stream_id, entry, stream_cfg, settings, sta
     local writer = dvr_local_writer_state.streams[sid]
     local should_record = settings.archive_enabled == true and paused ~= true and status and status.on_air == true
     if not should_record then
+        dvr_local_writer_state.storage_blocked[sid] = nil
         if writer then
             dvr_writer_finalize(writer, paused and "paused" or "offline")
             dvr_local_writer_state.streams[sid] = nil
@@ -3029,6 +3415,7 @@ local function dvr_local_writer_tick(stream_id, entry, stream_cfg, settings, sta
 
     local channel_data = entry and entry.channel or nil
     if not channel_data then
+        dvr_local_writer_state.storage_blocked[sid] = nil
         if writer then
             dvr_writer_finalize(writer, "offline")
             dvr_local_writer_state.streams[sid] = nil
@@ -3059,7 +3446,15 @@ local function dvr_local_writer_tick(stream_id, entry, stream_cfg, settings, sta
             })
     end
 
-    dvr_writer_flush_and_cleanup(writer, now)
+    local flush_ok, flush_err = dvr_writer_flush_and_cleanup(writer, now, settings)
+    if not flush_ok then
+        dvr_local_writer_state.storage_blocked[sid] = flush_err or "storage_guard"
+        dvr_writer_finalize(writer, flush_err or "storage_guard")
+        dvr_local_writer_state.streams[sid] = nil
+        dvr_update_local_state(sid, stream_cfg, settings, mode, true, flush_err or "storage_guard")
+        return
+    end
+    dvr_local_writer_state.storage_blocked[sid] = nil
 end
 
 function dvr.local_tick()
@@ -3096,9 +3491,29 @@ function dvr.local_tick()
             dvr_local_writer_state.fault_since[stream_id] = nil
         end
     end
+    for stream_id, _ in pairs(dvr_local_writer_state.fault_checks) do
+        if not active_set[stream_id] then
+            dvr_local_writer_state.fault_checks[stream_id] = nil
+        end
+    end
     for stream_id, _ in pairs(dvr_local_writer_state.recover_since) do
         if not active_set[stream_id] then
             dvr_local_writer_state.recover_since[stream_id] = nil
+        end
+    end
+    for stream_id, _ in pairs(dvr_local_writer_state.recover_checks) do
+        if not active_set[stream_id] then
+            dvr_local_writer_state.recover_checks[stream_id] = nil
+        end
+    end
+    for stream_id, _ in pairs(dvr_local_writer_state.last_switch_ts) do
+        if not active_set[stream_id] then
+            dvr_local_writer_state.last_switch_ts[stream_id] = nil
+        end
+    end
+    for stream_id, _ in pairs(dvr_local_writer_state.storage_blocked) do
+        if not active_set[stream_id] then
+            dvr_local_writer_state.storage_blocked[stream_id] = nil
         end
     end
 
@@ -3127,12 +3542,64 @@ function dvr.local_tick()
     end
 end
 
+function dvr.repair_segments(limit)
+    local row_limit = math.floor(dvr_number(limit, 5000, 1))
+    if row_limit > 20000 then
+        row_limit = 20000
+    end
+    local rows = dvr_db_query("SELECT id, stream_id, seg_start_ts, seg_end_ts, path, size_bytes, is_complete, created_ts " ..
+        "FROM dvr_segments ORDER BY updated_ts ASC LIMIT " .. tostring(row_limit) .. ";") or {}
+    local repaired = 0
+    local removed = 0
+    for _, row in ipairs(rows) do
+        local id = tonumber(row.id) or 0
+        if id > 0 then
+            local path = dvr_trim(row.path)
+            local size = dvr_segment_file_size(path)
+            if size <= 0 and path ~= "" and path:sub(-8) == ".part.ts" then
+                local alt = path:sub(1, -9) .. ".ts"
+                local alt_size = dvr_segment_file_size(alt)
+                if alt_size > 0 then
+                    path = alt
+                    size = alt_size
+                end
+            end
+            if size <= 0 then
+                local ok = dvr_db_exec("DELETE FROM dvr_segments WHERE id=" .. id .. ";")
+                if ok then
+                    removed = removed + 1
+                end
+            else
+                local prev_size = tonumber(row.size_bytes) or 0
+                local prev_path = dvr_trim(row.path)
+                if prev_size ~= size or prev_path ~= path then
+                    dvr_db_exec("UPDATE dvr_segments SET " ..
+                        "path='" .. dvr_sql_escape(path) .. "', " ..
+                        "size_bytes=" .. math.floor(size) .. ", " ..
+                        "updated_ts=" .. os.time() .. " " ..
+                        "WHERE id=" .. id .. ";")
+                    repaired = repaired + 1
+                end
+            end
+        end
+    end
+    return {
+        repaired = repaired,
+        removed = removed,
+    }
+end
+
 function dvr.configure()
     if dvr_local_writer_state.timer then
         pcall(function()
             dvr_local_writer_state.timer:close()
         end)
         dvr_local_writer_state.timer = nil
+    end
+    local repair = dvr.repair_segments(5000)
+    if repair and (tonumber(repair.repaired) or 0) + (tonumber(repair.removed) or 0) > 0 then
+        log.info("[dvr] startup repair: repaired=" .. tostring(repair.repaired) ..
+            " removed=" .. tostring(repair.removed))
     end
     dvr_local_writer_state.timer = timer({
         interval = 1,

@@ -1978,7 +1978,7 @@ local function build_local_dvr_play_url(stream_id)
     if not play_port or play_port < 1 or play_port > 65535 then
         play_port = http_port
     end
-    return "http://127.0.0.1:" .. tostring(play_port) .. "/dvr/play/" .. tostring(stream_id) .. "?internal=1"
+    return "http://127.0.0.1:" .. tostring(play_port) .. "/dvr/internal/play/" .. tostring(stream_id) .. "?internal=1"
 end
 
 local function ensure_stream_dvr_backup_input(cfg, stream_id)
@@ -1993,7 +1993,9 @@ local function ensure_stream_dvr_backup_input(cfg, stream_id)
         cfg.input = {}
     end
     local backup_input_url = build_local_dvr_play_url(stream_id)
-    local legacy_backup_input_url = backup_input_url:gsub("%?internal=1$", "")
+    local backup_input_url_no_flag = backup_input_url:gsub("%?internal=1$", "")
+    local legacy_internal_url = backup_input_url:gsub("/dvr/internal/play/", "/dvr/play/")
+    local legacy_backup_input_url = legacy_internal_url:gsub("%?internal=1$", "")
     local exists = false
     for idx = #cfg.input, 1, -1 do
         local raw = tostring(cfg.input[idx] or "")
@@ -2003,7 +2005,7 @@ local function ensure_stream_dvr_backup_input(cfg, stream_id)
             else
                 exists = true
             end
-        elseif raw == legacy_backup_input_url then
+        elseif raw == backup_input_url_no_flag or raw == legacy_internal_url or raw == legacy_backup_input_url then
             table.remove(cfg.input, idx)
         end
     end
@@ -2030,6 +2032,12 @@ function api._dvr_parse_input_binding(cfg, stream_id)
                 if input_type == "dvr" and server_id ~= "" then
                     local path = tostring(parsed.path or "")
                     local remote_stream_id = api._dvr_trim_text(parsed.dvr_stream_id)
+                    if remote_stream_id == "" then
+                        remote_stream_id = api._dvr_trim_text(path:match("^/dvr/internal/play/([^/?#]+)"))
+                        if remote_stream_id == "" then
+                            remote_stream_id = api._dvr_trim_text(path:match("^/dvr/archive/play/([^/?#]+)"))
+                        end
+                    end
                     if remote_stream_id == "" then
                         remote_stream_id = api._dvr_trim_text(path:match("^/dvr/play/([^/?#]+)"))
                         if remote_stream_id == "" then

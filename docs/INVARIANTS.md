@@ -65,6 +65,9 @@
 17. Remote DVR writer при постоянных source open-fail обязан использовать retry backoff, чтобы не создавать retry/log storm.
 18. `Type=DVR` input в stream editor должен сериализоваться как HTTP endpoint с `input_type=dvr` metadata; backend обязан использовать эти metadata для авто-инициализации remote DVR binding только на валидный `dvr_v1` server.
 19. Если `config.dvr.remote_stream_id` задан, remote DVR import/record/link операции должны использовать именно его (а не локальный `stream_id`), сохраняя `source_url` от origin stream.
+20. DVR playback state isolation:
+    - internal failover playback (`/dvr/internal/play/*` или legacy `/dvr/play/*?internal=1`) может двигать backup cursor/cycle,
+    - пользовательский просмотр архива (`/dvr/archive/play/*`) не должен менять backup cursor/cycle.
 
 ## 9. Тестируемость и DoD
 1. Для каждого изменения обязателен воспроизводимый набор проверок (build/lint/tests).

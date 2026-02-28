@@ -65,7 +65,7 @@ local function post_stream(body)
 end
 
 local stream_id = "dvr_auto_input"
-local expected_backup_input = "http://127.0.0.1:9060/dvr/play/" .. stream_id .. "?internal=1"
+local expected_backup_input = "http://127.0.0.1:9060/dvr/internal/play/" .. stream_id .. "?internal=1"
 
 post_stream({
     id = stream_id,
@@ -137,6 +137,7 @@ assert_eq(count3, 1, "DVR backup input must remain unique after forced passive n
 cfg3.input = {
     "http://origin.example/live",
     "http://127.0.0.1:9060/dvr/play/" .. stream_id,
+    "http://127.0.0.1:9060/dvr/play/" .. stream_id .. "?internal=1",
     expected_backup_input,
 }
 post_stream({
@@ -154,6 +155,8 @@ for _, value in ipairs(cfg4.input or {}) do
     end
     assert_true(tostring(value) ~= "http://127.0.0.1:9060/dvr/play/" .. stream_id,
         "legacy /dvr/play input without internal=1 must be removed")
+    assert_true(tostring(value) ~= "http://127.0.0.1:9060/dvr/play/" .. stream_id .. "?internal=1",
+        "legacy /dvr/play input with internal=1 must be removed")
 end
 assert_eq(count4, 1, "DVR backup input must be normalized to single internal URL")
 

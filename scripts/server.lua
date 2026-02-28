@@ -1214,6 +1214,10 @@ local function http_play_stream_id(path)
         prefix = "/stream/"
     elseif path:sub(1, 6) == "/play/" then
         prefix = "/play/"
+    elseif path:sub(1, 19) == "/dvr/internal/play/" then
+        prefix = "/dvr/internal/play/"
+    elseif path:sub(1, 18) == "/dvr/archive/play/" then
+        prefix = "/dvr/archive/play/"
     elseif path:sub(1, 10) == "/dvr/play/" then
         prefix = "/dvr/play/"
     elseif path:sub(1, 7) == "/input/" then
@@ -2744,7 +2748,9 @@ WantedBy=multi-user.target
                     end)
                 end
 
-                if sid ~= "" and seg_start_ts > 0 and dvr and dvr.backup_commit_progress then
+                if dvr_output.track_cursor == true
+                    and sid ~= "" and seg_start_ts > 0 and dvr and dvr.backup_commit_progress
+                then
                     local played_sec = elapsed
                     if dvr.estimate_segment_played_sec then
                         played_sec = dvr.estimate_segment_played_sec(segment, lock_bytes, elapsed)
@@ -2787,7 +2793,24 @@ WantedBy=multi-user.target
             return nil
         end
 
+        local request_path = (request.path and request.path:match("^([^?]+)")) or ""
+        local internal_route = request_path:find("^/dvr/internal/play/") == 1
+        local archive_route = request_path:find("^/dvr/archive/play/") == 1
         local internal = is_internal_play_request(request)
+        if internal_route and not internal then
+            local ip = tostring(request.addr or "")
+            local lower = ip:lower()
+            local loopback = ip == "127.0.0.1" or ip == "::1" or ip:match("^127%.") or lower:match("^::ffff:127%.")
+            local headers = request.headers or {}
+            if loopback
+                and not (headers["x-forwarded-for"] or headers["X-Forwarded-For"]
+                    or headers["forwarded"] or headers["Forwarded"]
+                    or headers["x-real-ip"] or headers["X-Real-IP"])
+            then
+                internal = true
+            end
+        end
+        local track_cursor = (not archive_route) and (internal_route or internal)
         if not http_play_allow and not internal then
             server:abort(client, 404)
             return nil
@@ -2840,18 +2863,41 @@ WantedBy=multi-user.target
                 send_unavailable("dvr module unavailable")
                 return
             end
-            local selected, select_err = dvr.backup_select_segment(stream_id, {
-                allow_cycle_restart = true,
-                include_partial = true,
-                min_partial_sec = settings.min_partial_sec,
-                start_mode = settings.backup_start_mode,
-                start_offset_hours = settings.backup_start_offset_hours,
-            })
-            if not selected or type(selected) ~= "table" or type(selected.segment) ~= "table" then
-                send_unavailable(select_err or "no dvr segments")
-                return
+            local selected = nil
+            local select_err = nil
+            local segment = nil
+            local segment_offset_sec = 0
+            if track_cursor then
+                selected, select_err = dvr.backup_select_segment(stream_id, {
+                    allow_cycle_restart = true,
+                    include_partial = true,
+                    min_partial_sec = settings.min_partial_sec,
+                    start_mode = settings.backup_start_mode,
+                    start_offset_hours = settings.backup_start_offset_hours,
+                })
+                if not selected or type(selected) ~= "table" or type(selected.segment) ~= "table" then
+                    send_unavailable(select_err or "no dvr segments")
+                    return
+                end
+                segment = selected.segment
+            else
+                selected, select_err = dvr.select_archive_segment(stream_id, {
+                    include_partial = true,
+                    min_partial_sec = settings.min_partial_sec,
+                    from_ts = tonumber(request and request.query and (request.query.from_ts or request.query.ts)),
+                    fallback_oldest = true,
+                })
+                if not selected or type(selected) ~= "table" or type(selected.segment) ~= "table" then
+                    send_unavailable(select_err or "no archive segment")
+                    return
+                end
+                segment = selected.segment
+                segment_offset_sec = math.max(0, math.floor(tonumber(selected.cursor_offset_sec) or 0))
+                local query_offset = tonumber(request and request.query and request.query.offset_sec)
+                if query_offset and query_offset > 0 then
+                    segment_offset_sec = math.max(0, math.floor(query_offset))
+                end
             end
-            local segment = selected.segment
             local seg_start_ts = tonumber(segment.seg_start_ts) or 0
             local seg_path = tostring(segment.path or "")
             if seg_start_ts <= 0 or seg_path == "" then
@@ -2863,6 +2909,9 @@ WantedBy=multi-user.target
             }) or {}
             local lock_path = tostring(paths.lock_path or "")
             local source_url = "file://" .. seg_path
+            if segment_offset_sec > 0 then
+                source_url = source_url .. "#seek=" .. tostring(segment_offset_sec)
+            end
             local use_lock = dvr and dvr.should_use_segment_lock and dvr.should_use_segment_lock(segment, lock_path)
             if use_lock then
                 source_url = source_url .. "#lock=" .. lock_path
@@ -2892,6 +2941,7 @@ WantedBy=multi-user.target
                 stream_id = stream_id,
                 seg_start_ts = seg_start_ts,
                 segment = segment,
+                track_cursor = track_cursor == true,
                 lock_path = lock_path,
                 start_ts = os.time(),
                 segment_guard_sec = settings.segment_guard_sec,
@@ -4370,6 +4420,8 @@ WantedBy=multi-user.target
             table.insert(routes, { "/stream/*", upstream })
             table.insert(routes, { "/play/*", upstream })
             table.insert(routes, { "/dvr/play/*", dvr_play_upstream })
+            table.insert(routes, { "/dvr/internal/play/*", dvr_play_upstream })
+            table.insert(routes, { "/dvr/archive/play/*", dvr_play_upstream })
         end
         table.insert(routes, { "/input/*", input_upstream })
         if include_hls_route and http_play_hls then
@@ -4410,6 +4462,8 @@ WantedBy=multi-user.target
         table.insert(main_routes, { "/stream/*", play_upstream })
         table.insert(main_routes, { "/play/*", play_upstream })
         table.insert(main_routes, { "/dvr/play/*", dvr_play_upstream })
+        table.insert(main_routes, { "/dvr/internal/play/*", dvr_play_upstream })
+        table.insert(main_routes, { "/dvr/archive/play/*", dvr_play_upstream })
     end
 
     table.insert(main_routes, { "/preview/*", safe_callback("preview_route_handler", preview_route_handler) })
