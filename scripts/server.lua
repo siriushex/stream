@@ -2811,7 +2811,7 @@ WantedBy=multi-user.target
             end
         end
         local track_cursor = (not archive_route) and (internal_route or internal)
-        if not http_play_allow and not internal then
+        if not http_play_allow and not internal and not archive_route then
             server:abort(client, 404)
             return nil
         end
