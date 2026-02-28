@@ -1978,7 +1978,7 @@ local function build_local_dvr_play_url(stream_id)
     if not play_port or play_port < 1 or play_port > 65535 then
         play_port = http_port
     end
-    return "http://127.0.0.1:" .. tostring(play_port) .. "/dvr/internal/play/" .. tostring(stream_id) .. "?internal=1"
+    return "http://127.0.0.1:" .. tostring(play_port) .. "/dvr/play/" .. tostring(stream_id) .. "?internal=1"
 end
 
 local function ensure_stream_dvr_backup_input(cfg, stream_id)
@@ -1994,7 +1994,7 @@ local function ensure_stream_dvr_backup_input(cfg, stream_id)
     end
     local backup_input_url = build_local_dvr_play_url(stream_id)
     local backup_input_url_no_flag = backup_input_url:gsub("%?internal=1$", "")
-    local legacy_internal_url = backup_input_url:gsub("/dvr/internal/play/", "/dvr/play/")
+    local legacy_internal_url = backup_input_url:gsub("/dvr/play/", "/dvr/internal/play/")
     local legacy_backup_input_url = legacy_internal_url:gsub("%?internal=1$", "")
     local exists = false
     for idx = #cfg.input, 1, -1 do
