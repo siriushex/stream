@@ -49,6 +49,21 @@ cp -a /usr/local/bin/stream /usr/local/bin/stream.bak.$(date +%s)
 install -m 0755 ./stream /usr/local/bin/stream
 ```
 
+### 3b) Sync runtime `scripts/web` when override directories exist
+If target host has `/etc/stream/scripts` and/or `/etc/stream/web`, sync them from the same source revision.
+Otherwise Lua/UI changes from `main` may not apply even after binary update.
+
+Run on target host:
+```bash
+set -e
+TS=$(date +%Y%m%d-%H%M%S)
+mkdir -p /etc/stream/backup.$TS
+[ -d /etc/stream/scripts ] && cp -a /etc/stream/scripts /etc/stream/backup.$TS/scripts || true
+[ -d /etc/stream/web ] && cp -a /etc/stream/web /etc/stream/backup.$TS/web || true
+rsync -a --delete ./scripts/ /etc/stream/scripts/
+rsync -a --delete ./web/ /etc/stream/web/
+```
+
 ### 4) Restart service(s)
 Discover and restart only required units:
 ```bash
