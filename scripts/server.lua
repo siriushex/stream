@@ -2845,17 +2845,8 @@ WantedBy=multi-user.target
         }
 
         local function send_unavailable(message)
-            server:send(client, {
-                code = 503,
-                headers = {
-                    "Content-Type: text/plain",
-                    "Cache-Control: no-store",
-                    "Pragma: no-cache",
-                    "Retry-After: 1",
-                    "Connection: close",
-                },
-                content = tostring(message or "dvr backup unavailable"),
-            })
+            -- Use abort for upstream callbacks to avoid fallback 404 from router wrappers.
+            server:abort(client, 503, tostring(message or "dvr backup unavailable"))
         end
 
         local function allow_stream(session)
