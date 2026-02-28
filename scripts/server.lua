@@ -2872,10 +2872,16 @@ WantedBy=multi-user.target
                 end
                 segment = selected.segment
             else
+                local archive_from_ts = nil
+                if dvr and type(dvr.resolve_archive_from_query) == "function" then
+                    archive_from_ts = dvr.resolve_archive_from_query(request and request.query, os.time())
+                else
+                    archive_from_ts = tonumber(request and request.query and (request.query.from_ts or request.query.ts))
+                end
                 selected, select_err = dvr.select_archive_segment(stream_id, {
                     include_partial = true,
                     min_partial_sec = settings.min_partial_sec,
-                    from_ts = tonumber(request and request.query and (request.query.from_ts or request.query.ts)),
+                    from_ts = archive_from_ts,
                     fallback_oldest = true,
                 })
                 if not selected or type(selected) ~= "table" or type(selected.segment) ~= "table" then

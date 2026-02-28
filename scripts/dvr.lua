@@ -89,6 +89,20 @@ local function dvr_trim(value)
     return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
+local function dvr_parse_query_number(value)
+    local n = tonumber(value)
+    if n ~= nil then
+        return n
+    end
+    if type(value) == "string" then
+        local token = value:match("^%s*([%+%-]?%d+%.?%d*)")
+        if token and token ~= "" then
+            return tonumber(token)
+        end
+    end
+    return nil
+end
+
 local function dvr_backup_start_mode(value, fallback)
     local mode = dvr_trim(value):lower()
     if mode == "time_offset" or mode == "offset" or mode == "time" then
@@ -870,6 +884,36 @@ function dvr.select_archive_segment(stream_id, opts)
         segment = row,
         cursor_offset_sec = offset_sec,
     }
+end
+
+function dvr.resolve_archive_from_query(query, now_ts)
+    if type(query) ~= "table" then
+        return nil
+    end
+
+    local from_ts = dvr_parse_query_number(query.from_ts or query.ts)
+    if from_ts and from_ts > 0 then
+        return math.floor(from_ts)
+    end
+
+    local timeshift_hours = dvr_parse_query_number(query.timeshift
+        or query.timeshift_hours
+        or query.shift_hours
+        or query.time_shift)
+    if timeshift_hours == nil or timeshift_hours == 0 then
+        return nil
+    end
+
+    local hours = math.abs(timeshift_hours)
+    if hours > 24 * 365 * 10 then
+        hours = 24 * 365 * 10
+    end
+    local base_now = math.floor(tonumber(now_ts) or os.time())
+    local resolved = base_now - math.floor(hours * 3600)
+    if resolved < 1 then
+        resolved = 1
+    end
+    return resolved
 end
 
 function dvr.cleanup_segments(stream_id, retention_days, keep_seg_start_ts)
