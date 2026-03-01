@@ -2108,7 +2108,9 @@ WantedBy=multi-user.target
     -- Smaller fill reduces "bursty" /play delivery and prevents long idle gaps that can cause
     -- downstream HTTP clients (ffmpeg/http input) to time out.
     local http_play_buffer_fill_kb = setting_number("http_play_buffer_fill_kb", 32)
-    local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 512)
+    -- 512KB cap is too aggressive for bursty/slow clients on busy DVB instances
+    -- and can cause frequent "upstream buffer overflow" disconnects.
+    local http_play_buffer_cap_kb = setting_number("http_play_buffer_cap_kb", 2048)
     -- Buffer defaults for internal /input loopback (ffmpeg/transcode).
     -- Keep it small to reduce bursty delivery and avoid timeouts in HTTP consumers.
     local transcode_loopback_buf_kb = setting_number("transcode_loopback_buf_kb", 512)
