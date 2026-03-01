@@ -2,6 +2,7 @@
 
 config = {}
 config.runtime_overrides = {}
+local DEFAULT_DVB_BUFFER_SIZE = 4
 
 -- Runtime-only setting overrides (per-process).
 -- Useful for multi-process setups (for example stream sharding on different ports),
@@ -364,6 +365,22 @@ local function sanitize_adapter_config(id, cfg)
             changed = true
         end
     end
+    if cfg.buffer_size == nil then
+        local nested = cfg.config
+        local nestedBuffer = type(nested) == "table" and nested.buffer_size
+        if nestedBuffer ~= nil then
+            cfg.buffer_size = nestedBuffer
+            nested.buffer_size = nil
+            if next(nested) == nil then
+                cfg.config = nil
+            end
+            changed = true
+        else
+            cfg.buffer_size = DEFAULT_DVB_BUFFER_SIZE
+            changed = true
+        end
+    end
+
     return cfg, changed
 end
 

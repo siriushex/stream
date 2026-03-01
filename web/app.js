@@ -621,6 +621,8 @@ const state = {
   pollLoops: {},
 };
 
+const DEFAULT_DVB_BUFFER_SIZE = 4;
+
 const POLL_STATUS_DEFAULT_MS = 1000;
 const STREAM_UPTIME_TICK_MS = 1000;
 const POLL_STATUS_WARMUP_MS = 2000;
@@ -21661,7 +21663,9 @@ function openAdapterEditor(adapter, isNew) {
   elements.adapterType.value = config.type || 'S2';
   elements.adapterModulation.value = config.modulation || 'AUTO';
   elements.adapterCaPmtDelay.value = config.ca_pmt_delay !== undefined ? config.ca_pmt_delay : '';
-  elements.adapterBufferSize.value = config.buffer_size !== undefined ? config.buffer_size : '';
+  const defaultAdapterBufferSize = DEFAULT_DVB_BUFFER_SIZE;
+  elements.adapterBufferSize.value = config.buffer_size !== undefined ? config.buffer_size : defaultAdapterBufferSize;
+  elements.adapterBufferSize.placeholder = defaultAdapterBufferSize;
   elements.adapterBudget.checked = config.budget === true;
   elements.adapterRawSignal.checked = config.raw_signal === true;
   elements.adapterLogSignal.checked = config.log_signal === true;
@@ -21800,13 +21804,15 @@ function readAdapterForm() {
   const adapterIndex = toNumber(elements.adapterIndex.value);
   if (adapterIndex === undefined) throw new Error('Adapter number is required');
 
+  const bufferSizeValue = elements.adapterBufferSize.value;
+  const bufferSizeNumber = toNumber(bufferSizeValue);
   const config = {
     id,
     adapter: adapterIndex,
     device: toNumber(elements.adapterDevice.value) || 0,
     type: elements.adapterType.value,
     ca_pmt_delay: toNumber(elements.adapterCaPmtDelay.value),
-    buffer_size: toNumber(elements.adapterBufferSize.value),
+    buffer_size: bufferSizeNumber !== undefined ? bufferSizeNumber : DEFAULT_DVB_BUFFER_SIZE,
     budget: elements.adapterBudget.checked || undefined,
     raw_signal: elements.adapterRawSignal.checked || undefined,
     log_signal: elements.adapterLogSignal.checked || undefined,
