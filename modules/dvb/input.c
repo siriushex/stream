@@ -54,6 +54,10 @@ struct module_data_t
     uint64_t dvr_last_reopen_us;
     uint64_t dvr_last_error_log_us;
     uint32_t dvr_suppressed_errors;
+    uint64_t dvr_last_bounce_us;
+    uint64_t dvr_last_overflow_recover_us;
+    uint64_t dvr_overflow_window_started_us;
+    uint32_t dvr_overflow_in_window;
 
     mpegts_psi_t *pat;
     int pat_error;
@@ -79,6 +83,10 @@ struct module_data_t
 /* Protect main event loop from tight dvr close/open storms on noisy drivers. */
 #define DVR_REOPEN_MIN_INTERVAL_US (500 * 1000)
 #define DVR_ERROR_LOG_MIN_INTERVAL_US (5 * 1000 * 1000)
+#define DVR_BOUNCE_MIN_INTERVAL_US (1000 * 1000)
+#define DVR_OVERFLOW_BURST_WINDOW_US (15 * 1000 * 1000)
+#define DVR_OVERFLOW_REOPEN_THRESHOLD 3
+#define DVR_OVERFLOW_REOPEN_MIN_INTERVAL_US (10 * 1000 * 1000)
 
 /*
  * ooooooooo  ooooo  oooo oooooooooo
@@ -129,6 +137,27 @@ static bool dvr_reopen_allowed(module_data_t *mod)
     return true;
 }
 
+static bool dvr_bounce_allowed(module_data_t *mod)
+{
+    const uint64_t now = asc_utime();
+    if(mod->dvr_last_bounce_us != 0 && now - mod->dvr_last_bounce_us < DVR_BOUNCE_MIN_INTERVAL_US)
+        return false;
+    mod->dvr_last_bounce_us = now;
+    return true;
+}
+
+static bool dvr_overflow_recover_allowed(module_data_t *mod)
+{
+    const uint64_t now = asc_utime();
+    if(mod->dvr_last_overflow_recover_us != 0
+        && now - mod->dvr_last_overflow_recover_us < DVR_OVERFLOW_REOPEN_MIN_INTERVAL_US)
+    {
+        return false;
+    }
+    mod->dvr_last_overflow_recover_us = now;
+    return true;
+}
+
 static void dvr_handle_error(module_data_t *mod, int err)
 {
     if(err == 0)
@@ -139,9 +168,37 @@ static void dvr_handle_error(module_data_t *mod, int err)
 
     if(err == EOVERFLOW)
     {
-        /* Driver overflow: avoid immediate fd reopen loop, ask demux bounce path to recover. */
-        mod->do_bounce = 1;
+        /*
+         * Driver overflow: first attempt soft recovery via demux bounce.
+         * If overflows persist in a short window, escalate to controlled dvr reopen.
+         */
+        const uint64_t now = asc_utime();
+        if(mod->dvr_overflow_window_started_us == 0
+            || now - mod->dvr_overflow_window_started_us > DVR_OVERFLOW_BURST_WINDOW_US)
+        {
+            mod->dvr_overflow_window_started_us = now;
+            mod->dvr_overflow_in_window = 1;
+        }
+        else
+        {
+            ++mod->dvr_overflow_in_window;
+        }
+
+        if(dvr_bounce_allowed(mod))
+            mod->do_bounce = 1;
+
         dvr_log_error_rate_limited(mod, true, "dvr overflow, scheduling dmx bounce", err);
+
+        if(mod->dvr_overflow_in_window >= DVR_OVERFLOW_REOPEN_THRESHOLD
+            && dvr_overflow_recover_allowed(mod))
+        {
+            asc_log_warning(MSG("persistent dvr overflow: %u in %u sec, reopening dvr fd"),
+                mod->dvr_overflow_in_window, (unsigned)(DVR_OVERFLOW_BURST_WINDOW_US / 1000000));
+            dvr_close(mod);
+            dvr_open(mod);
+            mod->dvr_overflow_window_started_us = now;
+            mod->dvr_overflow_in_window = 0;
+        }
         return;
     }
 
@@ -216,6 +273,8 @@ static void dvr_on_read(void *arg)
     if(aligned_len <= 0)
         return;
     mod->dvr_read += (uint32_t)aligned_len;
+    mod->dvr_overflow_window_started_us = 0;
+    mod->dvr_overflow_in_window = 0;
 
     for(ssize_t i = 0; i < aligned_len; i += TS_PACKET_SIZE)
     {
