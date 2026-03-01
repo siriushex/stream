@@ -7157,6 +7157,32 @@ local function list_metrics(server, client, request)
         return
     end
 
+    local ok_payload, encode_err = pcall(json.encode, payload)
+    if not ok_payload then
+        log.warning("[api/metrics] json encode failed; dropping dataplane/mpts: " .. tostring(encode_err))
+        payload.dataplane = nil
+        payload.mpts = nil
+        ok_payload, encode_err = pcall(json.encode, payload)
+    end
+    if not ok_payload then
+        log.warning("[api/metrics] json encode failed; dropping http_api: " .. tostring(encode_err))
+        payload.http_api = nil
+        ok_payload, encode_err = pcall(json.encode, payload)
+    end
+    if not ok_payload then
+        log.error("[api/metrics] json encode failed; fallback payload: " .. tostring(encode_err))
+        payload = {
+            ts = now,
+            version = astra and astra.version or "",
+            uptime_sec = uptime,
+            streams = payload.streams,
+            adapters = payload.adapters,
+            sessions = payload.sessions,
+            lua_mem_kb = lua_mem_kb,
+            perf = payload.perf,
+        }
+    end
+
     json_response(server, client, 200, payload)
 end
 
