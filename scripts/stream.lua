@@ -2527,6 +2527,21 @@ local function channel_prepare_input(channel_data, input_id, opts)
     return true
 end
 
+function stream_mark_input_activated(input_data, now)
+    if type(input_data) ~= "table" then
+        return
+    end
+    now = tonumber(now) or os.time()
+    input_data.fail_since = now
+    input_data.ok_since = nil
+    input_data.last_seen_ts = now
+    input_data.last_ok_ts = now
+    input_data.last_error = nil
+    input_data.__no_data_streak = 0
+    input_data.is_ok = false
+    input_data.on_air = false
+end
+
 local function channel_activate_input(channel_data, input_id, reason)
     local input_data = channel_data.input[input_id]
     if not input_data then
@@ -2543,6 +2558,9 @@ local function channel_activate_input(channel_data, input_id, reason)
     if prev_id ~= input_id then
         channel_data.active_input_id = input_id
         local now = os.time()
+        -- Reset failover timing for the newly activated input to avoid inheriting
+        -- stale fail_since/no_data state from previous probing cycle.
+        stream_mark_input_activated(input_data, now)
         local from_index = prev_id > 0 and (prev_id - 1) or -1
         local to_index = input_id - 1
         if prev_id > 0 and channel_data.input and channel_data.input[prev_id] then
