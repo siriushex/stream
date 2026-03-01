@@ -10,12 +10,12 @@ local function assert_true(value, message)
     end
 end
 
-local adapter_ok = "tf_np_ok"
+local adapter_ok = "tf_cc_ok"
 for _, point in ipairs({
     { cc = 0, pes = 0 },
-    { cc = 20, pes = 18 },
-    { cc = 40, pes = 35 },
-    { cc = 65, pes = 70 },
+    { cc = 40, pes = 10 },
+    { cc = 80, pes = 20 },
+    { cc = 130, pes = 25 },
 }) do
     dvb_autosearch_push_history({
         [adapter_ok] = {
@@ -36,26 +36,24 @@ local degraded_ok, reason_ok, details_ok = dvb_autosearch_degradation(adapter_ok
         auto_signal_type_flip_enabled = true,
     },
 }, {
-    cc_pes_only = true,
+    cc_only = true,
     window_sec = 60,
-    cc_threshold = 50,
-    pes_threshold = 50,
+    cc_threshold = 120,
 })
 
-assert_true(degraded_ok == true, "type-flip cc+pes degradation must trigger")
-assert_true(reason_ok == "cc_pes", "reason must be cc_pes")
-assert_true(type(details_ok) == "table" and (tonumber(details_ok.cc_delta) or 0) > 50,
+assert_true(degraded_ok == true, "type-flip cc-only degradation must trigger")
+assert_true(reason_ok == "cc", "reason must be cc")
+assert_true(type(details_ok) == "table" and (tonumber(details_ok.cc_delta) or 0) > 120,
     "cc delta must exceed threshold")
-assert_true((tonumber(details_ok.pes_delta) or 0) > 50, "pes delta must exceed threshold")
 
-local adapter_no_pes = "tf_np_low_pes"
+local adapter_low_cc = "tf_cc_low"
 for _, point in ipairs({
     { cc = 0, pes = 0 },
-    { cc = 30, pes = 20 },
-    { cc = 70, pes = 45 },
+    { cc = 30, pes = 200 },
+    { cc = 70, pes = 450 },
 }) do
     dvb_autosearch_push_history({
-        [adapter_no_pes] = {
+        [adapter_low_cc] = {
             streams = 20,
             streams_on_air = 20,
             bitrate_kbps = 20000,
@@ -66,19 +64,18 @@ for _, point in ipairs({
     })
 end
 
-local degraded_no_pes = dvb_autosearch_degradation(adapter_no_pes, {
-    id = adapter_no_pes,
+local degraded_low_cc = dvb_autosearch_degradation(adapter_low_cc, {
+    id = adapter_low_cc,
     config = {
         auto_signal_search_enabled = false,
         auto_signal_type_flip_enabled = true,
     },
 }, {
-    cc_pes_only = true,
+    cc_only = true,
     window_sec = 60,
-    cc_threshold = 50,
-    pes_threshold = 50,
+    cc_threshold = 120,
 })
-assert_true(degraded_no_pes == false, "degradation must not trigger when PES is below threshold")
+assert_true(degraded_low_cc == false, "degradation must not trigger when CC is below threshold")
 
 local saved_confirm = dvb_autosearch_confirm_degradation
 dvb_autosearch_confirm_degradation = function()
@@ -96,8 +93,7 @@ local task = {
         },
     },
     cfg = {
-        type_flip_cc_threshold = 50,
-        type_flip_pes_threshold = 50,
+        type_flip_cc_threshold = 120,
     },
     state = "running",
     phase = "confirm",
@@ -117,10 +113,9 @@ local degraded_after_reset, reason_after_reset = dvb_autosearch_degradation(adap
         auto_signal_type_flip_enabled = true,
     },
 }, {
-    cc_pes_only = true,
+    cc_only = true,
     window_sec = 60,
-    cc_threshold = 50,
-    pes_threshold = 50,
+    cc_threshold = 120,
 })
 assert_true(degraded_after_reset == false, "after type-flip cycle counters must be reset")
 assert_true(reason_after_reset == "insufficient-history" or reason_after_reset == "insufficient-window",

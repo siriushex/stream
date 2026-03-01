@@ -4245,8 +4245,8 @@ function dvb_autosearch_adapter_cfg(row)
         type_flip_wait_sec = clamp_number(cfg.auto_signal_type_flip_wait_sec, 5, 120) or 20,
         type_flip_confirm_sec = clamp_number(cfg.auto_signal_type_flip_confirm_sec, 30, 600) or 180,
         type_flip_cc_window_sec = clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600) or 60,
-        type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 50,
-        -- Standalone type-flip trigger (S2->S->S2) uses CC+PES deltas over a 60s window.
+        type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 120,
+        -- Standalone type-flip trigger (S2->S->S2) uses CC delta over a 60s window.
         type_flip_fault_window_sec = clamp_number(cfg.auto_signal_type_flip_fault_window_sec, 10, 600)
             or clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600)
             or 60,
@@ -4887,9 +4887,8 @@ function dvb_autosearch_step_task(task)
             }
             if task.type_flip_only then
                 confirm_opts.window_sec = 60
-                confirm_opts.cc_threshold = task.cfg and task.cfg.type_flip_cc_threshold or 50
-                confirm_opts.pes_threshold = task.cfg and task.cfg.type_flip_pes_threshold or 50
-                confirm_opts.cc_pes_only = true
+                confirm_opts.cc_threshold = task.cfg and task.cfg.type_flip_cc_threshold or 120
+                confirm_opts.cc_only = true
             end
             still_bad, reason, details = dvb_autosearch_confirm_degradation(task.adapter_id, task.row, confirm_opts)
         end
@@ -5157,8 +5156,7 @@ function dvb_autosearch_tick()
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
                                 window_sec = 60,
                                 cc_threshold = cfg.type_flip_cc_threshold,
-                                pes_threshold = cfg.type_flip_pes_threshold,
-                                cc_pes_only = true,
+                                cc_only = true,
                             })
                         else
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)

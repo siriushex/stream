@@ -2196,6 +2196,7 @@ const elements = {
   adapterAutoSignalTypeFlipEnabled: $('#adapter-auto-signal-type-flip-enabled'),
   adapterAutoSignalTypeFlipBody: $('#adapter-auto-signal-type-flip-body'),
   adapterAutoSignalTypeFlipWaitSec: $('#adapter-auto-signal-type-flip-wait-sec'),
+  adapterAutoSignalTypeFlipCcThreshold: $('#adapter-auto-signal-type-flip-cc-threshold'),
   adapterAutoSignalCandidateTargets: $('#adapter-auto-signal-candidate-targets'),
   adapterAutoSignalCandidateProfiles: $('#adapter-auto-signal-candidate-profiles'),
   adapterAutoSignalCandidateHint: $('#adapter-auto-signal-candidate-hint'),
@@ -21025,6 +21026,9 @@ function syncAdapterAutoSignalControls() {
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     elements.adapterAutoSignalTypeFlipWaitSec.disabled = !showTypeFlipBody;
   }
+  if (elements.adapterAutoSignalTypeFlipCcThreshold) {
+    elements.adapterAutoSignalTypeFlipCcThreshold.disabled = !showTypeFlipBody;
+  }
 
   if (autoSearchEnabled) {
     refreshAdapterAutoSignalCandidateProfiles();
@@ -21728,6 +21732,10 @@ function openAdapterEditor(adapter, isNew) {
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     elements.adapterAutoSignalTypeFlipWaitSec.value = config.auto_signal_type_flip_wait_sec !== undefined ? config.auto_signal_type_flip_wait_sec : '';
   }
+  if (elements.adapterAutoSignalTypeFlipCcThreshold) {
+    elements.adapterAutoSignalTypeFlipCcThreshold.value =
+      config.auto_signal_type_flip_cc_threshold !== undefined ? config.auto_signal_type_flip_cc_threshold : '';
+  }
   if (elements.adapterAutoSignalCandidateTargets) {
     const existingProfiles = Array.isArray(config.auto_signal_candidate_profiles)
       ? config.auto_signal_candidate_profiles
@@ -21883,6 +21891,9 @@ function readAdapterForm() {
   }
   if (elements.adapterAutoSignalTypeFlipWaitSec) {
     config.auto_signal_type_flip_wait_sec = toNumber(elements.adapterAutoSignalTypeFlipWaitSec.value);
+  }
+  if (elements.adapterAutoSignalTypeFlipCcThreshold) {
+    config.auto_signal_type_flip_cc_threshold = toNumber(elements.adapterAutoSignalTypeFlipCcThreshold.value);
   }
   config.auto_signal_candidate_profiles = refreshAdapterAutoSignalCandidateProfiles();
 
