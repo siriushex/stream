@@ -41,6 +41,8 @@ local direct_reason = radio and radio._test and radio._test.force_direct_input_r
 assert_true(type(direct_reason) == "function", "force_direct_input_reason missing")
 local build_ffmpeg_args = radio and radio._test and radio._test.build_ffmpeg_args
 assert_true(type(build_ffmpeg_args) == "function", "build_ffmpeg_args missing")
+local mark_ffmpeg_progress = radio and radio._test and radio._test.mark_ffmpeg_progress
+assert_true(type(mark_ffmpeg_progress) == "function", "mark_ffmpeg_progress missing")
 
 do
   local s = normalize({
@@ -138,6 +140,21 @@ do
   local argv = build_ffmpeg_args(s, nil)
   assert_true(has_pair(argv, "-i", "/tmp/test-scaled.png"), "prescaled PNG input path")
   assert_true(not has_token(argv, "-vf"), "prescaled PNG should skip realtime -vf")
+end
+
+do
+  local job = {
+    last_progress_ts = 100,
+    last_ffmpeg_time_sec = 10.00,
+    last_ffmpeg_frame = 100,
+  }
+  mark_ffmpeg_progress(job, "frame=  100 fps=8.0 time=00:00:10.00 bitrate=550.1kbits/s")
+  assert_eq(job.last_progress_ts, 100, "same frame/time must not be treated as progress")
+
+  mark_ffmpeg_progress(job, "frame=  101 fps=8.0 time=00:00:10.12 bitrate=550.1kbits/s")
+  assert_true(job.last_progress_ts >= 100, "advanced frame/time must update progress timestamp")
+  assert_true((job.last_ffmpeg_time_sec or 0) > 10.0, "time cursor should advance")
+  assert_eq(job.last_ffmpeg_frame, 101, "frame cursor should advance")
 end
 
 print("radio_stream_settings_unit: ok")

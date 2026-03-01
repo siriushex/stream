@@ -731,9 +731,54 @@ local function mark_ffmpeg_progress(job, text)
         return
     end
     local s = tostring(text)
-    -- В логе ffmpeg обычно есть строки: "frame=... time=...". Это дешёвый и достаточно надёжный признак,
-    -- что генератор действительно продолжает выдавать TS.
-    if s:find("time=", 1, true) or s:find("frame=", 1, true) then
+    local function parse_ffmpeg_time_sec(hms)
+        local hh, mm, ss = tostring(hms):match("^(%d+):(%d+):(%d+%.?%d*)$")
+        if not hh then return nil end
+        local h = tonumber(hh)
+        local m = tonumber(mm)
+        local ssec = tonumber(ss)
+        if not h or not m or not ssec then return nil end
+        return (h * 3600) + (m * 60) + ssec
+    end
+
+    local max_time = nil
+    for token in s:gmatch("time=(%d+:%d+:%d+%.?%d*)") do
+        local t = parse_ffmpeg_time_sec(token)
+        if t and (not max_time or t > max_time) then
+            max_time = t
+        end
+    end
+
+    local max_frame = nil
+    for token in s:gmatch("frame=%s*(%d+)") do
+        local f = tonumber(token)
+        if f and (not max_frame or f > max_frame) then
+            max_frame = f
+        end
+    end
+
+    local progressed = false
+    if max_time then
+        local prev_time = tonumber(job.last_ffmpeg_time_sec)
+        if not prev_time or max_time > (prev_time + 0.0005) then
+            progressed = true
+            job.last_ffmpeg_time_sec = max_time
+        end
+    end
+    if max_frame then
+        local prev_frame = tonumber(job.last_ffmpeg_frame)
+        if not prev_frame or max_frame > prev_frame then
+            progressed = true
+            job.last_ffmpeg_frame = max_frame
+        end
+    end
+
+    -- Fallback для разорванных stderr-чанков, где маркер есть, но число не распарсилось.
+    if not progressed and not max_time and not max_frame and (s:find("time=", 1, true) or s:find("frame=", 1, true)) then
+        progressed = true
+    end
+
+    if progressed then
         job.last_progress_ts = now_ts()
     end
 end
@@ -866,6 +911,8 @@ function radio.start(stream_id, raw_settings)
     job.start_ts = now_ts()
     job.last_progress_ts = job.start_ts
     job.last_stall_log_ts = 0
+    job.last_ffmpeg_time_sec = nil
+    job.last_ffmpeg_frame = nil
 
     local direct_reason = force_direct_input_reason(settings)
     if direct_reason and settings.use_curl then
@@ -1015,4 +1062,5 @@ radio._test = {
     build_curl_args = build_curl_args,
     build_ffmpeg_args = build_ffmpeg_args,
     force_direct_input_reason = force_direct_input_reason,
+    mark_ffmpeg_progress = mark_ffmpeg_progress,
 }
