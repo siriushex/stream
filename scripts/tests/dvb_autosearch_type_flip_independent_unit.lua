@@ -113,6 +113,19 @@ assert_true(tonumber(degradation_opts and degradation_opts.window_sec) == 60,
 assert_true(tonumber(degradation_opts and degradation_opts.cc_threshold) == 120,
     "standalone type-flip degradation should use CC threshold 120")
 
+-- Startup pause guard: standalone type-flip must not evaluate degradation
+-- in the first 180 seconds after process start.
+enqueue_called = false
+enqueue_opts = nil
+enqueue_reason = nil
+degradation_opts = nil
+runtime.started_at = os.time()
+
+dvb_autosearch_tick()
+
+assert_true(enqueue_called == false, "standalone type-flip must be paused during startup window")
+assert_true(degradation_opts == nil, "degradation should not be evaluated during startup pause")
+
 dvb_autosearch_enabled = saved_enabled
 dvb_autosearch_lock_ok = saved_lock_ok
 dvb_autosearch_collect_runtime = saved_collect_runtime

@@ -242,6 +242,10 @@ local function api_http_metrics_snapshot(limit)
 
     for _, route in pairs(m.routes) do
         local route_rps = metric_bucket_sum_window(route.buckets, now_sec, API_HTTP_METRIC_WINDOW_SEC) / API_HTTP_METRIC_WINDOW_SEC
+        local route_status_codes = {}
+        for code, count in pairs(route.status_codes or {}) do
+            route_status_codes[code] = tonumber(count) or count
+        end
         routes[#routes + 1] = {
             method = route.method,
             endpoint = route.endpoint,
@@ -253,7 +257,7 @@ local function api_http_metrics_snapshot(limit)
             p95_ms = metric_percentile(route.latencies, 0.95),
             p99_ms = metric_percentile(route.latencies, 0.99),
             last_latency_ms = tonumber(route.last_latency_ms) or 0,
-            status_codes = route.status_codes or {},
+            status_codes = route_status_codes,
         }
     end
 
@@ -270,6 +274,15 @@ local function api_http_metrics_snapshot(limit)
         out_routes[i] = routes[i]
     end
 
+    local totals_status_codes = {}
+    for code, count in pairs(m.status_codes or {}) do
+        totals_status_codes[code] = tonumber(count) or count
+    end
+    local totals_auth_codes = {}
+    for code, count in pairs(m.auth_codes or {}) do
+        totals_auth_codes[code] = tonumber(count) or count
+    end
+
     return {
         window_sec = API_HTTP_METRIC_WINDOW_SEC,
         totals = {
@@ -277,8 +290,8 @@ local function api_http_metrics_snapshot(limit)
             errors = tonumber(m.totals.errors) or 0,
             error_rate_pct = metric_error_rate_pct(m.totals.errors, m.totals.requests),
             rps = total_rps,
-            status_codes = m.status_codes or {},
-            auth_codes = m.auth_codes or {},
+            status_codes = totals_status_codes,
+            auth_codes = totals_auth_codes,
         },
         endpoints = out_routes,
     }
@@ -4246,6 +4259,8 @@ function dvb_autosearch_adapter_cfg(row)
         type_flip_confirm_sec = clamp_number(cfg.auto_signal_type_flip_confirm_sec, 30, 600) or 180,
         type_flip_cc_window_sec = clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600) or 60,
         type_flip_cc_threshold = clamp_number(cfg.auto_signal_type_flip_cc_threshold, 1, 100000) or 120,
+        -- Type-flip must ignore startup noise (CC spikes right after process boot).
+        type_flip_startup_pause_sec = clamp_number(cfg.auto_signal_type_flip_startup_pause_sec, 0, 1800) or 180,
         -- Standalone type-flip trigger (S2->S->S2) uses CC delta over a 60s window.
         type_flip_fault_window_sec = clamp_number(cfg.auto_signal_type_flip_fault_window_sec, 10, 600)
             or clamp_number(cfg.auto_signal_type_flip_cc_window_sec, 10, 600)
@@ -4842,13 +4857,25 @@ function dvb_autosearch_start_task(task)
         candidates = {}
     end
     local can_type_flip = false
+    local type_flip_ready = false
     if cfg and cfg.allow_type_flip then
+        local pause_sec = clamp_number(cfg.type_flip_startup_pause_sec, 0, 1800) or 180
+        local started_at = runtime and tonumber(runtime.started_at) or nil
+        if pause_sec <= 0 or not started_at then
+            type_flip_ready = true
+        else
+            type_flip_ready = (os.time() - started_at) >= pause_sec
+        end
         local cur_type = tostring((row.config and row.config.type) or ""):upper()
-        can_type_flip = (cur_type == "S2")
+        can_type_flip = (cur_type == "S2") and type_flip_ready
     end
     if #candidates == 0 and not can_type_flip then
         task.state = "failed"
-        task.error = "no free candidate FE profiles"
+        if task.type_flip_only == true and cfg and cfg.allow_type_flip and not type_flip_ready then
+            task.error = "type flip startup pause active"
+        else
+            task.error = "no free candidate FE profiles"
+        end
         dvb_autosearch_alert("WARNING", "DVB_AUTOSEARCH_NO_FREE_FE",
             "auto signal search skipped: no free FE candidates",
             { adapter_id = task.adapter_id })
@@ -5012,7 +5039,17 @@ function dvb_autosearch_step_task(task)
     local candidate = task.candidates and task.candidates[task.candidate_index]
     if not candidate then
         -- Last chance recovery: satellite type flip S2 -> S -> S2.
-        if task.cfg and task.cfg.allow_type_flip and not task.type_flip_tried then
+        local type_flip_ready = false
+        if task.cfg and task.cfg.allow_type_flip then
+            local pause_sec = clamp_number(task.cfg.type_flip_startup_pause_sec, 0, 1800) or 180
+            local started_at = runtime and tonumber(runtime.started_at) or nil
+            if pause_sec <= 0 or not started_at then
+                type_flip_ready = true
+            else
+                type_flip_ready = (os.time() - started_at) >= pause_sec
+            end
+        end
+        if task.cfg and task.cfg.allow_type_flip and not task.type_flip_tried and type_flip_ready then
             local cur_type = tostring((task.row and task.row.config and task.row.config.type) or ""):upper()
             if cur_type == "S2" then
                 task.type_flip_tried = true
@@ -5026,6 +5063,8 @@ function dvb_autosearch_step_task(task)
                     return false
                 end
             end
+        elseif task.cfg and task.cfg.allow_type_flip and not task.type_flip_tried then
+            task.last_error = "type flip startup pause active"
         end
 
         task.state = "failed"
@@ -5153,11 +5192,23 @@ function dvb_autosearch_tick()
                         local type_flip_only = (cfg.enabled ~= true) and (cfg.allow_type_flip == true)
                         local degraded, reason, details = nil, "ok", {}
                         if type_flip_only then
-                            degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
-                                window_sec = 60,
-                                cc_threshold = cfg.type_flip_cc_threshold,
-                                cc_only = true,
-                            })
+                            local type_flip_ready = false
+                            local pause_sec = clamp_number(cfg.type_flip_startup_pause_sec, 0, 1800) or 180
+                            local started_at = runtime and tonumber(runtime.started_at) or nil
+                            if pause_sec <= 0 or not started_at then
+                                type_flip_ready = true
+                            else
+                                type_flip_ready = (now - started_at) >= pause_sec
+                            end
+                            if not type_flip_ready then
+                                degraded = false
+                            else
+                                degraded, reason, details = dvb_autosearch_degradation(adapter_id, row, {
+                                    window_sec = 60,
+                                    cc_threshold = cfg.type_flip_cc_threshold,
+                                    cc_only = true,
+                                })
+                            end
                         else
                             degraded, reason, details = dvb_autosearch_degradation(adapter_id, row)
                         end

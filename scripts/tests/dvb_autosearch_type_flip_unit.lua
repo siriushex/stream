@@ -29,6 +29,7 @@ assert_equal(cfg_default.type_flip_wait_sec, 20, "type flip wait default should 
 assert_equal(cfg_default.type_flip_confirm_sec, 180, "type flip confirm default should be 180 sec")
 assert_equal(cfg_default.type_flip_cc_window_sec, 60, "type flip cc window default should be 60 sec")
 assert_equal(cfg_default.type_flip_cc_threshold, 120, "type flip cc threshold default should be 120")
+assert_equal(cfg_default.type_flip_startup_pause_sec, 180, "type flip startup pause default should be 180 sec")
 assert_equal(cfg_default.type_flip_fault_window_sec, 60, "type flip fault window default should be 60 sec")
 assert_equal(cfg_default.type_flip_no_data_threshold, 40, "type flip no_data threshold default should be 40")
 assert_equal(cfg_default.type_flip_pes_threshold, 50, "type flip pes threshold default should be 50")
@@ -39,11 +40,13 @@ local cfg_override = dvb_autosearch_adapter_cfg({
         auto_signal_search_enabled = true,
         auto_signal_type_flip_enabled = true,
         auto_signal_type_flip_wait_sec = 45,
+        auto_signal_type_flip_startup_pause_sec = 240,
     },
 })
 assert_true(cfg_override ~= nil, "adapter cfg override should be built")
 assert_true(cfg_override.allow_type_flip == true, "type flip flag override should work")
 assert_equal(cfg_override.type_flip_wait_sec, 45, "type flip wait override should work")
+assert_equal(cfg_override.type_flip_startup_pause_sec, 240, "type flip startup pause override should work")
 
 local saved_apply = dvb_autosearch_apply_adapter_config
 dvb_autosearch_apply_adapter_config = function(_, cfg)
