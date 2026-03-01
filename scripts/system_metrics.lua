@@ -392,18 +392,25 @@ local function to_rollup_point(snap)
     if snap.disk and snap.disk[1] and snap.disk[1].used_percent ~= nil then
         root_disk_used = tonumber(snap.disk[1].used_percent)
     end
-    local disk_io_map = {}
+    local disk_io_rows = {}
     for _, item in ipairs(snap.disk_io or {}) do
         if item and item.device then
-            disk_io_map[item.device] = {
+            table.insert(disk_io_rows, {
+                device = tostring(item.device),
                 read_bps = tonumber(item.read_bps),
                 write_bps = tonumber(item.write_bps),
-            }
+            })
         end
     end
-    local net_map = {}
+    local net_rows = {}
     for _, item in ipairs(snap.net or {}) do
-        net_map[item.iface] = { rx_bps = item.rx_bps, tx_bps = item.tx_bps }
+        if item and item.iface then
+            table.insert(net_rows, {
+                iface = tostring(item.iface),
+                rx_bps = tonumber(item.rx_bps),
+                tx_bps = tonumber(item.tx_bps),
+            })
+        end
     end
     return {
         ts_bucket = tonumber(snap.ts) or os.time(),
@@ -411,8 +418,8 @@ local function to_rollup_point(snap)
         cpu_usage = snap.cpu and snap.cpu.usage or nil,
         mem_used_percent = snap.mem and snap.mem.used_percent or nil,
         disk_used_percent = root_disk_used,
-        disk_io = disk_io_map,
-        net = net_map,
+        disk_io = disk_io_rows,
+        net = net_rows,
     }
 end
 
@@ -424,13 +431,61 @@ local function row_to_point(row)
     if not ts_bucket then
         return nil
     end
+    local net_map = {}
+    local net_raw = row.net
+    if type(net_raw) == "table" then
+        if #net_raw > 0 then
+            for _, item in ipairs(net_raw) do
+                if item and item.iface then
+                    net_map[item.iface] = {
+                        rx_bps = tonumber(item.rx_bps),
+                        tx_bps = tonumber(item.tx_bps),
+                    }
+                end
+            end
+        else
+            -- Backward compatibility for legacy rows where `net` is already a map.
+            for iface, item in pairs(net_raw) do
+                if item then
+                    net_map[tostring(iface)] = {
+                        rx_bps = tonumber(item.rx_bps),
+                        tx_bps = tonumber(item.tx_bps),
+                    }
+                end
+            end
+        end
+    end
+    local disk_io_map = {}
+    local disk_raw = row.disk_io
+    if type(disk_raw) == "table" then
+        if #disk_raw > 0 then
+            for _, item in ipairs(disk_raw) do
+                if item and item.device then
+                    disk_io_map[item.device] = {
+                        read_bps = tonumber(item.read_bps),
+                        write_bps = tonumber(item.write_bps),
+                    }
+                end
+            end
+        else
+            -- Backward compatibility for legacy rows where `disk_io` is already a map.
+            for dev, item in pairs(disk_raw) do
+                if item then
+                    disk_io_map[tostring(dev)] = {
+                        read_bps = tonumber(item.read_bps),
+                        write_bps = tonumber(item.write_bps),
+                    }
+                end
+            end
+        end
+    end
     return {
         t_ms = ts_bucket * 1000,
         cpu_usage = tonumber(row.cpu_usage),
         mem_used_percent = tonumber(row.mem_used_percent),
         disk_used_percent = tonumber(row.disk_used_percent),
-        disk_io = row.disk_io,
-        net = row.net,
+        disk_io = disk_io_map,
+        net = net_map,
     }
 end
 
