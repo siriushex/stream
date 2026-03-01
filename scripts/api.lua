@@ -7157,20 +7157,20 @@ local function list_metrics(server, client, request)
         return
     end
 
-    local ok_payload, encode_err = pcall(json.encode, payload)
+    local ok_payload, encoded_or_err = pcall(json.encode, payload)
     if not ok_payload then
-        log.warning("[api/metrics] json encode failed; dropping dataplane/mpts: " .. tostring(encode_err))
+        log.warning("[api/metrics] json encode failed; dropping dataplane/mpts: " .. tostring(encoded_or_err))
         payload.dataplane = nil
         payload.mpts = nil
-        ok_payload, encode_err = pcall(json.encode, payload)
+        ok_payload, encoded_or_err = pcall(json.encode, payload)
     end
     if not ok_payload then
-        log.warning("[api/metrics] json encode failed; dropping http_api: " .. tostring(encode_err))
+        log.warning("[api/metrics] json encode failed; dropping http_api: " .. tostring(encoded_or_err))
         payload.http_api = nil
-        ok_payload, encode_err = pcall(json.encode, payload)
+        ok_payload, encoded_or_err = pcall(json.encode, payload)
     end
     if not ok_payload then
-        log.error("[api/metrics] json encode failed; fallback payload: " .. tostring(encode_err))
+        log.error("[api/metrics] json encode failed; fallback payload: " .. tostring(encoded_or_err))
         payload = {
             ts = now,
             version = astra and astra.version or "",
@@ -7181,9 +7181,35 @@ local function list_metrics(server, client, request)
             lua_mem_kb = lua_mem_kb,
             perf = payload.perf,
         }
+        ok_payload, encoded_or_err = pcall(json.encode, payload)
+    end
+    if not ok_payload then
+        log.error("[api/metrics] json encode failed after fallback; returning minimal payload")
+        payload = {
+            ts = now,
+            version = astra and astra.version or "",
+            uptime_sec = uptime,
+            streams = payload.streams or {},
+            adapters = payload.adapters or {},
+            sessions = payload.sessions or {},
+        }
+        local ok_min, encoded_min = pcall(json.encode, payload)
+        if ok_min then
+            encoded_or_err = encoded_min
+        else
+            encoded_or_err = "{\"error\":\"metrics encode failed\"}"
+        end
     end
 
-    json_response(server, client, 200, payload)
+    server:send(client, {
+        code = 200,
+        headers = {
+            "Content-Type: application/json",
+            "Cache-Control: no-cache",
+            "Connection: close",
+        },
+        content = tostring(encoded_or_err or "{}"),
+    })
 end
 
 local function list_http_api_metrics(server, client, request)
