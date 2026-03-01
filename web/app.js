@@ -511,6 +511,7 @@ const state = {
   observabilityTimer: null,
   systemMetricsSnapshot: null,
   systemMetricsIface: '',
+  systemMetricsDiskDevice: '',
   systemMetricsLastFetchMs: 0,
   systemMetricsInFlight: false,
   systemMetricsFlags: null,
@@ -1018,6 +1019,7 @@ const elements = {
   observabilitySystemChartDisk: $('#obs-sys-chart-disk'),
   observabilitySystemChartNet: $('#obs-sys-chart-net'),
   observabilityNetIface: $('#obs-net-iface'),
+  observabilityDiskDevice: $('#obs-disk-device'),
   observabilityChartBitrate: $('#obs-chart-bitrate'),
   observabilityChartStreams: $('#obs-chart-streams'),
   observabilityChartSwitches: $('#obs-chart-switches'),
@@ -31070,6 +31072,12 @@ function pickDefaultSystemIface(snapshot) {
   return first ? String(first.iface) : '';
 }
 
+function pickDefaultSystemDiskDevice(snapshot) {
+  const list = snapshot && Array.isArray(snapshot.disk_io) ? snapshot.disk_io : [];
+  const first = list.find((item) => item && item.device) || null;
+  return first ? String(first.device) : '';
+}
+
 function updateSystemNetIfaceOptions(snapshot) {
   const net = snapshot && Array.isArray(snapshot.net) ? snapshot.net : [];
   const ifaces = net.map((item) => item && item.iface ? String(item.iface) : '').filter(Boolean);
@@ -31094,7 +31102,33 @@ function updateSystemNetIfaceOptions(snapshot) {
   elements.observabilityNetIface.value = next;
 }
 
-function renderSystemMetricsCards(container, snapshot, iface, timeseries, flags) {
+function updateSystemDiskDeviceOptions(snapshot) {
+  const list = snapshot && Array.isArray(snapshot.disk_io) ? snapshot.disk_io : [];
+  const devices = list.map((item) => item && item.device ? String(item.device) : '').filter(Boolean);
+  if (!devices.length) {
+    state.systemMetricsDiskDevice = '';
+    if (elements.observabilityDiskDevice) {
+      elements.observabilityDiskDevice.innerHTML = '';
+    }
+    return;
+  }
+  const current = state.systemMetricsDiskDevice
+    || (elements.observabilityDiskDevice && elements.observabilityDiskDevice.value)
+    || '';
+  const next = current && devices.includes(current) ? current : devices[0];
+  state.systemMetricsDiskDevice = next;
+  if (!elements.observabilityDiskDevice) return;
+
+  elements.observabilityDiskDevice.innerHTML = '';
+  devices.forEach((device) => {
+    const option = createEl('option', '', device);
+    option.value = device;
+    elements.observabilityDiskDevice.appendChild(option);
+  });
+  elements.observabilityDiskDevice.value = next;
+}
+
+function renderSystemMetricsCards(container, snapshot, iface, diskDevice, timeseries, flags) {
   if (!container) return { rollupEnabled: false, hasHistoryData: false };
   container.innerHTML = '';
   if (!snapshot || snapshot.enabled !== true) return { rollupEnabled: false, hasHistoryData: false };
@@ -31122,16 +31156,34 @@ function renderSystemMetricsCards(container, snapshot, iface, timeseries, flags)
   const rxNow = picked ? Number(picked.rx_bps) : undefined;
   const txNow = picked ? Number(picked.tx_bps) : undefined;
 
+  const diskIo = Array.isArray(snapshot.disk_io) ? snapshot.disk_io : [];
+  const pickedDisk = (diskDevice && diskIo.find((row) => row && row.device === diskDevice)) || diskIo[0] || null;
+  const pickedDiskDevice = pickedDisk && pickedDisk.device ? String(pickedDisk.device) : '';
+  const diskReadNow = pickedDisk ? Number(pickedDisk.read_bps) : undefined;
+  const diskWriteNow = pickedDisk ? Number(pickedDisk.write_bps) : undefined;
+
   const ts = (rollupEnabled && timeseries && typeof timeseries === 'object') ? timeseries : {};
   const cpuHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.cpu_usage, (v) => v * 100) : [];
   const memHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.mem_used_percent) : [];
   const diskHistoryRaw = rollupEnabled ? toTimeseriesPoints(ts.disk_used_percent) : [];
+  const diskReadPairs = rollupEnabled && pickedDiskDevice && ts.disk_read_bps ? ts.disk_read_bps[pickedDiskDevice] : null;
+  const diskWritePairs = rollupEnabled && pickedDiskDevice && ts.disk_write_bps ? ts.disk_write_bps[pickedDiskDevice] : null;
+  const diskReadHistoryRaw = rollupEnabled ? toTimeseriesPoints(diskReadPairs) : [];
+  const diskWriteHistoryRaw = rollupEnabled ? toTimeseriesPoints(diskWritePairs) : [];
   const rxPairs = rollupEnabled && pickedIface && ts.net_rx_bps ? ts.net_rx_bps[pickedIface] : null;
   const txPairs = rollupEnabled && pickedIface && ts.net_tx_bps ? ts.net_tx_bps[pickedIface] : null;
   const rxHistoryRaw = rollupEnabled ? toTimeseriesPoints(rxPairs) : [];
   const txHistoryRaw = rollupEnabled ? toTimeseriesPoints(txPairs) : [];
 
-  const hasHistoryData = !!(cpuHistoryRaw.length || memHistoryRaw.length || diskHistoryRaw.length || rxHistoryRaw.length || txHistoryRaw.length);
+  const hasHistoryData = !!(
+    cpuHistoryRaw.length
+    || memHistoryRaw.length
+    || diskHistoryRaw.length
+    || diskReadHistoryRaw.length
+    || diskWriteHistoryRaw.length
+    || rxHistoryRaw.length
+    || txHistoryRaw.length
+  );
 
   const flatLine = (value) => (Number.isFinite(Number(value)) ? [{ x: 0, y: Number(value) }, { x: 1, y: Number(value) }] : []);
 
@@ -31216,6 +31268,27 @@ function renderSystemMetricsCards(container, snapshot, iface, timeseries, flags)
     sparkOpts: { yMin: 0, yMax: 100, padding: 6 },
   });
 
+  const diskIoTitle = pickedDiskDevice ? `Disk I/O (${pickedDiskDevice})` : 'Disk I/O';
+  const diskIoReadText = `R ${pickedDisk ? formatMbitPerSecFromBytes(pickedDisk.read_bps) : '—'}`;
+  const diskIoWriteText = `W ${pickedDisk ? formatMbitPerSecFromBytes(pickedDisk.write_bps) : '—'}`;
+  const diskIoTooltip = pickedDiskDevice && pickedDisk
+    ? `${pickedDiskDevice}: read ${formatBytes(pickedDisk.read_bytes)} • write ${formatBytes(pickedDisk.write_bytes)}`
+    : '';
+  makeCard({
+    title: diskIoTitle,
+    overlayLines: [diskIoReadText, diskIoWriteText],
+    tooltip: diskIoTooltip,
+    valueCompact: true,
+    series: [
+      { color: accent, points: diskReadHistoryRaw.length ? diskReadHistoryRaw : flatLine(diskReadNow) },
+      { color: warning, points: diskWriteHistoryRaw.length ? diskWriteHistoryRaw : flatLine(diskWriteNow) },
+    ],
+    sparkOpts: {
+      padding: 6,
+      yFormatter: formatMbitAxisLabel,
+    },
+  });
+
   const ifaceLabel = pickedIface ? `Net (${pickedIface})` : 'Net';
   const rxText = `RX ${picked ? formatMbitPerSecFromBytes(picked.rx_bps) : '—'}`;
   const txText = `TX ${picked ? formatMbitPerSecFromBytes(picked.tx_bps) : '—'}`;
@@ -31242,6 +31315,7 @@ function renderSystemMetrics() {
   const enabled = isViewEnabled('observability');
   const snapshot = state.systemMetricsSnapshot;
   const iface = state.systemMetricsIface || pickDefaultSystemIface(snapshot);
+  const diskDevice = state.systemMetricsDiskDevice || pickDefaultSystemDiskDevice(snapshot);
   const flags = state.systemMetricsFlags || {};
   const rollupEnabled = flags.rollup === true;
   const timeseries = state.systemMetricsTimeseries;
@@ -31250,7 +31324,7 @@ function renderSystemMetrics() {
     const show = enabled && state.currentView === 'observability' && snapshot && snapshot.enabled === true;
     elements.observabilitySystem.hidden = !show;
     if (show) {
-      renderSystemMetricsCards(elements.observabilitySystemCards, snapshot, iface, timeseries, flags);
+      renderSystemMetricsCards(elements.observabilitySystemCards, snapshot, iface, diskDevice, timeseries, flags);
     }
   }
   if (elements.dashboardSystem) {
@@ -31263,7 +31337,7 @@ function renderSystemMetrics() {
     if (!show) {
       elements.observabilitySystemTimeseries.hidden = true;
     } else {
-      const hintNeeded = renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface);
+      const hintNeeded = renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface, diskDevice);
       elements.observabilitySystemTimeseries.hidden = !hintNeeded;
     }
   }
@@ -31272,6 +31346,8 @@ function renderSystemMetrics() {
 async function loadSystemMetricsSnapshot(force) {
   if (!isViewEnabled('observability')) {
     state.systemMetricsSnapshot = null;
+    state.systemMetricsIface = '';
+    state.systemMetricsDiskDevice = '';
     state.systemMetricsLastFetchMs = 0;
     state.systemMetricsInFlight = false;
     state.systemMetricsFlags = null;
@@ -31301,6 +31377,7 @@ async function loadSystemMetricsSnapshot(force) {
     state.systemMetricsLastFetchMs = Date.now();
     if (snap && snap.enabled === true) {
       updateSystemNetIfaceOptions(snap);
+      updateSystemDiskDeviceOptions(snap);
     }
     renderSystemMetrics();
   } catch (err) {
@@ -31327,7 +31404,7 @@ function toTimeseriesPoints(pairs, transform) {
   return out;
 }
 
-function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface) {
+function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface, diskDevice) {
   if (!elements.observabilitySystemTimeseriesHint || !elements.observabilitySystemTimeseriesCharts) return false;
 
   const hintEl = elements.observabilitySystemTimeseriesHint;
@@ -31339,12 +31416,22 @@ function renderSystemMetricsTimeseries(rollupEnabled, timeseries, iface) {
   const cpuPoints = toTimeseriesPoints(ts.cpu_usage, (v) => v * 100);
   const memPoints = toTimeseriesPoints(ts.mem_used_percent);
   const diskPoints = toTimeseriesPoints(ts.disk_used_percent);
+  const diskReadPairs = ts.disk_read_bps && diskDevice ? ts.disk_read_bps[String(diskDevice)] : null;
+  const diskWritePairs = ts.disk_write_bps && diskDevice ? ts.disk_write_bps[String(diskDevice)] : null;
+  const diskReadPoints = toTimeseriesPoints(diskReadPairs);
+  const diskWritePoints = toTimeseriesPoints(diskWritePairs);
   const rxPairs = ts.net_rx_bps && iface ? ts.net_rx_bps[String(iface)] : null;
   const txPairs = ts.net_tx_bps && iface ? ts.net_tx_bps[String(iface)] : null;
   const rxPoints = toTimeseriesPoints(rxPairs);
   const txPoints = toTimeseriesPoints(txPairs);
 
-  const hasData = cpuPoints.length || memPoints.length || diskPoints.length || rxPoints.length || txPoints.length;
+  const hasData = cpuPoints.length
+    || memPoints.length
+    || diskPoints.length
+    || diskReadPoints.length
+    || diskWritePoints.length
+    || rxPoints.length
+    || txPoints.length;
   if (!rollupEnabled) {
     if (!hasData) {
       hintEl.textContent = 'Server history collection is disabled. Enable it in Settings → Observability → Server metrics.';
@@ -37955,6 +38042,12 @@ function bindEvents() {
   if (elements.observabilityNetIface) {
     elements.observabilityNetIface.addEventListener('change', () => {
       state.systemMetricsIface = elements.observabilityNetIface.value || '';
+      renderSystemMetrics();
+    });
+  }
+  if (elements.observabilityDiskDevice) {
+    elements.observabilityDiskDevice.addEventListener('change', () => {
+      state.systemMetricsDiskDevice = elements.observabilityDiskDevice.value || '';
       renderSystemMetrics();
     });
   }

@@ -1095,10 +1095,16 @@
           <div class="observability-system" id="obs-system" hidden>
             <div class="observability-system-head">
               <div class="chart-title">Server</div>
-              <label class="field obs-net-field">
-                <span>Network</span>
-                <select id="obs-net-iface"></select>
-              </label>
+              <div class="obs-system-filters">
+                <label class="field obs-net-field">
+                  <span>Network</span>
+                  <select id="obs-net-iface"></select>
+                </label>
+                <label class="field obs-disk-field">
+                  <span>Disk</span>
+                  <select id="obs-disk-device"></select>
+                </label>
+              </div>
             </div>
             <div class="observability-system-cards" id="obs-system-cards"></div>
 

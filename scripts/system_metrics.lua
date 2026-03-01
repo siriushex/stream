@@ -16,6 +16,7 @@ system_metrics.state = system_metrics.state or {
 system_metrics.cache = system_metrics.cache or {
     cpu = nil, -- { ts=unix_sec, idle=..., total=... }
     net = nil, -- { ts=unix_sec, ifaces={ iface={ rx_bytes=..., tx_bytes=... } } }
+    disk = nil, -- { ts=unix_sec, devices={ dev={ read_bytes=..., write_bytes=... } } }
 }
 
 system_metrics.timer_rollup = system_metrics.timer_rollup or nil
@@ -281,6 +282,72 @@ local function compute_net_rates(prev, cur)
     return out
 end
 
+local function is_virtual_disk(name)
+    if not name or name == "" then
+        return true
+    end
+    if name:match("^loop") or name:match("^ram") or name:match("^zram") or name:match("^fd") then
+        return true
+    end
+    return false
+end
+
+local function is_block_device(name)
+    if is_virtual_disk(name) then
+        return false
+    end
+    return read_first_line("/sys/block/" .. tostring(name) .. "/dev") ~= nil
+end
+
+local function sample_disk_io(now)
+    local lines = read_lines("/proc/diskstats")
+    if not lines or #lines == 0 then
+        return nil
+    end
+    local devices = {}
+    for _, line in ipairs(lines) do
+        local _major, _minor, name, rest = line:match("^%s*(%d+)%s+(%d+)%s+([^%s]+)%s+(.*)$")
+        if name and rest and is_block_device(name) then
+            local nums = {}
+            for num in rest:gmatch("(%d+)") do
+                table.insert(nums, tonumber(num))
+            end
+            local sectors_read = nums[3] or 0
+            local sectors_written = nums[7] or 0
+            devices[name] = {
+                read_bytes = sectors_read * 512,
+                write_bytes = sectors_written * 512,
+            }
+        end
+    end
+    return { ts = now, devices = devices }
+end
+
+local function compute_disk_io_rates(prev, cur)
+    if not prev or not cur then
+        return {}
+    end
+    local dt = (cur.ts or 0) - (prev.ts or 0)
+    if dt <= 0 then
+        return {}
+    end
+    local out = {}
+    for name, curv in pairs(cur.devices or {}) do
+        local prevv = prev.devices and prev.devices[name] or nil
+        if prevv then
+            local read = (curv.read_bytes or 0) - (prevv.read_bytes or 0)
+            local write = (curv.write_bytes or 0) - (prevv.write_bytes or 0)
+            if read < 0 then read = 0 end
+            if write < 0 then write = 0 end
+            out[name] = {
+                read_bps = read / dt,
+                write_bps = write / dt,
+            }
+        end
+    end
+    return out
+end
+
 local function build_disk_snapshot()
     if not utils or not utils.statvfs then
         return nil
@@ -325,6 +392,15 @@ local function to_rollup_point(snap)
     if snap.disk and snap.disk[1] and snap.disk[1].used_percent ~= nil then
         root_disk_used = tonumber(snap.disk[1].used_percent)
     end
+    local disk_io_map = {}
+    for _, item in ipairs(snap.disk_io or {}) do
+        if item and item.device then
+            disk_io_map[item.device] = {
+                read_bps = tonumber(item.read_bps),
+                write_bps = tonumber(item.write_bps),
+            }
+        end
+    end
     local net_map = {}
     for _, item in ipairs(snap.net or {}) do
         net_map[item.iface] = { rx_bps = item.rx_bps, tx_bps = item.tx_bps }
@@ -335,6 +411,7 @@ local function to_rollup_point(snap)
         cpu_usage = snap.cpu and snap.cpu.usage or nil,
         mem_used_percent = snap.mem and snap.mem.used_percent or nil,
         disk_used_percent = root_disk_used,
+        disk_io = disk_io_map,
         net = net_map,
     }
 end
@@ -352,6 +429,7 @@ local function row_to_point(row)
         cpu_usage = tonumber(row.cpu_usage),
         mem_used_percent = tonumber(row.mem_used_percent),
         disk_used_percent = tonumber(row.disk_used_percent),
+        disk_io = row.disk_io,
         net = row.net,
     }
 end
@@ -393,6 +471,12 @@ function system_metrics.snapshot()
     if net_cur then
         system_metrics.cache.net = net_cur
     end
+    local disk_cur = sample_disk_io(now)
+    local disk_prev = system_metrics.cache.disk
+    local disk_io_rates = compute_disk_io_rates(disk_prev, disk_cur)
+    if disk_cur then
+        system_metrics.cache.disk = disk_cur
+    end
 
     local net_list = {}
     if net_cur and net_cur.ifaces then
@@ -413,6 +497,25 @@ function system_metrics.snapshot()
             })
         end
     end
+    local disk_io_list = {}
+    if disk_cur and disk_cur.devices then
+        local names = {}
+        for name, _ in pairs(disk_cur.devices) do
+            table.insert(names, name)
+        end
+        table.sort(names)
+        for _, name in ipairs(names) do
+            local v = disk_cur.devices[name]
+            local r = disk_io_rates[name] or {}
+            table.insert(disk_io_list, {
+                device = name,
+                read_bytes = v.read_bytes or 0,
+                write_bytes = v.write_bytes or 0,
+                read_bps = r.read_bps,
+                write_bps = r.write_bps,
+            })
+        end
+    end
 
     local mem = sample_mem()
     local loadavg = sample_loadavg() or {}
@@ -426,6 +529,7 @@ function system_metrics.snapshot()
         cpu = { usage = cpu_usage, la1 = loadavg.la1, la5 = loadavg.la5, la15 = loadavg.la15 },
         mem = mem,
         disk = disks,
+        disk_io = disk_io_list,
         net = net_list,
         uptime_sec = uptime,
     }
@@ -500,6 +604,7 @@ local function rollup_tick()
         cpu_usage = point.cpu_usage,
         mem_used_percent = point.mem_used_percent,
         disk_used_percent = point.disk_used_percent,
+        disk_io = point.disk_io,
         net = point.net,
     })
 end

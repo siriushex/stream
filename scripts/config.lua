@@ -203,8 +203,12 @@ local function setup_observability_schema(db)
         cpu_usage REAL,
         mem_used_percent REAL,
         disk_used_percent REAL,
-        net_json TEXT
+        net_json TEXT,
+        disk_io_json TEXT
     );
+    ]])
+    db_exec_safe(db, [[
+    ALTER TABLE system_metrics_rollup ADD COLUMN disk_io_json TEXT;
     ]])
     db_exec_safe(db, [[
     ALTER TABLE ai_metrics_rollup ADD COLUMN resolution_sec INTEGER NOT NULL DEFAULT 60;
@@ -695,7 +699,8 @@ config.migrations = {
         cpu_usage REAL,
         mem_used_percent REAL,
         disk_used_percent REAL,
-        net_json TEXT
+        net_json TEXT,
+        disk_io_json TEXT
     );
 
     CREATE INDEX IF NOT EXISTS system_metrics_rollup_ts_idx ON system_metrics_rollup(ts_bucket);
@@ -907,6 +912,9 @@ config.migrations = {
     ]],
     [[
     ALTER TABLE dvr_streams ADD COLUMN config_json TEXT;
+    ]],
+    [[
+    ALTER TABLE system_metrics_rollup ADD COLUMN disk_io_json TEXT;
     ]],
 }
 
@@ -2652,6 +2660,12 @@ function config.upsert_system_metric_rollup(entry)
     elseif entry.net_json ~= nil then
         net_json = tostring(entry.net_json)
     end
+    local disk_io_json = ""
+    if entry.disk_io ~= nil then
+        disk_io_json = json_encode(entry.disk_io)
+    elseif entry.disk_io_json ~= nil then
+        disk_io_json = tostring(entry.disk_io_json)
+    end
 
     local function sql_num_or_null(v)
         if v == nil then
@@ -2662,9 +2676,9 @@ function config.upsert_system_metric_rollup(entry)
 
     local obs_db = get_observability_db()
     local ok, err = db_exec_safe(obs_db,
-        "INSERT OR REPLACE INTO system_metrics_rollup(ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json) VALUES(" ..
+        "INSERT OR REPLACE INTO system_metrics_rollup(ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json, disk_io_json) VALUES(" ..
         ts_bucket .. ", " .. sql_num_or_null(cpu_usage) .. ", " .. sql_num_or_null(mem_used_percent) .. ", " ..
-        sql_num_or_null(disk_used_percent) .. ", '" .. sql_escape(net_json) .. "');")
+        sql_num_or_null(disk_used_percent) .. ", '" .. sql_escape(net_json) .. "', '" .. sql_escape(disk_io_json) .. "');")
     if not ok then
         log.warning("[observability] failed to upsert system metric: " .. tostring(err))
         return nil, err
@@ -2688,10 +2702,10 @@ function config.list_system_metric_rollup(opts)
     end
     local where_sql = table.concat(where, " AND ")
     local obs_db = get_observability_db()
-    local rows = db_query(obs_db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
+    local rows = db_query(obs_db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json, disk_io_json " ..
         "FROM system_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
     if #rows == 0 and obs_db ~= config.db then
-        rows = db_query(config.db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json " ..
+        rows = db_query(config.db, "SELECT ts_bucket, cpu_usage, mem_used_percent, disk_used_percent, net_json, disk_io_json " ..
             "FROM system_metrics_rollup WHERE " .. where_sql .. " ORDER BY ts_bucket ASC LIMIT " .. limit .. ";")
     end
     for _, row in ipairs(rows) do
@@ -2699,6 +2713,11 @@ function config.list_system_metric_rollup(opts)
             row.net = json_decode(row.net_json)
         else
             row.net = nil
+        end
+        if row.disk_io_json and row.disk_io_json ~= "" then
+            row.disk_io = json_decode(row.disk_io_json)
+        else
+            row.disk_io = nil
         end
     end
     return rows

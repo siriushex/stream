@@ -4974,6 +4974,16 @@ button.stream-audio-fix-toggle:disabled {
   min-width: 200px;
 }
 
+.obs-system-filters {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.obs-disk-field {
+  min-width: 200px;
+}
+
 .observability-summary {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));

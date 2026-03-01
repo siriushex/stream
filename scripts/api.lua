@@ -8564,6 +8564,8 @@ local function system_metrics_timeseries(server, client, request)
         cpu_usage = {},
         mem_used_percent = {},
         disk_used_percent = {},
+        disk_read_bps = {},
+        disk_write_bps = {},
         net_rx_bps = {},
         net_tx_bps = {},
     }
@@ -8589,6 +8591,18 @@ local function system_metrics_timeseries(server, client, request)
                     if v and v.tx_bps ~= nil then
                         series.net_tx_bps[iface] = series.net_tx_bps[iface] or {}
                         table.insert(series.net_tx_bps[iface], { t, v.tx_bps })
+                    end
+                end
+            end
+            if pt.disk_io then
+                for device, v in pairs(pt.disk_io) do
+                    if v and v.read_bps ~= nil then
+                        series.disk_read_bps[device] = series.disk_read_bps[device] or {}
+                        table.insert(series.disk_read_bps[device], { t, v.read_bps })
+                    end
+                    if v and v.write_bps ~= nil then
+                        series.disk_write_bps[device] = series.disk_write_bps[device] or {}
+                        table.insert(series.disk_write_bps[device], { t, v.write_bps })
                     end
                 end
             end
