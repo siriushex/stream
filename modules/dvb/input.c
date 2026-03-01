@@ -87,6 +87,7 @@ struct module_data_t
 #define DVR_OVERFLOW_BURST_WINDOW_US (15 * 1000 * 1000)
 #define DVR_OVERFLOW_REOPEN_THRESHOLD 3
 #define DVR_OVERFLOW_REOPEN_MIN_INTERVAL_US (10 * 1000 * 1000)
+#define DVR_READ_DRAIN_MAX_BURST 16
 
 /*
  * ooooooooo  ooooo  oooo oooooooooo
@@ -262,31 +263,38 @@ static void dvr_on_read(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
 
-    const ssize_t len = read(mod->dvr_fd, mod->dvr_buffer, sizeof(mod->dvr_buffer));
-    if(len <= 0)
+    for(int burst = 0; burst < DVR_READ_DRAIN_MAX_BURST; ++burst)
     {
-        dvr_handle_error(mod, (len == 0) ? EPIPE : errno);
-        return;
-    }
+        const ssize_t len = read(mod->dvr_fd, mod->dvr_buffer, sizeof(mod->dvr_buffer));
+        if(len <= 0)
+        {
+            const int err = (len == 0) ? EPIPE : errno;
+            if(err == EAGAIN || err == EWOULDBLOCK || err == EINTR)
+                break;
+            dvr_handle_error(mod, err);
+            break;
+        }
 
-    const ssize_t aligned_len = (len / TS_PACKET_SIZE) * TS_PACKET_SIZE;
-    if(aligned_len <= 0)
-        return;
-    mod->dvr_read += (uint32_t)aligned_len;
-    mod->dvr_overflow_window_started_us = 0;
-    mod->dvr_overflow_in_window = 0;
+        const ssize_t aligned_len = (len / TS_PACKET_SIZE) * TS_PACKET_SIZE;
+        if(aligned_len > 0)
+        {
+            mod->dvr_read += (uint32_t)aligned_len;
+            mod->dvr_overflow_window_started_us = 0;
+            mod->dvr_overflow_in_window = 0;
 
-    for(ssize_t i = 0; i < aligned_len; i += TS_PACKET_SIZE)
-    {
-        const uint8_t *ts = &mod->dvr_buffer[i];
+            for(ssize_t i = 0; i < aligned_len; i += TS_PACKET_SIZE)
+            {
+                const uint8_t *ts = &mod->dvr_buffer[i];
 
-        if(mod->ca->ca_fd > 0)
-            ca_on_ts(mod->ca, ts);
+                if(mod->ca->ca_fd > 0)
+                    ca_on_ts(mod->ca, ts);
 
-        module_stream_send(mod, ts);
+                module_stream_send(mod, ts);
 
-        if(TS_IS_SYNC(ts) && TS_GET_PID(ts) == 0)
-            mpegts_psi_mux(mod->pat, ts, on_pat, mod);
+                if(TS_IS_SYNC(ts) && TS_GET_PID(ts) == 0)
+                    mpegts_psi_mux(mod->pat, ts, on_pat, mod);
+            }
+        }
     }
 }
 
