@@ -623,7 +623,7 @@ local function normalize_settings(raw)
     local out = {}
     out.audio_url = normalize_audio_url(raw.audio_url)
     out.png_path = tostring(raw.png_path or "")
-    out.autostart = normalize_bool(raw.autostart, false)
+    out.autostart = normalize_bool(raw.autostart, true)
     out.use_curl = normalize_bool(raw.use_curl, true)
     out.extra_headers = tostring(raw.extra_headers or "")
     out.user_agent = tostring(raw.user_agent or "")
@@ -1029,7 +1029,7 @@ end
 -- ошибки не должны валить стрим-пайплайн.
 function radio.sync_from_stream_config(stream_id, stream_cfg, enabled)
     local cfg = (type(stream_cfg) == "table") and stream_cfg.radio or nil
-    local want = enabled and type(cfg) == "table" and cfg.autostart == true
+    local want = enabled and type(cfg) == "table" and cfg.autostart ~= false
 
     local job = radio.jobs[stream_id]
     if not want then

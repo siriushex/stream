@@ -71,5 +71,18 @@ assert_true(settings_preserve.archive_enabled == true, "archive enabled must be 
 assert_true(settings_preserve.backup_enabled == true, "backup enabled must be preserved")
 assert_eq(settings_preserve.retention_days, 5, "retention days must be preserved")
 
+local settings_remote = dvr.settings_for_stream({
+    dvr = {
+        mode = "remote",
+        enabled = true,
+        backup_enabled = true,
+        path = tmp .. "/archive_remote",
+    },
+})
+assert_eq(settings_remote.mode, "remote", "mode must be preserved")
+assert_true(settings_remote.archive_enabled == false, "remote mode must disable local archive writer")
+assert_true(settings_remote.backup_enabled == true, "remote mode must not disable backup flag")
+assert_eq(settings_remote.archive_path, tmp .. "/archive_remote", "remote archive path value must be preserved")
+
 log.info("[unit] dvr_archive_path_unit ok")
 astra.exit()

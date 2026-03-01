@@ -488,6 +488,7 @@ end
 
 function dvr.settings_for_stream(stream_cfg)
     local cfg = (type(stream_cfg) == "table" and type(stream_cfg.dvr) == "table") and stream_cfg.dvr or {}
+    local mode = dvr_trim(cfg.mode):lower()
     local archive_enabled = dvr_bool(cfg.enabled, nil)
     if archive_enabled == nil then
         archive_enabled = dvr_bool(dvr_setting_alias({ "dvr_enabled", "dvr.enabled" }, false), false)
@@ -657,7 +658,13 @@ function dvr.settings_for_stream(stream_cfg)
         )
     end
 
+    if mode == "remote" then
+        -- Remote DVR mode must not write archive locally.
+        archive_enabled = false
+    end
+
     return {
+        mode = mode ~= "" and mode or "local",
         archive_enabled = archive_enabled == true,
         backup_enabled = backup_enabled == true,
         archive_path = archive_path,
@@ -3566,7 +3573,17 @@ function dvr.local_tick()
     local remote_rows = dvr.list_streams({ record_enabled = true, limit = 10000 })
     for _, row in ipairs(remote_rows) do
         local sid = dvr_trim(row and row.stream_id)
-        if sid ~= "" and not active_set[sid] then
+        local has_local_runtime = false
+        if runtime and type(runtime.streams) == "table" then
+            has_local_runtime = runtime.streams[sid] ~= nil
+            if not has_local_runtime then
+                local sid_num = tonumber(sid)
+                if sid_num then
+                    has_local_runtime = runtime.streams[sid_num] ~= nil
+                end
+            end
+        end
+        if sid ~= "" and not active_set[sid] and not has_local_runtime then
             remote_active_set[sid] = true
             dvr_remote_writer_tick(row, default_settings)
         end

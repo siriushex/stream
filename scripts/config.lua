@@ -367,7 +367,10 @@ local function sanitize_adapter_config(id, cfg)
     end
     if cfg.buffer_size == nil then
         local nested = cfg.config
-        local nestedBuffer = type(nested) == "table" and nested.buffer_size
+        local nestedBuffer = nil
+        if type(nested) == "table" then
+            nestedBuffer = nested.buffer_size
+        end
         if nestedBuffer ~= nil then
             cfg.buffer_size = nestedBuffer
             nested.buffer_size = nil

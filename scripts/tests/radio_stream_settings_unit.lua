@@ -59,6 +59,7 @@ do
   assert_eq(s.audio_format, "auto", "audio_format fallback")
   assert_true(type(s.restart_delay_sec) == "number" and s.restart_delay_sec > 0, "restart_delay_sec must be > 0")
   assert_eq(s.max_restarts_per_10min, 1, "max_restarts_per_10min clamp")
+  assert_true(s.autostart == true, "autostart default should be true")
   assert_eq(s.fps, 1, "default fps")
   assert_eq(s.preset, "ultrafast", "default preset")
   assert_eq(s.video_bitrate, "400k", "default video bitrate")

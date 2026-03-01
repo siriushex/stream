@@ -184,7 +184,36 @@ local function radio_get_desired_autostart(stream_id)
     local row = config.get_stream(stream_id)
     local cfg = row and row.config or nil
     local rcfg = cfg and cfg.radio or nil
-    return (type(rcfg) == "table" and rcfg.autostart == true) and true or false
+    return (type(rcfg) == "table" and rcfg.autostart ~= false) and true or false
+end
+
+local function radio_copy_table(src)
+    if type(src) ~= "table" then
+        return {}
+    end
+    local out = {}
+    for k, v in pairs(src) do
+        out[k] = v
+    end
+    return out
+end
+
+local function radio_build_effective_settings(stream_id, request_body)
+    local effective = {}
+    if config and type(config.get_stream) == "function" then
+        local row = config.get_stream(stream_id)
+        local cfg = row and row.config or nil
+        local rcfg = cfg and cfg.radio or nil
+        if type(rcfg) == "table" then
+            effective = radio_copy_table(rcfg)
+        end
+    end
+    if type(request_body) == "table" then
+        for k, v in pairs(request_body) do
+            effective[k] = v
+        end
+    end
+    return effective
 end
 
 local function radio_persist_config(stream_id, patch, autostart)
@@ -370,7 +399,8 @@ function api.radio_start(server, client, request, stream_id)
     end
 
     local body = parse_json_body(request) or {}
-    local ok, err = radio.start(stream_id, body)
+    local settings = radio_build_effective_settings(stream_id, body)
+    local ok, err = radio.start(stream_id, settings)
     if not ok then
         return error_response(server, client, 400, err or "start failed")
     end
@@ -445,7 +475,8 @@ function api.radio_restart(server, client, request, stream_id)
     end
 
     local body = parse_json_body(request) or {}
-    local ok, err = radio.restart(stream_id, body)
+    local settings = radio_build_effective_settings(stream_id, body)
+    local ok, err = radio.restart(stream_id, settings)
     if not ok then
         return error_response(server, client, 400, err or "restart failed")
     end

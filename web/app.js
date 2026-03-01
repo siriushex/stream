@@ -387,6 +387,7 @@ const state = {
     logs: '',
   },
   radio: {
+    autostart: true,
     audioUrl: '',
     pngPath: '',
     useCurl: true,
@@ -16737,7 +16738,7 @@ function resetRadioStateFromStream(stream) {
   const radio = normalizeRadioState();
   const cfg = stream && stream.config ? stream.config : {};
   const rcfg = cfg && cfg.radio ? cfg.radio : {};
-  radio.autostart = rcfg.autostart === true;
+  radio.autostart = rcfg.autostart !== false;
   radio.autoRestart = rcfg.auto_restart !== false;
   radio.restartDelaySec = Number(rcfg.restart_delay_sec || rcfg.restart_delay) || 4;
   radio.noProgressTimeoutSec = Number(rcfg.no_progress_timeout_sec || rcfg.no_progress_timeout) || 30;
@@ -17095,7 +17096,7 @@ function setPngtsAsBackupInput(path, message) {
 function normalizeRadioState() {
   if (!state.radio) state.radio = {};
   const radio = state.radio;
-  radio.autostart = radio.autostart === true;
+  radio.autostart = radio.autostart !== false;
   radio.autoRestart = radio.autoRestart !== false;
   radio.restartDelaySec = Number.isFinite(Number(radio.restartDelaySec)) ? Number(radio.restartDelaySec) : 4;
   radio.noProgressTimeoutSec = Number.isFinite(Number(radio.noProgressTimeoutSec)) ? Number(radio.noProgressTimeoutSec) : 30;
