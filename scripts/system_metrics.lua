@@ -263,7 +263,7 @@ local function compute_net_rates(prev, cur)
     end
     local dt = (cur.ts or 0) - (prev.ts or 0)
     if dt <= 0 then
-        return {}
+        dt = 1
     end
     local out = {}
     for name, curv in pairs(cur.ifaces or {}) do
@@ -329,7 +329,7 @@ local function compute_disk_io_rates(prev, cur)
     end
     local dt = (cur.ts or 0) - (prev.ts or 0)
     if dt <= 0 then
-        return {}
+        dt = 1
     end
     local out = {}
     for name, curv in pairs(cur.devices or {}) do
