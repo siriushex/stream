@@ -47,6 +47,7 @@ struct em_packet_t
 
     module_decrypt_t *decrypt;
     void *arg;
+    uint64_t context_generation;
 };
 
 /*
@@ -76,6 +77,7 @@ struct module_cam_t
     void (*disconnect)(module_data_t *mod);
     void (*send_em)(  module_data_t *mod
                     , module_decrypt_t *decrypt, void *arg
+                    , uint64_t context_generation
                     , const uint8_t *buffer, uint16_t size);
 };
 

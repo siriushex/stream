@@ -85,7 +85,10 @@ typedef struct
 {
     ca_stream_t *stream;
     bool is_backup;
+    uint64_t context_generation;
 } cam_ecm_arg_t;
+
+static uint64_t cam_context_generation_next = 1;
 
 typedef struct
 {
@@ -670,11 +673,17 @@ ca_stream_t * ca_stream_init(module_data_t *mod, uint16_t ecm_pid)
     memset(ca_stream, 0, sizeof(ca_stream_t));
     pthread_mutex_init(&ca_stream->parallel_key_mutex, NULL);
 
+    const uint64_t context_generation = cam_context_generation_next++;
+    if(cam_context_generation_next == 0)
+        cam_context_generation_next = 1;
+
     ca_stream->ecm_pid = ecm_pid;
     ca_stream->arg_primary.stream = ca_stream;
     ca_stream->arg_primary.is_backup = false;
+    ca_stream->arg_primary.context_generation = context_generation;
     ca_stream->arg_backup.stream = ca_stream;
     ca_stream->arg_backup.is_backup = true;
+    ca_stream->arg_backup.context_generation = context_generation;
     ca_stream->backup_timer_arg.mod = mod;
     ca_stream->backup_timer_arg.stream = ca_stream;
     ca_stream->prefer_primary_timer_arg.mod = mod;
@@ -943,6 +952,7 @@ static bool ca_stream_send_backup_pending(module_data_t *mod, ca_stream_t *ca_st
         return false;
 
     mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
+                             ca_stream->arg_backup.context_generation,
                              ca_stream->backup_ecm_buf, ca_stream->backup_ecm_len);
     ca_stream->sendtime_backup = asc_utime();
     ca_stream->stat_ecm_sent_backup += 1;
@@ -1767,7 +1777,10 @@ static void on_em(void *arg, mpegts_psi_t *psi)
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_primary->disable_emm)
         {
             void *em_arg = is_ecm ? (void *)&ca_stream->arg_primary : NULL;
+            const uint64_t context_generation = is_ecm
+                                               ? ca_stream->arg_primary.context_generation : 0;
             mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, em_arg,
+                                      context_generation,
                                       psi->buffer, psi->buffer_size);
             if(is_ecm)
             {
@@ -1844,7 +1857,10 @@ static void on_em(void *arg, mpegts_psi_t *psi)
                 ca_stream_cancel_backup_send(ca_stream);
 
             void *em_arg = is_ecm ? (void *)&ca_stream->arg_backup : NULL;
+            const uint64_t context_generation = is_ecm
+                                               ? ca_stream->arg_backup.context_generation : 0;
             mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, em_arg,
+                                     context_generation,
                                      psi->buffer, psi->buffer_size);
             if(is_ecm)
             {

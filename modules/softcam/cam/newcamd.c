@@ -20,7 +20,7 @@
 
 #include <astra.h>
 #include "../module_cam.h"
-#include "newcamd_keys.h"
+#include "newcamd_cw_guard.h"
 
 #include <openssl/des.h>
 
@@ -31,9 +31,8 @@
 
 #define MSG(_msg) "[newcamd %s] " _msg, mod->config.name
 
-#define CSA_KEY_SIZE 8
 #define ECM_HEADER_SIZE 3
-#define ECM_PAYLOAD_SIZE (CSA_KEY_SIZE * 2)
+#define ECM_PAYLOAD_SIZE (NEWCAMD_CW_HALF_SIZE * 2)
 
 struct module_data_t
 {
@@ -68,7 +67,10 @@ struct module_data_t
         DES_key_schedule ks2;
     } triple_des;
 
-    uint16_t msg_id;        // curren message id
+    uint16_t msg_id;        // current message id
+    uint16_t pending_msg_id;
+    newcamd_cw_scope_t pending_cw_scope;
+    bool pending_msg_id_valid;
     em_packet_t *packet;    // current packet
     newcamd_cw_cache_t cw_cache;
 
@@ -79,6 +81,9 @@ struct module_data_t
     /* Observability */
     uint64_t stat_reconnects;
     uint64_t stat_timeouts;
+    uint64_t stat_response_id_mismatches;
+    uint64_t stat_partial_cw_rejected;
+    uint64_t stat_partial_cw_scope_mismatches;
     uint64_t last_io_us;
     const char *last_error;
     bool au_enabled;
@@ -191,6 +196,11 @@ static void on_newcamd_close(void *arg)
 {
     module_data_t *mod = arg;
 
+    mod->pending_msg_id = 0;
+    memset(&mod->pending_cw_scope, 0, sizeof(mod->pending_cw_scope));
+    mod->pending_msg_id_valid = false;
+    newcamd_cw_cache_reset(&mod->cw_cache);
+
     if(!mod->sock)
         return;
 
@@ -255,8 +265,13 @@ static void on_newcamd_ready(void *arg)
         mod->payload_size = mod->packet->buffer_size - 3;
 
         mod->msg_id = (mod->msg_id + 1) & 0xFFFF;
-        mod->buffer[2] = mod->msg_id >> 8;
-        mod->buffer[3] = mod->msg_id & 0xff;
+        mod->pending_msg_id = mod->msg_id;
+        mod->pending_cw_scope.decrypt = mod->packet->decrypt;
+        mod->pending_cw_scope.arg = mod->packet->arg;
+        mod->pending_cw_scope.generation = mod->packet->context_generation;
+        mod->pending_msg_id_valid = true;
+        mod->buffer[2] = mod->pending_msg_id >> 8;
+        mod->buffer[3] = mod->pending_msg_id & 0xff;
 
         const uint16_t pnr = mod->packet->decrypt->cas_pnr;
         mod->buffer[4] = pnr >> 8;
@@ -424,6 +439,19 @@ static void on_newcamd_read_packet(void *arg)
             return;
         }
 
+        if(   !mod->pending_msg_id_valid
+           || !newcamd_response_id_matches(mod->pending_msg_id,
+                                            mod->buffer[2], mod->buffer[3]))
+        {
+            mod->stat_response_id_mismatches += 1;
+            mod->last_error = "response_id_mismatch";
+            asc_log_warning(  MSG("drop response with unexpected id (expected:%u got:%u)")
+                            , mod->pending_msg_id
+                            , ((unsigned int)mod->buffer[2] << 8) | mod->buffer[3]);
+            newcamd_reconnect(mod, false);
+            return;
+        }
+
         asc_timer_destroy(mod->timeout);
         mod->timeout = NULL;
 
@@ -435,6 +463,7 @@ static void on_newcamd_read_packet(void *arg)
         if(asc_list_eol(mod->__cam.decrypt_list))
         {
             /* the decrypt module was detached */
+            mod->pending_msg_id_valid = false;
             free(mod->packet);
             mod->packet = module_cam_queue_pop(&mod->__cam);
             if(mod->packet)
@@ -442,23 +471,28 @@ static void on_newcamd_read_packet(void *arg)
             return;
         }
 
+        bool apply_response = true;
+
         if(mod->payload_size == ECM_PAYLOAD_SIZE)
         {
-            uint8_t response[ECM_PAYLOAD_SIZE];
-            memcpy(response, &buffer[3], ECM_PAYLOAD_SIZE);
-
-            if(newcamd_cw_cache_merge(&mod->cw_cache, response))
+            if(mod->packet->buffer[0] == 0x80 || mod->packet->buffer[0] == 0x81)
             {
-                memcpy(&buffer[3], response, ECM_PAYLOAD_SIZE);
+                const newcamd_cw_merge_result_t cw_result = newcamd_cw_cache_merge(
+                      &mod->cw_cache, mod->pending_cw_scope, &buffer[3]);
+                if(cw_result != NEWCAMD_CW_ACCEPTED)
+                {
+                    mod->stat_partial_cw_rejected += 1;
+                    if(cw_result == NEWCAMD_CW_REJECTED_SCOPE)
+                        mod->stat_partial_cw_scope_mismatches += 1;
+                    asc_log_warning(MSG("drop partial CW without matching cache context"));
+                    apply_response = false;
+                }
+            }
+
+            if(apply_response)
+            {
                 memcpy(mod->packet->buffer, buffer, ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE);
                 mod->packet->buffer_size = ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE;
-            }
-            else
-            {
-                /* Do not apply an unknown/empty CW half. */
-                mod->packet->buffer[2] = 0x00;
-                mod->packet->buffer[3] = 0x00;
-                mod->packet->buffer_size = ECM_HEADER_SIZE;
             }
         }
         else if(mod->payload_size == 0)
@@ -473,7 +507,9 @@ static void on_newcamd_read_packet(void *arg)
             mod->packet->buffer_size = ECM_HEADER_SIZE;
         }
 
-        on_cam_response(mod->packet->decrypt->self, mod->packet->arg, mod->packet->buffer);
+        if(apply_response)
+            on_cam_response(mod->packet->decrypt->self, mod->packet->arg, mod->packet->buffer);
+        mod->pending_msg_id_valid = false;
         free(mod->packet);
 
         mod->packet = module_cam_queue_pop(&mod->__cam);
@@ -647,6 +683,7 @@ static void newcamd_reconnect(module_data_t *mod, bool timeout)
 
 void newcamd_send_em(  module_data_t *mod
                      , module_decrypt_t *decrypt, void *arg
+                     , uint64_t context_generation
                      , const uint8_t *buffer, uint16_t size)
 {
     if(mod->status != 3)
@@ -666,6 +703,7 @@ void newcamd_send_em(  module_data_t *mod
     packet->buffer_size = size;
     packet->decrypt = decrypt;
     packet->arg = arg;
+    packet->context_generation = context_generation;
 
     if(packet->buffer[0] == 0x80 || packet->buffer[0] == 0x81)
     {
@@ -760,6 +798,15 @@ static int method_stats(module_data_t *mod)
 
     lua_pushinteger(lua, (lua_Integer)mod->stat_timeouts);
     lua_setfield(lua, -2, "timeouts");
+
+    lua_pushinteger(lua, (lua_Integer)mod->stat_response_id_mismatches);
+    lua_setfield(lua, -2, "response_id_mismatches");
+
+    lua_pushinteger(lua, (lua_Integer)mod->stat_partial_cw_rejected);
+    lua_setfield(lua, -2, "partial_cw_rejected");
+
+    lua_pushinteger(lua, (lua_Integer)mod->stat_partial_cw_scope_mismatches);
+    lua_setfield(lua, -2, "partial_cw_scope_mismatches");
 
     if(mod->last_error && mod->last_error[0] != '\0')
     {
