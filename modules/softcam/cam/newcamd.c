@@ -20,6 +20,7 @@
 
 #include <astra.h>
 #include "../module_cam.h"
+#include "newcamd_keys.h"
 
 #include <openssl/des.h>
 
@@ -33,11 +34,6 @@
 #define CSA_KEY_SIZE 8
 #define ECM_HEADER_SIZE 3
 #define ECM_PAYLOAD_SIZE (CSA_KEY_SIZE * 2)
-
-typedef union {
-    uint8_t a[CSA_KEY_SIZE];
-    uint64_t l;
-} csa_key_t;
 
 struct module_data_t
 {
@@ -74,7 +70,7 @@ struct module_data_t
 
     uint16_t msg_id;        // curren message id
     em_packet_t *packet;    // current packet
-    csa_key_t last_key[2];  // NDS
+    newcamd_cw_cache_t cw_cache;
 
     uint8_t buffer[NEWCAMD_MSG_SIZE];
     size_t payload_size;    // to send
@@ -448,23 +444,22 @@ static void on_newcamd_read_packet(void *arg)
 
         if(mod->payload_size == ECM_PAYLOAD_SIZE)
         {
-            // NDS
-            csa_key_t key_0, key_1;
-            memcpy(key_0.a, &buffer[3], CSA_KEY_SIZE);
-            memcpy(key_1.a, &buffer[11], CSA_KEY_SIZE);
-            if(key_0.l == 0)
-            {
-                memcpy(&buffer[3], mod->last_key[0].a, CSA_KEY_SIZE);
-                mod->last_key[1].l = key_1.l;
-            }
-            else if(key_1.l == 0)
-            {
-                memcpy(&buffer[11], mod->last_key[1].a, CSA_KEY_SIZE);
-                mod->last_key[0].l = key_0.l;
-            }
+            uint8_t response[ECM_PAYLOAD_SIZE];
+            memcpy(response, &buffer[3], ECM_PAYLOAD_SIZE);
 
-            memcpy(mod->packet->buffer, buffer, ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE);
-            mod->packet->buffer_size = ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE;
+            if(newcamd_cw_cache_merge(&mod->cw_cache, response))
+            {
+                memcpy(&buffer[3], response, ECM_PAYLOAD_SIZE);
+                memcpy(mod->packet->buffer, buffer, ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE);
+                mod->packet->buffer_size = ECM_HEADER_SIZE + ECM_PAYLOAD_SIZE;
+            }
+            else
+            {
+                /* Do not apply an unknown/empty CW half. */
+                mod->packet->buffer[2] = 0x00;
+                mod->packet->buffer[3] = 0x00;
+                mod->packet->buffer_size = ECM_HEADER_SIZE;
+            }
         }
         else if(mod->payload_size == 0)
         {

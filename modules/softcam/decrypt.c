@@ -1766,11 +1766,14 @@ static void on_em(void *arg, mpegts_psi_t *psi)
     {
         if(em_type < 0x82 || em_type > 0x8F || !mod->cam_primary->disable_emm)
         {
-            mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, &ca_stream->arg_primary,
+            void *em_arg = is_ecm ? (void *)&ca_stream->arg_primary : NULL;
+            mod->cam_primary->send_em(mod->cam_primary->self, &mod->__decrypt, em_arg,
                                       psi->buffer, psi->buffer_size);
-            ca_stream->sendtime_primary = asc_utime();
             if(is_ecm)
+            {
+                ca_stream->sendtime_primary = asc_utime();
                 ca_stream->stat_ecm_sent_primary += 1;
+            }
             sent_primary = true;
             sent = true;
         }
@@ -1837,12 +1840,17 @@ static void on_em(void *arg, mpegts_psi_t *psi)
             if(is_ecm && mod->cam_backup_mode == CAM_BACKUP_MODE_FAILOVER && sent_primary)
                 return;
 
-            ca_stream_cancel_backup_send(ca_stream);
-            mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, &ca_stream->arg_backup,
-                                     psi->buffer, psi->buffer_size);
-            ca_stream->sendtime_backup = asc_utime();
             if(is_ecm)
+                ca_stream_cancel_backup_send(ca_stream);
+
+            void *em_arg = is_ecm ? (void *)&ca_stream->arg_backup : NULL;
+            mod->cam_backup->send_em(mod->cam_backup->self, &mod->__decrypt, em_arg,
+                                     psi->buffer, psi->buffer_size);
+            if(is_ecm)
+            {
+                ca_stream->sendtime_backup = asc_utime();
                 ca_stream->stat_ecm_sent_backup += 1;
+            }
             sent = true;
         }
     }
