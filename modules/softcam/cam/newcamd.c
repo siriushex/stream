@@ -268,6 +268,7 @@ static void on_newcamd_ready(void *arg)
         mod->pending_msg_id = mod->msg_id;
         mod->pending_cw_scope.decrypt = mod->packet->decrypt;
         mod->pending_cw_scope.arg = mod->packet->arg;
+        mod->pending_cw_scope.generation = mod->packet->context_generation;
         mod->pending_msg_id_valid = true;
         mod->buffer[2] = mod->pending_msg_id >> 8;
         mod->buffer[3] = mod->pending_msg_id & 0xff;
@@ -443,9 +444,11 @@ static void on_newcamd_read_packet(void *arg)
                                             mod->buffer[2], mod->buffer[3]))
         {
             mod->stat_response_id_mismatches += 1;
+            mod->last_error = "response_id_mismatch";
             asc_log_warning(  MSG("drop response with unexpected id (expected:%u got:%u)")
                             , mod->pending_msg_id
                             , ((unsigned int)mod->buffer[2] << 8) | mod->buffer[3]);
+            newcamd_reconnect(mod, false);
             return;
         }
 
@@ -680,6 +683,7 @@ static void newcamd_reconnect(module_data_t *mod, bool timeout)
 
 void newcamd_send_em(  module_data_t *mod
                      , module_decrypt_t *decrypt, void *arg
+                     , uint64_t context_generation
                      , const uint8_t *buffer, uint16_t size)
 {
     if(mod->status != 3)
@@ -699,6 +703,7 @@ void newcamd_send_em(  module_data_t *mod
     packet->buffer_size = size;
     packet->decrypt = decrypt;
     packet->arg = arg;
+    packet->context_generation = context_generation;
 
     if(packet->buffer[0] == 0x80 || packet->buffer[0] == 0x81)
     {

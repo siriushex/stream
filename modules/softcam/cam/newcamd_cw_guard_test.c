@@ -15,20 +15,24 @@ int main(void)
     uint8_t full[16];
     uint8_t even_only[16] = {0};
     uint8_t odd_only[16] = {0};
+    uint8_t zero[16] = {0};
     uint8_t expected[16];
     uint8_t decrypt_a;
     uint8_t arg_a;
     uint8_t arg_b;
-    const newcamd_cw_scope_t scope_a = { &decrypt_a, &arg_a };
-    const newcamd_cw_scope_t scope_b = { &decrypt_a, &arg_b };
+    const newcamd_cw_scope_t scope_a = { &decrypt_a, &arg_a, 1 };
+    const newcamd_cw_scope_t scope_b = { &decrypt_a, &arg_b, 1 };
+    const newcamd_cw_scope_t scope_reused = { &decrypt_a, &arg_a, 2 };
 
     assert(newcamd_response_id_matches(0x1234, 0x12, 0x34));
     assert(!newcamd_response_id_matches(0x1234, 0x12, 0x35));
     assert(!newcamd_cw_scope_matches(scope_a, scope_b));
+    assert(!newcamd_cw_scope_matches(scope_a, scope_reused));
 
     fill(full, sizeof(full), 0x11);
     fill(&full[8], 8, 0x22);
     assert(newcamd_cw_cache_merge(&cache, scope_a, full) == NEWCAMD_CW_ACCEPTED);
+    assert(newcamd_cw_cache_merge(&cache, scope_a, zero) == NEWCAMD_CW_REJECTED_NO_CACHE);
 
     fill(even_only, 8, 0x33);
     memcpy(expected, even_only, sizeof(expected));
@@ -51,6 +55,7 @@ int main(void)
     memset(even_only, 0, sizeof(even_only));
     fill(even_only, 8, 0x66);
     assert(newcamd_cw_cache_merge(&cache, scope_b, even_only) == NEWCAMD_CW_REJECTED_SCOPE);
+    assert(newcamd_cw_cache_merge(&cache, scope_reused, even_only) == NEWCAMD_CW_REJECTED_SCOPE);
 
     newcamd_cw_cache_reset(&cache);
     memset(odd_only, 0, sizeof(odd_only));

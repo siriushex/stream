@@ -17,6 +17,7 @@ typedef enum {
 typedef struct {
     const void *decrypt;
     const void *arg;
+    uint64_t generation;
 } newcamd_cw_scope_t;
 
 typedef struct {
@@ -34,7 +35,9 @@ static inline bool newcamd_response_id_matches(uint16_t expected, uint8_t hi, ui
 static inline bool newcamd_cw_scope_matches(newcamd_cw_scope_t left,
                                              newcamd_cw_scope_t right)
 {
-    return left.decrypt == right.decrypt && left.arg == right.arg;
+    return left.decrypt == right.decrypt
+        && left.arg == right.arg
+        && left.generation == right.generation;
 }
 
 static inline bool newcamd_cw_half_nonzero(const uint8_t *half)
