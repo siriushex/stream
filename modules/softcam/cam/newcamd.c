@@ -21,6 +21,7 @@
 #include <astra.h>
 #include "../module_cam.h"
 #include "newcamd_cw_guard.h"
+#include "newcamd_reconnect.h"
 
 #include <openssl/des.h>
 
@@ -356,7 +357,7 @@ static void on_newcamd_read_packet(void *arg)
         {
             asc_log_error(MSG("failed to read header"));
             mod->last_error = "read_header";
-            newcamd_reconnect(mod, true);
+            newcamd_reconnect(mod, newcamd_should_reconnect_immediately((int)len) ? false : true);
             return;
         }
         mod->last_io_us = asc_utime();
