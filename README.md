@@ -1,59 +1,34 @@
 # Stream Hub
 
-Stream Hub is a streaming server with Web UI.
+Stream Hub is a streaming server with a browser-based control panel. It
+combines stream ingest, routing, delivery, monitoring, DVB workflows, DVR,
+and optional SoftCAM support in one runtime.
 
-This repository contains only source code and runtime components required for build and execution:
-- core daemon and modules,
-- web interface assets,
-- runtime scripts,
-- installer scripts.
+This repository contains source code only: the C runtime and modules, Lua
+services, web assets, tests, and build tooling. Do not commit deployed
+configuration, recordings, runtime databases, access data, or locally built
+binaries.
 
-Operational manuals, internal infrastructure notes, logs, and environment-specific data are intentionally excluded.
+## Start here
 
-License: see `COPYING`.
+- [Usage guide](docs/USAGE.md) — build, first start, UI workflow, validation,
+  SoftCAM/Newcamd operations, maintenance, and troubleshooting.
+- [Architecture](docs/ARCHITECTURE.md) — runtime boundaries and component map.
+- [DevOps](docs/DEVOPS.md) — controlled build, deployment, and rollback flow.
+- [Security review](docs/SECURITY_REVIEW.md) — security constraints and risk
+  register.
+- [Auth backend contract](contrib/auth-backends/contract.md) — Ministra/TMS
+  integration contract and related QA material.
 
-## Auth Backends (Ministra/TMS)
-
-Integration contract and QA artifacts:
-
-- `contrib/auth-backends/contract.md`
-- `contrib/auth-backends/test-matrix.md`
-- `contrib/auth-backends/acceptance-checklist.md`
-
-## Observability Runbook (Production)
-
-Use these settings to keep long history with low overhead:
-
-- `observability_enabled=true`
-- `observability_stream_detail_enabled=true`
-- `observability_stream_highres_enabled=true`
-- `observability_stream_ffmpeg_metrics_enabled=true`
-- `observability_stream_highres_max_streams=20`
-- `ai_metrics_on_demand=false`
-- `ai_metrics_retention_days=30`
-- `ai_rollup_interval_sec=60`
-- `ai_logs_retention_days=30`
-- `observability_system_rollup_enabled=true`
-- `observability_system_rollup_interval_sec=60`
-- `observability_system_retention_sec=604800` (7 days)
-
-Minimal API checks (replace host/port):
+## Validation before publishing
 
 ```bash
-# login
-TOKEN=$(curl -sS -X POST http://HOST:PORT/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"admin"}' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-
-# global metrics mode + flags
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  "http://HOST:PORT/api/v1/ai/metrics?range=1h&scope=global"
-
-# stream series (auto resolution with fallback)
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  "http://HOST:PORT/api/v1/observability/stream-series?stream_id=STREAM_ID&range=1h&resolution=auto&metrics=stream.bitrate_kbps.avg,stream.cc_errors.delta,stream.pes_errors.delta,stream.ffmpeg.restart.total"
-
-# system timeseries
-curl -sS -H "Authorization: Bearer $TOKEN" \
-  "http://HOST:PORT/api/v1/observability/system/timeseries?range=1h"
+scripts/ci/check_sensitive_data.sh --staged
+contrib/ci/check_public_docs.sh
+node --check web/app.js
 ```
+
+The Help page in Stream Hub opens the same public usage guide hosted in this
+repository.
+
+License: see [COPYING](COPYING).
