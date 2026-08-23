@@ -183,6 +183,16 @@ local function db_count(db, table_name, where)
     return tonumber(value) or 0
 end
 
+local function db_has_column(db, table_name, column_name)
+    local rows = db_query(db, "PRAGMA table_info(" .. table_name .. ");")
+    for _, row in ipairs(rows) do
+        if tostring(row.name or "") == tostring(column_name or "") then
+            return true
+        end
+    end
+    return false
+end
+
 local function setup_observability_schema(db)
     if not db then
         return
@@ -1150,6 +1160,12 @@ function config.migrate()
         local ok, err = db_exec_safe(db, "BEGIN;")
         if not ok then
             return nil, "begin failed: " .. tostring(err)
+        end
+        -- Migration 10 in some Stream builds already created disk_io_json,
+        -- while older databases at the same schema version did not. Keep the
+        -- additive migration safe for both histories.
+        if step == 17 and db_has_column(db, "system_metrics_rollup", "disk_io_json") then
+            sql = "SELECT 1;"
         end
         ok, err = db_exec_safe(db, sql)
         if not ok then
