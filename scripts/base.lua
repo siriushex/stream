@@ -1168,6 +1168,19 @@ local function net_bool(value)
     return nil
 end
 
+function stream_softcam_key_guard_resolve(cam_config, input_config)
+    if type(input_config) == "table" and input_config.key_guard ~= nil then
+        return net_bool(input_config.key_guard) == true
+    end
+    if type(cam_config) == "table" and cam_config.key_guard ~= nil then
+        return net_bool(cam_config.key_guard) == true
+    end
+    if type(config) == "table" and type(config.get_setting) == "function" then
+        return net_bool(config.get_setting("softcam_key_guard")) == true
+    end
+    return false
+end
+
 local function net_number(value)
     if value == nil then
         return nil
@@ -2108,12 +2121,11 @@ function init_input(conf)
                 end
             end
 
-            -- Optional global guard: reject suspicious CW updates (keeps compatibility by default).
-            local key_guard = false
-            if type(config) == "table" and type(config.get_setting) == "function" then
-                local v = config.get_setting("softcam_key_guard")
-                key_guard = (v == true or v == 1 or v == "1")
-            end
+            -- Optional guard: stream input overrides CAM, then global fallback.
+            local key_guard = stream_softcam_key_guard_resolve(
+                opts and opts.raw_cfg or {},
+                conf
+            )
 
             -- Optional dual-CAM hedge: send ECM to backup only after this delay (ms).
             local cam_backup_hedge_ms = tonumber(conf.cam_backup_hedge_ms or conf.dual_cam_hedge_ms)
