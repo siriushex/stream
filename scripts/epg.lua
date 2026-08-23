@@ -45,6 +45,62 @@ local function normalize_format(value)
     return "xmltv"
 end
 
+local function legacy_file_destination(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local text = value:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then
+        return nil
+    end
+    if text:sub(1, 7):lower() == "file://" then
+        local path = text:sub(8)
+        if path:sub(1, 1) == "/" then
+            return path
+        end
+        return nil
+    end
+    if text:sub(1, 1) == "/" then
+        return text
+    end
+    return nil
+end
+
+function epg.resolve_stream_config(row)
+    local cfg = type(row) == "table" and row.config or nil
+    if type(cfg) ~= "table" then
+        return nil
+    end
+
+    local stream_id = tostring(row.id or cfg.id or "")
+    local modern = cfg.epg
+    if type(modern) == "table" and next(modern) ~= nil then
+        local xmltv_id = tostring(modern.xmltv_id or stream_id)
+        if xmltv_id == "" then
+            return nil
+        end
+        return {
+            xmltv_id = xmltv_id,
+            destination = modern.destination,
+            format = normalize_format(modern.format),
+            codepage = modern.codepage,
+            legacy = false,
+        }
+    end
+
+    local destination = legacy_file_destination(cfg.epg_export)
+    if not destination or stream_id == "" then
+        return nil
+    end
+    return {
+        xmltv_id = stream_id,
+        destination = destination,
+        format = "xmltv",
+        codepage = cfg.codepage,
+        legacy = true,
+    }
+end
+
 local function xml_escape(text)
     local value = tostring(text or "")
     value = value:gsub("&", "&amp;")
@@ -151,7 +207,7 @@ function epg.export_all(reason)
     local groups = {}
     for _, row in ipairs(rows or {}) do
         local cfg = row.config or {}
-        local epg_conf = cfg.epg
+        local epg_conf = epg.resolve_stream_config(row)
         if epg_conf and epg_conf.xmltv_id and epg_conf.xmltv_id ~= "" then
             local dest = epg.resolve_destination(epg_conf)
             if dest then

@@ -24358,6 +24358,26 @@ function updateStreamAuthFormFromConfig(config) {
   updateStreamAuthModeUi();
 }
 
+function resolveEditorEpgConfig(stream, config) {
+  if (config.epg && typeof config.epg === 'object' && Object.keys(config.epg).length) {
+    return config.epg;
+  }
+  const legacy = String(config.epg_export || '').trim();
+  let destination = '';
+  if (legacy.toLowerCase().startsWith('file://')) {
+    destination = legacy.slice(7);
+  } else if (legacy.startsWith('/')) {
+    destination = legacy;
+  }
+  if (!destination.startsWith('/')) return {};
+  return {
+    xmltv_id: String(stream.id || config.id || ''),
+    destination,
+    format: 'xmltv',
+    codepage: config.codepage || '',
+  };
+}
+
 function openEditor(stream, isNew, opts) {
   const remote = opts && opts.remote ? { ...opts.remote } : null;
   const config = stream.config || {};
@@ -24591,7 +24611,7 @@ function openEditor(stream, isNew, opts) {
   updateMptsPnrWarning();
   updateMptsInputWarning();
   updateMptsDeliveryWarning();
-  const epgConfig = config.epg || {};
+  const epgConfig = resolveEditorEpgConfig(stream, config);
   if (elements.streamEpgId) {
     elements.streamEpgId.value = epgConfig.xmltv_id || '';
   }
