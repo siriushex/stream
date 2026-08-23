@@ -57,6 +57,11 @@ __pycache__/
 !/docs/DEVOPS.md
 !/docs/SECURITY_REVIEW.md
 !/docs/USAGE.md
+!/docs/superpowers/
+!/docs/superpowers/specs/
+!/docs/superpowers/specs/*.md
+!/docs/superpowers/plans/
+!/docs/superpowers/plans/*.md
 /site/
 /overrides/
 /mkdocs.yml
