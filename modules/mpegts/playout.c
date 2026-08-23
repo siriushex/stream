@@ -49,6 +49,7 @@
 
 #include <astra.h>
 #include "mpegts.h"
+#include "playout_clock.h"
 
 struct module_data_t
 {
@@ -84,6 +85,9 @@ struct module_data_t
     uint64_t in_window_start_ts;
     size_t in_window_bytes;
 
+    /* PCR is the media clock; HLS arrival time measures download speed. */
+    playout_clock_t media_clock;
+
     /* Оценка выходного битрейта (EMA) - для статуса/диагностики. */
     double out_bitrate_bps_ema;
     uint64_t out_window_start_ts;
@@ -96,6 +100,7 @@ struct module_data_t
     uint64_t drops_total;
 
     bool in_underrun;
+    bool prebuffering;
     uint64_t underrun_start_ts;
     uint64_t last_target_bps;
     uint8_t null_cc;
@@ -170,7 +175,9 @@ static inline uint64_t playout_get_target_bps(module_data_t *mod)
     }
     else
     {
-        if(mod->in_bitrate_bps_ema > 0.0)
+        if(mod->media_clock.bitrate_bps_ema > 0.0)
+            bps = (uint64_t)mod->media_clock.bitrate_bps_ema;
+        else if(mod->in_bitrate_bps_ema > 0.0)
             bps = (uint64_t)mod->in_bitrate_bps_ema;
         else
             bps = mod->config.assumed_bitrate_bps;
@@ -207,10 +214,12 @@ static inline void playout_make_null(uint8_t *pkt, uint8_t cc)
 
 static inline void playout_send_one(module_data_t *mod, uint64_t now, uint64_t target_bps)
 {
-    /* Если задан min_fill_ms - не отдаём "живые" пакеты, пока буфер не набрал запас.
-     * В это время выдаём NULL, чтобы транспорт был непрерывным. */
+    /* min_fill_ms is a startup/recovery threshold, not a permanent low-water
+     * gate. Re-enter prebuffering only after the media buffer becomes empty. */
     const uint64_t fill_ms = playout_buffer_fill_ms(mod, target_bps);
-    const bool prebuffer = (mod->config.min_fill_ms > 0 && fill_ms < mod->config.min_fill_ms);
+    mod->prebuffering = playout_prebuffer_next(
+          mod->prebuffering, mod->count, fill_ms, mod->config.min_fill_ms);
+    const bool prebuffer = mod->prebuffering;
 
     if(mod->count > 0 && !prebuffer)
     {
@@ -302,6 +311,15 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
     }
 
     const uint64_t now = asc_utime();
+    playout_clock_count_packet(&mod->media_clock);
+    if(TS_IS_PCR(ts))
+    {
+        playout_clock_observe(&mod->media_clock,
+                              TS_GET_PID(ts),
+                              TS_GET_PCR(ts),
+                              TS_PACKET_SIZE,
+                              NULL);
+    }
     playout_update_in_bitrate(mod, now);
 
     if(mod->count >= mod->capacity)
@@ -341,11 +359,17 @@ static int method_stats(module_data_t *mod)
     lua_setfield(lua, -2, "target_kbps");
     lua_pushnumber(lua, (lua_Number)(mod->out_bitrate_bps_ema / 1000.0));
     lua_setfield(lua, -2, "current_kbps");
+    lua_pushnumber(lua, (lua_Number)(mod->media_clock.bitrate_bps_ema / 1000.0));
+    lua_setfield(lua, -2, "media_kbps");
+    lua_pushnumber(lua, (lua_Number)(mod->in_bitrate_bps_ema / 1000.0));
+    lua_setfield(lua, -2, "arrival_kbps");
 
     lua_pushnumber(lua, (lua_Number)fill_ms);
     lua_setfield(lua, -2, "buffer_fill_ms");
     lua_pushnumber(lua, (lua_Number)mod->config.target_fill_ms);
     lua_setfield(lua, -2, "buffer_target_ms");
+    lua_pushboolean(lua, mod->prebuffering);
+    lua_setfield(lua, -2, "prebuffering");
     lua_pushnumber(lua, (lua_Number)((uint64_t)mod->count * (uint64_t)TS_PACKET_SIZE));
     lua_setfield(lua, -2, "buffer_bytes");
 
@@ -463,6 +487,7 @@ static void module_init(module_data_t *mod)
     mod->last_tick_ts = 0;
     mod->pkt_credit = 0.0;
     mod->null_cc = 0;
+    mod->prebuffering = (mod->config.min_fill_ms > 0);
 }
 
 static void module_destroy(module_data_t *mod)
