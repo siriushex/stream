@@ -20,9 +20,11 @@ int main(void)
     uint8_t decrypt_a;
     uint8_t arg_a;
     uint8_t arg_b;
+    uint8_t decrypt_b;
     const newcamd_cw_scope_t scope_a = { &decrypt_a, &arg_a, 1 };
     const newcamd_cw_scope_t scope_b = { &decrypt_a, &arg_b, 1 };
     const newcamd_cw_scope_t scope_reused = { &decrypt_a, &arg_a, 2 };
+    const newcamd_cw_scope_t scope_service_b = { &decrypt_b, &arg_b, 1 };
 
     assert(newcamd_response_id_matches(0x1234, 0x12, 0x34));
     assert(!newcamd_response_id_matches(0x1234, 0x12, 0x35));
@@ -61,6 +63,30 @@ int main(void)
     memset(odd_only, 0, sizeof(odd_only));
     fill(&odd_only[8], 8, 0x77);
     assert(newcamd_cw_cache_merge(&cache, scope_a, odd_only) == NEWCAMD_CW_REJECTED_NO_CACHE);
+
+    /* Interleaved services on one Newcamd socket keep independent CW halves. */
+    newcamd_cw_cache_reset(&cache);
+    fill(full, sizeof(full), 0x11);
+    fill(&full[8], 8, 0x22);
+    assert(newcamd_cw_cache_merge(&cache, scope_a, full) == NEWCAMD_CW_ACCEPTED);
+
+    fill(full, sizeof(full), 0x55);
+    fill(&full[8], 8, 0x66);
+    assert(newcamd_cw_cache_merge(&cache, scope_service_b, full) == NEWCAMD_CW_ACCEPTED);
+
+    memset(even_only, 0, sizeof(even_only));
+    fill(even_only, 8, 0x33);
+    assert(newcamd_cw_cache_merge(&cache, scope_a, even_only) == NEWCAMD_CW_ACCEPTED);
+    fill(expected, 8, 0x33);
+    fill(&expected[8], 8, 0x22);
+    assert(memcmp(even_only, expected, sizeof(expected)) == 0);
+
+    memset(odd_only, 0, sizeof(odd_only));
+    fill(&odd_only[8], 8, 0x77);
+    assert(newcamd_cw_cache_merge(&cache, scope_service_b, odd_only) == NEWCAMD_CW_ACCEPTED);
+    fill(expected, 8, 0x55);
+    fill(&expected[8], 8, 0x77);
+    assert(memcmp(odd_only, expected, sizeof(expected)) == 0);
 
     return 0;
 }
