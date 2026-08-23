@@ -373,8 +373,12 @@ function epg.ingest_section(stream_id, data, opts)
     status.last_error = nil
     epg.stream_status[stream_id] = status
 
-    if changed and opts.defer_export ~= true then
-        epg.request_export("EIT update")
+    if changed then
+        -- EIT schedule tables arrive as many distinct sections every few hundred
+        -- milliseconds. Exporting here turns the debounce into a continuous
+        -- write loop. The configured periodic timer flushes the accumulated
+        -- registry once per interval instead.
+        epg.registry_dirty = true
     end
     return true, changed
 end
@@ -622,6 +626,9 @@ function epg.export_all(reason)
                 log.error("[epg] export failed: " .. tostring(err))
             end
         end
+    end
+    if exported then
+        epg.registry_dirty = false
     end
     return exported
 end
