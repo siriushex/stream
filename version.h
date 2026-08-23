@@ -6,6 +6,6 @@
 #define ASTRA_VERSION_PATCH 187
 
 // Stream Hub (product) version. This should be used for user-facing output (API/UI/CLI).
-#define STREAM_VERSION "1.2.6"
+#define STREAM_VERSION "1.3.0"
 
 #endif /* _VERSION_H_ */

@@ -140,6 +140,28 @@ primary-input loss and verify that the selected backup becomes active, audio
 and video continue decoding, and error counters remain acceptable. A backup
 that only establishes a network connection is not a verified recovery path.
 
+For HTTP buffer resources, the A/V health gate has five controls:
+
+- `health_require_video` and `health_require_audio` require recent payload on
+  PIDs identified from PAT/PMT stream types;
+- `health_min_bitrate_kbps` rejects a stream that has transport structure but
+  insufficient payload;
+- `health_failover_sec` is the minimum continuous unhealthy interval;
+- `health_fail_checks` is the minimum number of failed observations.
+
+Both failure limits must be reached before switching. A higher-priority input
+must then remain healthy for `backup_return_delay_sec` before failback. Keep the
+CC and PES thresholds enabled: these A/V checks complement transport integrity
+checks and must not hide or reset them. Dashboard publication is optional. If
+enabled, leave `dashboard_stream_id` empty to use the buffer ID; Stream creates
+or updates only an output it owns, and reports a conflict for an unrelated ID.
+
+For native HLS playout, `media_kbps` is derived from PCR and controls pacing.
+`arrival_kbps` describes HTTP download speed and can be zero when a complete
+localhost burst finishes inside its sampling window. `prebuffering` should
+change from true to false once the startup reserve is filled and should re-enter
+only after the media buffer becomes empty.
+
 ## 7. SoftCAM and Newcamd
 
 Use SoftCAM only for services that you are authorized to receive and decode.
@@ -164,6 +186,14 @@ Do not share a single connection across many streams unless its measured ECM
 latency and capacity support that load. Where parallelism is needed, use a
 bounded split-CAM pool and watch queue depth, dropped batches, reconnects, and
 CPU usage.
+
+`key_guard` precedence is input, then CAM, then global setting. The SoftCAM
+status exposes candidate validation counters plus the accepted key's parity mask
+and `apply_seq`; shift stats expose ingress and egress packet sequences. During
+an odd/even rotation, confirm that `cw_applied` advances while candidate rejects,
+CC, and PES deltas remain zero. A partial Newcamd CW is completed only from the
+same service scope and current connection generation; it must never borrow a
+half-key from another channel.
 
 Do not disable CC or PES thresholds to make a card appear healthy. Nonzero or
 growing counters indicate a transport or descrambling defect that needs

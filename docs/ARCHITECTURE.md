@@ -223,3 +223,42 @@ Fallback: при недоступности отдельной БД чтение
 - Context: нужен DVR backup контур без влияния на вещание.
 - Chosen: origin->dvr state sync через outbox (retry/backoff) и `dvr_v1` server type.
 - Consequences: при падении DVR эфир сохраняется, sync восстанавливается асинхронно.
+
+## 14. Stream Hub 1.3 media-stability paths
+
+The SoftCAM control-word path is deliberately service-scoped:
+
+```text
+Newcamd response -> service-scoped CW merge -> candidate validation
+-> parity apply sequence -> synchronous/parallel descramble context
+```
+
+Partial odd/even replies may reuse only a valid half from the same service and
+connection generation. Candidate CWs are validated at ingress and applied at
+the matching packet sequence after the shift buffer, so buffered packets are
+never decoded with a future parity key. Per-input `key_guard` overrides the CAM
+setting, which overrides the global default.
+
+Native HLS separates download time from media time:
+
+```text
+HLS segment download -> pre-playout analyzer -> playout ring
+-> PCR-derived pacing -> HTTP/UDP consumers
+```
+
+The analyzer remains before playout. PCR supplies the authoritative media rate;
+wall-clock arrival rate remains diagnostic only. An active HLS sequence stays
+reserved until completion, preventing playlist refresh from enqueueing it twice.
+
+HTTP buffer failover uses content health rather than socket state alone:
+
+```text
+HTTP input -> PAT/PMT/A/V health -> failure/recovery gate
+-> active input selector -> client ring
+```
+
+The active reader switches only after both the configured failure duration and
+failed-check count are satisfied. A separate probe observes higher-priority
+inputs without replacing the active reader and requests failback only after the
+full stable recovery interval. Managed Dashboard publication is opt-in and may
+rewrite only streams carrying the matching `buffer_managed_resource_id` marker.

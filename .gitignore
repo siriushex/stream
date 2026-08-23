@@ -68,6 +68,7 @@ __pycache__/
 /AGENT.md
 /SKILL.md
 /CHANGELOG.md
+!/CHANGELOG.md
 /PLAN*.md
 /PERF_*.md
 /audit_report.md

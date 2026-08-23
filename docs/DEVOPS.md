@@ -30,12 +30,33 @@ node --check web/app.js
 ./stream scripts/tests/auth_backend_unit.lua
 ```
 
+Для Stream Hub 1.3 дополнительно:
+
+```bash
+contrib/ci/test_softcam_helpers.sh
+contrib/ci/test_playout_helpers.sh
+contrib/ci/test_http_buffer_helpers.sh
+contrib/ci/smoke_native_hls_playout.sh
+contrib/ci/smoke_http_buffer_av_failover.sh
+```
+
+Newcamd необходимо собирать и проверять на Linux с OpenSSL development headers.
+Успешная macOS-сборка без `modules/softcam/cam/newcamd.o` не является
+доказательством поддержки Newcamd. Linux gate должен подтвердить наличие этого
+object file, успешный SoftCAM helper test и внешний FFmpeg decode video/audio.
+
 ## 3. Деплой
 
 ### 3.1 Подготовка артефакта
 1. Сборка и tests в локальном репо.
 2. Проверка `git status` и состава diff.
 3. Коммит в `main` только после зелёных проверок.
+
+Release bundle содержит `STREAM_BUILD_INFO.txt`: product version, точный Git
+commit, UTC build time, architecture/profile и SHA-256 packaged Stream binary.
+По умолчанию provenance writer отказывается создавать метаданные из dirty
+working tree; `STREAM_ALLOW_DIRTY_BUILD=1` допустим только для явно помеченного
+локального эксперимента, не для release/canary артефакта.
 
 ### 3.2 Установка через installer
 Поддерживаются скрипты:
@@ -58,6 +79,9 @@ node --check web/app.js
 1. `systemctl status stream@<name> --no-pager`
 2. `journalctl -u stream@<name> -n 200 --no-pager`
 3. Проверка HTTP/UI/API инстанса.
+4. Десятиминутная проверка финального output: стабильный bitrate, CC/PES delta
+   равны нулю, `cw_applied` растёт на odd/even сменах, FFmpeg декодирует video и
+   audio без повторяющихся PPS/MMCO/AC-3 ошибок.
 
 ## 4. Rollback
 1. Остановить только затронутый unit.
