@@ -482,11 +482,33 @@ static int lua_iso8859_encode(lua_State *L)
     return 1;
 }
 
+static int lua_iso8859_decode(lua_State *L)
+{
+    size_t data_size = 0;
+    const uint8_t *data = (const uint8_t *)luaL_checklstring(L, 1, &data_size);
+    if(data_size == 0)
+    {
+        lua_pushstring(L, "");
+        return 1;
+    }
+
+    char *text = iso8859_decode(data, data_size);
+    if(!text)
+    {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushstring(L, text);
+    free(text);
+    return 1;
+}
+
 LUA_API int luaopen_iso8859(lua_State *L)
 {
     static const luaL_Reg api[] =
     {
         { "encode", lua_iso8859_encode },
+        { "decode", lua_iso8859_decode },
         { NULL, NULL }
     };
 

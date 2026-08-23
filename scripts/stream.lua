@@ -2482,6 +2482,42 @@ local function channel_prepare_input(channel_data, input_id, opts)
         input_data.last_error = nil
     end
 
+    local stream_epg = nil
+    if epg and type(epg.resolve_stream_config) == "function" then
+        stream_epg = epg.resolve_stream_config({
+            id = channel_data.config and channel_data.config.id,
+            config = channel_data.config,
+        })
+    end
+    if stream_epg and type(eit_collect) == "table" then
+        local collect_tail = input_data.input and (input_data.input.analyze_tail or input_data.input.tail) or nil
+        local service_id = tonumber(input_data.config.set_pnr or input_data.config.pnr
+            or (channel_data.config and channel_data.config.set_pnr)
+            or (channel_data.config and channel_data.config.pnr))
+        local collect_opts = {
+            upstream = collect_tail and collect_tail:stream() or input_data.input.tail:stream(),
+            callback = function(section)
+                if channel_data.active_input_id == input_id and epg and epg.ingest_section then
+                    epg.ingest_section(tostring(channel_data.config.id or channel_data.config.name or ""), section)
+                end
+            end,
+        }
+        if service_id and service_id > 0 then
+            collect_opts.service_id = service_id
+        end
+        input_data.epg_collector = eit_collect(collect_opts)
+        if epg.stream_status then
+            local stream_id = tostring(channel_data.config.id or channel_data.config.name or "")
+            local status = epg.stream_status[stream_id] or {}
+            status.collector = "waiting"
+            status.input_index = input_id - 1
+            status.destination = epg.resolve_destination(stream_epg)
+            status.xmltv_id = stream_epg.xmltv_id
+            status.legacy = stream_epg.legacy == true
+            epg.stream_status[stream_id] = status
+        end
+    end
+
     if opts.probing then
         input_data.probing = true
     end
@@ -3322,6 +3358,7 @@ function channel_kill_input(channel_data, input_id)
     -- TODO: kill additional modules
 
     input_data.analyze = nil
+    input_data.epg_collector = nil
     input_data.stats = nil
     input_data.on_air = nil
     input_data.is_ok = nil
@@ -7465,6 +7502,16 @@ function make_channel(channel_config)
     end
     if channel_data.clients == 0 and tonumber(channel_data.config.http_keep_active or 0) == -1 then
         channel_data.clients = 1
+    end
+    if channel_data.clients == 0 and epg and type(epg.resolve_stream_config) == "function" then
+        local stream_epg = epg.resolve_stream_config({
+            id = channel_data.config.id,
+            config = channel_data.config,
+        })
+        if stream_epg then
+            -- DVB schedules must be collected continuously, independently of HTTP viewers.
+            channel_data.clients = 1
+        end
     end
 
     channel_data.failover = {

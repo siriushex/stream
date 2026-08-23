@@ -1511,6 +1511,7 @@ const elements = {
   streamEpgFormat: $('#stream-epg-format'),
   streamEpgDestination: $('#stream-epg-destination'),
   streamEpgCodepage: $('#stream-epg-codepage'),
+  streamEpgStatus: $('#stream-epg-status'),
   mptsCountry: $('#mpts-country'),
   mptsUtcOffset: $('#mpts-utc-offset'),
   mptsDstTimeOfChange: $('#mpts-dst-time-of-change'),
@@ -24378,6 +24379,32 @@ function resolveEditorEpgConfig(stream, config) {
   };
 }
 
+async function refreshEditorEpgStatus(streamId) {
+  if (!elements.streamEpgStatus) return;
+  const id = String(streamId || '').trim();
+  if (!id) {
+    elements.streamEpgStatus.textContent = 'Collector status: not configured';
+    return;
+  }
+  elements.streamEpgStatus.textContent = 'Collector status: loading…';
+  try {
+    const payload = await apiJson('/api/v1/epg/status');
+    const rows = Array.isArray(payload && payload.streams) ? payload.streams : [];
+    const item = rows.find((entry) => String(entry && entry.id || '') === id);
+    if (!state.editing || String(state.editing.stream && state.editing.stream.id || '') !== id) return;
+    if (!item) {
+      elements.streamEpgStatus.textContent = 'Collector status: not configured';
+      return;
+    }
+    const lastEit = item.last_eit_ts ? new Date(Number(item.last_eit_ts) * 1000).toLocaleString() : '—';
+    const lastWrite = item.last_write_ts ? new Date(Number(item.last_write_ts) * 1000).toLocaleString() : '—';
+    const error = item.last_error ? ` · error: ${item.last_error}` : '';
+    elements.streamEpgStatus.textContent = `Collector: ${item.collector || 'waiting'} · events: ${Number(item.event_count) || 0} · last EIT: ${lastEit} · last write: ${lastWrite}${error}`;
+  } catch (err) {
+    elements.streamEpgStatus.textContent = `Collector status unavailable: ${err.message || err}`;
+  }
+}
+
 function openEditor(stream, isNew, opts) {
   const remote = opts && opts.remote ? { ...opts.remote } : null;
   const config = stream.config || {};
@@ -24846,6 +24873,7 @@ function openEditor(stream, isNew, opts) {
     elements.btnAnalyze.disabled = !!remote;
   }
   state.editing = { stream, isNew, remote };
+  if (!remote) refreshEditorEpgStatus(stream.id).catch(() => {});
   // Recompute DVR action availability after editor context is finalized.
   // Without this pass, saved streams can keep stale disabled state from pre-bind phase.
   updateStreamDvrFields();

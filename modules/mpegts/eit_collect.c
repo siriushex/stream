@@ -17,6 +17,8 @@ struct module_data_t
     uint16_t service_id;
     bool filter_service;
     uint32_t section_crc[17][256];
+    uint16_t section_service[17][256];
+    bool section_seen[17][256];
 };
 
 static int actual_table_index(uint8_t table_id)
@@ -62,9 +64,13 @@ static void on_eit(void *arg, mpegts_psi_t *psi)
         return;
 
     const uint8_t section_number = psi->buffer[6];
-    if(mod->section_crc[table_index][section_number] == crc)
+    if(mod->section_seen[table_index][section_number]
+        && mod->section_service[table_index][section_number] == service_id
+        && mod->section_crc[table_index][section_number] == crc)
         return;
     mod->section_crc[table_index][section_number] = crc;
+    mod->section_service[table_index][section_number] = service_id;
+    mod->section_seen[table_index][section_number] = true;
 
     lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_callback);
     lua_pushlstring(lua, (const char *)psi->buffer, psi->buffer_size);

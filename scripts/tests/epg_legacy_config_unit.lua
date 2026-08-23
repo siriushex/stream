@@ -53,5 +53,17 @@ assert_equal(epg.resolve_stream_config({ id = "empty", config = {} }), nil, "mis
 assert_equal(epg.resolve_stream_config({ id = "disabled", config = { epg_export = false } }),
     nil, "disabled legacy config")
 
+config = {
+    get_setting = function() return nil end,
+    list_streams = function()
+        return {
+            { id = "legacy", enabled = 1, config = { epg_export = "file:///opt/epg/legacy.xml" } },
+        }
+    end,
+}
+assert_equal(epg.resolve_export_interval(), 60, "safe legacy default interval")
+config.list_streams = function() return {} end
+assert_equal(epg.resolve_export_interval(), 0, "no EPG interval without configured streams")
+
 print("epg_legacy_config_unit: ok")
 astra.exit()

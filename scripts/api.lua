@@ -8305,6 +8305,13 @@ local function telegram_test(server, client)
     json_response(server, client, 200, { status = "queued" })
 end
 
+local function epg_status(server, client)
+    if not epg or not epg.get_status then
+        return error_response(server, client, 503, "EPG subsystem unavailable")
+    end
+    json_response(server, client, 200, epg.get_status())
+end
+
 local function telegram_backup(server, client)
     if not telegram or not telegram.send_backup_now then
         return error_response(server, client, 400, "telegram notifier unavailable")
@@ -13146,6 +13153,10 @@ function api.handle_request(server, client, request)
 
     if path == "/api/v1/stream-status" and method == "GET" then
         return list_stream_status(server, client, request)
+    end
+
+    if path == "/api/v1/epg/status" and method == "GET" then
+        return epg_status(server, client)
     end
 
     local status_id = path:match("^/api/v1/stream%-status/([%w%-%_]+)$")
