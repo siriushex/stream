@@ -3025,6 +3025,11 @@ local function buffer_resource_payload(row)
         backup_start_delay_sec = row.backup_start_delay_sec,
         backup_return_delay_sec = row.backup_return_delay_sec,
         backup_probe_interval_sec = row.backup_probe_interval_sec,
+        health_require_video = row.health_require_video ~= 0,
+        health_require_audio = row.health_require_audio ~= 0,
+        health_min_bitrate_kbps = row.health_min_bitrate_kbps,
+        health_failover_sec = row.health_failover_sec,
+        health_fail_checks = row.health_fail_checks,
         active_input_index = row.active_input_index,
         buffering_sec = row.buffering_sec,
         bandwidth_kbps = row.bandwidth_kbps,
@@ -3111,6 +3116,9 @@ local function upsert_buffer_resource(server, client, id, body, request)
         return error_response(server, client, 400, "path already in use")
     end
     body.path = path
+    body.health_min_bitrate_kbps = math.max(1, tonumber(body.health_min_bitrate_kbps) or 128)
+    body.health_failover_sec = math.max(1, tonumber(body.health_failover_sec) or 5)
+    body.health_fail_checks = math.max(1, tonumber(body.health_fail_checks) or 2)
     apply_config_change(server, client, request, {
         comment = "buffer resource " .. id,
         defer_export = true,

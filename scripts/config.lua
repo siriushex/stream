@@ -117,6 +117,21 @@ local function db_exec_safe(db, sql)
     return true
 end
 
+local function sqlite_error_text(err)
+    if type(err) == "table" then
+        if type(err.message) == "string" and err.message ~= "" then
+            return err.message
+        end
+        if type(err.error) == "string" and err.error ~= "" then
+            return err.error
+        end
+        if type(err.msg) == "string" and err.msg ~= "" then
+            return err.msg
+        end
+    end
+    return tostring(err or "")
+end
+
 function config.with_transaction(fn)
     local ok, err = db_exec_safe(config.db, "BEGIN;")
     if not ok then
@@ -916,6 +931,21 @@ config.migrations = {
     [[
     ALTER TABLE system_metrics_rollup ADD COLUMN disk_io_json TEXT;
     ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN health_require_video INTEGER NOT NULL DEFAULT 1;
+    ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN health_require_audio INTEGER NOT NULL DEFAULT 1;
+    ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN health_min_bitrate_kbps INTEGER NOT NULL DEFAULT 128;
+    ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN health_failover_sec INTEGER NOT NULL DEFAULT 5;
+    ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN health_fail_checks INTEGER NOT NULL DEFAULT 2;
+    ]],
 }
 
 function config.init(opts)
@@ -1109,7 +1139,33 @@ function config.migrate()
         ok, err = db_exec_safe(db, sql)
         if not ok then
             db_exec_safe(db, "ROLLBACK;")
-            return nil, err
+            local normalized_sql = tostring(sql or ""):upper()
+            local _, alter_count = normalized_sql:gsub(
+                "ALTER%s+TABLE%s+[%w_]+%s+ADD%s+COLUMN", "")
+            local duplicate_column = sqlite_error_text(err):lower():find(
+                "duplicate column name", 1, true) ~= nil
+            if alter_count ~= 1 or not duplicate_column then
+                return nil, err
+            end
+
+            ok, err = db_exec_safe(db, "BEGIN;")
+            if not ok then
+                return nil, "duplicate recovery begin failed: " .. sqlite_error_text(err)
+            end
+            ok, err = db_exec_safe(
+                db, "UPDATE schema_version SET version = " .. step .. ";")
+            if not ok then
+                db_exec_safe(db, "ROLLBACK;")
+                return nil, err
+            end
+            ok, err = db_exec_safe(db, "COMMIT;")
+            if not ok then
+                db_exec_safe(db, "ROLLBACK;")
+                return nil, err
+            end
+            log.warning("[config] recovered duplicate-column migration at version "
+                .. tostring(step))
+            return true
         end
         ok, err = db_exec_safe(db, "UPDATE schema_version SET version = " .. step .. ";")
         if not ok then
@@ -1772,6 +1828,11 @@ function config.list_buffer_resources()
         "backup_start_delay_sec",
         "backup_return_delay_sec",
         "backup_probe_interval_sec",
+        "health_require_video",
+        "health_require_audio",
+        "health_min_bitrate_kbps",
+        "health_failover_sec",
+        "health_fail_checks",
         "active_input_index",
         "buffering_sec",
         "bandwidth_kbps",
@@ -1816,6 +1877,11 @@ function config.get_buffer_resource(id)
         "backup_start_delay_sec",
         "backup_return_delay_sec",
         "backup_probe_interval_sec",
+        "health_require_video",
+        "health_require_audio",
+        "health_min_bitrate_kbps",
+        "health_failover_sec",
+        "health_fail_checks",
         "active_input_index",
         "buffering_sec",
         "bandwidth_kbps",
@@ -1873,6 +1939,11 @@ function config.upsert_buffer_resource(id, data)
         backup_start_delay_sec = tonumber(data.backup_start_delay_sec) or 3,
         backup_return_delay_sec = tonumber(data.backup_return_delay_sec) or 10,
         backup_probe_interval_sec = tonumber(data.backup_probe_interval_sec) or 30,
+        health_require_video = normalize_bool(data.health_require_video, true),
+        health_require_audio = normalize_bool(data.health_require_audio, true),
+        health_min_bitrate_kbps = math.max(1, tonumber(data.health_min_bitrate_kbps) or 128),
+        health_failover_sec = math.max(1, tonumber(data.health_failover_sec) or 5),
+        health_fail_checks = math.max(1, tonumber(data.health_fail_checks) or 2),
         active_input_index = tonumber(data.active_input_index) or 0,
         buffering_sec = tonumber(data.buffering_sec) or 8,
         bandwidth_kbps = tonumber(data.bandwidth_kbps) or 4000,
@@ -1908,6 +1979,11 @@ function config.upsert_buffer_resource(id, data)
             "backup_start_delay_sec=" .. fields.backup_start_delay_sec .. ", " ..
             "backup_return_delay_sec=" .. fields.backup_return_delay_sec .. ", " ..
             "backup_probe_interval_sec=" .. fields.backup_probe_interval_sec .. ", " ..
+            "health_require_video=" .. (fields.health_require_video and 1 or 0) .. ", " ..
+            "health_require_audio=" .. (fields.health_require_audio and 1 or 0) .. ", " ..
+            "health_min_bitrate_kbps=" .. fields.health_min_bitrate_kbps .. ", " ..
+            "health_failover_sec=" .. fields.health_failover_sec .. ", " ..
+            "health_fail_checks=" .. fields.health_fail_checks .. ", " ..
             "active_input_index=" .. fields.active_input_index .. ", " ..
             "buffering_sec=" .. fields.buffering_sec .. ", " ..
             "bandwidth_kbps=" .. fields.bandwidth_kbps .. ", " ..
@@ -1936,7 +2012,9 @@ function config.upsert_buffer_resource(id, data)
         db_exec(config.db,
             "INSERT INTO buffer_resources(" ..
             "id, name, path, enable, backup_type, no_data_timeout_sec, backup_start_delay_sec, " ..
-            "backup_return_delay_sec, backup_probe_interval_sec, active_input_index, buffering_sec, " ..
+            "backup_return_delay_sec, backup_probe_interval_sec, health_require_video, " ..
+            "health_require_audio, health_min_bitrate_kbps, health_failover_sec, health_fail_checks, " ..
+            "active_input_index, buffering_sec, " ..
             "bandwidth_kbps, client_start_offset_sec, max_client_lag_ms, smart_start_enabled, " ..
             "smart_target_delay_ms, smart_lookback_ms, smart_require_pat_pmt, smart_require_keyframe, " ..
             "smart_require_pcr, smart_wait_ready_ms, smart_max_lead_ms, keyframe_detect_mode, " ..
@@ -1952,6 +2030,11 @@ function config.upsert_buffer_resource(id, data)
             fields.backup_start_delay_sec .. ", " ..
             fields.backup_return_delay_sec .. ", " ..
             fields.backup_probe_interval_sec .. ", " ..
+            (fields.health_require_video and 1 or 0) .. ", " ..
+            (fields.health_require_audio and 1 or 0) .. ", " ..
+            fields.health_min_bitrate_kbps .. ", " ..
+            fields.health_failover_sec .. ", " ..
+            fields.health_fail_checks .. ", " ..
             fields.active_input_index .. ", " ..
             fields.buffering_sec .. ", " ..
             fields.bandwidth_kbps .. ", " ..
