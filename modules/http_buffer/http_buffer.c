@@ -23,6 +23,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netdb.h>
+#include <netinet/tcp.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -35,6 +36,7 @@
 #include <unistd.h>
 
 #include "../mpegts/mpegts.h"
+#include "http_buffer_health_gate.h"
 
 #define MSG(_msg) "[http_buffer] " _msg
 
@@ -44,6 +46,13 @@
 #define BUFFER_HEADER_MAX 8192
 #define BUFFER_READ_CHUNK 65536
 #define IDR_SCAN_LIMIT (256 * 1024)
+#define CLIENT_SEND_TIMEOUT_SEC 15
+#define HEALTH_CHECK_INTERVAL_MS 1000ULL
+#define HEALTH_PROBE_BUFFER (TS_PACKET_SIZE * 8)
+
+#define READ_RESULT_ERROR 0
+#define READ_RESULT_EOF 1
+#define READ_RESULT_SWITCH 2
 
 #define START_FLAG_PAT 0x01
 #define START_FLAG_PMT 0x02
@@ -104,7 +113,35 @@ typedef struct
     char last_error[128];
     uint32_t reconnects;
     uint64_t bytes_in;
+    uint64_t last_health_ts;
+    uint64_t bitrate_kbps;
+    uint16_t pmt_pid;
+    uint16_t video_pid;
+    uint16_t audio_pid;
+    uint32_t health_failures;
+    uint32_t recovery_progress_sec;
+    char health_reason[64];
 } buffer_input_t;
+
+typedef struct
+{
+    mpegts_psi_t *pat;
+    mpegts_psi_t *pmt;
+    uint16_t pmt_pid;
+    uint16_t video_pid;
+    uint16_t audio_pid;
+    uint64_t last_pat_ms;
+    uint64_t last_pmt_ms;
+    uint64_t last_video_ms;
+    uint64_t last_audio_ms;
+    uint64_t window_started_ms;
+    uint64_t bytes_window;
+    uint64_t bitrate_kbps;
+    uint8_t scan[HEALTH_PROBE_BUFFER];
+    size_t scan_size;
+    http_buffer_health_gate_t gate;
+    char reason[64];
+} input_health_t;
 
 typedef struct
 {
@@ -140,6 +177,11 @@ typedef struct buffer_resource_t
     int backup_start_delay_sec;
     int backup_return_delay_sec;
     int backup_probe_interval_sec;
+    bool health_require_video;
+    bool health_require_audio;
+    int health_min_bitrate_kbps;
+    int health_failover_sec;
+    int health_fail_checks;
 
     int buffering_sec;
     int bandwidth_kbps;
@@ -216,11 +258,24 @@ typedef struct buffer_resource_t
 
     uint32_t reconnects;
     int active_input_index;
+    int requested_input_index;
+    bool health_current_ok;
+    uint64_t health_bitrate_kbps;
+    uint64_t health_last_video_ts;
+    uint64_t health_last_audio_ts;
+    uint32_t health_failures;
+    char health_reason[64];
 
     pthread_t thread;
     bool thread_running;
     bool thread_stop;
     int reader_fd;
+
+    pthread_t probe_thread;
+    bool probe_thread_running;
+    bool probe_stop;
+    int probe_fd;
+    int recovery_input_index;
 
     uint8_t pending[TS_PACKET_SIZE * 2];
     size_t pending_len;
@@ -363,6 +418,13 @@ static uint64_t now_sec(void)
     return (uint64_t)time(NULL);
 }
 
+static uint64_t now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
 static uint64_t now_us(void)
 {
     return asc_utime();
@@ -488,6 +550,12 @@ static void resource_clear_packets(buffer_resource_t *res)
     res->audio_pid = 0;
     res->video_type = 0;
     res->video_codec[0] = '\0';
+    res->health_current_ok = false;
+    res->health_bitrate_kbps = 0;
+    res->health_last_video_ts = 0;
+    res->health_last_audio_ts = 0;
+    res->health_failures = 0;
+    snprintf(res->health_reason, sizeof(res->health_reason), "warming");
 
     res->pat = mpegts_psi_init(MPEGTS_PACKET_PAT, 0);
 }
@@ -524,6 +592,11 @@ static uint32_t resource_compute_hash(buffer_resource_t *res)
     h = hash_update_int(h, res->backup_start_delay_sec);
     h = hash_update_int(h, res->backup_return_delay_sec);
     h = hash_update_int(h, res->backup_probe_interval_sec);
+    h = hash_update_int(h, res->health_require_video ? 1 : 0);
+    h = hash_update_int(h, res->health_require_audio ? 1 : 0);
+    h = hash_update_int(h, res->health_min_bitrate_kbps);
+    h = hash_update_int(h, res->health_failover_sec);
+    h = hash_update_int(h, res->health_fail_checks);
     h = hash_update_int(h, res->buffering_sec);
     h = hash_update_int(h, res->bandwidth_kbps);
     h = hash_update_int(h, res->client_start_offset_sec);
@@ -671,6 +744,10 @@ static bool resource_is_ready(buffer_resource_t *res)
     if(res->last_pat_index == 0 || res->last_pmt_index == 0)
         return false;
     if(res->video_pid == 0 || res->last_keyframe_index == 0)
+        return false;
+    if(!res->health_current_ok)
+        return false;
+    if(res->health_require_audio && res->audio_pid == 0)
         return false;
     if(res->smart_require_pcr && res->last_pcr_index == 0)
         return false;
@@ -1591,8 +1668,303 @@ static void parse_input_url_options(const char *url, char **base_url, char **use
     }
 }
 
-static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, const char *bind_iface)
+static bool health_video_type(uint8_t type)
 {
+    return type == 0x02 || type == 0x10 || type == 0x1B
+        || type == 0x24 || type == 0x42;
+}
+
+static bool health_audio_type(uint8_t type)
+{
+    return type == 0x03 || type == 0x04 || type == 0x06
+        || type == 0x0F || type == 0x11 || type == 0x81 || type == 0x87;
+}
+
+static void health_on_pmt(void *arg, mpegts_psi_t *psi)
+{
+    input_health_t *health = (input_health_t *)arg;
+    if(!health || !psi || psi->buffer[0] != 0x02)
+        return;
+
+    uint16_t video_pid = 0;
+    uint16_t audio_pid = 0;
+    const uint8_t *ptr;
+    PMT_ITEMS_FOREACH(psi, ptr)
+    {
+        const uint8_t type = PMT_ITEM_GET_TYPE(psi, ptr);
+        const uint16_t pid = PMT_ITEM_GET_PID(psi, ptr);
+        if(!pid || pid >= NULL_TS_PID)
+            continue;
+        if(!video_pid && health_video_type(type))
+            video_pid = pid;
+        else if(!audio_pid && health_audio_type(type))
+            audio_pid = pid;
+    }
+
+    health->video_pid = video_pid;
+    health->audio_pid = audio_pid;
+    health->last_pmt_ms = now_ms();
+}
+
+static void health_on_pat(void *arg, mpegts_psi_t *psi)
+{
+    input_health_t *health = (input_health_t *)arg;
+    if(!health || !psi || psi->buffer[0] != 0x00)
+        return;
+
+    uint16_t pmt_pid = 0;
+    const uint8_t *ptr;
+    PAT_ITEMS_FOREACH(psi, ptr)
+    {
+        const uint16_t pnr = PAT_ITEM_GET_PNR(psi, ptr);
+        const uint16_t pid = PAT_ITEM_GET_PID(psi, ptr);
+        if(pnr != 0 && pid && pid < NULL_TS_PID)
+        {
+            pmt_pid = pid;
+            break;
+        }
+    }
+
+    health->last_pat_ms = now_ms();
+    if(pmt_pid && pmt_pid != health->pmt_pid)
+    {
+        if(health->pmt)
+            mpegts_psi_destroy(health->pmt);
+        health->pmt = mpegts_psi_init(MPEGTS_PACKET_PMT, pmt_pid);
+        health->pmt_pid = pmt_pid;
+        health->video_pid = 0;
+        health->audio_pid = 0;
+        health->last_pmt_ms = 0;
+    }
+}
+
+static void input_health_init(input_health_t *health)
+{
+    memset(health, 0, sizeof(*health));
+    health->pat = mpegts_psi_init(MPEGTS_PACKET_PAT, 0);
+    health->window_started_ms = now_ms();
+    http_buffer_health_gate_reset(&health->gate);
+    snprintf(health->reason, sizeof(health->reason), "warming");
+}
+
+static void input_health_destroy(input_health_t *health)
+{
+    if(!health)
+        return;
+    if(health->pat)
+        mpegts_psi_destroy(health->pat);
+    if(health->pmt)
+        mpegts_psi_destroy(health->pmt);
+    health->pat = NULL;
+    health->pmt = NULL;
+}
+
+static void input_health_packet(input_health_t *health, const uint8_t *ts)
+{
+    if(!health || !ts || ts[0] != 0x47)
+        return;
+
+    const uint16_t pid = TS_GET_PID(ts);
+    const uint8_t afc = (ts[3] >> 4) & 0x03;
+    size_t payload_offset = 4;
+    if(afc & 0x02)
+        payload_offset += (size_t)ts[4] + 1;
+    const bool has_payload = (afc & 0x01) && payload_offset < TS_PACKET_SIZE;
+    const uint64_t current_ms = now_ms();
+
+    health->bytes_window += TS_PACKET_SIZE;
+    if(pid == 0 && health->pat)
+        mpegts_psi_mux(health->pat, ts, health_on_pat, health);
+    else if(health->pmt && pid == health->pmt_pid)
+        mpegts_psi_mux(health->pmt, ts, health_on_pmt, health);
+
+    if(has_payload && health->video_pid && pid == health->video_pid)
+        health->last_video_ms = current_ms;
+    if(has_payload && health->audio_pid && pid == health->audio_pid)
+        health->last_audio_ms = current_ms;
+}
+
+static void input_health_feed(input_health_t *health, const uint8_t *data, size_t len)
+{
+    if(!health || !data || len == 0)
+        return;
+
+    size_t offset = 0;
+    while(offset < len)
+    {
+        size_t room = sizeof(health->scan) - health->scan_size;
+        size_t take = len - offset;
+        if(take > room)
+            take = room;
+        memcpy(health->scan + health->scan_size, data + offset, take);
+        health->scan_size += take;
+        offset += take;
+
+        size_t used = 0;
+        while(health->scan_size - used >= TS_PACKET_SIZE)
+        {
+            if(health->scan[used] != 0x47)
+            {
+                used++;
+                continue;
+            }
+            input_health_packet(health, health->scan + used);
+            used += TS_PACKET_SIZE;
+        }
+        if(used > 0)
+        {
+            memmove(health->scan,
+                    health->scan + used,
+                    health->scan_size - used);
+            health->scan_size -= used;
+        }
+        if(health->scan_size == sizeof(health->scan))
+        {
+            memmove(health->scan, health->scan + 1, health->scan_size - 1);
+            health->scan_size--;
+        }
+    }
+}
+
+static http_buffer_health_result_t input_health_evaluate(
+      buffer_resource_t *res,
+      input_health_t *health,
+      bool *evaluated)
+{
+    const uint64_t current_ms = now_ms();
+    const uint64_t elapsed_ms = current_ms - health->window_started_ms;
+    *evaluated = elapsed_ms >= HEALTH_CHECK_INTERVAL_MS;
+    if(!*evaluated)
+        return HTTP_BUFFER_HEALTH_HOLD;
+
+    health->bitrate_kbps = elapsed_ms > 0
+        ? (health->bytes_window * 8ULL) / elapsed_ms : 0;
+    health->bytes_window = 0;
+    health->window_started_ms = current_ms;
+
+    const uint64_t recent_ms = (uint64_t)res->health_failover_sec * 1000ULL;
+    const bool bitrate_ok = health->bitrate_kbps
+        >= (uint64_t)res->health_min_bitrate_kbps;
+    const bool pat_ok = health->last_pat_ms != 0;
+    const bool pmt_ok = health->last_pmt_ms != 0;
+    const bool video_ok = !res->health_require_video
+        || (health->video_pid && health->last_video_ms
+            && current_ms >= health->last_video_ms
+            && current_ms - health->last_video_ms <= recent_ms);
+    const bool audio_ok = !res->health_require_audio
+        || (health->audio_pid && health->last_audio_ms
+            && current_ms >= health->last_audio_ms
+            && current_ms - health->last_audio_ms <= recent_ms);
+
+    if(!bitrate_ok)
+        snprintf(health->reason, sizeof(health->reason), "no_bitrate");
+    else if(!pat_ok)
+        snprintf(health->reason, sizeof(health->reason), "no_pat");
+    else if(!pmt_ok)
+        snprintf(health->reason, sizeof(health->reason), "no_pmt");
+    else if(!video_ok)
+        snprintf(health->reason, sizeof(health->reason), "no_video");
+    else if(!audio_ok)
+        snprintf(health->reason, sizeof(health->reason), "no_audio");
+    else
+        health->reason[0] = '\0';
+
+    const bool healthy = bitrate_ok && pat_ok && pmt_ok && video_ok && audio_ok;
+    return http_buffer_health_gate_observe(
+          &health->gate,
+          healthy,
+          current_ms,
+          (uint32_t)res->health_failover_sec * 1000U,
+          (uint32_t)res->health_fail_checks);
+}
+
+static http_buffer_health_result_t publish_input_health(
+      buffer_resource_t *res,
+      buffer_input_t *input,
+      input_health_t *health,
+      bool active)
+{
+    bool evaluated = false;
+    const http_buffer_health_result_t result =
+        input_health_evaluate(res, health, &evaluated);
+    if(!evaluated)
+        return HTTP_BUFFER_HEALTH_HOLD;
+
+    const uint64_t current_ms = now_ms();
+    input->last_health_ts = now_sec();
+    input->bitrate_kbps = health->bitrate_kbps;
+    input->pmt_pid = health->pmt_pid;
+    input->video_pid = health->video_pid;
+    input->audio_pid = health->audio_pid;
+    input->health_failures = health->gate.fail_checks;
+    input->recovery_progress_sec = http_buffer_health_recovery_progress(
+          &health->gate,
+          result == HTTP_BUFFER_HEALTH_OK,
+          current_ms,
+          (uint32_t)res->backup_return_delay_sec * 1000U);
+
+    if(result == HTTP_BUFFER_HEALTH_OK)
+    {
+        input->state = INPUT_STATE_OK;
+        input->last_ok_ts = now_sec();
+        input->last_error[0] = '\0';
+        input->health_reason[0] = '\0';
+    }
+    else
+    {
+        input->state = result == HTTP_BUFFER_HEALTH_FAIL
+            ? INPUT_STATE_DOWN : INPUT_STATE_PROBING;
+        snprintf(input->last_error, sizeof(input->last_error), "%s", health->reason);
+        snprintf(input->health_reason, sizeof(input->health_reason), "%s", health->reason);
+    }
+
+    if(active)
+    {
+        res->health_current_ok = result == HTTP_BUFFER_HEALTH_OK;
+        res->health_bitrate_kbps = health->bitrate_kbps;
+        res->health_last_video_ts = health->last_video_ms ? now_sec() : 0;
+        res->health_last_audio_ts = health->last_audio_ms ? now_sec() : 0;
+        res->health_failures = health->gate.fail_checks;
+        snprintf(res->health_reason,
+                 sizeof(res->health_reason),
+                 "%s",
+                 result == HTTP_BUFFER_HEALTH_OK ? "" : health->reason);
+        if(result == HTTP_BUFFER_HEALTH_OK && resource_is_ready(res))
+            resource_set_state(res, RESOURCE_STATE_OK, NULL);
+        else if(result == HTTP_BUFFER_HEALTH_FAIL)
+            resource_set_state(res, RESOURCE_STATE_DOWN, health->reason);
+        else
+            resource_set_state(res, RESOURCE_STATE_PROBING, health->reason);
+    }
+    return result;
+}
+
+static bool feed_active_source(
+      buffer_resource_t *res,
+      buffer_input_t *input,
+      input_health_t *health,
+      const uint8_t *data,
+      size_t len)
+{
+    input_health_feed(health, data, len);
+    pthread_mutex_lock(&res->lock);
+    const bool feed_ok = feed_ts_data(res, data, len);
+    http_buffer_health_result_t health_result = HTTP_BUFFER_HEALTH_HOLD;
+    if(feed_ok)
+    {
+        input->bytes_in += len;
+        health_result = publish_input_health(res, input, health, true);
+    }
+    pthread_cond_broadcast(&res->cond);
+    pthread_mutex_unlock(&res->lock);
+    return feed_ok && health_result != HTTP_BUFFER_HEALTH_FAIL;
+}
+
+static int read_http_stream(buffer_resource_t *res, buffer_input_t *input, const char *bind_iface)
+{
+    input_health_t health;
+    input_health_init(&health);
+#define READ_RETURN(_value) do { input_health_destroy(&health); return (_value); } while(0)
     char *redirect_url = NULL;
     char *base_url = NULL;
     char *user_agent = NULL;
@@ -1615,7 +1987,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                 free(base_url);
             if(user_agent)
                 free(user_agent);
-            return false;
+            READ_RETURN(READ_RESULT_ERROR);
         }
 
         int fd = open_tcp_socket(host, port, bind_iface);
@@ -1629,7 +2001,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                 free(base_url);
             if(user_agent)
                 free(user_agent);
-            return false;
+            READ_RETURN(READ_RESULT_ERROR);
         }
 
         struct timeval tv;
@@ -1656,7 +2028,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                 free(base_url);
             if(user_agent)
                 free(user_agent);
-            return false;
+            READ_RETURN(READ_RESULT_ERROR);
         }
 
         res->reader_fd = fd;
@@ -1697,7 +2069,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                             free(base_url);
                         if(user_agent)
                             free(user_agent);
-                        return false;
+                        READ_RETURN(READ_RESULT_ERROR);
                     }
                     continue;
                 }
@@ -1739,7 +2111,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                             free(base_url);
                         if(user_agent)
                             free(user_agent);
-                        return false;
+                        READ_RETURN(READ_RESULT_ERROR);
                     }
                     continue;
                 }
@@ -1772,7 +2144,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                         free(base_url);
                     if(user_agent)
                         free(user_agent);
-                    return false;
+                    READ_RETURN(READ_RESULT_ERROR);
                 }
             }
 
@@ -1810,7 +2182,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                                     free(base_url);
                                 if(user_agent)
                                     free(user_agent);
-                                return false;
+                                READ_RETURN(READ_RESULT_ERROR);
                             }
                             memcpy(line, buffer + offset, line_len);
                             line[line_len] = '\0';
@@ -1826,17 +2198,12 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                         {
                             size_t avail = buffer_len - offset;
                             size_t take = stream.chunk_left < avail ? stream.chunk_left : avail;
-                            pthread_mutex_lock(&res->lock);
-                            bool ok_feed = feed_ts_data(res, (const uint8_t *)buffer + offset, take);
-                            if(ok_feed)
-                            {
-                                input->bytes_in += take;
-                                if(input->state != INPUT_STATE_OK)
-                                    mark_input_state(input, INPUT_STATE_OK, NULL);
-                                resource_update_state(res);
-                            }
-                            pthread_cond_broadcast(&res->cond);
-                            pthread_mutex_unlock(&res->lock);
+                            bool ok_feed = feed_active_source(
+                                  res,
+                                  input,
+                                  &health,
+                                  (const uint8_t *)buffer + offset,
+                                  take);
                             if(!ok_feed)
                             {
                                 close(fd);
@@ -1851,7 +2218,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                                     free(base_url);
                                 if(user_agent)
                                     free(user_agent);
-                                return false;
+                                READ_RETURN(READ_RESULT_ERROR);
                             }
                             last_data = now_sec();
                             stream.chunk_left -= take;
@@ -1876,17 +2243,12 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                             take = (size_t)left;
                     }
 
-                    pthread_mutex_lock(&res->lock);
-                    bool ok_feed = feed_ts_data(res, (const uint8_t *)buffer + offset, take);
-                    if(ok_feed)
-                    {
-                        input->bytes_in += take;
-                        if(input->state != INPUT_STATE_OK)
-                            mark_input_state(input, INPUT_STATE_OK, NULL);
-                        resource_update_state(res);
-                    }
-                    pthread_cond_broadcast(&res->cond);
-                    pthread_mutex_unlock(&res->lock);
+                    bool ok_feed = feed_active_source(
+                          res,
+                          input,
+                          &health,
+                          (const uint8_t *)buffer + offset,
+                          take);
                     if(!ok_feed)
                     {
                         close(fd);
@@ -1901,7 +2263,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                             free(base_url);
                         if(user_agent)
                             free(user_agent);
-                        return false;
+                        READ_RETURN(READ_RESULT_ERROR);
                     }
 
                     last_data = now_sec();
@@ -1946,7 +2308,7 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
                     free(base_url);
                 if(user_agent)
                     free(user_agent);
-                return false;
+                READ_RETURN(READ_RESULT_ERROR);
             }
             if(redirect_url)
                 free(redirect_url);
@@ -1961,8 +2323,298 @@ static bool read_http_stream(buffer_resource_t *res, buffer_input_t *input, cons
             free(base_url);
         if(user_agent)
             free(user_agent);
-        return ok;
+        READ_RETURN(ok ? READ_RESULT_EOF : READ_RESULT_ERROR);
     }
+}
+#undef READ_RETURN
+
+static bool probe_should_stop(buffer_resource_t *res, int input_index)
+{
+    bool stop;
+    pthread_mutex_lock(&res->lock);
+    stop = res->probe_stop || res->thread_stop
+        || input_index < 0 || input_index >= res->input_count
+        || !res->inputs[input_index].enable
+        || res->active_input_index <= input_index
+        || res->requested_input_index >= 0;
+    pthread_mutex_unlock(&res->lock);
+    return stop;
+}
+
+static bool probe_http_input(
+      buffer_resource_t *res,
+      int input_index,
+      const char *bind_iface)
+{
+    buffer_input_t *input = &res->inputs[input_index];
+    input_health_t health;
+    input_health_init(&health);
+    char *redirect_url = NULL;
+    char *base_url = NULL;
+    char *user_agent = NULL;
+    parse_input_url_options(input->url, &base_url, &user_agent);
+    const char *current_url = base_url ? base_url : input->url;
+    int redirects = 0;
+    bool success = false;
+
+    while(!probe_should_stop(res, input_index))
+    {
+        char *host = NULL;
+        char *path = NULL;
+        int port = 0;
+        if(!parse_http_url(current_url, &host, &port, &path))
+        {
+            free(host);
+            free(path);
+            break;
+        }
+
+        int fd = open_tcp_socket(host, port, bind_iface);
+        if(fd < 0)
+        {
+            free(host);
+            free(path);
+            break;
+        }
+
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        char request[1024];
+        snprintf(request, sizeof(request),
+            "GET %s HTTP/1.1\r\n"
+            "Host: %s:%d\r\n"
+            "User-Agent: %s\r\n"
+            "Connection: close\r\n\r\n",
+            path, host, port, user_agent ? user_agent : "Stream");
+        if(!send_all(fd, request, strlen(request)))
+        {
+            close(fd);
+            free(host);
+            free(path);
+            break;
+        }
+
+        pthread_mutex_lock(&res->lock);
+        res->probe_fd = fd;
+        mark_input_state(input, INPUT_STATE_PROBING, "recovery_probe");
+        input->recovery_progress_sec = 0;
+        pthread_mutex_unlock(&res->lock);
+
+        char buffer[BUFFER_READ_CHUNK];
+        size_t buffer_len = 0;
+        http_stream_state_t stream;
+        memset(&stream, 0, sizeof(stream));
+        stream.content_length = -1;
+        uint64_t last_data = now_sec();
+        char *next_url = NULL;
+
+        while(!probe_should_stop(res, input_index))
+        {
+            ssize_t n = recv(fd, buffer + buffer_len, sizeof(buffer) - buffer_len, 0);
+            if(n == 0)
+                break;
+            if(n < 0)
+            {
+                if(errno == EINTR)
+                    continue;
+                if(errno == EAGAIN || errno == EWOULDBLOCK)
+                {
+                    if(now_sec() - last_data > (uint64_t)res->no_data_timeout_sec)
+                        break;
+                    continue;
+                }
+                break;
+            }
+
+            buffer_len += (size_t)n;
+            size_t offset = 0;
+            if(!stream.headers_done)
+            {
+                char *header_end = NULL;
+                for(size_t i = 0; i + 3 < buffer_len; ++i)
+                {
+                    if(buffer[i] == '\r' && buffer[i + 1] == '\n'
+                       && buffer[i + 2] == '\r' && buffer[i + 3] == '\n')
+                    {
+                        header_end = buffer + i + 4;
+                        break;
+                    }
+                    if(buffer[i] == '\n' && buffer[i + 1] == '\n')
+                    {
+                        header_end = buffer + i + 2;
+                        break;
+                    }
+                }
+                if(!header_end)
+                {
+                    if(buffer_len >= BUFFER_HEADER_MAX)
+                        break;
+                    continue;
+                }
+                *header_end = '\0';
+                parse_headers(&stream, buffer);
+                offset = (size_t)(header_end - buffer);
+                stream.headers_done = true;
+                if(stream.status_code == 301 || stream.status_code == 302
+                   || stream.status_code == 307 || stream.status_code == 308)
+                {
+                    if(stream.location && redirects < 5)
+                        next_url = build_redirect_url(stream.location, host, port, path);
+                    break;
+                }
+                if(stream.status_code != 200)
+                    break;
+            }
+
+            if(stream.headers_done && offset < buffer_len)
+            {
+                const size_t take = buffer_len - offset;
+                input_health_feed(&health, (const uint8_t *)buffer + offset, take);
+                pthread_mutex_lock(&res->lock);
+                input->bytes_in += take;
+                const http_buffer_health_result_t health_result =
+                    publish_input_health(res, input, &health, false);
+                const uint32_t progress = input->recovery_progress_sec;
+                pthread_mutex_unlock(&res->lock);
+                if(health_result == HTTP_BUFFER_HEALTH_FAIL)
+                    break;
+                if(health_result == HTTP_BUFFER_HEALTH_OK
+                   && progress >= (uint32_t)res->backup_return_delay_sec)
+                {
+                    success = true;
+                    break;
+                }
+                last_data = now_sec();
+            }
+            buffer_len = 0;
+        }
+
+        close(fd);
+        pthread_mutex_lock(&res->lock);
+        if(res->probe_fd == fd)
+            res->probe_fd = -1;
+        pthread_mutex_unlock(&res->lock);
+        if(stream.location)
+            free(stream.location);
+        free(host);
+        free(path);
+
+        if(success || probe_should_stop(res, input_index))
+        {
+            free(next_url);
+            break;
+        }
+        if(next_url)
+        {
+            redirects++;
+            if(redirects > 5)
+            {
+                free(next_url);
+                break;
+            }
+            free(redirect_url);
+            redirect_url = next_url;
+            current_url = redirect_url;
+            continue;
+        }
+        break;
+    }
+
+    free(redirect_url);
+    free(base_url);
+    free(user_agent);
+    input_health_destroy(&health);
+    return success;
+}
+
+static void probe_sleep(buffer_resource_t *res, int seconds)
+{
+    const int steps = seconds > 0 ? seconds * 10 : 1;
+    for(int i = 0; i < steps && !res->probe_stop && !res->thread_stop; ++i)
+        usleep(100000);
+}
+
+static void *resource_probe_thread(void *arg)
+{
+    buffer_resource_t *res = (buffer_resource_t *)arg;
+    module_data_t *mod = res->owner;
+    int cursor = 0;
+
+    while(!res->probe_stop && !res->thread_stop)
+    {
+        pthread_mutex_lock(&res->lock);
+        const int active = res->active_input_index;
+        const int requested = res->requested_input_index;
+        pthread_mutex_unlock(&res->lock);
+
+        if(active <= 0 || requested >= 0)
+        {
+            pthread_mutex_lock(&res->lock);
+            res->recovery_input_index = -1;
+            pthread_mutex_unlock(&res->lock);
+            cursor = 0;
+            probe_sleep(res, 1);
+            continue;
+        }
+
+        int candidate = -1;
+        for(int n = 0; n < active; ++n)
+        {
+            const int idx = (cursor + n) % active;
+            if(res->inputs[idx].enable)
+            {
+                candidate = idx;
+                cursor = (idx + 1) % active;
+                break;
+            }
+        }
+        if(candidate < 0)
+        {
+            probe_sleep(res, 1);
+            continue;
+        }
+
+        pthread_mutex_lock(&res->lock);
+        res->recovery_input_index = candidate;
+        pthread_mutex_unlock(&res->lock);
+        const bool ready = probe_http_input(
+              res, candidate, mod ? mod->source_bind_interface : NULL);
+
+        if(ready)
+        {
+            int active_fd = -1;
+            pthread_mutex_lock(&res->lock);
+            if(!res->probe_stop && res->active_input_index > candidate)
+            {
+                res->requested_input_index = candidate;
+                active_fd = res->reader_fd;
+                snprintf(res->last_error, sizeof(res->last_error), "failback_ready");
+            }
+            pthread_mutex_unlock(&res->lock);
+            if(active_fd >= 0)
+                shutdown(active_fd, SHUT_RD);
+        }
+        else
+        {
+            pthread_mutex_lock(&res->lock);
+            if(candidate < res->input_count
+               && res->inputs[candidate].state != INPUT_STATE_OK)
+            {
+                res->inputs[candidate].state = INPUT_STATE_DOWN;
+            }
+            pthread_mutex_unlock(&res->lock);
+        }
+
+        pthread_mutex_lock(&res->lock);
+        if(res->recovery_input_index == candidate)
+            res->recovery_input_index = -1;
+        pthread_mutex_unlock(&res->lock);
+        probe_sleep(res, res->backup_probe_interval_sec);
+    }
+    return NULL;
 }
 
 static void *resource_thread(void *arg)
@@ -1970,8 +2622,6 @@ static void *resource_thread(void *arg)
     buffer_resource_t *res = (buffer_resource_t *)arg;
     module_data_t *mod = res->owner;
     int backoff = 1;
-    time_t last_probe = 0;
-    time_t backup_since = 0;
 
     while(!res->thread_stop)
     {
@@ -1990,43 +2640,40 @@ static void *resource_thread(void *arg)
             continue;
         }
 
-        time_t now = (time_t)now_sec();
-        bool probing_primary = false;
-        int fallback_index = -1;
-
-        if(active != 0 && res->backup_probe_interval_sec > 0)
-        {
-            if(backup_since == 0)
-                backup_since = now;
-            if(res->backup_return_delay_sec <= 0 || now - backup_since >= res->backup_return_delay_sec)
-            {
-                if(now - last_probe >= res->backup_probe_interval_sec)
-                {
-                    fallback_index = active;
-                    active = 0;
-                    probing_primary = true;
-                    last_probe = now;
-                }
-            }
-        }
-
-        if(active == 0)
-            backup_since = 0;
-
         buffer_input_t *input = &res->inputs[active];
+        pthread_mutex_lock(&res->lock);
         res->active_input_index = active;
+        res->requested_input_index = -1;
         resource_set_state(res, RESOURCE_STATE_PROBING, "connecting");
         mark_input_state(input, INPUT_STATE_PROBING, "connecting");
-
-        pthread_mutex_lock(&res->lock);
         resource_clear_packets(res);
         pthread_cond_broadcast(&res->cond);
         pthread_mutex_unlock(&res->lock);
 
-        bool ok = read_http_stream(res, input, mod->source_bind_interface);
+        const int result = read_http_stream(res, input, mod->source_bind_interface);
 
         if(res->thread_stop)
             break;
+
+        pthread_mutex_lock(&res->lock);
+        const int requested = res->requested_input_index;
+        if(requested >= 0 && requested < res->input_count
+           && res->inputs[requested].enable && requested != active)
+        {
+            res->active_input_index = requested;
+            res->requested_input_index = -1;
+            res->recovery_input_index = -1;
+            pthread_mutex_unlock(&res->lock);
+            asc_log_info(MSG("FAILBACK_SWITCH %s %d->%d stable=%ds"),
+                         res->id,
+                         active,
+                         requested,
+                         res->backup_return_delay_sec);
+            backoff = 1;
+            continue;
+        }
+        res->requested_input_index = -1;
+        pthread_mutex_unlock(&res->lock);
 
         bool had_data = false;
         pthread_mutex_lock(&res->lock);
@@ -2035,30 +2682,34 @@ static void *resource_thread(void *arg)
         if(had_data)
             backoff = 1;
 
+        pthread_mutex_lock(&res->lock);
         input->reconnects += 1;
-        snprintf(input->last_error, sizeof(input->last_error), ok ? "input_eof" : "input_error");
+        if(input->last_error[0] == '\0')
+        {
+            snprintf(input->last_error,
+                     sizeof(input->last_error),
+                     result == READ_RESULT_EOF ? "input_eof" : "input_error");
+        }
         input->state = INPUT_STATE_DOWN;
-        resource_set_state(res, RESOURCE_STATE_DOWN, "input_error");
+        resource_set_state(res, RESOURCE_STATE_DOWN, input->last_error);
         res->reconnects += 1;
+        pthread_mutex_unlock(&res->lock);
         asc_log_warning(MSG("RESOURCE_DOWN %s %s"), res->id, input->url ? input->url : "");
 
-        int next = -1;
-        if(probing_primary && fallback_index >= 0)
-            next = fallback_index;
-        else
-            next = next_enabled_input(res, active);
+        int next = next_enabled_input(res, active);
 
         if(next >= 0 && next != active)
         {
             if(res->input_count > 1)
                 asc_log_info(MSG("FAILOVER_SWITCH %s %d->%d"), res->id, active, next);
+            pthread_mutex_lock(&res->lock);
             res->active_input_index = next;
-            if(next != 0)
-                backup_since = (time_t)now_sec();
+            res->requested_input_index = -1;
+            pthread_mutex_unlock(&res->lock);
         }
 
         int sleep_for = backoff;
-        if(active == 0 && next > 0 && res->backup_start_delay_sec > 0)
+        if(next >= 0 && next != active && res->backup_start_delay_sec > 0)
             sleep_for = res->backup_start_delay_sec;
         else if(strcmp(res->backup_type, "active") == 0)
             sleep_for = 0;
@@ -2077,26 +2728,44 @@ static void resource_start(buffer_resource_t *res)
     if(res->thread_running)
         return;
     res->thread_stop = false;
+    res->probe_stop = false;
     res->reader_fd = -1;
+    res->probe_fd = -1;
+    res->requested_input_index = -1;
+    res->recovery_input_index = -1;
     if(pthread_create(&res->thread, NULL, resource_thread, res) == 0)
     {
         res->thread_running = true;
+    }
+    if(res->thread_running
+       && pthread_create(&res->probe_thread, NULL, resource_probe_thread, res) == 0)
+    {
+        res->probe_thread_running = true;
     }
 }
 
 static void resource_stop(buffer_resource_t *res)
 {
-    if(!res->thread_running)
+    if(!res->thread_running && !res->probe_thread_running)
         return;
     res->thread_stop = true;
+    res->probe_stop = true;
     if(res->reader_fd >= 0)
-    {
         shutdown(res->reader_fd, SHUT_RDWR);
-        close(res->reader_fd);
-        res->reader_fd = -1;
+    if(res->probe_fd >= 0)
+        shutdown(res->probe_fd, SHUT_RDWR);
+    if(res->thread_running)
+    {
+        pthread_join(res->thread, NULL);
+        res->thread_running = false;
     }
-    pthread_join(res->thread, NULL);
-    res->thread_running = false;
+    if(res->probe_thread_running)
+    {
+        pthread_join(res->probe_thread, NULL);
+        res->probe_thread_running = false;
+    }
+    res->reader_fd = -1;
+    res->probe_fd = -1;
 }
 
 static void client_release(buffer_client_t *client)
@@ -2358,6 +3027,33 @@ static void *listener_thread(void *arg)
             continue;
         }
 
+        struct timeval send_timeout;
+        memset(&send_timeout, 0, sizeof(send_timeout));
+        send_timeout.tv_sec = CLIENT_SEND_TIMEOUT_SEC;
+        if(setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO,
+                      &send_timeout, sizeof(send_timeout)) != 0
+           && asc_log_is_debug())
+        {
+            asc_log_debug(MSG("SO_SNDTIMEO failed: %s"), strerror(errno));
+        }
+
+        int keepalive = 1;
+        if(setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE,
+                      &keepalive, sizeof(keepalive)) != 0
+           && asc_log_is_debug())
+        {
+            asc_log_debug(MSG("SO_KEEPALIVE failed: %s"), strerror(errno));
+        }
+#ifdef TCP_USER_TIMEOUT
+        int user_timeout_ms = CLIENT_SEND_TIMEOUT_SEC * 1000;
+        if(setsockopt(client_fd, IPPROTO_TCP, TCP_USER_TIMEOUT,
+                      &user_timeout_ms, sizeof(user_timeout_ms)) != 0
+           && asc_log_is_debug())
+        {
+            asc_log_debug(MSG("TCP_USER_TIMEOUT failed: %s"), strerror(errno));
+        }
+#endif
+
         pthread_mutex_lock(&mod->lock);
         bool over_limit = mod->clients_total >= (uint32_t)mod->max_clients_total;
         pthread_mutex_unlock(&mod->lock);
@@ -2513,6 +3209,32 @@ static buffer_resource_t *resource_from_lua(module_data_t *mod, lua_State *L, in
     res->backup_probe_interval_sec = (int)lua_tointeger(L, -1);
     lua_pop(L, 1);
 
+    lua_getfield(L, idx, "health_require_video");
+    res->health_require_video = lua_isnil(L, -1) ? true : lua_toboolean(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, idx, "health_require_audio");
+    res->health_require_audio = lua_isnil(L, -1) ? true : lua_toboolean(L, -1);
+    lua_pop(L, 1);
+
+    lua_getfield(L, idx, "health_min_bitrate_kbps");
+    res->health_min_bitrate_kbps = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if(res->health_min_bitrate_kbps <= 0)
+        res->health_min_bitrate_kbps = 128;
+
+    lua_getfield(L, idx, "health_failover_sec");
+    res->health_failover_sec = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if(res->health_failover_sec <= 0)
+        res->health_failover_sec = 5;
+
+    lua_getfield(L, idx, "health_fail_checks");
+    res->health_fail_checks = (int)lua_tointeger(L, -1);
+    lua_pop(L, 1);
+    if(res->health_fail_checks <= 0)
+        res->health_fail_checks = 2;
+
     lua_getfield(L, idx, "active_input_index");
     res->active_input_index = (int)lua_tointeger(L, -1);
     lua_pop(L, 1);
@@ -2647,6 +3369,11 @@ static buffer_resource_t *resource_from_lua(module_data_t *mod, lua_State *L, in
     res->idr_scan_limit = IDR_SCAN_LIMIT;
     if(res->idr_scan_limit > 0)
         res->idr_scan_buf = (uint8_t *)calloc(res->idr_scan_limit, sizeof(uint8_t));
+
+    res->reader_fd = -1;
+    res->probe_fd = -1;
+    res->requested_input_index = -1;
+    res->recovery_input_index = -1;
 
     resource_realloc_packets(res);
     resource_clear_packets(res);
@@ -2841,6 +3568,11 @@ static int method_apply_config(module_data_t *mod)
                             existing->backup_start_delay_sec = parsed->backup_start_delay_sec;
                             existing->backup_return_delay_sec = parsed->backup_return_delay_sec;
                             existing->backup_probe_interval_sec = parsed->backup_probe_interval_sec;
+                            existing->health_require_video = parsed->health_require_video;
+                            existing->health_require_audio = parsed->health_require_audio;
+                            existing->health_min_bitrate_kbps = parsed->health_min_bitrate_kbps;
+                            existing->health_failover_sec = parsed->health_failover_sec;
+                            existing->health_fail_checks = parsed->health_fail_checks;
                             existing->active_input_index = parsed->active_input_index;
                             existing->buffering_sec = parsed->buffering_sec;
                             existing->bandwidth_kbps = parsed->bandwidth_kbps;
@@ -2972,6 +3704,33 @@ static void push_resource_status(buffer_resource_t *res)
     lua_setfield(lua, -2, "clients_connected");
 
     lua_newtable(lua);
+    lua_pushboolean(lua, res->health_require_video);
+    lua_setfield(lua, -2, "require_video");
+    lua_pushboolean(lua, res->health_require_audio);
+    lua_setfield(lua, -2, "require_audio");
+    lua_pushnumber(lua, res->health_min_bitrate_kbps);
+    lua_setfield(lua, -2, "min_bitrate_kbps");
+    lua_pushnumber(lua, res->health_failover_sec);
+    lua_setfield(lua, -2, "failover_sec");
+    lua_pushnumber(lua, res->health_fail_checks);
+    lua_setfield(lua, -2, "fail_checks");
+    lua_pushboolean(lua, res->health_current_ok);
+    lua_setfield(lua, -2, "current_ok");
+    lua_pushnumber(lua, (lua_Number)res->health_bitrate_kbps);
+    lua_setfield(lua, -2, "bitrate_kbps");
+    lua_pushnumber(lua, (lua_Number)res->health_last_video_ts);
+    lua_setfield(lua, -2, "last_video_ts");
+    lua_pushnumber(lua, (lua_Number)res->health_last_audio_ts);
+    lua_setfield(lua, -2, "last_audio_ts");
+    lua_pushnumber(lua, (lua_Number)res->health_failures);
+    lua_setfield(lua, -2, "failures");
+    lua_pushstring(lua, res->health_reason);
+    lua_setfield(lua, -2, "reason");
+    lua_pushnumber(lua, res->recovery_input_index);
+    lua_setfield(lua, -2, "recovery_input_index");
+    lua_setfield(lua, -2, "health");
+
+    lua_newtable(lua);
     lua_pushnumber(lua, (lua_Number)res->capacity_packets);
     lua_setfield(lua, -2, "capacity_packets");
     lua_pushnumber(lua, (lua_Number)res->write_index);
@@ -3032,6 +3791,22 @@ static void push_resource_status(buffer_resource_t *res)
         lua_setfield(lua, -2, "reconnects");
         lua_pushnumber(lua, (lua_Number)input->bytes_in);
         lua_setfield(lua, -2, "bytes_in");
+        lua_pushnumber(lua, (lua_Number)input->last_health_ts);
+        lua_setfield(lua, -2, "last_health_ts");
+        lua_pushnumber(lua, (lua_Number)input->bitrate_kbps);
+        lua_setfield(lua, -2, "bitrate_kbps");
+        lua_pushnumber(lua, input->pmt_pid);
+        lua_setfield(lua, -2, "pmt_pid");
+        lua_pushnumber(lua, input->video_pid);
+        lua_setfield(lua, -2, "video_pid");
+        lua_pushnumber(lua, input->audio_pid);
+        lua_setfield(lua, -2, "audio_pid");
+        lua_pushnumber(lua, (lua_Number)input->health_failures);
+        lua_setfield(lua, -2, "health_failures");
+        lua_pushnumber(lua, (lua_Number)input->recovery_progress_sec);
+        lua_setfield(lua, -2, "recovery_progress_sec");
+        lua_pushstring(lua, input->health_reason);
+        lua_setfield(lua, -2, "health_reason");
         lua_settable(lua, -3);
     }
     lua_setfield(lua, -2, "inputs");
