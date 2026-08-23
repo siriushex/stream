@@ -3015,7 +3015,7 @@ local function buffer_output_url(path)
 end
 
 local function buffer_resource_payload(row)
-    return {
+    local payload = {
         id = row.id,
         name = row.name,
         path = row.path,
@@ -3030,6 +3030,8 @@ local function buffer_resource_payload(row)
         health_min_bitrate_kbps = row.health_min_bitrate_kbps,
         health_failover_sec = row.health_failover_sec,
         health_fail_checks = row.health_fail_checks,
+        publish_to_dashboard = row.publish_to_dashboard ~= 0,
+        dashboard_stream_id = row.dashboard_stream_id or "",
         active_input_index = row.active_input_index,
         buffering_sec = row.buffering_sec,
         bandwidth_kbps = row.bandwidth_kbps,
@@ -3055,6 +3057,17 @@ local function buffer_resource_payload(row)
         created = row.created,
         updated = row.updated,
     }
+    local link = config.get_buffer_stream_link and config.get_buffer_stream_link(row.id) or nil
+    if link then
+        payload.dashboard_link = {
+            state = link.managed ~= 0 and "managed" or "linked",
+            stream_id = link.stream_id,
+            managed = link.managed ~= 0,
+        }
+    else
+        payload.dashboard_link = { state = "not_published", managed = false }
+    end
+    return payload
 end
 
 local function buffer_input_payload(row)
@@ -3130,6 +3143,10 @@ local function upsert_buffer_resource(server, client, id, body, request)
         end,
         apply = function()
             config.upsert_buffer_resource(id, body)
+            local ok, sync_err = config.sync_buffer_dashboard_stream(id)
+            if not ok then
+                error(sync_err or "buffer dashboard sync failed")
+            end
         end,
         success_builder = function(_, revision_id)
             local row = config.get_buffer_resource(id)

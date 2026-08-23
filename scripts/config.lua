@@ -946,6 +946,21 @@ config.migrations = {
     [[
     ALTER TABLE buffer_resources ADD COLUMN health_fail_checks INTEGER NOT NULL DEFAULT 2;
     ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN publish_to_dashboard INTEGER NOT NULL DEFAULT 0;
+    ]],
+    [[
+    ALTER TABLE buffer_resources ADD COLUMN dashboard_stream_id TEXT NOT NULL DEFAULT '';
+    ]],
+    [[
+    CREATE TABLE IF NOT EXISTS buffer_stream_links (
+        resource_id TEXT PRIMARY KEY,
+        stream_id TEXT NOT NULL,
+        managed INTEGER NOT NULL DEFAULT 0,
+        created INTEGER NOT NULL,
+        updated INTEGER NOT NULL
+    );
+    ]],
 }
 
 function config.init(opts)
@@ -1833,6 +1848,7 @@ function config.list_buffer_resources()
         "health_min_bitrate_kbps",
         "health_failover_sec",
         "health_fail_checks",
+        "publish_to_dashboard",
         "active_input_index",
         "buffering_sec",
         "bandwidth_kbps",
@@ -1882,6 +1898,7 @@ function config.get_buffer_resource(id)
         "health_min_bitrate_kbps",
         "health_failover_sec",
         "health_fail_checks",
+        "publish_to_dashboard",
         "active_input_index",
         "buffering_sec",
         "bandwidth_kbps",
@@ -1933,6 +1950,7 @@ function config.upsert_buffer_resource(id, data)
     end
     local keyframe_detect_mode = tostring(data.keyframe_detect_mode or "auto")
     local pacing_mode = tostring(data.pacing_mode or "none")
+    local dashboard_stream_id = tostring(data.dashboard_stream_id or "")
 
     local fields = {
         no_data_timeout_sec = tonumber(data.no_data_timeout_sec) or 3,
@@ -1944,6 +1962,7 @@ function config.upsert_buffer_resource(id, data)
         health_min_bitrate_kbps = math.max(1, tonumber(data.health_min_bitrate_kbps) or 128),
         health_failover_sec = math.max(1, tonumber(data.health_failover_sec) or 5),
         health_fail_checks = math.max(1, tonumber(data.health_fail_checks) or 2),
+        publish_to_dashboard = normalize_bool(data.publish_to_dashboard, false),
         active_input_index = tonumber(data.active_input_index) or 0,
         buffering_sec = tonumber(data.buffering_sec) or 8,
         bandwidth_kbps = tonumber(data.bandwidth_kbps) or 4000,
@@ -1984,6 +2003,8 @@ function config.upsert_buffer_resource(id, data)
             "health_min_bitrate_kbps=" .. fields.health_min_bitrate_kbps .. ", " ..
             "health_failover_sec=" .. fields.health_failover_sec .. ", " ..
             "health_fail_checks=" .. fields.health_fail_checks .. ", " ..
+            "publish_to_dashboard=" .. (fields.publish_to_dashboard and 1 or 0) .. ", " ..
+            "dashboard_stream_id='" .. sql_escape(dashboard_stream_id) .. "', " ..
             "active_input_index=" .. fields.active_input_index .. ", " ..
             "buffering_sec=" .. fields.buffering_sec .. ", " ..
             "bandwidth_kbps=" .. fields.bandwidth_kbps .. ", " ..
@@ -2014,7 +2035,7 @@ function config.upsert_buffer_resource(id, data)
             "id, name, path, enable, backup_type, no_data_timeout_sec, backup_start_delay_sec, " ..
             "backup_return_delay_sec, backup_probe_interval_sec, health_require_video, " ..
             "health_require_audio, health_min_bitrate_kbps, health_failover_sec, health_fail_checks, " ..
-            "active_input_index, buffering_sec, " ..
+            "publish_to_dashboard, dashboard_stream_id, active_input_index, buffering_sec, " ..
             "bandwidth_kbps, client_start_offset_sec, max_client_lag_ms, smart_start_enabled, " ..
             "smart_target_delay_ms, smart_lookback_ms, smart_require_pat_pmt, smart_require_keyframe, " ..
             "smart_require_pcr, smart_wait_ready_ms, smart_max_lead_ms, keyframe_detect_mode, " ..
@@ -2035,6 +2056,8 @@ function config.upsert_buffer_resource(id, data)
             fields.health_min_bitrate_kbps .. ", " ..
             fields.health_failover_sec .. ", " ..
             fields.health_fail_checks .. ", " ..
+            (fields.publish_to_dashboard and 1 or 0) .. ", " ..
+            "'" .. sql_escape(dashboard_stream_id) .. "', " ..
             fields.active_input_index .. ", " ..
             fields.buffering_sec .. ", " ..
             fields.bandwidth_kbps .. ", " ..
@@ -2061,7 +2084,136 @@ function config.upsert_buffer_resource(id, data)
     end
 end
 
+local function buffer_stream_id(row)
+    local stream_id = tostring(row and row.dashboard_stream_id or "")
+    if stream_id == "" then
+        stream_id = tostring(row and row.id or "buffer_stream")
+    end
+    return stream_id
+end
+
+local function buffer_local_url(row)
+    local port = tonumber(config.get_setting("buffer_listen_port")) or 8089
+    return "http://127.0.0.1:" .. tostring(port)
+        .. normalize_buffer_path(row and row.path or "")
+end
+
+function config.get_buffer_stream_link(resource_id)
+    local rows = db_query(config.db,
+        "SELECT * FROM buffer_stream_links WHERE resource_id='"
+        .. sql_escape(resource_id) .. "' LIMIT 1;")
+    if #rows == 0 then
+        return nil
+    end
+    rows[1].managed = tonumber(rows[1].managed) or 0
+    rows[1].created = tonumber(rows[1].created) or 0
+    rows[1].updated = tonumber(rows[1].updated) or 0
+    return rows[1]
+end
+
+local function buffer_stream_uses_url(stream, url)
+    local cfg = stream and stream.config
+    if type(cfg) ~= "table" or type(cfg.input) ~= "table" then
+        return false
+    end
+    for _, input in ipairs(cfg.input) do
+        if type(input) == "string" and input == url then
+            return true
+        end
+        if type(input) == "table" and tostring(input.url or "") == url then
+            return true
+        end
+    end
+    return false
+end
+
+local function delete_owned_buffer_stream(resource_id, stream_id)
+    local stream = stream_id and config.get_stream(stream_id) or nil
+    local cfg = stream and stream.config
+    if type(cfg) == "table"
+        and tostring(cfg.buffer_managed_resource_id or "") == tostring(resource_id)
+    then
+        config.delete_stream(stream_id)
+        return true
+    end
+    return false
+end
+
+function config.sync_buffer_dashboard_stream(resource_id)
+    local row = config.get_buffer_resource(resource_id)
+    if not row then
+        return nil, "buffer resource not found"
+    end
+
+    local prior_link = config.get_buffer_stream_link(resource_id)
+    local publish = (tonumber(row.publish_to_dashboard) or 0) ~= 0
+    if not publish then
+        if prior_link and prior_link.managed ~= 0 then
+            delete_owned_buffer_stream(resource_id, prior_link.stream_id)
+        end
+        db_exec(config.db, "DELETE FROM buffer_stream_links WHERE resource_id='"
+            .. sql_escape(resource_id) .. "';")
+        return true, { state = "not_published", managed = false }
+    end
+
+    local stream_id = buffer_stream_id(row)
+    local local_url = buffer_local_url(row)
+    if prior_link and prior_link.stream_id ~= stream_id and prior_link.managed ~= 0 then
+        delete_owned_buffer_stream(resource_id, prior_link.stream_id)
+    end
+
+    local existing = config.get_stream(stream_id)
+    local managed = false
+    local state = "linked"
+    if existing then
+        local cfg = existing.config or {}
+        if tostring(cfg.buffer_managed_resource_id or "") == tostring(resource_id) then
+            config.upsert_stream(stream_id, row.enable ~= 0, {
+                id = stream_id,
+                name = row.name,
+                enable = row.enable ~= 0,
+                input = { local_url },
+                buffer_managed_resource_id = resource_id,
+            })
+            managed = true
+            state = "managed"
+        elseif not buffer_stream_uses_url(existing, local_url) then
+            return nil, "dashboard stream id conflict: " .. stream_id
+        end
+    else
+        config.upsert_stream(stream_id, row.enable ~= 0, {
+            id = stream_id,
+            name = row.name,
+            enable = row.enable ~= 0,
+            input = { local_url },
+            buffer_managed_resource_id = resource_id,
+        })
+        managed = true
+        state = "managed"
+    end
+
+    local now = os.time()
+    local created = prior_link and prior_link.created or now
+    db_exec(config.db,
+        "INSERT OR REPLACE INTO buffer_stream_links(resource_id, stream_id, managed, created, updated) VALUES(" ..
+        "'" .. sql_escape(resource_id) .. "', " ..
+        "'" .. sql_escape(stream_id) .. "', " ..
+        (managed and 1 or 0) .. ", " .. tostring(created) .. ", " .. tostring(now) .. ");")
+    return true, {
+        state = state,
+        stream_id = stream_id,
+        managed = managed,
+        url = local_url,
+    }
+end
+
 function config.delete_buffer_resource(id)
+    local link = config.get_buffer_stream_link(id)
+    if link and link.managed ~= 0 then
+        delete_owned_buffer_stream(id, link.stream_id)
+    end
+    db_exec(config.db, "DELETE FROM buffer_stream_links WHERE resource_id='"
+        .. sql_escape(id) .. "';")
     db_exec(config.db, "DELETE FROM buffer_inputs WHERE resource_id='" .. sql_escape(id) .. "';")
     db_exec(config.db, "DELETE FROM buffer_resources WHERE id='" .. sql_escape(id) .. "';")
 end

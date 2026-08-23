@@ -18,7 +18,14 @@ config.init({
     db_path = tmp .. "/stream.db",
 })
 
-local first_health_step = #config.migrations - 4
+local first_health_step = nil
+for index, sql in ipairs(config.migrations) do
+    if tostring(sql):find("health_require_video", 1, true) then
+        first_health_step = index
+        break
+    end
+end
+assert_true(first_health_step ~= nil, "health migration not found")
 local ok, err = config.db:exec(
     "UPDATE schema_version SET version = " .. tostring(first_health_step - 1) .. ";")
 assert_true(ok, "failed to rewind schema version: " .. tostring(err))
