@@ -15,4 +15,6 @@ run_test() {
 }
 
 run_test modules/softcam/cam/newcamd_cw_guard_test.c newcamd_cw_guard_test
+run_test modules/softcam/decrypt_key_guard_timing_test.c decrypt_key_guard_timing_test
+run_test modules/softcam/decrypt_shift_size_test.c decrypt_shift_size_test
 printf '%s\n' 'SoftCAM helper tests: OK.'
