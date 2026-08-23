@@ -45,6 +45,8 @@
 #include <astra.h>
 #include "module_cam.h"
 #include "cas/cas_list.h"
+#include "decrypt_key_guard_timing.h"
+#include "decrypt_shift_size.h"
 
 #include <pthread.h>
 #include <unistd.h>
@@ -195,8 +197,19 @@ struct ca_stream_t
     uint8_t cand_key[16];
     bool cand_from_backup;
     uint64_t cand_set_us;
-    uint8_t cand_ok_count;
-    uint8_t cand_fail_count;
+    decrypt_key_guard_timing_t cand_timing;
+
+    /* Latest packet boundary for each scrambling parity. */
+    uint8_t ingress_parity_mask;
+    uint64_t parity_start_seq[2];
+    uint64_t parity_start_us[2];
+
+    /* Validated at ingress, applied at the matching post-shift packet. */
+    bool guarded_key_pending;
+    uint8_t guarded_key_mask;
+    uint8_t guarded_key[16];
+    bool guarded_key_from_backup;
+    uint64_t guarded_key_apply_seq;
 
 #if FFDECSA == 1
 
@@ -301,6 +314,8 @@ struct module_data_t
         size_t count;
         size_t read;
         size_t write;
+        uint64_t ingress_seq;
+        uint64_t egress_seq;
     } shift;
 
     /* Parallel CSA descramble (opt-in). */
@@ -349,9 +364,6 @@ struct module_data_t
 
 #define BISS_CAID 0x2600
 #define MSG(_msg) "[decrypt %s] " _msg, mod->name
-
-#define SHIFT_ASSUME_MBIT 10
-#define SHIFT_MAX_BYTES (4 * 1024 * 1024)
 
 #define CAM_BACKUP_MODE_RACE 0
 #define CAM_BACKUP_MODE_HEDGE 1
@@ -1034,8 +1046,7 @@ static void ca_stream_guard_clear(ca_stream_t *ca_stream)
     ca_stream->cand_mask = 0;
     ca_stream->cand_from_backup = false;
     ca_stream->cand_set_us = 0;
-    ca_stream->cand_ok_count = 0;
-    ca_stream->cand_fail_count = 0;
+    decrypt_key_guard_timing_reset(&ca_stream->cand_timing);
 }
 
 static descramble_key_ctx_t * ca_stream_parallel_key_acquire(ca_stream_t *ca_stream)
@@ -1120,6 +1131,10 @@ static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t 
     if(mask == 0)
         return;
 
+    /* Keep one accepted key aligned with the shift buffer until it is applied. */
+    if(ca_stream->guarded_key_pending)
+        return;
+
     uint8_t cand_key[16];
     uint8_t cand_mask = mask;
 
@@ -1154,8 +1169,7 @@ static void ca_stream_guard_set_candidate(ca_stream_t *ca_stream, const uint8_t 
     ca_stream->cand_mask = cand_mask;
     ca_stream->cand_set_us = asc_utime();
     ca_stream->cand_from_backup = from_backup;
-    ca_stream->cand_ok_count = 0;
-    ca_stream->cand_fail_count = 0;
+    decrypt_key_guard_timing_reset(&ca_stream->cand_timing);
 
 #if FFDECSA == 1
     if(!ca_stream->cand_keys)
@@ -1316,6 +1330,8 @@ static void stream_reload(module_data_t *mod)
     mod->shift.count = 0;
     mod->shift.read = 0;
     mod->shift.write = 0;
+    mod->shift.ingress_seq = 0;
+    mod->shift.egress_seq = 0;
 
     if(mod->descramble.mode == DESCRAMBLE_PARALLEL_PER_STREAM_THREAD)
     {
@@ -2426,6 +2442,168 @@ static void decrypt(module_data_t *mod)
     mod->storage.dsc_count = mod->storage.count;
 }
 
+static void ca_stream_guard_accept(ca_stream_t *ca_stream, uint64_t apply_seq)
+{
+    ca_stream->guarded_key_pending = true;
+    ca_stream->guarded_key_mask = ca_stream->cand_mask;
+    memcpy(ca_stream->guarded_key, ca_stream->cand_key, sizeof(ca_stream->guarded_key));
+    ca_stream->guarded_key_from_backup = ca_stream->cand_from_backup;
+    ca_stream->guarded_key_apply_seq = apply_seq;
+    ca_stream_guard_clear(ca_stream);
+}
+
+static void ca_stream_guard_reject(module_data_t *mod, ca_stream_t *ca_stream)
+{
+    const bool from_backup = ca_stream->cand_from_backup;
+    if(from_backup)
+    {
+        ca_stream->stat_key_guard_reject_backup += 1;
+        ca_stream_backup_mark_bad(mod, ca_stream, "key_guard_reject");
+    }
+    else
+    {
+        ca_stream->stat_key_guard_reject_primary += 1;
+    }
+    ca_stream_guard_clear(ca_stream);
+    ca_stream->last_ecm_ok = false;
+    ca_stream->last_ecm_send_us = 0;
+    if(ca_stream->ecm_fail_count != UINT32_MAX)
+        ++ca_stream->ecm_fail_count;
+}
+
+static void ca_stream_guard_observe_ingress(
+      module_data_t *mod,
+      const uint8_t *ts,
+      uint16_t pid,
+      uint64_t ingress_seq)
+{
+    if(!mod->key_guard || !TS_IS_SCRAMBLED(ts))
+        return;
+
+    ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
+    if(!ca_stream)
+        return;
+
+    const uint8_t sc = TS_IS_SCRAMBLED(ts);
+    uint8_t parity_mask = 0;
+    int parity_index = -1;
+    if(sc == 0x80)
+    {
+        parity_mask = 1;
+        parity_index = 0;
+    }
+    else if(sc == 0xC0)
+    {
+        parity_mask = 2;
+        parity_index = 1;
+    }
+    if(parity_index < 0)
+        return;
+
+    const uint64_t now_us = asc_utime();
+    if(ca_stream->ingress_parity_mask != parity_mask)
+    {
+        ca_stream->ingress_parity_mask = parity_mask;
+        /* Keep the first transition when PIDs switch within the same parity epoch. */
+        if(ca_stream->parity_start_us[parity_index] == 0
+           || now_us - ca_stream->parity_start_us[parity_index] > 5000000ULL)
+        {
+            ca_stream->parity_start_seq[parity_index] = ingress_seq;
+            ca_stream->parity_start_us[parity_index] = now_us;
+        }
+    }
+
+    if(!ca_stream->cand_pending || !TS_IS_PAYLOAD_START(ts))
+        return;
+
+    if(ca_stream->cand_set_us && now_us - ca_stream->cand_set_us > 10000000ULL)
+    {
+        ca_stream_guard_clear(ca_stream);
+        return;
+    }
+
+    if(!(ca_stream->cand_mask & parity_mask))
+        return;
+
+    uint64_t validated_seq = 0;
+    const bool valid = ca_stream_guard_validate_pes(mod, ca_stream, ts);
+    const decrypt_key_guard_result_t result = decrypt_key_guard_timing_observe(
+          &ca_stream->cand_timing, valid, ingress_seq, &validated_seq);
+
+    if(result == DECRYPT_KEY_GUARD_ACCEPT)
+    {
+        const uint8_t accepted_mask = ca_stream->cand_mask;
+        const uint64_t apply_seq = decrypt_key_guard_timing_apply_boundary(
+              ca_stream->parity_start_seq[parity_index],
+              validated_seq,
+              mod->shift.egress_seq);
+        ca_stream_guard_accept(ca_stream, apply_seq);
+        if(asc_log_is_debug())
+            asc_log_debug(MSG("key_guard: candidate accepted at ingress (mask:%u parity:%u apply_seq:%"PRIu64" validated_seq:%"PRIu64")"),
+                          (unsigned)accepted_mask,
+                          (unsigned)parity_mask,
+                          apply_seq,
+                          validated_seq);
+    }
+    else if(result == DECRYPT_KEY_GUARD_REJECT)
+    {
+        if(asc_log_is_debug())
+            asc_log_debug(MSG("key_guard: candidate rejected at ingress (mask:%u)"),
+                          (unsigned)ca_stream->cand_mask);
+        ca_stream_guard_reject(mod, ca_stream);
+    }
+}
+
+static void ca_stream_guard_apply_due(
+      module_data_t *mod,
+      uint64_t egress_seq,
+      bool parallel)
+{
+    bool any_due = false;
+    asc_list_for(mod->ca_list)
+    {
+        ca_stream_t *ca_stream = asc_list_data(mod->ca_list);
+        if(ca_stream->guarded_key_pending
+           && decrypt_key_guard_timing_should_apply(
+                egress_seq, ca_stream->guarded_key_apply_seq))
+        {
+            any_due = true;
+            break;
+        }
+    }
+    if(!any_due)
+        return;
+
+    /* Finish packets preceding the key boundary with the old control word. */
+    if(!parallel)
+        decrypt(mod);
+
+    asc_list_for(mod->ca_list)
+    {
+        ca_stream_t *ca_stream = asc_list_data(mod->ca_list);
+        if(!ca_stream->guarded_key_pending
+           || !decrypt_key_guard_timing_should_apply(
+                egress_seq, ca_stream->guarded_key_apply_seq))
+        {
+            continue;
+        }
+
+        ca_stream_stage_new_key(ca_stream,
+                                ca_stream->guarded_key,
+                                ca_stream->guarded_key_mask,
+                                ca_stream->guarded_key_from_backup);
+        ca_stream->guarded_key_pending = false;
+        ca_stream->guarded_key_mask = 0;
+        ca_stream->guarded_key_from_backup = false;
+        ca_stream->guarded_key_apply_seq = 0;
+        if(parallel)
+            ca_stream_apply_staged_key_parallel(mod, ca_stream);
+    }
+
+    if(!parallel)
+        decrypt(mod);
+}
+
 static void descramble_drop_log_rate_limited(module_data_t *mod, const char *reason)
 {
     if(!mod)
@@ -2617,6 +2795,10 @@ static void on_ts_parallel(module_data_t *mod, const uint8_t *ts)
         return;
     }
 
+    const uint64_t ingress_seq = ++mod->shift.ingress_seq;
+    uint64_t egress_seq = ingress_seq;
+    ca_stream_guard_observe_ingress(mod, ts, pid, ingress_seq);
+
     if(mod->shift.buffer)
     {
         memcpy(&mod->shift.buffer[mod->shift.write], ts, TS_PACKET_SIZE);
@@ -2633,69 +2815,14 @@ static void on_ts_parallel(module_data_t *mod, const uint8_t *ts)
         if(mod->shift.read == mod->shift.size)
             mod->shift.read = 0;
         mod->shift.count -= TS_PACKET_SIZE;
+        egress_seq = ++mod->shift.egress_seq;
     }
-
-    /* key_guard: validate candidate keys on PES headers before applying */
-    if(mod->key_guard && TS_IS_SCRAMBLED(ts) && TS_IS_PAYLOAD_START(ts))
+    else
     {
-        ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
-        if(ca_stream && ca_stream->cand_pending)
-        {
-            const uint64_t now_us = asc_utime();
-            if(ca_stream->cand_set_us && now_us - ca_stream->cand_set_us > 10000000ULL)
-            {
-                ca_stream_guard_clear(ca_stream);
-            }
-            else
-            {
-                const uint8_t sc = TS_IS_SCRAMBLED(ts);
-                uint8_t p_mask = 0;
-                if(sc == 0x80)
-                    p_mask = 1;
-                else if(sc == 0xC0)
-                    p_mask = 2;
-
-                if(p_mask && (ca_stream->cand_mask & p_mask))
-                {
-                    const bool ok = ca_stream_guard_validate_pes(mod, ca_stream, ts);
-                    if(ok)
-                        ca_stream->cand_ok_count += 1;
-                    else
-                        ca_stream->cand_fail_count += 1;
-
-                    if(ca_stream->cand_ok_count >= 2)
-                    {
-                        ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
-                        ca_stream_apply_staged_key_parallel(mod, ca_stream);
-                        if(asc_log_is_debug())
-                            asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
-                        ca_stream_guard_clear(ca_stream);
-                    }
-                    else if(ca_stream->cand_fail_count >= 2)
-                    {
-                        const bool cand_from_backup = ca_stream->cand_from_backup;
-                        if(asc_log_is_debug())
-                            asc_log_debug(MSG("key_guard: candidate keys rejected (mask:%u)"), (unsigned)ca_stream->cand_mask);
-                        if(cand_from_backup)
-                        {
-                            ca_stream->stat_key_guard_reject_backup += 1;
-                            ca_stream_backup_mark_bad(mod, ca_stream, "key_guard_reject");
-                        }
-                        else
-                        {
-                            ca_stream->stat_key_guard_reject_primary += 1;
-                        }
-                        ca_stream_guard_clear(ca_stream);
-                        ca_stream->last_ecm_ok = false;
-                        ca_stream->last_ecm_send_us = 0;
-                        if(ca_stream->ecm_fail_count != UINT32_MAX)
-                            ++ca_stream->ecm_fail_count;
-                    }
-                }
-            }
-        }
+        mod->shift.egress_seq = egress_seq;
     }
 
+    ca_stream_guard_apply_due(mod, egress_seq, true);
     descramble_queue_ts(mod, ts);
 }
 
@@ -2746,6 +2873,10 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
         return;
     }
 
+    const uint64_t ingress_seq = ++mod->shift.ingress_seq;
+    uint64_t egress_seq = ingress_seq;
+    ca_stream_guard_observe_ingress(mod, ts, pid, ingress_seq);
+
     if(mod->shift.buffer)
     {
         memcpy(&mod->shift.buffer[mod->shift.write], ts, TS_PACKET_SIZE);
@@ -2762,71 +2893,14 @@ static void on_ts(module_data_t *mod, const uint8_t *ts)
         if(mod->shift.read == mod->shift.size)
             mod->shift.read = 0;
         mod->shift.count -= TS_PACKET_SIZE;
+        egress_seq = ++mod->shift.egress_seq;
     }
-
-    /* key_guard: validate candidate keys on PES headers before applying */
-    if(mod->key_guard && TS_IS_SCRAMBLED(ts) && TS_IS_PAYLOAD_START(ts))
+    else
     {
-        ca_stream_t *ca_stream = ca_stream_for_pid(mod, pid);
-        if(ca_stream && ca_stream->cand_pending)
-        {
-            const uint64_t now_us = asc_utime();
-            if(ca_stream->cand_set_us && now_us - ca_stream->cand_set_us > 10000000ULL)
-            {
-                /* Stale candidate: drop silently and retry via ECM resend. */
-                ca_stream_guard_clear(ca_stream);
-            }
-            else
-            {
-                const uint8_t sc = TS_IS_SCRAMBLED(ts);
-                uint8_t p_mask = 0;
-                if(sc == 0x80)
-                    p_mask = 1;
-                else if(sc == 0xC0)
-                    p_mask = 2;
-
-                if(p_mask && (ca_stream->cand_mask & p_mask))
-                {
-                    const bool ok = ca_stream_guard_validate_pes(mod, ca_stream, ts);
-                    if(ok)
-                        ca_stream->cand_ok_count += 1;
-                    else
-                        ca_stream->cand_fail_count += 1;
-
-                    if(ca_stream->cand_ok_count >= 2)
-                    {
-                        ca_stream_stage_new_key(ca_stream, ca_stream->cand_key, ca_stream->cand_mask, ca_stream->cand_from_backup);
-                        if(descramble_parallel_active(mod))
-                            ca_stream_apply_staged_key_parallel(mod, ca_stream);
-                        if(asc_log_is_debug())
-                            asc_log_debug(MSG("key_guard: candidate keys accepted (mask:%u)"), (unsigned)ca_stream->new_key_id);
-                        ca_stream_guard_clear(ca_stream);
-                    }
-                    else if(ca_stream->cand_fail_count >= 2)
-                    {
-                        const bool cand_from_backup = ca_stream->cand_from_backup;
-                        if(asc_log_is_debug())
-                            asc_log_debug(MSG("key_guard: candidate keys rejected (mask:%u)"), (unsigned)ca_stream->cand_mask);
-                        if(cand_from_backup)
-                        {
-                            ca_stream->stat_key_guard_reject_backup += 1;
-                            ca_stream_backup_mark_bad(mod, ca_stream, "key_guard_reject");
-                        }
-                        else
-                        {
-                            ca_stream->stat_key_guard_reject_primary += 1;
-                        }
-                        ca_stream_guard_clear(ca_stream);
-                        ca_stream->last_ecm_ok = false;
-                        ca_stream->last_ecm_send_us = 0;
-                        if(ca_stream->ecm_fail_count != UINT32_MAX)
-                            ++ca_stream->ecm_fail_count;
-                    }
-                }
-            }
-        }
+        mod->shift.egress_seq = egress_seq;
     }
 
+    ca_stream_guard_apply_due(mod, egress_seq, false);
     uint8_t *dst = &mod->storage.buffer[mod->storage.write];
     memcpy(dst, ts, TS_PACKET_SIZE);
 
@@ -3408,26 +3482,11 @@ static void module_init(module_data_t *mod)
     module_option_number("shift", &shift);
     if(shift > 0)
     {
-        /*
-         * shift is a buffered delay before decrypt (time-based, capped).
-         * Backward compatibility: small values historically behaved like "units" rather than ms.
-         * We treat shift < 100 as legacy units where 1 == 100ms.
-         */
-        uint64_t shift_ms = (uint64_t)shift;
-        if(shift < 100)
-            shift_ms = (uint64_t)shift * 100ULL;
-
-        const uint64_t bits_per_sec = (uint64_t)SHIFT_ASSUME_MBIT * 1000ULL * 1000ULL;
-        uint64_t bytes = (shift_ms * bits_per_sec) / 8ULL / 1000ULL;
-        if(bytes < TS_PACKET_SIZE)
-            bytes = TS_PACKET_SIZE;
-        bytes = ((bytes + TS_PACKET_SIZE - 1) / TS_PACKET_SIZE) * TS_PACKET_SIZE;
-        if(bytes > SHIFT_MAX_BYTES)
-            bytes = SHIFT_MAX_BYTES;
-        mod->shift.size = (size_t)bytes;
+        const size_t bytes = decrypt_shift_size_bytes(shift);
+        mod->shift.size = bytes;
         mod->shift.buffer = malloc(mod->shift.size);
-        if(asc_log_is_debug() && bytes == SHIFT_MAX_BYTES)
-            asc_log_debug(MSG("shift buffer capped to %d bytes"), SHIFT_MAX_BYTES);
+        if(asc_log_is_debug() && bytes == DECRYPT_SHIFT_MAX_ALIGNED_BYTES)
+            asc_log_debug(MSG("shift buffer capped to %zu bytes"), bytes);
     }
 
     stream_reload(mod);
@@ -3547,6 +3606,10 @@ static int method_stats(module_data_t *mod)
     lua_setfield(lua, -2, "size_bytes");
     lua_pushinteger(lua, (lua_Integer)mod->shift.count);
     lua_setfield(lua, -2, "fill_bytes");
+    lua_pushinteger(lua, (lua_Integer)mod->shift.ingress_seq);
+    lua_setfield(lua, -2, "ingress_seq");
+    lua_pushinteger(lua, (lua_Integer)mod->shift.egress_seq);
+    lua_setfield(lua, -2, "egress_seq");
     if(mod->shift.size > 0)
     {
         const lua_Number pct = (lua_Number)mod->shift.count / (lua_Number)mod->shift.size;
@@ -3754,9 +3817,9 @@ static int method_stats(module_data_t *mod)
         lua_setfield(lua, -2, "pending");
         lua_pushinteger(lua, (lua_Integer)ca_stream->cand_mask);
         lua_setfield(lua, -2, "mask");
-        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_ok_count);
+        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_timing.ok_count);
         lua_setfield(lua, -2, "ok_count");
-        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_fail_count);
+        lua_pushinteger(lua, (lua_Integer)ca_stream->cand_timing.fail_count);
         lua_setfield(lua, -2, "fail_count");
         if(ca_stream->cand_set_us)
         {
@@ -3764,6 +3827,15 @@ static int method_stats(module_data_t *mod)
             lua_setfield(lua, -2, "age_ms");
         }
         lua_setfield(lua, -2, "candidate");
+
+        lua_newtable(lua);
+        lua_pushboolean(lua, ca_stream->guarded_key_pending);
+        lua_setfield(lua, -2, "pending");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->guarded_key_mask);
+        lua_setfield(lua, -2, "mask");
+        lua_pushinteger(lua, (lua_Integer)ca_stream->guarded_key_apply_seq);
+        lua_setfield(lua, -2, "apply_seq");
+        lua_setfield(lua, -2, "accepted_key");
 
         lua_rawseti(lua, -2, idx);
         idx += 1;
