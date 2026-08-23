@@ -416,5 +416,75 @@ do
     assert_eq(token5, "LEGACY2", "token legacy cookie fallback")
 end
 
+-- 8) Trusted IPs may read media without credentials, but not the UI/API.
+do
+    config._settings = {
+        http_auth_enabled = true,
+        http_auth_users = false,
+        http_auth_allow = "185.216.46.0/24,185.216.44.0/24",
+        http_auth_deny = "",
+        http_auth_tokens = "",
+    }
+
+    local media_paths = {
+        "/play/channel_id",
+        "/live/channel_id",
+        "/input/channel_id",
+        "/dvr/play/channel_id",
+    }
+    for _, path in ipairs(media_paths) do
+        local allowed = http_auth_check({
+            addr = "185.216.46.23",
+            path = path,
+            headers = {},
+            query = {},
+        })
+        assert_eq(allowed, true, "trusted media path " .. path)
+    end
+
+    local ui_allowed = http_auth_check({
+        addr = "185.216.46.23",
+        path = "/",
+        headers = {},
+        query = {},
+    })
+    assert_eq(ui_allowed, false, "trusted UI still requires credentials")
+
+    local api_allowed = http_auth_check({
+        addr = "185.216.46.23",
+        path = "/api/v1/streams",
+        headers = {},
+        query = {},
+    })
+    assert_eq(api_allowed, false, "trusted API still requires credentials")
+end
+
+-- 9) Outside addresses remain blocked and deny always wins over allow.
+do
+    config._settings = {
+        http_auth_enabled = true,
+        http_auth_users = false,
+        http_auth_allow = "185.216.46.0/24,185.216.44.0/24",
+        http_auth_deny = "",
+        http_auth_tokens = "",
+    }
+    local outside_allowed = http_auth_check({
+        addr = "185.216.45.23",
+        path = "/play/channel_id",
+        headers = {},
+        query = {},
+    })
+    assert_eq(outside_allowed, false, "outside media blocked")
+
+    config._settings.http_auth_deny = "185.216.46.23"
+    local denied_allowed = http_auth_check({
+        addr = "185.216.46.23",
+        path = "/play/channel_id",
+        headers = {},
+        query = {},
+    })
+    assert_eq(denied_allowed, false, "deny overrides trusted media allow")
+end
+
 print("auth_backend_unit: ok")
 astra.exit()

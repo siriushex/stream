@@ -1755,11 +1755,12 @@ function http_auth_check(request)
     local ip = request and request.addr or ""
     local allow = http_auth_list(config.get_setting("http_auth_allow"))
     local deny = http_auth_list(config.get_setting("http_auth_deny"))
+    local trusted_ip = #allow > 0 and http_auth_has(allow, ip)
 
     if #deny > 0 and http_auth_has(deny, ip) then
         return false, info
     end
-    if #allow > 0 and not http_auth_has(allow, ip) then
+    if #allow > 0 and not trusted_ip then
         return false, info
     end
 
@@ -1767,16 +1768,23 @@ function http_auth_check(request)
         return true, info
     end
 
-    -- Allow internal ffmpeg consumers (transcode/audio-fix/publish) to read certain endpoints
-    -- without credentials.
-    -- This is constrained to:
+    -- A configured allow-list is also the trusted media network: matching clients
+    -- may read media endpoints without credentials, while UI/API still require auth.
+    -- Deny-list precedence is enforced above.
+    local path = request and request.path or ""
+    local media_path = path:sub(1, 6) == "/play/" or path:sub(1, 10) == "/dvr/play/"
+        or path:sub(1, 6) == "/live/" or path:sub(1, 7) == "/input/"
+    if media_path and trusted_ip then
+        return true, info
+    end
+
+    -- Allow internal ffmpeg consumers (transcode/audio-fix/publish) to read media
+    -- endpoints without credentials. This is constrained to:
     -- - loopback source IP
     -- - no forwarded headers (avoid accidental reverse-proxy bypass)
     -- - explicit query flag (?internal=1)
     -- - /play/*, /live/*, /input/* only
-    local path = request and request.path or ""
-    if path:sub(1, 6) == "/play/" or path:sub(1, 10) == "/dvr/play/"
-        or path:sub(1, 6) == "/live/" or path:sub(1, 7) == "/input/" then
+    if media_path then
         local ip = request and request.addr or ""
         local headers = request and request.headers or {}
         local query = request and request.query or nil
