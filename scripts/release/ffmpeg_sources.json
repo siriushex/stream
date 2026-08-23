@@ -1,22 +1,22 @@
 {
   "linux-x86_64": {
     "lgpl": {
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linux64-lgpl.tar.xz",
-      "sha256": "00e8808415fc081af9f96ed0a36c1022a9e0766429f1c0835a4c2320d7e6e35e"
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-20-13-45/ffmpeg-N-126229-gf101fce22d-linux64-lgpl.tar.xz",
+      "sha256": "96639a4a6158240eac79269abd6d6575eae3692ee777112a0ac3f0883a9843a3"
     },
     "gpl": {
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linux64-gpl.tar.xz",
-      "sha256": "9f63ca812df522e944065c8011ff10f8aa6d043230a0cf28e868bf5c05d18877"
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-20-13-45/ffmpeg-N-126229-gf101fce22d-linux64-gpl.tar.xz",
+      "sha256": "cfce4cb7658648b9abe1161e06f783062cf3af8cf04a8aac6fb82cc376e1f921"
     }
   },
   "linux-aarch64": {
     "lgpl": {
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linuxarm64-lgpl.tar.xz",
-      "sha256": "cb1ed6d420523fba7d81313458cc0ea9271c392976f399384d617105ee42a160"
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-20-13-45/ffmpeg-N-126229-gf101fce22d-linuxarm64-lgpl.tar.xz",
+      "sha256": "a56ed9d5874a23e07cde0b21861adf316c737a801cbfdd039a817852bd41faea"
     },
     "gpl": {
-      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-02-05-13-01/ffmpeg-N-122647-gb628cafd48-linuxarm64-gpl.tar.xz",
-      "sha256": "061235d7f44059fbf0b2e2068f43f1fbddcdf35400e1c25dc7a2c84161b031eb"
+      "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-20-13-45/ffmpeg-N-126229-gf101fce22d-linuxarm64-gpl.tar.xz",
+      "sha256": "59165bcce39a7f2162d8913aed04fe895a6b8628b6901868df75a39d3beb5ad3"
     }
   }
 }
