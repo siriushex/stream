@@ -1,0 +1,28 @@
+FROM ubuntu:16.04 AS build
+
+RUN apt-get update -y \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      gcc \
+      make \
+      binutils \
+      python3 \
+      tar \
+      libssl-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . /src
+
+# Match the Ubuntu 16.04 production ABI while retaining OpenSSL-backed
+# Newcamd and the built-in FFdecsa implementation. Transcoding is excluded
+# from Stream Lite and x86-64 avoids host-specific instruction selection.
+RUN ./configure.sh --without-transcode --arch=x86-64 --bin=./stream \
+ && make -j"$(getconf _NPROCESSORS_ONLN || echo 2)" \
+ && mkdir -p /out \
+ && cp -a ./stream /out/stream \
+ && strip /out/stream \
+ && /out/stream -v 2>&1 | grep -F 'Stream 1.3.0 (Build: LITE (no transcode))'
+
+FROM scratch AS artifact
+COPY --from=build /out/stream /stream
