@@ -26,9 +26,8 @@ MODULES="decrypt"
 libssl_test_c()
 {
     cat <<EOF
-#include <stdio.h>
-#include <openssl/des.h>
-int main(void) { DES_cblock b; DES_random_key((DES_cblock *)b); return 0; }
+#include "modules/softcam/cam/newcamd_openssl_probe.h"
+int main(void) { return newcamd_openssl_probe(); }
 EOF
 }
 
