@@ -55,6 +55,11 @@ local ok, changed = epg.ingest_section("a5_60103", section, {
     defer_export = true,
 })
 assert_true(ok == true and changed == true, "section was not ingested")
+for _, event in pairs(epg.registry["a5_60103"] or {}) do
+    -- Some broadcasters mark DVB text as UTF-8 (0x15) but still put a
+    -- Windows/ISO-8859 byte in it. The XMLTV writer must repair that byte.
+    event.title = "Atl" .. string.char(0xE9) .. "tico"
+end
 assert_true(epg.export_all("unit") == true, "export did not succeed")
 
 local xml = read_file(destination)
@@ -62,7 +67,8 @@ assert_true(xml:find('<channel id="a5_60103">', 1, true) ~= nil, "channel missin
 assert_true(xml:find('LNK &amp; HD', 1, true) ~= nil, "channel XML escaping missing")
 assert_true(xml:find('<programme ', 1, true) ~= nil, "programme missing")
 assert_true(xml:find('channel="a5_60103"', 1, true) ~= nil, "programme channel missing")
-assert_true(xml:find('<title lang="lit">Žinios</title>', 1, true) ~= nil, "title missing")
+assert_true(xml:find('<title lang="lit">Atlético</title>', 1, true) ~= nil, "invalid UTF-8 was not repaired")
+assert_true(xml:find(string.char(0xE9), 1, true) == nil, "raw ISO-8859 byte leaked into UTF-8 XML")
 assert_true(xml:find('<sub-title lang="lit">Dienos naujienos</sub-title>', 1, true) ~= nil,
     "subtitle missing")
 assert_true(xml:find('<desc lang="lit">Išsamus aprašymas, pirma dalis.</desc>', 1, true) ~= nil,

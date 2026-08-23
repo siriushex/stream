@@ -101,8 +101,59 @@ function epg.resolve_stream_config(row)
     }
 end
 
-local function xml_escape(text)
+local function utf8_continuation(value)
+    return value ~= nil and value >= 0x80 and value <= 0xBF
+end
+
+local function sanitize_utf8(text)
     local value = tostring(text or "")
+    local out = {}
+    local pos = 1
+    while pos <= #value do
+        local first = value:byte(pos)
+        if first < 0x80 then
+            -- XML 1.0 permits tab, LF, CR and printable ASCII only.
+            if first == 0x09 or first == 0x0A or first == 0x0D or first >= 0x20 then
+                out[#out + 1] = string.char(first)
+            end
+            pos = pos + 1
+        else
+            local second = value:byte(pos + 1)
+            local third = value:byte(pos + 2)
+            local fourth = value:byte(pos + 3)
+            local length = nil
+            if first >= 0xC2 and first <= 0xDF and utf8_continuation(second) then
+                length = 2
+            elseif first >= 0xE0 and first <= 0xEF and utf8_continuation(third) then
+                local second_ok = utf8_continuation(second)
+                if first == 0xE0 then second_ok = second ~= nil and second >= 0xA0 and second <= 0xBF end
+                if first == 0xED then second_ok = second ~= nil and second >= 0x80 and second <= 0x9F end
+                if second_ok then length = 3 end
+            elseif first >= 0xF0 and first <= 0xF4
+                and utf8_continuation(third) and utf8_continuation(fourth)
+            then
+                local second_ok = utf8_continuation(second)
+                if first == 0xF0 then second_ok = second ~= nil and second >= 0x90 and second <= 0xBF end
+                if first == 0xF4 then second_ok = second ~= nil and second >= 0x80 and second <= 0x8F end
+                if second_ok then length = 4 end
+            end
+
+            if length then
+                out[#out + 1] = value:sub(pos, pos + length - 1)
+                pos = pos + length
+            else
+                -- Repair a stray ISO-8859-1/Windows byte inside text that was
+                -- advertised as UTF-8. This is common in live DVB EIT data.
+                out[#out + 1] = string.char(0xC0 + math.floor(first / 64), 0x80 + (first % 64))
+                pos = pos + 1
+            end
+        end
+    end
+    return table.concat(out)
+end
+
+local function xml_escape(text)
+    local value = sanitize_utf8(text)
     value = value:gsub("&", "&amp;")
     value = value:gsub("<", "&lt;")
     value = value:gsub(">", "&gt;")
