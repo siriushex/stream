@@ -41,6 +41,8 @@ jobs:
         run: contrib/ci/test_softcam_helpers.sh
       - name: Playout helper unit tests
         run: contrib/ci/test_playout_helpers.sh
+      - name: HTTP buffer helper unit tests
+        run: contrib/ci/test_http_buffer_helpers.sh
       - name: Smoke
         run: contrib/ci/smoke.sh
       - name: HLS memfd smoke
