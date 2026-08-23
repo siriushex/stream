@@ -321,6 +321,10 @@ exec "$BASE_DIR/bin/stream-bin" "$@"
 SH
 chmod +x "$STAGE_DIR/bin/stream"
 
+"$ROOT_DIR/scripts/release/write_stream_build_info.sh" \
+  "$STAGE_DIR/bin/stream-bin" "$STAGE_DIR/STREAM_BUILD_INFO.txt" \
+  "$VERSION" "$ARCH" "$PROFILE"
+
 cat > "$STAGE_DIR/run.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
