@@ -81,6 +81,7 @@ trap cleanup EXIT
 cat >"$CFG" <<JSON
 {
   "settings": {
+    "http_auth_enabled": false,
     "http_play_hls": true,
     "hls_storage": "memfd",
     "hls_on_demand": true,
