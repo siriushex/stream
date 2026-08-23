@@ -4068,27 +4068,39 @@ end
 -- call a global (nil) symbol and crash at runtime.
 local hls_schedule_segment_retry
 
+local function hls_release_active_segment(instance)
+    if instance.active_seq ~= nil and instance.queued then
+        instance.queued[instance.active_seq] = nil
+    end
+    instance.active_seq = nil
+end
+
 local function hls_start_next_segment(instance)
     if instance.segment_request or #instance.queue == 0 then
         return
     end
 
     local item = table.remove(instance.queue, 1)
-    if instance.queued then
-        instance.queued[item.seq] = nil
-    end
     instance.active_seq = item.seq
     instance.segment_ok = false
 
     local seg_conf = parse_url(item.uri)
     if not seg_conf or (seg_conf.format ~= "http" and seg_conf.format ~= "https") then
-        log.error("[hls] unsupported segment url: " .. item.uri)
+        log.error("[hls] unsupported segment url: " .. tostring(item.uri))
         hls_mark_error(instance, "segment_url_invalid", true)
+        instance.last_seq = item.seq
+        instance.hls.last_seq = item.seq
+        hls_release_active_segment(instance)
+        hls_start_next_segment(instance)
         return
     end
     if seg_conf.format == "https" and not https_native_supported() then
         log.error("[hls] https is not supported (OpenSSL not available)")
         hls_mark_error(instance, "segment_https_unsupported", true)
+        instance.last_seq = item.seq
+        instance.hls.last_seq = item.seq
+        hls_release_active_segment(instance)
+        hls_start_next_segment(instance)
         return
     end
 
@@ -4104,7 +4116,7 @@ local function hls_start_next_segment(instance)
         table.insert(headers, "Authorization: Basic " .. auth)
     end
 
-    local req = http_request({
+    local ok_request, req_or_err = pcall(http_request, {
         host = seg_conf.host,
         port = seg_conf.port,
         path = seg_conf.path,
@@ -4126,7 +4138,7 @@ local function hls_start_next_segment(instance)
                     instance.hls.gap_count = 0
                     hls_mark_ok(instance)
                 end
-                instance.active_seq = nil
+                hls_release_active_segment(instance)
                 hls_start_next_segment(instance)
                 return
             end
@@ -4145,7 +4157,7 @@ local function hls_start_next_segment(instance)
                     end
                     instance.last_seq = item.seq
                     instance.hls.last_seq = item.seq
-                    instance.active_seq = nil
+                    hls_release_active_segment(instance)
                     hls_start_next_segment(instance)
                     return
                 end
@@ -4172,7 +4184,38 @@ local function hls_start_next_segment(instance)
         end,
     })
 
-    instance.segment_request = req
+    if ok_request and req_or_err then
+        instance.segment_request = req_or_err
+        return
+    end
+
+    local reason = tostring(req_or_err or "http_request returned nil")
+    log.error("[hls] segment init failed: " .. reason)
+    instance.segment_request = nil
+    local retries = instance.hls.segment_retries or 0
+    item.attempts = (item.attempts or 0) + 1
+    if retries > 0 and item.attempts > retries then
+        instance.hls.gap_count = (instance.hls.gap_count or 0) + 1
+        if instance.hls.gap_count > (instance.hls.max_gap_segments or 0) then
+            hls_set_state(instance, "failed", "hls_gap_limit")
+        end
+        instance.last_seq = item.seq
+        instance.hls.last_seq = item.seq
+        hls_release_active_segment(instance)
+        hls_start_next_segment(instance)
+        return
+    end
+
+    hls_mark_error(instance, "segment_init_failed", true)
+    table.insert(instance.queue, 1, item)
+    if instance.queued then
+        instance.queued[item.seq] = true
+    end
+    local delay_ms = 500
+    if instance.net_cfg then
+        delay_ms = calc_backoff_ms(instance.net_cfg, item.attempts)
+    end
+    hls_schedule_segment_retry(instance, delay_ms)
 end
 
 local function hls_schedule_refresh(instance, interval)
@@ -4273,11 +4316,15 @@ local function hls_handle_playlist(instance, content)
     instance.hls.target_duration = media.target_duration
 
     if instance.last_seq and #media.segments > 0 then
-        local seq0 = media.segments[1].seq or instance.last_seq
-        if seq0 + 1 < instance.last_seq then
+        local latest = media.segments[#media.segments].seq or instance.last_seq
+        local rollback_tolerance = tonumber(instance.hls.max_gap_segments) or 0
+        if latest + rollback_tolerance < instance.last_seq then
             -- Источник перезапустился или откатил media sequence.
             instance.queue = {}
             instance.queued = {}
+            if instance.active_seq ~= nil then
+                instance.queued[instance.active_seq] = true
+            end
             instance.hls.gap_count = 0
             instance.last_seq = nil
             instance.hls.last_seq = nil
@@ -4285,7 +4332,10 @@ local function hls_handle_playlist(instance, content)
     end
 
     for _, item in ipairs(media.segments) do
-        if (not instance.last_seq or item.seq > instance.last_seq) and not instance.queued[item.seq] then
+        if item.seq ~= instance.active_seq
+            and (not instance.last_seq or item.seq > instance.last_seq)
+            and not instance.queued[item.seq]
+        then
             table.insert(instance.queue, item)
             instance.queued[item.seq] = true
         end
