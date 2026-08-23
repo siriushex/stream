@@ -3,6 +3,14 @@ log.set({ debug = true })
 dofile("scripts/base.lua")
 dofile("scripts/config.lua")
 
+-- This fixture targets migration 17 in isolation. Stream 1.3.0 has later
+-- migrations whose tables are intentionally outside this focused fixture.
+local focused_migrations = {}
+for index = 1, 17 do
+    focused_migrations[index] = config.migrations[index]
+end
+config.migrations = focused_migrations
+
 local function assert_true(cond, msg)
     if not cond then
         error(msg or "assert failed")
