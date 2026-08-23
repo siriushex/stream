@@ -20,6 +20,11 @@ config = {
                 enabled = 1,
                 config = {},
             },
+            {
+                id = "disabled_legacy",
+                enabled = 0,
+                config = { epg_export = "file:///opt/epg/disabled.xml" },
+            },
         }
     end,
 }
@@ -33,11 +38,16 @@ epg.stream_status.a5_60103 = {
 local payload = epg.get_status()
 assert_true(payload.configured == 1, "configured count mismatch")
 assert_true(payload.event_count == 42, "event count mismatch")
-assert_true(#payload.streams == 1, "unexpected status rows")
+assert_true(#payload.streams == 2, "disabled configured stream missing")
 assert_true(payload.streams[1].id == "a5_60103", "stream id missing")
 assert_true(payload.streams[1].destination == "/opt/epg/lnk.xml", "destination missing")
 assert_true(payload.streams[1].legacy == true, "legacy marker missing")
 assert_true(payload.streams[1].collector == "active", "collector state missing")
+assert_true(payload.streams[1].enabled == true, "active stream enabled marker missing")
+assert_true(payload.streams[2].id == "disabled_legacy", "disabled stream id missing")
+assert_true(payload.streams[2].destination == "/opt/epg/disabled.xml", "disabled destination missing")
+assert_true(payload.streams[2].collector == "disabled", "disabled collector state missing")
+assert_true(payload.streams[2].enabled == false, "disabled stream enabled marker mismatch")
 
 local api_file = assert(io.open("scripts/api.lua", "rb"))
 local api_source = api_file:read("*a")

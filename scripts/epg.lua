@@ -445,7 +445,7 @@ function epg.get_status()
     end
     for _, row in ipairs(config.list_streams() or {}) do
         local enabled = row.enabled == nil or row.enabled == true or tonumber(row.enabled) ~= 0
-        local resolved = enabled and epg.resolve_stream_config(row) or nil
+        local resolved = epg.resolve_stream_config(row)
         if resolved then
             local id = tostring(row.id or (row.config and row.config.id) or "")
             local current = epg.stream_status[id] or {}
@@ -456,10 +456,13 @@ function epg.get_status()
             item.destination = epg.resolve_destination(resolved)
             item.format = resolved.format
             item.legacy = resolved.legacy == true
-            item.collector = item.collector or "waiting"
+            item.enabled = enabled
+            item.collector = enabled and (item.collector or "waiting") or "disabled"
             item.event_count = tonumber(item.event_count) or 0
-            payload.configured = payload.configured + 1
-            payload.event_count = payload.event_count + item.event_count
+            if enabled then
+                payload.configured = payload.configured + 1
+                payload.event_count = payload.event_count + item.event_count
+            end
             table.insert(payload.streams, item)
         end
     end

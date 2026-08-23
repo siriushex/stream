@@ -2032,13 +2032,14 @@ WantedBy=multi-user.target
             local cache_control = "Cache-Control: no-cache"
             local extra_headers = nil
             local is_html = (ext == "html")
+            local is_core_ui_asset = rel == "app.js" or rel == "styles.css"
             if is_html then
                 cache_control = "Cache-Control: no-cache, no-store, must-revalidate"
                 extra_headers = {
                     "Pragma: no-cache",
                     "Expires: 0",
                 }
-            elseif is_versioned_web_request(raw_path, request) then
+            elseif is_versioned_web_request(raw_path, request) and not is_core_ui_asset then
                 cache_control = "Cache-Control: public, max-age=31536000, immutable"
             end
             local response = {
