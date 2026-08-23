@@ -2566,6 +2566,21 @@ select {
   grid-template-columns: 1.6fr 0.5fr 0.7fr 0.8fr 1fr 0.7fr auto;
 }
 
+.buffer-link-status[data-state="managed"],
+.buffer-link-status[data-state="linked"] {
+  color: var(--success);
+}
+
+.buffer-link-status[data-state="conflict"] {
+  color: var(--danger);
+}
+
+.buffer-health-detail {
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  margin-top: 3px;
+}
+
 .buffer-allow-table .table-row {
   grid-template-columns: 0.6fr 1fr auto;
 }

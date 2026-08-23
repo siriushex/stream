@@ -1179,6 +1179,14 @@ const elements = {
   bufferBackupStartDelay: $('#buffer-backup-start-delay'),
   bufferBackupReturnDelay: $('#buffer-backup-return-delay'),
   bufferBackupProbeInterval: $('#buffer-backup-probe-interval'),
+  bufferHealthRequireVideo: $('#buffer-health-require-video'),
+  bufferHealthRequireAudio: $('#buffer-health-require-audio'),
+  bufferHealthMinBitrate: $('#buffer-health-min-bitrate'),
+  bufferHealthFailoverSec: $('#buffer-health-failover-sec'),
+  bufferHealthFailChecks: $('#buffer-health-fail-checks'),
+  bufferPublishDashboard: $('#buffer-publish-dashboard'),
+  bufferDashboardStreamId: $('#buffer-dashboard-stream-id'),
+  bufferDashboardStatus: $('#buffer-dashboard-status'),
   bufferBufferingSec: $('#buffer-buffering-sec'),
   bufferBandwidthKbps: $('#buffer-bandwidth-kbps'),
   bufferClientStartOffset: $('#buffer-client-start-offset'),
@@ -23035,6 +23043,10 @@ function clearBufferEditor() {
   if (elements.bufferDiagnostics) {
     elements.bufferDiagnostics.innerHTML = '';
   }
+  if (elements.bufferDashboardStatus) {
+    elements.bufferDashboardStatus.textContent = 'Not published';
+    elements.bufferDashboardStatus.dataset.state = 'not_published';
+  }
   if (elements.bufferInputEmpty) {
     elements.bufferInputEmpty.style.display = 'block';
   }
@@ -23056,6 +23068,13 @@ function defaultBufferResource(id) {
     backup_start_delay_sec: 3,
     backup_return_delay_sec: 10,
     backup_probe_interval_sec: 30,
+    health_require_video: true,
+    health_require_audio: true,
+    health_min_bitrate_kbps: 128,
+    health_failover_sec: 5,
+    health_fail_checks: 2,
+    publish_to_dashboard: false,
+    dashboard_stream_id: '',
     buffering_sec: 8,
     bandwidth_kbps: 4000,
     client_start_offset_sec: 1,
@@ -23089,6 +23108,11 @@ const BUFFER_PRESETS = {
       backup_start_delay_sec: 3,
       backup_return_delay_sec: 10,
       backup_probe_interval_sec: 30,
+      health_require_video: true,
+      health_require_audio: true,
+      health_min_bitrate_kbps: 128,
+      health_failover_sec: 5,
+      health_fail_checks: 2,
       buffering_sec: 8,
       bandwidth_kbps: 4000,
       client_start_offset_sec: 1,
@@ -23118,8 +23142,13 @@ const BUFFER_PRESETS = {
       backup_type: 'active',
       no_data_timeout_sec: 2,
       backup_start_delay_sec: 0,
-      backup_return_delay_sec: 2,
+      backup_return_delay_sec: 8,
       backup_probe_interval_sec: 10,
+      health_require_video: true,
+      health_require_audio: true,
+      health_min_bitrate_kbps: 128,
+      health_failover_sec: 5,
+      health_fail_checks: 2,
       buffering_sec: 6,
       bandwidth_kbps: 4000,
       client_start_offset_sec: 1,
@@ -23151,6 +23180,11 @@ const BUFFER_PRESETS = {
       backup_start_delay_sec: 1,
       backup_return_delay_sec: 3,
       backup_probe_interval_sec: 10,
+      health_require_video: true,
+      health_require_audio: true,
+      health_min_bitrate_kbps: 128,
+      health_failover_sec: 5,
+      health_fail_checks: 2,
       buffering_sec: 2,
       bandwidth_kbps: 4000,
       client_start_offset_sec: 0,
@@ -23192,6 +23226,11 @@ function applyBufferPresetValues(values) {
   setPresetField(elements.bufferBackupStartDelay, values.backup_start_delay_sec);
   setPresetField(elements.bufferBackupReturnDelay, values.backup_return_delay_sec);
   setPresetField(elements.bufferBackupProbeInterval, values.backup_probe_interval_sec);
+  setPresetField(elements.bufferHealthRequireVideo, values.health_require_video);
+  setPresetField(elements.bufferHealthRequireAudio, values.health_require_audio);
+  setPresetField(elements.bufferHealthMinBitrate, values.health_min_bitrate_kbps);
+  setPresetField(elements.bufferHealthFailoverSec, values.health_failover_sec);
+  setPresetField(elements.bufferHealthFailChecks, values.health_fail_checks);
   setPresetField(elements.bufferBufferingSec, values.buffering_sec);
   setPresetField(elements.bufferBandwidthKbps, values.bandwidth_kbps);
   setPresetField(elements.bufferClientStartOffset, values.client_start_offset_sec);
@@ -23230,6 +23269,26 @@ function applyBufferPreset(key) {
   setStatus(`Preset applied: ${preset.label}`);
 }
 
+function renderBufferDashboardStatus(buffer) {
+  if (!elements.bufferDashboardStatus) return;
+  const link = buffer && buffer.dashboard_link ? buffer.dashboard_link : null;
+  const stateValue = link && link.state
+    ? link.state
+    : (buffer && buffer.publish_to_dashboard ? 'pending' : 'not_published');
+  elements.bufferDashboardStatus.dataset.state = stateValue;
+  if (stateValue === 'managed') {
+    elements.bufferDashboardStatus.textContent = `Managed: ${link.stream_id || buffer.id || ''}`;
+  } else if (stateValue === 'linked') {
+    elements.bufferDashboardStatus.textContent = `Linked: ${link.stream_id || ''}`;
+  } else if (stateValue === 'conflict') {
+    elements.bufferDashboardStatus.textContent = 'Conflict';
+  } else if (stateValue === 'pending') {
+    elements.bufferDashboardStatus.textContent = 'Will publish on save';
+  } else {
+    elements.bufferDashboardStatus.textContent = 'Not published';
+  }
+}
+
 function openBufferEditor(buffer, isNew) {
   if (!buffer) {
     clearBufferEditor();
@@ -23256,6 +23315,14 @@ function openBufferEditor(buffer, isNew) {
   elements.bufferBackupStartDelay.value = merged.backup_start_delay_sec ?? 3;
   elements.bufferBackupReturnDelay.value = merged.backup_return_delay_sec ?? 10;
   elements.bufferBackupProbeInterval.value = merged.backup_probe_interval_sec ?? 30;
+  elements.bufferHealthRequireVideo.checked = merged.health_require_video !== false;
+  elements.bufferHealthRequireAudio.checked = merged.health_require_audio !== false;
+  elements.bufferHealthMinBitrate.value = merged.health_min_bitrate_kbps ?? 128;
+  elements.bufferHealthFailoverSec.value = merged.health_failover_sec ?? 5;
+  elements.bufferHealthFailChecks.value = merged.health_fail_checks ?? 2;
+  elements.bufferPublishDashboard.checked = merged.publish_to_dashboard === true;
+  elements.bufferDashboardStreamId.value = merged.dashboard_stream_id || '';
+  renderBufferDashboardStatus(merged);
   elements.bufferBufferingSec.value = merged.buffering_sec ?? 8;
   elements.bufferBandwidthKbps.value = merged.bandwidth_kbps ?? 4000;
   elements.bufferClientStartOffset.value = merged.client_start_offset_sec ?? 1;
@@ -23362,7 +23429,7 @@ function renderBufferInputs() {
 
   const header = document.createElement('div');
   header.className = 'table-row header';
-  header.innerHTML = '<div>Input URL</div><div>Priority</div><div>State</div><div>Last OK</div><div>Last error</div><div>Bytes</div><div></div>';
+  header.innerHTML = '<div>Input URL</div><div>Priority</div><div>State / A/V health</div><div>Last OK</div><div>Last error</div><div>Bytes</div><div></div>';
   table.appendChild(header);
 
   if (inputs.length === 0) {
@@ -23381,8 +23448,21 @@ function renderBufferInputs() {
     const lastOk = formatTimestamp(input.last_ok_ts);
     const lastError = input.last_error || 'n/a';
     const bytes = formatBytes(input.bytes_in);
+    const healthParts = [
+      `${Number(input.bitrate_kbps) || 0} kbps`,
+      `V:${Number(input.video_pid) || 0}`,
+      `A:${Number(input.audio_pid) || 0}`,
+    ];
+    if (input.health_reason) healthParts.push(input.health_reason);
+    const recoveryProgress = Number(input.recovery_progress_sec) || 0;
+    if (recoveryProgress > 0 && (!Number.isFinite(activeIndex) || index !== activeIndex)) {
+      const target = Number(state.bufferEditing && state.bufferEditing.backup_return_delay_sec) || 0;
+      healthParts.push(`RECOVERING ${recoveryProgress}/${target}s`);
+    }
+    const healthText = healthParts.join(' • ');
     row.innerHTML = `<div>${input.url || ''}</div><div>${input.priority ?? 0}</div>` +
-      `<div>${stateLabel}</div><div>${lastOk}</div><div>${lastError}</div><div>${bytes}</div>`;
+      `<div>${stateLabel}<div class="buffer-health-detail muted">${healthText}</div></div>` +
+      `<div>${lastOk}</div><div>${lastError}</div><div>${bytes}</div>`;
 
     const actions = document.createElement('div');
     actions.className = 'buffer-actions';
@@ -23516,6 +23596,13 @@ function renderBufferDiagnostics() {
   addDiag('Write index', bufferStats.write_index || 'n/a');
   addDiag('Last write', formatTimestamp(bufferStats.last_write_ts));
 
+  const health = status.health || {};
+  addDiag('A/V health', health.current_ok === true ? 'OK' : (health.reason || 'warming'));
+  addDiag('Health bitrate', `${Number(health.bitrate_kbps) || 0} kbps`);
+  if (Number.isFinite(health.recovery_input_index) && health.recovery_input_index >= 0) {
+    addDiag('Recovery probe', `input ${health.recovery_input_index}`);
+  }
+
   const smart = status.smart || {};
   addDiag('Checkpoints', smart.checkpoints_count || 0);
 
@@ -23566,6 +23653,14 @@ function renderBufferDetail() {
   elements.bufferBackupStartDelay.value = buffer.backup_start_delay_sec ?? 3;
   elements.bufferBackupReturnDelay.value = buffer.backup_return_delay_sec ?? 10;
   elements.bufferBackupProbeInterval.value = buffer.backup_probe_interval_sec ?? 30;
+  elements.bufferHealthRequireVideo.checked = buffer.health_require_video !== false;
+  elements.bufferHealthRequireAudio.checked = buffer.health_require_audio !== false;
+  elements.bufferHealthMinBitrate.value = buffer.health_min_bitrate_kbps ?? 128;
+  elements.bufferHealthFailoverSec.value = buffer.health_failover_sec ?? 5;
+  elements.bufferHealthFailChecks.value = buffer.health_fail_checks ?? 2;
+  elements.bufferPublishDashboard.checked = buffer.publish_to_dashboard === true;
+  elements.bufferDashboardStreamId.value = buffer.dashboard_stream_id || '';
+  renderBufferDashboardStatus(buffer);
   elements.bufferBufferingSec.value = buffer.buffering_sec ?? 8;
   elements.bufferBandwidthKbps.value = buffer.bandwidth_kbps ?? 4000;
   elements.bufferClientStartOffset.value = buffer.client_start_offset_sec ?? 1;
@@ -23733,6 +23828,13 @@ function readBufferForm() {
     backup_start_delay_sec: toNumber(elements.bufferBackupStartDelay.value) ?? 3,
     backup_return_delay_sec: toNumber(elements.bufferBackupReturnDelay.value) ?? 10,
     backup_probe_interval_sec: toNumber(elements.bufferBackupProbeInterval.value) ?? 30,
+    health_require_video: elements.bufferHealthRequireVideo.checked,
+    health_require_audio: elements.bufferHealthRequireAudio.checked,
+    health_min_bitrate_kbps: toNumber(elements.bufferHealthMinBitrate.value) ?? 128,
+    health_failover_sec: toNumber(elements.bufferHealthFailoverSec.value) ?? 5,
+    health_fail_checks: toNumber(elements.bufferHealthFailChecks.value) ?? 2,
+    publish_to_dashboard: elements.bufferPublishDashboard.checked,
+    dashboard_stream_id: elements.bufferDashboardStreamId.value.trim(),
     buffering_sec: toNumber(elements.bufferBufferingSec.value) ?? 8,
     bandwidth_kbps: toNumber(elements.bufferBandwidthKbps.value) ?? 4000,
     client_start_offset_sec: toNumber(elements.bufferClientStartOffset.value) ?? 1,

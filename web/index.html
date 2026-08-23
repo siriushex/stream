@@ -787,6 +787,44 @@
               </div>
 
               <div class="buffer-subsection">
+                <div class="panel-title">A/V health and publication</div>
+                <div class="form-grid">
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-health-require-video" checked />
+                    <span>Require video</span>
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-health-require-audio" checked />
+                    <span>Require audio</span>
+                  </label>
+                  <label class="field">
+                    <span>Minimum bitrate (kbps)</span>
+                    <input type="number" id="buffer-health-min-bitrate" min="1" value="128" />
+                  </label>
+                  <label class="field">
+                    <span>Health failover (sec)</span>
+                    <input type="number" id="buffer-health-failover-sec" min="1" value="5" />
+                  </label>
+                  <label class="field">
+                    <span>Failed checks</span>
+                    <input type="number" id="buffer-health-fail-checks" min="1" value="2" />
+                  </label>
+                  <label class="checkline">
+                    <input type="checkbox" id="buffer-publish-dashboard" />
+                    <span>Publish to dashboard</span>
+                  </label>
+                  <label class="field">
+                    <span>Dashboard stream ID</span>
+                    <input type="text" id="buffer-dashboard-stream-id" placeholder="From buffer ID" />
+                  </label>
+                  <div class="field">
+                    <span>Dashboard link</span>
+                    <div id="buffer-dashboard-status" class="buffer-link-status muted">Not published</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="buffer-subsection">
                 <div class="panel-title">Buffering</div>
                 <div class="form-grid">
                   <label class="field">
