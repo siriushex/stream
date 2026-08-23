@@ -906,50 +906,73 @@ static void check_is_active(void *arg)
     on_close(mod);
 }
 
+static void process_ts_data(module_data_t *mod, const char *data, size_t size)
+{
+    while(size > 0)
+    {
+        size_t space = mod->sync.buffer_size - mod->sync.buffer_write;
+        if(space == 0)
+        {
+            mod->sync.buffer_write = 0;
+            space = mod->sync.buffer_size;
+        }
+
+        const size_t chunk = size < space ? size : space;
+        memcpy(&mod->sync.buffer[mod->sync.buffer_write], data, chunk);
+        mod->sync.buffer_write += chunk;
+        data += chunk;
+        size -= chunk;
+
+        size_t read = 0;
+        while(read < mod->sync.buffer_write)
+        {
+            while(read < mod->sync.buffer_write && mod->sync.buffer[read] != 0x47)
+                ++read;
+
+            if(read >= mod->sync.buffer_write
+                || mod->sync.buffer_write - read < TS_PACKET_SIZE)
+                break;
+
+            module_stream_send(mod, &mod->sync.buffer[read]);
+            read += TS_PACKET_SIZE;
+        }
+
+        if(read > 0)
+        {
+            const size_t tail = mod->sync.buffer_write - read;
+            if(tail > 0)
+                memmove(mod->sync.buffer, &mod->sync.buffer[read], tail);
+            mod->sync.buffer_write = tail;
+        }
+    }
+}
+
 static void on_ts_read(void *arg)
 {
     module_data_t *mod = (module_data_t *)arg;
 
-    ssize_t size = asc_socket_recv(  mod->sock
-                                   , &mod->sync.buffer[mod->sync.buffer_write]
-                                   , mod->sync.buffer_size - mod->sync.buffer_write);
-    if(size <= 0)
+    while(true)
     {
+        const ssize_t size = socket_recv_data(mod, mod->buffer, HTTP_BUFFER_SIZE);
+        if(size > 0)
+        {
+            if(!note_io(mod, (size_t)size))
+                return;
+
+            mod->is_active = true;
+            process_ts_data(mod, mod->buffer, (size_t)size);
+            continue;
+        }
+
+        if(size == -2)
+            return;
+#ifndef _WIN32
+        if(!mod->is_tls && size < 0
+            && (errno == EAGAIN || errno == EWOULDBLOCK))
+            return;
+#endif
         on_close(mod);
         return;
-    }
-
-    if(!note_io(mod, (size_t)size))
-        return;
-
-    mod->is_active = true;
-    mod->sync.buffer_write += size;
-    mod->sync.buffer_read = 0;
-
-    while(1)
-    {
-        while(mod->sync.buffer[mod->sync.buffer_read] != 0x47)
-        {
-            ++mod->sync.buffer_read;
-            if(mod->sync.buffer_read >= mod->sync.buffer_write)
-            {
-                mod->sync.buffer_write = 0;
-                return;
-            }
-        }
-
-        const size_t next = mod->sync.buffer_read + TS_PACKET_SIZE;
-        if(next > mod->sync.buffer_write)
-        {
-            const size_t tail = mod->sync.buffer_write - mod->sync.buffer_read;
-            if(tail > 0)
-                memmove(mod->sync.buffer, &mod->sync.buffer[mod->sync.buffer_read], tail);
-            mod->sync.buffer_write = tail;
-            return;
-        }
-
-        module_stream_send(mod, &mod->sync.buffer[mod->sync.buffer_read]);
-        mod->sync.buffer_read += TS_PACKET_SIZE;
     }
 }
 
@@ -1175,6 +1198,8 @@ static void on_read(void *arg)
 
         if(mod->is_stream && mod->status_code == 200)
         {
+            const size_t initial_stream_size = mod->buffer_skip > skip
+                ? mod->buffer_skip - skip : 0;
             mod->status = 3;
 
             lua_rawgeti(lua, LUA_REGISTRYINDEX, mod->idx_response);
@@ -1205,7 +1230,18 @@ static void on_read(void *arg)
                                  , on_thread_close);
             }
 
+            /* A fast server may coalesce response headers and the first TS
+             * payload into one recv(). Preserve those bytes instead of
+             * discarding everything after the header terminator. */
+            if(!mod->config.sync && initial_stream_size > 0)
+            {
+                mod->is_active = true;
+                process_ts_data(mod, &mod->buffer[skip], initial_stream_size);
+            }
+
             mod->buffer_skip = 0;
+            if(!mod->config.sync)
+                on_ts_read(mod);
             return;
         }
 
