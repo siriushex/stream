@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
+if [[ ! -f "mkdocs.yml" ]]; then
+  echo "[docs-seo] SKIP: mkdocs.yml is not present in this source-only checkout"
+  exit 0
+fi
+
 if [[ ! -d ".venv-docs" ]]; then
   python3 -m venv .venv-docs
 fi
